@@ -14,7 +14,7 @@ from backend.licenses import copy_provenance
 from backend.models import BackgroundJob, Image
 from backend.ml.upscaler import scan_upscale_models, upscale_image_sync
 from backend.schemas.upscale import UpscaleModelInfo, UpscaleRunRequest
-from backend.services.dataset_service import refresh_stats
+from backend.services.dataset_service import refresh_stats, refresh_stats_after_abort
 from backend.services.image_service import generate_thumbnail
 from backend.services.label_service import copy_labels
 from backend.services import version_service
@@ -64,6 +64,21 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
     await db.commit()
 
     cfg = body.model_dump()
+
+    # Every dataset whose stored stats the run moved, refreshed after the loop.
+    # A set, not `body.dataset_id`: a selection can span datasets (PM-029). Out
+    # here so `_run_with_stats` can still refresh them when `_run` raises.
+    touched: set[str] = set()
+
+    async def _run_with_stats(job_id: str) -> None:
+        # The loop's tail refreshes on completion and on a soft cancel; a raise
+        # outside the per-image `try`, or a hard cancel, skips it with earlier
+        # images already committed.
+        try:
+            await _run(job_id)
+        except BaseException:
+            await refresh_stats_after_abort(touched, context="Upscale")
+            raise
 
     async def _run(job_id: str) -> None:
         from backend.database import AsyncSessionLocal
@@ -144,11 +159,6 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
             # same reason it carries `copy_provenance` — "this image is a reject"
             # is a fact about the picture, not about the file.
             derivative_ids: dict[str, str] = {}
-
-            # Every dataset whose stored stats the run moved, refreshed after
-            # the loop. A set, not `body.dataset_id`: a selection can span
-            # datasets (PM-029).
-            touched: set[str] = set()
 
             cancelled = False
             for i, img in enumerate(images):
@@ -401,5 +411,5 @@ async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db
             if cancelled:
                 job_queue.raise_if_cancelled(job_id)
 
-    await job_queue.enqueue(job, _run)
+    await job_queue.enqueue(job, _run_with_stats)
     return {"job_id": job.id, "total": total}

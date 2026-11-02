@@ -379,3 +379,84 @@ def test_inpaint_copy_refreshes_the_image_count(tmp_path, monkeypatch):
             assert stored[0] == 2
 
     run(scenario())
+
+
+# Follow-up 5: a raise outside the per-image `try` failed the job with earlier
+# images committed, and skipped the tail refresh that would have counted them.
+
+def _raise_on_the_second_backup(monkeypatch):
+    """The versioning hook runs before each replace and outside the per-image
+    `try` in all three jobs, so failing it on the second image raises out of the
+    loop with the first image's replace already committed."""
+    from backend.services import version_service
+
+    real = version_service.protect_file_before_overwrite
+    calls = 0
+
+    async def flaky(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("the database went away mid-run")
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(version_service, "protect_file_before_overwrite", flaky)
+
+
+async def _assert_refreshed_after_failure(env, ds_id, job, before) -> None:
+    assert job["status"] == "failed", job
+    after = await _stored_stats(env, ds_id)
+    assert after == await _true_stats(env, ds_id)
+    assert after[1] != before[1], "the first image's replace should have moved the size"
+
+
+def test_upscale_refreshes_stats_when_it_fails_partway(tmp_path, monkeypatch):
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            _install_fake_upscale(monkeypatch)
+            ds = await env.create_dataset("d")
+            a = await upload_image(env, ds["id"], "a.png", png_bytes())
+            b = await upload_image(env, ds["id"], "b.png", png_bytes())
+            before = await _stored_stats(env, ds["id"])
+            _raise_on_the_second_backup(monkeypatch)
+
+            job = await _upscale(env, ds["id"], [a["id"], b["id"]], replace=True)
+            await _assert_refreshed_after_failure(env, ds["id"], job, before)
+
+    run(scenario())
+
+
+def test_lut_refreshes_stats_when_it_fails_partway(tmp_path, monkeypatch):
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            a = await upload_image(env, ds["id"], "a.jpg", jpeg_bytes())
+            b = await upload_image(env, ds["id"], "b.jpg", jpeg_bytes())
+            lut = _identity_cube(tmp_path / "identity.cube")
+            before = await _stored_stats(env, ds["id"])
+            _raise_on_the_second_backup(monkeypatch)
+
+            job = await _lut(env, ds["id"], [a["id"], b["id"]], lut, replace=True)
+            await _assert_refreshed_after_failure(env, ds["id"], job, before)
+
+    run(scenario())
+
+
+def test_inpaint_refreshes_stats_when_it_fails_partway(tmp_path, monkeypatch):
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            _install_fake_inpaint(monkeypatch)
+            ds = await env.create_dataset("d")
+            # JPEGs, re-encoded on save, so the first replace moves the size.
+            a = await upload_image(env, ds["id"], "a.jpg", jpeg_bytes(size=(48, 32)))
+            b = await upload_image(env, ds["id"], "b.jpg", jpeg_bytes(size=(48, 32)))
+            await _add_detection(env, a["id"])
+            await _add_detection(env, b["id"])
+            before = await _stored_stats(env, ds["id"])
+            _raise_on_the_second_backup(monkeypatch)
+
+            started = await _run_inpaint(env, ds["id"], [a["id"], b["id"]], replace=True)
+            job = await wait_for_job(env, started["job_id"], timeout=60)
+            await _assert_refreshed_after_failure(env, ds["id"], job, before)
+
+    run(scenario())

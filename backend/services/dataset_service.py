@@ -1381,6 +1381,24 @@ async def refresh_stats(db: AsyncSession, dataset_id: str) -> None:
         await db.commit()
 
 
+async def refresh_stats_after_abort(dataset_ids, *, context: str) -> None:
+    """`refresh_stats` for a job that raised out of its loop, or was hard-cancelled.
+
+    Images the run already committed moved the stored counts, and the job's own
+    tail refresh never ran. A fresh session, since the job's may be mid-failure;
+    best-effort per dataset, so it never masks the exception the caller re-raises.
+    `AsyncSessionLocal` is imported here, not at module level, so a test's patch
+    of `backend.database` reaches it (`videos._run_with_stats` does the same)."""
+    from backend.database import AsyncSessionLocal
+
+    for ds_id in dataset_ids:
+        try:
+            async with AsyncSessionLocal() as session:
+                await refresh_stats(session, ds_id)
+        except Exception:
+            logger.warning("%s: could not refresh stats for %s", context, ds_id, exc_info=True)
+
+
 def _aggregate_dataset_stats(rows, ds, subfolder, score_cov, flag_counts) -> dict:
     """Pure-Python bucketing/aggregation for get_dataset_stats.
 

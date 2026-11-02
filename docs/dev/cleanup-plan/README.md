@@ -37,39 +37,41 @@ rather than `setlimit`, since `chunked`'s 10,000 default sits above any limit lo
 
 ### Stage 1 follow-ups
 
-Found while fixing, and by an independent review of the branch on 2026-11-02. They are the
-next items to fix, in this order: the first four are wrong today, the rest are gaps.
+Found while fixing, and by an independent review of the branch on 2026-11-02. Items 1–6 landed
+on `fix/m8-stage1-followups`, each with a test that failed first, and what stays true lives in
+the files named beside them:
 
-1. **Thumbnails are not gated.** The in-place sites gate `file_path` but regenerate the
-   thumbnail through an ungated `img.thumbnail_path` (e.g. `upscaling.py`'s replace epilogue);
-   only inpaint gates both. `generate_thumbnail` mkdirs its parent, so it is the write
-   primitive CLAUDE.md names for `bulk_thumbnails`. Pre-existing, but CLAUDE.md's new
-   "Every in-place overwrite is gated too" bullet reads as if both are gated: gate the
-   thumbnail at each site as inpaint does, or narrow the bullet to `file_path`.
-2. **A doc claim is wrong.** `docs/dev/frontend-jobs.md` says every job writing a
-   `failure_summary` builds it with `backend/job_outcome.py`. Captioning builds its own
-   (`captioning.py`'s `_failure_headline`). Fix the sentence, or move captioning onto the helper.
-3. **Detection crop's request-time lookup is unchunked** (`detection.py`'s `crop_to_detection`,
-   `Image.id.in_(body.image_ids)`), B3's shape on the same select-all path as the forms B3
-   fixed. The class reaches further, outside this milestone: `quality.py`, `captioning.py`,
-   `detection.py`'s detection-job lookup and several `images.py` routes. `images.py`'s batch
-   resize and batch crop jobs load their ids the same way.
-4. **A detail-page toast names the wrong cause.** With `processed: 0` and `failed: 0`,
-   `ImageDetailPage`'s upscale and LUT effects always say the new name is taken. `skipped` is
-   also seeded with rows that vanished between enqueue and run, and copy mode has no name skip.
-5. **No stats refresh when a job fails partway.** Upscale, LUT and inpaint refresh on
-   completion and on a soft cancel, but a raise outside the per-image `try` fails the job with
-   earlier images committed and `image_count`/`total_size_bytes` stale. A `try/finally` around
-   the loop closes it.
-6. **A short race on the detail page.** The job id is cleared before `fetchEditOutcome`
-   returns, so Run is enabled during that GET; a second run, or moving to another image, can
-   still receive the first run's `setUpscaleMode(false)`/`paneGo`.
+1. **Thumbnails gated** at every in-place site CLAUDE.md lists, crop+upscale's job included, as
+   inpaint already did. A refusal is a stale tile, not a failed edit. CLAUDE.md § Key
+   invariants, `utils.contained_path`'s docstring.
+2. **The `failure_summary` claim corrected**, not the code: captioning's cause-based headline
+   says more than a file list would. `docs/dev/frontend-jobs.md`.
+3. **Chunked:** detection crop's and the detection run's request-time lookups, and the batch
+   resize and crop jobs' id loads. The rest of the class is item 9.
+4. **The detail-page toast names its cause.** Upscale and LUT write `missing` beside `skipped`.
+   `docs/dev/image-processing-models.md` § Upscaling.
+5. **Stats refresh on a partway failure** for upscale, LUT and inpaint, through
+   `dataset_service.refresh_stats_after_abort` around `_run` rather than a `try/finally`
+   inside it. Same section.
+6. **The detail-page race closed** with a generation ref per tool. Same section.
+
+Still open:
+
 7. **Crop+upscale's replace job** completes with `processed: 0` when its row vanished mid-run,
    and the detail page still toasts "Crop & upscale applied". An edge case; stage 6 replaces
    that effect.
 8. **Only upscale and LUT keep a refusal's reason.** Detection crop, batch resize and crop,
    inpaint and re-extraction say why only in the live `Failed:` message and the log. Stage 3's
    shared loop is the natural place to extend `failure_summary`.
+9. **The rest of the unchunked `IN` class**, left out of item 3 by choice. Client id lists
+   still reach one `Image.id.in_()` in `quality.py` (`score_quality`, style similarity and the
+   reference-image lookups), `captioning.py` (`run_captioning`, `run_pipeline` and the pipeline
+   job), `images.py`'s `batch_reorder`, `_apply_bulk_filters` and `batch_move_subfolder`, and
+   `caption_service`, `export_service` and `tag_consolidation_service`. The comment above
+   `SELECT_ALL_ID_CAP` in `images.py` is stale too: it calls `batch_delete` unchunked. Batch move
+   and copy to another dataset wait for M4, which changes both routes.
+10. **Batch resize and crop share item 5's gap.** `images.py`'s two jobs refresh stats after the
+    loop with no guard for a raise out of it. Stage 3's loop, or item 5's wrapper, closes it.
 
 ## Stages 2 to 4: no port conflict
 

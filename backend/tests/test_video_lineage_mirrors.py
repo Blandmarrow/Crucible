@@ -417,20 +417,21 @@ def test_the_rating_is_carried_but_is_not_a_score_or_a_qualifier():
 def test_no_derivative_path_inherits_a_rating():
     """The travel rule's second half: a rating does **not** reach a derivative.
 
-    Crop, crop+upscale, crop-to-detection, upscale and LUT all build a *new*
-    picture, and a keep/cut decision made about the original says nothing about
+    Crop, crop+upscale, crop-to-detection, upscale, LUT and inpaint's copy mode
+    all build a *new* picture, and a keep/cut decision made about the original says nothing about
     it. Today they carry provenance via `**copy_provenance(...)`, which returns
     exactly five keys and so cannot leak one — but nothing stops an explicit
     kwarg being added alongside, which is the failure this guards. Read from the
     AST for the same reason as every other structural guard here.
     """
-    from backend.routers import detection, images as images_router, lut, upscaling
+    from backend.routers import detection, images as images_router, inpaint, lut, upscaling
 
     sites = {
         "images.crop (crop-only + crop+upscale)": images_router.crop,
         "detection.crop_to_detection": detection.crop_to_detection,
         "upscaling.run_upscale": upscaling.run_upscale,
         "lut.run_lut": lut.run_lut,
+        "inpaint.run_inpaint": inpaint.run_inpaint,
     }
     leaked: dict[str, list[str]] = {}
     for label, func in sites.items():

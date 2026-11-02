@@ -232,7 +232,7 @@ def test_upscale_reports_all_zero_counts_on_a_clean_run(tmp_path, monkeypatch):
             job = await _run_upscale(env, ds["id"], img["id"], replace=True)
             assert job["status"] == "completed", job
             assert job["result_data"] == {
-                "processed": 1, "skipped": 0, "failed": 0, "thumbnails_stale": 0,
+                "processed": 1, "skipped": 0, "missing": 0, "failed": 0, "thumbnails_stale": 0,
                 "failed_count": 0, "failure_summary": None,
             }
 
@@ -256,7 +256,7 @@ def test_upscale_counts_a_disk_collision_as_skipped_not_processed(tmp_path, monk
             job = await _run_upscale(env, ds["id"], img["id"], replace=True)
             assert job["status"] == "completed", job
             assert job["result_data"] == {
-                "processed": 0, "skipped": 1, "failed": 0, "thumbnails_stale": 0,
+                "processed": 0, "skipped": 1, "missing": 0, "failed": 0, "thumbnails_stale": 0,
                 "failed_count": 0, "failure_summary": None,
             }
 

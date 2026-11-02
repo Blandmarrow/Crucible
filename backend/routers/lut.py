@@ -95,9 +95,15 @@ async def run_lut(body: LutRunRequest, db: AsyncSession = Depends(get_db)):
             # be recut. The image itself is correct and committed — but the
             # gallery keeps rendering the old tile, and the realistic trigger (a
             # full volume, a read-only thumbnails/) hits every image in the run.
+            #
+            # `missing` is the vanished-row part of `skipped`, kept apart so a
+            # one-image run can say *which* skip it was: the rest of `skipped`
+            # is the replace-mode name collision below.
+            missing = len(image_ids) - len(images)
             counts = {
                 "processed": 0,
-                "skipped": len(image_ids) - len(images),
+                "skipped": missing,
+                "missing": missing,
                 "failed": 0,
                 "thumbnails_stale": 0,
             }

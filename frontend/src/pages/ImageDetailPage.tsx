@@ -221,17 +221,30 @@ function syncGalleryStatePage(datasetId: string, page: number) {
  *  `null` when the job cannot be read, and the caller falls back to the status. */
 async function fetchEditOutcome(
   jobId: string,
-): Promise<{ processed: number; failed: number; summary: string | null } | null> {
+): Promise<{
+  processed: number; failed: number; skipped: number; missing: number; summary: string | null;
+} | null> {
   try {
     const r = (await jobsApi.get(jobId)).result_data ?? {};
     return {
       processed: Number(r.processed ?? 0),
       failed: Number(r.failed ?? 0),
+      skipped: Number(r.skipped ?? 0),
+      missing: Number(r.missing ?? 0),
       summary: typeof r.failure_summary === "string" ? r.failure_summary : null,
     };
   } catch {
     return null;
   }
+}
+
+/** Why a one-image upscale or LUT that failed nothing still processed nothing.
+ *  `missing` is a row deleted between enqueue and run; the rest of `skipped` is
+ *  the replace-mode name collision, which copy mode never has. */
+function nothingDoneReason(outcome: { skipped: number; missing: number }): string {
+  if (outcome.missing > 0) return "the image was deleted before the job ran";
+  if (outcome.skipped > 0) return "a file with the new name already exists";
+  return "nothing was changed";
 }
 
 export default function ImageDetailPage() {
@@ -973,7 +986,7 @@ export default function ImageDetailPage() {
           if (outcome.failed > 0) {
             toast.error(outcome.summary ?? "Upscaling failed", { duration: 10000 });
           } else {
-            toast("Upscaling skipped — a file with the new name already exists", { icon: "⚠️" });
+            toast(`Upscaling skipped — ${nothingDoneReason(outcome)}`, { icon: "⚠️" });
           }
           return;
         }
@@ -1011,7 +1024,7 @@ export default function ImageDetailPage() {
           if (outcome.failed > 0) {
             toast.error(outcome.summary ?? "LUT grading failed", { duration: 10000 });
           } else {
-            toast("LUT skipped — a file with the new name already exists", { icon: "⚠️" });
+            toast(`LUT skipped — ${nothingDoneReason(outcome)}`, { icon: "⚠️" });
           }
           return;
         }

@@ -2,7 +2,8 @@ import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { usePaneDatasetId, usePaneImageId } from "../hooks/usePaneDatasetId";
 import { usePaneNavigate } from "../hooks/usePaneNavigate";
 import { usePaneContext } from "../contexts/PaneContext";
-import { usePaneStore } from "../store/paneStore";
+import { currentPaneView, usePaneStore } from "../store/paneStore";
+import { matchPath } from "react-router";
 import { useUiPrefsStore } from "../store/uiPrefsStore";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ChevronLeft, ChevronRight, Save, Crop, AlertTriangle, Copy, Sparkles, ChevronDown, ChevronUp, Type, Eye, EyeOff, ScanSearch, Pencil, Maximize2, Palette, CheckSquare, Square, Crosshair, Combine, Focus, BoxSelect, Eraser } from "lucide-react";
@@ -238,6 +239,15 @@ async function fetchEditOutcome(
   }
 }
 
+/** The image the user has asked for *now*. A navigation renders as a React
+ *  transition, so this render's `imageId` can lag the click for as long as the
+ *  next render is held up, and an edit outcome landing in that gap would read the
+ *  old one and drag the user back. The URL, or the pane store, moves at the click. */
+function intendedImageId(paneId: string | undefined): string | undefined {
+  if (paneId) return currentPaneView(paneId)?.imageId;
+  return matchPath("/datasets/:datasetId/image/:imageId", window.location.pathname)?.params.imageId;
+}
+
 /** Why a one-image upscale or LUT that failed nothing still processed nothing.
  *  `missing` is a row deleted between enqueue and run; the rest of `skipped` is
  *  the replace-mode name collision, which copy mode never has. */
@@ -286,14 +296,16 @@ export default function ImageDetailPage() {
   const [lutReplace, setLutReplace] = useState(false);
   const [lutJobId, setLutJobId] = useState<string | null>(null);
   // A generation per tool, bumped when a run starts and when the page moves to
-  // another image; `*RunGenRef` is the one the in-flight job started in. The
-  // job id is cleared before `fetchEditOutcome` returns, so by then a second run
-  // or another image may own the page: a stale outcome still toasts, but must
-  // not close the tool or navigate.
+  // another image; `*RunRef` holds the generation and the image the in-flight
+  // job started in. The job id is cleared before `fetchEditOutcome` returns, so
+  // by then a second run or another image may own the page: a stale outcome
+  // still toasts, but must not close the tool or navigate. The image is checked
+  // against `intendedImageId` too, because a navigation's render can still be
+  // pending when the outcome lands, with this generation not yet bumped.
   const upscaleGenRef = useRef(0);
-  const upscaleRunGenRef = useRef(0);
+  const upscaleRunRef = useRef<{ gen: number; imageId?: string }>({ gen: 0 });
   const lutGenRef = useRef(0);
-  const lutRunGenRef = useRef(0);
+  const lutRunRef = useRef<{ gen: number; imageId?: string }>({ gen: 0 });
 
   const owNum = parseInt(outputWidth);
   const ohNum = parseInt(outputHeight);
@@ -992,7 +1004,7 @@ export default function ImageDetailPage() {
       qc.invalidateQueries({ queryKey: ["image", imageId] });
       const finishedId = upscaleJobId;
       const newImageId = upscaleJobProgress.image_id;
-      const runGen = upscaleRunGenRef.current;
+      const run = upscaleRunRef.current;
       setUpscaleJobId(null);
       void fetchEditOutcome(finishedId).then((outcome) => {
         // Nothing processed: say why, and leave the tool open to try again.
@@ -1005,7 +1017,7 @@ export default function ImageDetailPage() {
           return;
         }
         // Another run or another image owns the page now: report, touch nothing.
-        if (upscaleGenRef.current !== runGen) {
+        if (upscaleGenRef.current !== run.gen || intendedImageId(paneCtx?.paneId) !== run.imageId) {
           toast.success("Upscaling complete");
           return;
         }
@@ -1029,7 +1041,7 @@ export default function ImageDetailPage() {
       // Clear it, or `upscaleRunning` holds Run once the store drops the entry.
       setUpscaleJobId(null);
     }
-  }, [upscaleJobProgress?.status, upscaleJobId, datasetId, imageId, upscaleReplace, qc, paneGo]);
+  }, [upscaleJobProgress?.status, upscaleJobId, datasetId, imageId, upscaleReplace, qc, paneGo, paneCtx]);
 
   // LUT job tracking
   useEffect(() => {
@@ -1039,7 +1051,7 @@ export default function ImageDetailPage() {
       qc.invalidateQueries({ queryKey: ["image", imageId] });
       const finishedId = lutJobId;
       const newImageId = lutJobProgress.image_id;
-      const runGen = lutRunGenRef.current;
+      const run = lutRunRef.current;
       setLutJobId(null);
       void fetchEditOutcome(finishedId).then((outcome) => {
         // Nothing processed: say why, and leave the tool open to try again.
@@ -1052,7 +1064,7 @@ export default function ImageDetailPage() {
           return;
         }
         // Another run or another image owns the page now: report, touch nothing.
-        if (lutGenRef.current !== runGen) {
+        if (lutGenRef.current !== run.gen || intendedImageId(paneCtx?.paneId) !== run.imageId) {
           toast.success("LUT applied");
           return;
         }
@@ -1076,7 +1088,7 @@ export default function ImageDetailPage() {
       // Clear it, or `lutRunning` holds Run once the store drops the entry.
       setLutJobId(null);
     }
-  }, [lutJobProgress?.status, lutJobId, datasetId, imageId, lutReplace, qc, paneGo]);
+  }, [lutJobProgress?.status, lutJobId, datasetId, imageId, lutReplace, qc, paneGo, paneCtx]);
 
   // Crop+upscale job tracking
   useEffect(() => {
@@ -1327,11 +1339,11 @@ export default function ImageDetailPage() {
       }),
     // The generation is bumped at the click and bound to the job only once its
     // id exists, so an earlier job finishing during this POST is never mistaken
-    // for this run.
-    onMutate: () => ++upscaleGenRef.current,
-    onSuccess: (data, _vars, gen) => {
+    // for this run. `onMutate` runs at the click, with the image this run is for.
+    onMutate: () => ({ gen: ++upscaleGenRef.current, imageId }),
+    onSuccess: (data, _vars, run) => {
       if (data.job_id) {
-        upscaleRunGenRef.current = gen ?? 0;
+        if (run) upscaleRunRef.current = run;
         setUpscaleJobId(data.job_id);
         toast.success("Upscaling…");
       }
@@ -1349,10 +1361,10 @@ export default function ImageDetailPage() {
         replace: lutReplace,
       }),
     // Bound to the job once its id exists, as upscale does above.
-    onMutate: () => ++lutGenRef.current,
-    onSuccess: (data, _vars, gen) => {
+    onMutate: () => ({ gen: ++lutGenRef.current, imageId }),
+    onSuccess: (data, _vars, run) => {
       if (data.job_id) {
-        lutRunGenRef.current = gen ?? 0;
+        if (run) lutRunRef.current = run;
         setLutJobId(data.job_id);
         toast.success("Applying LUT…");
       }

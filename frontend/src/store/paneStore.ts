@@ -170,3 +170,9 @@ function findSplit(tree: PaneTree, leafId: string): PaneSplit | null {
   }
   return findSplit(tree.children[0], leafId) ?? findSplit(tree.children[1], leafId);
 }
+
+/** A pane's view as the store holds it now, ahead of any render still pending:
+ *  `setView` is synchronous, while the render it starts is a React transition. */
+export function currentPaneView(paneId: string): PaneView | null {
+  return findLeaf(usePaneStore.getState().layout, paneId)?.view ?? null;
+}

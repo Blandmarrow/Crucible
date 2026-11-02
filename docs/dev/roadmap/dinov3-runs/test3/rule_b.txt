@@ -1,0 +1,7 @@
+same-pool AUC | same-bin AUC | subject leak | margin ; rule 1(b): layer >= v2 L7 AND blend >= v2 blend
+v2      L7   alone 0.651 0.691 0.518 +0.133 | blend 0.698 0.750 0.575 +0.123      | peak margin L4 (33%) +0.133 | final +0.086
+v3b224  L7   alone 0.648 0.681 0.521 +0.127 | blend 0.696 0.745 0.565 +0.131 FAIL | peak margin L6 (50%) +0.143 | final +0.122
+v3b512  L7   alone 0.652 0.696 0.519 +0.132 | blend 0.696 0.747 0.568 +0.128 FAIL | peak margin L9 (75%) +0.137 | final +0.130
+v3l224  L14  alone 0.644 0.682 0.506 +0.138 | blend 0.691 0.742 0.558 +0.132 PASS | peak margin L22 (92%) +0.184 | final +0.127
+v3l512  L14  alone 0.661 0.704 0.518 +0.142 | blend 0.694 0.744 0.569 +0.126 PASS | peak margin L22 (92%) +0.190 | final +0.132
+CLIP alone: (0.692, 0.692, 0.739, 0.586, 0.106)

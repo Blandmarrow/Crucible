@@ -1,0 +1,25 @@
+RULE 1(a): mean >= base+0.03 AND beats base on > half of styles
+setting                     mean       d styles won    bauer bilibin  clarke   dulac   goble nielsen rackham
+0.30 CLIP + v2 L7         0.7909 +0.0000     0/7        0.680   0.624   0.932   0.704   0.855   0.932   0.809
+0.30 CLIP + v3b224 L7     0.7859 -0.0050     3/7 FAIL   0.675   0.581   0.924   0.698   0.870   0.936   0.816
+0.30 CLIP + v3b512 L7     0.7875 -0.0034     2/7 FAIL   0.669   0.620   0.916   0.691   0.874   0.946   0.797
+0.30 CLIP + v3l224 L14    0.7806 -0.0103     3/7 FAIL   0.651   0.580   0.911   0.709   0.870   0.942   0.801
+0.30 CLIP + v3l512 L14    0.7847 -0.0062     4/7 FAIL   0.643   0.593   0.916   0.704   0.867   0.950   0.819
+
+paired wins over the baseline, per style (of 20 draws); spread = SD over draws
+0.30 CLIP + v3b224 L7    bauer: 9 bilibin: 0 clarke: 4 dulac:11 goble:17 nielsen:14 rackham:11   SD range 0.018-0.089
+0.30 CLIP + v3b512 L7    bauer: 6 bilibin:11 clarke: 0 dulac: 5 goble:20 nielsen:20 rackham: 6   SD range 0.016-0.092
+0.30 CLIP + v3l224 L14   bauer: 3 bilibin: 0 clarke: 1 dulac:13 goble:13 nielsen:18 rackham: 7   SD range 0.018-0.081
+0.30 CLIP + v3l512 L14   bauer: 2 bilibin: 0 clarke: 0 dulac:12 goble:13 nielsen:20 rackham:15   SD range 0.015-0.093
+
+H2: layer alone minus 0.30 blend (need >= +0.02 for majority)
+  v3b224 L7    alone 0.7210  blend 0.7859  d -0.0649
+  v3b512 L7    alone 0.7316  blend 0.7875  d -0.0559
+  v3l224 L14   alone 0.7182  blend 0.7806  d -0.0624
+  v3l512 L14   alone 0.7326  blend 0.7847  d -0.0521
+H3: 512 minus 224 at fixed blend (need >= +0.04)
+  0.30 CLIP + v3b512 L7    +0.0016
+  0.30 CLIP + v3l512 L14   +0.0041
+H4: L/16 minus B/16 at fixed blend, same resolution (need >= +0.04)
+  0.30 CLIP + v3l224 L14   -0.0053
+  0.30 CLIP + v3l512 L14   -0.0028

@@ -1,0 +1,7 @@
+cols: same-pool AUC | same-bin AUC | subject leak | margin   (rule b = margin of the fixed layer, alone, >= DINOv2 L7's)
+v2      L7   alone 0.789 0.872 0.645 +0.144      | 0.30 blend 0.731 0.815 0.728 +0.004 | best margin L6 +0.145 | final -0.229
+v3b224  L7   alone 0.762 0.825 0.641 +0.121 FAIL | 0.30 blend 0.739 0.819 0.714 +0.025 | best margin L6 +0.203 | final -0.211
+v3b512  L7   alone 0.845 0.902 0.601 +0.244 PASS | 0.30 blend 0.794 0.874 0.696 +0.098 | best margin L6 +0.334 | final -0.206
+v3l224  L14  alone 0.876 0.927 0.625 +0.251 PASS | 0.30 blend 0.806 0.882 0.714 +0.092 | best margin L12 +0.300 | final -0.194
+v3l512  L14  alone 0.933 0.965 0.602 +0.331 PASS | 0.30 blend 0.842 0.912 0.705 +0.136 | best margin L11 +0.385 | final -0.196
+CLIP alone margin -0.069

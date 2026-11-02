@@ -490,6 +490,233 @@ python -m backend.scripts.style_gate --dataset <name> --refs <4 of one style> \
 and the chosen layer stays inside the 5–11 band. If it does not, the finding is
 dataset-class-specific and the default should not move.
 
+## The DINOv3 run — 2026-11-02, pre-registered: three of four passed
+
+Run on branch `exp/dinov3-test` to answer the question Stage 2 hangs on: is DINOv3 worth
+building in, at which size, and does it lean on subject the way the deep layers do? It is the
+first run of either DINOv3 size through the crossed probes, and the first on a GPU.
+
+**Data.** `test2` in the dev DB (a different `test2` from August's): 234 *Highlander: The
+Search for Vengeance* frames against 564 *Hellsing Ultimate* images, the latter pre-split by
+subject (characters, expressions, effect, action, environment, prop). Two styles, both 2D
+anime, overlapping dark subject matter. Six `pruned_synthetic_*` files are excluded.
+
+**Models.** DINOv2-base (stored and re-extracted), DINOv3 ViT-B/16 (12 × 768) and ViT-L/16
+(24 × 1024), each at 224 and 512 px, plus CLIP. ViT-L layers are compared by relative depth:
+L14 of 24 sits where L7 of 12 does (`style_crossed_probe.at_depth`). **Preprocessing differs
+by family, and that is part of what is compared:** DINOv2's processor resizes the short edge
+to 256 and centre-crops 224; DINOv3's squashes the whole frame to a square.
+
+**Rule, written before any embedding existed.** The plan's leave-one-out rule needs ≥ 4
+styles, so it was replaced by fixed settings. Each candidate is 30% CLIP + the layer at the
+branch default's relative depth: B/16 L7 and L/16 L14, at 224 and 512 px. It passes if
+**(a)** its mean AUC over the two configurations (each style in turn as reference; 4
+references × 20 seeded draws) beats `0.30 CLIP + v2 L7` by ≥ 0.03 and loses on neither, and
+**(b)** its layer's style-minus-subject margin in `pools` is no worse than DINOv2 L7's. Rule
+(b) was scored on the layer alone, which its wording allows; the blend rows are given below
+because they are what would ship. The same pre-registration also called differences under
+~0.04 ties, which sits awkwardly with a 0.03 bar; both readings are given.
+
+**Trust.** `--verify` against the app's stored vectors gave CLIP mean cos 1.000000 and
+DINOv2 0.999995 over all 804 images. One configuration through the sweep driver and
+`style_gate.py` agreed to four decimals on six of seven final-embedding signals, and the
+seventh differed by 0.0002 (stored against re-extracted DINOv2). Two gaps remain. That check
+covered final embeddings only, not the L7/L14 slices the rule rests on. And DINOv3 has no
+stored reference at all, so its vectors are trusted through the shared extraction path, not
+checked against the app.
+
+### The pre-registered result
+
+On the files as imported, separability (mean AUC over the two configurations):
+
+| setting | AUC | vs baseline | rule (a) | margin, layer alone | rule (b) |
+|---|---|---|---|---|---|
+| 0.38 CLIP + v2 final — *the app on `main`* | 0.616 | −0.223 | | | |
+| 0.30 CLIP + v2 L7 — *the baseline* | 0.839 | | | +0.144 | |
+| 0.30 CLIP + v3 B/16 @224 L7 | 0.865 | +0.026 | **fail** | +0.121 | **fail** |
+| 0.30 CLIP + v3 B/16 @512 L7 | 0.910 | +0.071 | pass | +0.244 | pass |
+| 0.30 CLIP + v3 L/16 @224 L14 | 0.904 | +0.065 | pass | +0.251 | pass |
+| 0.30 CLIP + v3 L/16 @512 L14 | 0.931 | +0.092 | pass | +0.331 | pass |
+
+**Verdict as pre-registered: B/16 @512, L/16 @224 and L/16 @512 pass; B/16 @224 fails both
+rules.** No candidate lost on either configuration.
+
+### A format confound, found after scoring — a deviation from the pre-registration
+
+Every Highlander file is a 1920×1032 JPEG and every Hellsing file a 1920×1080 PNG, so format
+and frame shape split perfectly with the style label. Under DINOv3's squash the height
+difference is also a stretch cue that DINOv2's crop does not see. This was noticed **after**
+both rules had been scored. The control below was added then, so it is not pre-registered.
+
+Both groups were centre-cropped to one aspect, downscaled to 1280×688 and re-encoded as JPEG
+q90. **Compression history still differs:** Highlander went JPEG → JPEG, Hellsing PNG → JPEG.
+The resolution also changed, so the absolute numbers are not the app's numbers on these files.
+At the fixed layers, `pools` AUC fell by 0.060–0.126; across all layers by up to 0.179 (v3
+B/16 @512 L5), and DINOv2 L9 by only 0.025. L1 and the final embedding moved by under 0.01.
+The confound inflated the 512 px and L/16 candidates more than the baseline: L/16 @224's lead
+fell from +0.065 to +0.044.
+
+Re-scored on the normalised files (same seeded draws):
+
+| setting | AUC | vs baseline | paired wins over baseline (Highlander / Hellsing, of 20 draws) | margin, layer alone | margin, 0.30 blend |
+|---|---|---|---|---|---|
+| 0.30 CLIP + v2 L7 — *baseline* | 0.790 | | | +0.062 | −0.040 |
+| 0.30 CLIP + v3 B/16 @224 L7 | 0.821 | +0.032 | 20 / 15 | +0.076 | −0.011 |
+| 0.30 CLIP + v3 B/16 @512 L7 | 0.860 | +0.070 | 20 / 20 | +0.181 | +0.045 |
+| 0.30 CLIP + v3 L/16 @224 L14 | 0.834 | +0.044 | 20 / 18 | +0.133 | +0.005 |
+| 0.30 CLIP + v3 L/16 @512 L14 | 0.847 | +0.058 | 20 / 20 | +0.189 | +0.020 |
+
+All four clear both rules' bars here, B/16 @224 by a hair (+0.032, and +0.076 against
++0.062). Per-draw spread is about ±0.02–0.06 per configuration. The paired wins show the lead
+survives a change of references. But the draws share one set of positives and controls, so
+they are not independent samples, and two configurations carry no real error bar.
+
+**The blends that would ship barely put style over subject.** On the normalised files the
+0.30 blend margins are −0.011 to +0.045, against −0.040 for the baseline. DINOv3 moves the
+blend from subject-leaning to roughly neutral, not to style-led.
+
+### Exploratory — selected on this data, not part of the rule
+
+- **CLIP did not complement DINO here.** At every pre-registered layer the blend scored below
+  the layer alone (L/16 @512 L14: 0.925 alone, 0.847 blended). At weaker layers the blend
+  often helps: 166 of 267 blends beat their layer. CLIP alone separates at 0.700 with a
+  margin of −0.078, but that margin is partly built in, because the subject bins are CLIP's
+  own zero-shot bins. Finding 5's complementarity was measured across media and did not show
+  on this one-medium pair. One pair cannot overturn it.
+- **The crossover depth is similar across the three models.** On the normalised files the
+  margin peaks at 46–58% of depth (DINOv2 L7; B/16 L6; L/16 L11) and is first negative after
+  the peak at 67–75% (DINOv2 L9; B/16 L8–L9; L/16 L16). Layer 12 of 12 and 24 of 24 are again
+  the most subject-locked. The final embeddings separate the styles at 0.538–0.569 in `pools`
+  pairwise AUC (0.58–0.61 in the sweep's reference metric).
+- **Size against resolution.** At the fixed settings on the normalised files, B/16 @512 led
+  (0.860, against 0.847 for L/16 @512 and 0.834 for L/16 @224); L/16 led only among best layers
+  alone (0.951 against 0.918), a pick made on this data. Neither size is shown to be stronger.
+  Going from 224 to 512 px gained +0.039 (B/16) and +0.013 (L/16) on the blends, both under the
+  pre-registration's own tie line.
+- **Speed (RTX 5090, batch 8, or 4 at 512 px, 1080p sources).** Extraction ran at 21.8–33.7
+  images/s, with only L/16 @512 below 28.9. That suggests decoding, not the model, was the
+  limit, but decoding was never timed alone. VRAM and CPU time were not measured. The trap
+  "512 px costs 5× the CPU time" still stands untested on this hardware.
+- **Download size:** B/16 is 0.34 GB, L/16 1.21 GB, so B/16 is under a third of the size.
+
+### What this run does not establish
+
+- **Two styles, one medium, one dataset.** Two configurations decide every verdict; a third
+  style could reorder the candidates.
+- **The style label is the source.** Each film has its own characters and palette, so even a
+  subject bin holds different faces (the § Run B caveat again).
+- **The normalised sweep reuses the probe's extraction** of the normalised files: the same
+  `dino_embed_offline.extract` path, but nothing checks those vectors against stored ones.
+- **The synthetic probe** (30 bases × 7 restyles × 3 framings) ran at 224 px only, on the
+  original files. On rendering restyles, style-over-same-picture at the fixed layer was 0.550
+  (DINOv2 L7), 0.676 (B/16 L7) and 0.706 (L/16 L14), and about 0.01–0.02 at every final
+  embedding.
+
+### Hypotheses for Stage 2 — to test on at least four styles before acting on
+
+**Tested the same night on seven styles, and none held** — see § The seven-illustrator run
+below. Kept as written, because what they got wrong is the lesson.
+
+- DINOv3 beats DINOv2 at the same relative depth. The pre-registered result supports this for
+  B/16 @512 and both L/16 sizes, on one two-style pair.
+- The default layer should be set by relative depth, near half.
+- The CLIP weight should be re-measured within one medium, with subject bins that are not
+  CLIP's own.
+- 512 px over 224 px is suggested, not shown; re-time it on CPU before making it a default.
+- L/16's 24 × 1024 shape fails DINOv2's blob-length check, so a mixed row would raise
+  instead of silently mis-ranking, once the guard is widened to admit it. It turns the silent
+  mismatch into a loud one; the model discriminator is still needed for either size.
+- Any future test set must be checked for file properties that split with the label (see
+  § Traps) before it is scored.
+
+The pre-registration, the result tables and the run scripts are in `dinov3-runs/test2/`, next
+to this file. The harness changes this run needed are `--size` and depth-aware layers in
+`style_crossed_probe.py`, and a fix for Windows `@C:/dir` pool paths. The sweep driver and the
+test-set builders are in `backend/scripts/style_research/`.
+
+## The seven-illustrator run — 2026-11-02, pre-registered: DINOv3 did not earn its place
+
+Run straight after the `test2` run, to test its hypotheses on a set built to avoid its
+faults: more styles, one medium, identical files.
+
+**Data.** `test3` in the dev DB: 200 colour plates by seven public-domain fairy-tale
+illustrators from Wikimedia Commons. Bauer 27, Bilibin 30, Clarke 25, Dulac 30, Goble 30,
+Nielsen 28 and Rackham 30. The plates were picked as an even spread through each artist's
+category, then screened before any embedding. A colourfulness bar dropped monochrome scans
+and yellowed text pages. Contact sheets were checked by eye to remove covers, title pages,
+photos of objects, stained glass and sideways scans. A pHash pass (distance ≤ 8) dropped
+second scans of one plate, after a hand pass had already removed the frame-border duplicates
+pHash misses. Every image was then centre-cropped and saved as **1024×1024 JPEG q90 before
+import**, so format, size and aspect are identical across artists. Licences and source pages
+are in `dinov3-runs/test3/MANIFEST.json`. The exclusions and their reason are in
+`exclude.json` beside it, and the builders (`fetch_commons.py`, `screen.py`, `finalize.py`) in
+`backend/scripts/style_research/`.
+
+**Pre-registration.** It was written before any download, and amended before any embedding
+only to record 25–30 per artist instead of the 40–50 aimed for. Rule 1 uses the `test2`
+fixed settings: it passes on a mean gain of ≥ 0.03 over `0.30 CLIP + v2 L7`, wins on more
+than half the styles, and margins (layer and blend) no worse than DINOv2's. Rule 2 is the
+plan's leave-one-out, all-DINOv3 family against all-DINOv2 family, ≥ 0.03. H1–H4 are the
+`test2` hypotheses.
+
+**Trust.** `--verify` gave CLIP 1.000000 and DINOv2 0.999996 over all 200.
+
+### Results
+
+| setting | mean AUC | vs baseline | styles won | rule 1 |
+|---|---|---|---|---|
+| 0.38 CLIP + v2 final — *the app on `main`* | 0.706 | −0.085 | | |
+| 0.30 CLIP + v2 L7 — *baseline* | 0.791 | | | |
+| 0.30 CLIP + v3 B/16 @224 L7 | 0.786 | −0.005 | 3 / 7 | fail |
+| 0.30 CLIP + v3 B/16 @512 L7 | 0.788 | −0.003 | 2 / 7 | fail |
+| 0.30 CLIP + v3 L/16 @224 L14 | 0.781 | −0.010 | 3 / 7 | fail |
+| 0.30 CLIP + v3 L/16 @512 L14 | 0.785 | −0.006 | 4 / 7 | fail |
+
+- **Rule 1 fails for all four, on (a) alone.** Each is a tie with DINOv2 L7. The paired wins
+  over 20 draws are mixed in every candidate: L/16 @512 wins 20/20 on Nielsen and 0/20 on
+  Bilibin and Clarke. The `pools` margins tie too: +0.127 to +0.142 at the fixed layers,
+  against +0.133 for DINOv2 L7.
+- **Rule 2 passes, narrowly.** Leave-one-out gives 0.819 for DINOv3 against 0.784 for
+  DINOv2, a gain of +0.035. All of it comes from L/16 @512 at **deep** layers (L18, L22 of 24)
+  with 20% CLIP — a setting nobody proposed beforehand. That is just over the bar and inside
+  what two candidate families could reach by selection.
+- **H1, best layer near half depth: not confirmed.** L/16's picks sit at 75–92% of its depth,
+  and its `pools` margin peaks at L22.
+- **H2, layer alone beats the blend: reversed.** The 30% CLIP blend beats every fixed layer
+  alone by 0.052–0.065. CLIP alone separates at 0.777 and has a positive margin (+0.106).
+  `test2`'s "CLIP behaves as a subject matcher" was a property of that pair.
+- **H3, 512 px over 224 px: a tie** (+0.002 for B/16, +0.004 for L/16).
+- **H4, L/16 over B/16: a tie** (−0.005 at 224 px, −0.003 at 512 px).
+- **Per-style spread is wide** (SD over draws 0.015–0.093). Bilibin and Bauer are hard for
+  every signal (0.58–0.74), and Clarke and Nielsen are easy (≥ 0.91).
+
+### What this run says about `test2`
+
+The `test2` gains (+0.065 to +0.092 for the three settings that passed, and +0.044 to +0.070
+after the format control) did not carry over to telling seven illustrators apart. That pair was two
+styles, two configurations and one confound already found. Its ordering of layers, of sizes
+and of CLIP was a property of that pair. The `synthetic` probe still shows DINOv3's mid
+layers preferring a shared PIL restyle to the same picture far more than DINOv2 does (B/16
+L7 0.616, L/16 L14 0.636, against 0.292). That gap is not visible on real artists, which is
+the § What these runs do not settle warning about PIL filters, now measured.
+
+**What held on both sets:** reading DINOv2 at layer 7 instead of its final embedding. The
+branch's blend beats the app on `main` by +0.223 (`test2`), +0.180 (`test2` normalised) and
++0.085 (`test3`). That is Stage 1/2a, already on this branch.
+
+### What it means for Stage 2
+
+**Do not build DINOv3 on this evidence.** At the settings anyone would ship, it ties DINOv2
+on seven real styles. Its one pass needs a deep L/16 layer chosen on the same data, and it
+costs a gated 1.21 GB download, a `transformers` floor raise and a model discriminator.
+Revisit only with a set that shows a gap at a fixed, pre-named setting. Porting this
+branch's DINOv2 layer change is the gain the evidence supports.
+
+**Not established here:** each artist's plates come from different books and scans, so
+paper tone and print texture split with the label, and every model gets that cue equally.
+The centre-crop removes part of each composition. Plates per artist were 25–30, and the
+styles are one era of book illustration.
+
 ## Proposed stages
 
 Deliberately ordered so the cheapest, least committal win comes first. **Stages 1 and 2a
@@ -575,6 +802,12 @@ the above measures it.
   general form: when a metric's positives share two properties, it measures neither until
   one of them is held fixed. Any future sweep here states which of style/subject it fixed,
   or it is measuring the same thing again.
+- **A file property that splits with the style label reads as style.** In the 2026-11-02 run
+  every image of one style was a 1032-row JPEG and every image of the other a 1080-row PNG.
+  Normalising both cost the fixed mid layers 0.06–0.13 AUC (up to 0.18 elsewhere in the
+  band) and the final embedding under 0.01. Before
+  scoring a test set, check that format, resolution and aspect do not line up with the label;
+  if they do, normalise them, or the run measures the files.
 - **Licensing and gating are unchanged.** All `facebook/dinov3-*` repos are `gated: manual`
   under a custom DINOv3 Licence, not Apache-2.0, and a fine-grained token additionally needs
   gated-repo read scope or the fetch 403s. `transformers>=4.56` is required; the floor in

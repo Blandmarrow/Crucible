@@ -72,8 +72,24 @@ DEFAULT_DB = REPO_ROOT / "dataset_manager.db"
 
 # Layers the blend rows are reported at: the two shipped defaults, past and present, plus
 # the ends of the band. Every individual layer is in the table above them regardless.
+# Written against a 12-layer model, like every layer number in this file — `at_depth`
+# carries them to a deeper checkpoint (DINOv3 ViT-L is 24) by relative depth.
 BLEND_LAYERS = (5, 7, 9, 12)
+REFERENCE_DEPTH = 12
 OLD_CLIP_WEIGHT, OLD_DINO_WEIGHT = 0.38, 0.62  # the pre-2026-08-04 blend, on the final CLS
+
+
+def at_depth(layer: int, depth: int) -> int:
+    """The layer of a ``depth``-layer model at the same relative depth as ``layer`` of a
+    12-layer one — the *end* of the span it covers, so 12 maps to the last layer and 7 of
+    12 to 14 of 24. Identity at depth 12, which keeps every published table reproducible."""
+    return max(1, min(depth, round(layer * depth / REFERENCE_DEPTH)))
+
+
+def depth_note(depth: int) -> None:
+    if depth != REFERENCE_DEPTH:
+        print(f"\n{depth} layers: L{at_depth(7, depth)} here sits at the relative depth of L7 "
+              f"in a {REFERENCE_DEPTH}-layer model; blend and combination rows are rescaled.")
 
 
 # --------------------------------------------------------------------- the style axis
@@ -187,8 +203,11 @@ def spread(items: list, n: int | None) -> list:
 
 
 def resolve_source(conn, spec: str) -> tuple[str, list[tuple[str, Path]]]:
-    """``dataset[:count]`` or ``@relative/dir[:count]`` -> (label, files)."""
-    body, _, count = spec.partition(":")
+    """``dataset[:count]`` or ``@dir[:count]`` -> (label, files). The count is split off
+    the *last* colon and only when it is digits, so ``@C:/abs/dir`` keeps its drive."""
+    body, sep, count = spec.rpartition(":")
+    if not sep or not count.isdigit():
+        body, count = spec, ""
     n = int(count) if count else None
     if body.startswith("@"):
         path = (REPO_ROOT / body[1:]).resolve()
@@ -242,7 +261,7 @@ def signal_table(layers, cls, clip, a, b) -> dict[str, np.ndarray]:
     sig["final CLS"] = pair_cosines(cls, a, b)
     sig["CLIP"] = pair_cosines(clip, a, b)
     from backend.ml.similarity_scorer import STYLE_CLIP_WEIGHT, STYLE_DINO_WEIGHT
-    for lay in BLEND_LAYERS:
+    for lay in (at_depth(x, layers.shape[1]) for x in BLEND_LAYERS):
         sig[f"blend @L{lay}"] = (STYLE_CLIP_WEIGHT * sig["CLIP"]
                                  + STYLE_DINO_WEIGHT * sig[f"L{lay}"])
     sig["blend @final (old)"] = OLD_CLIP_WEIGHT * sig["CLIP"] + OLD_DINO_WEIGHT * sig["final CLS"]
@@ -250,15 +269,21 @@ def signal_table(layers, cls, clip, a, b) -> dict[str, np.ndarray]:
 
 
 # -------------------------------------------------------------------------- extraction
-def embed(paths: list[str], model_id: str, batch: int):
-    """(cls, layers, clip) for a path list, through the app's own extraction path."""
+def embed(paths: list[str], model_id: str, batch: int, size: int | None = None):
+    """(cls, layers, clip) for a path list, through the app's own extraction path.
+
+    ``size`` rescales the DINO processor exactly as ``dino_embed_offline --size`` does;
+    None keeps the processor's own resolution. CLIP always runs at its own 224 px."""
     import torch
     from backend.ml import device as _device
-    from backend.scripts.dino_embed_offline import extract, extract_clip
+    from backend.scripts.dino_embed_offline import extract, extract_clip, scale_processor
     from transformers import AutoImageProcessor, AutoModel
 
     device = _device.get_device()
     processor = AutoImageProcessor.from_pretrained(model_id)
+    if size:
+        baseline = scale_processor(processor, size)
+        print(f"  processor baseline {baseline}px → {size}px")
     model = AutoModel.from_pretrained(model_id, dtype=torch.float32).to(device).eval()
     print(f"{model_id}:")
     cls, layers = extract(model, processor, paths, device, batch)
@@ -307,6 +332,7 @@ def report_synthetic(d) -> None:
     same_grade = grade[a] == grade[b]
     same_fram = framing[a] == framing[b]
     same_source = source[a] == source[b]
+    depth_note(layers.shape[1])
 
     print("""
 style      = AUC(STYLE > NOTHING)    can it see a shared look across different pictures?
@@ -356,10 +382,11 @@ def cmd_synthetic(args) -> None:
     print(f"{len(bases)} base pictures x {len(GRADES)} restyles x {len(FRAMINGS)} framings "
           f"= {len(rows)} variants in {work}")
 
-    cls, layers, clip = embed([r["path"] for r in rows], args.model, args.batch)
+    cls, layers, clip = embed([r["path"] for r in rows], args.model, args.batch, args.size)
     out = Path(args.out).resolve()
     out.parent.mkdir(parents=True, exist_ok=True)
     np.savez(out, layers=layers, cls=cls, clip=clip,
+             model=np.array(args.model), size=np.array(args.size or 0),
              base=np.array([r["base"] for r in rows]),
              source=np.array([r["source"] for r in rows]),
              grade=np.array([r["grade"] for r in rows]),
@@ -382,6 +409,7 @@ def report_pools(d, style_subset: list[str] | None) -> None:
               if style_subset else np.ones(len(a), dtype=bool))
     binned = subj[a] >= 0
     sub_label = ",".join(style_subset) if style_subset else "all pools"
+    depth_note(layers.shape[1])
 
     print(f"""
 all pools    AUC(same pool > different pool) — includes any medium cue the pools carry
@@ -427,7 +455,7 @@ def cmd_pools(args) -> None:
     for name in dict.fromkeys(pools.tolist()):
         print(f"  {name:<12} {int((pools == name).sum())}")
 
-    cls, layers, clip = embed([str(p) for _, p in items], args.model, args.batch)
+    cls, layers, clip = embed([str(p) for _, p in items], args.model, args.batch, args.size)
 
     if args.bins:
         import open_clip
@@ -452,24 +480,45 @@ def cmd_pools(args) -> None:
     out = Path(args.out).resolve()
     out.parent.mkdir(parents=True, exist_ok=True)
     np.savez(out, layers=layers, cls=cls, clip=clip, pool=pools, subj=subj,
-             path=np.array([str(p) for _, p in items]))
+             path=np.array([str(p) for _, p in items]),
+             model=np.array(args.model), size=np.array(args.size or 0))
     print(f"wrote {out}")
     subset = args.style_subset.split(",") if args.style_subset else None
     report_pools(np.load(out, allow_pickle=False), subset)
 
 
 # =============================================================== subcommand: combos
+# (first, last) layer of a 12-layer model, and how the span is combined. `combos_at`
+# rescales each span to the cache's depth and names it.
 COMBOS = (
-    ("L7 alone", (7,), "raw"),
-    ("L9 alone", (9,), "raw"),
-    ("L12 alone", (12,), "raw"),
-    ("all 12, plain mean", tuple(range(1, 13)), "raw"),
-    ("all 12, standardised", tuple(range(1, 13)), "z"),
-    ("L5-L9, plain mean", (5, 6, 7, 8, 9), "raw"),
-    ("L5-L9, standardised", (5, 6, 7, 8, 9), "z"),
-    ("L3-L7, standardised", (3, 4, 5, 6, 7), "z"),
-    ("L1-L6, standardised", (1, 2, 3, 4, 5, 6), "z"),
+    ((7, 7), "raw"),
+    ((9, 9), "raw"),
+    ((12, 12), "raw"),
+    ((1, 12), "raw"),
+    ((1, 12), "z"),
+    ((5, 9), "raw"),
+    ((5, 9), "z"),
+    ((3, 7), "z"),
+    ((1, 6), "z"),
 )
+
+
+def combos_at(depth: int) -> list[tuple[str, tuple[int, ...], str]]:
+    """``COMBOS`` as (name, layers, mode) for a ``depth``-layer model. A span starts at the
+    first layer past its predecessor's end, so 5–9 of 12 becomes 9–18 of 24, not 10–18."""
+    out = []
+    for (lo, hi), mode in COMBOS:
+        first = 1 if lo == 1 else at_depth(lo - 1, depth) + 1
+        last = at_depth(hi, depth)
+        how = "plain mean" if mode == "raw" else "standardised"
+        if lo == hi:
+            first, name = last, f"L{last} alone"
+        elif (first, last) == (1, depth):
+            name = f"all {depth}, {how}"
+        else:
+            name = f"L{first}-L{last}, {how}"
+        out.append((name, tuple(range(first, last + 1)), mode))
+    return out
 
 
 def combine(per_layer: list[np.ndarray], idx: tuple[int, ...], mode: str) -> np.ndarray:
@@ -511,10 +560,11 @@ def cmd_combos(args) -> None:
         nat = ([pair_cosines(nd["layers"][:, i, :], na, nb) for i in range(nd["layers"].shape[1])],
                pair_cosines(nd["clip"], na, nb), pool[na] == pool[nb])
 
+    depth_note(layers.shape[1])
     print("\n=== combinations, on the RENDERING family ===")
     head = f"{'combination':<22} {'style':>7} {'style>pic':>10}"
     print(head + (f" {'natural':>9} {'+CLIP':>7}" if nat else ""))
-    for name, idx, mode in COMBOS:
+    for name, idx, mode in combos_at(layers.shape[1]):
         s = combine(per_layer, idx, mode)
         row = f"{name:<22} {auc(s[STYLE], s[NOTHING]):>7.3f} {auc(s[STYLE], s[PICTURE]):>10.3f}"
         if nat:
@@ -540,8 +590,12 @@ def cmd_refs(args) -> None:
     from backend.ml.similarity_scorer import (
         DEFAULT_DINO_LAYER, STYLE_CLIP_WEIGHT, STYLE_DINO_WEIGHT,
     )
-    signals = {f"L{lay}": layers[:, lay - 1, :] for lay in BLEND_LAYERS}
+    depth = layers.shape[1]
+    depth_note(depth)
+    signals = {f"L{lay}": layers[:, lay - 1, :]
+               for lay in (at_depth(x, depth) for x in BLEND_LAYERS)}
     signals["CLIP"] = clip
+    default_layer = at_depth(DEFAULT_DINO_LAYER, depth)
     in_scope = np.isin(pool, targets)
 
     def centroid_scores(vecs, refs, cands):
@@ -577,9 +631,9 @@ def cmd_refs(args) -> None:
         out = {name: auc(*_split(centroid_scores(v, ref_idx, cands), pos))
                for name, v in signals.items()}
         blend = (STYLE_CLIP_WEIGHT * centroid_scores(clip, ref_idx, cands)
-                 + STYLE_DINO_WEIGHT * centroid_scores(layers[:, DEFAULT_DINO_LAYER - 1, :],
+                 + STYLE_DINO_WEIGHT * centroid_scores(layers[:, default_layer - 1, :],
                                                        ref_idx, cands))
-        out[f"blend @L{DEFAULT_DINO_LAYER}"] = auc(*_split(blend, pos))
+        out[f"blend @L{default_layer}"] = auc(*_split(blend, pos))
         return out
 
     print("AUC separating the reference style from the other pools in --targets.")
@@ -596,7 +650,7 @@ def cmd_refs(args) -> None:
                 for name in (runs[0] if runs else {}):
                     means.setdefault(name, {})[(target, diverse)] = float(
                         np.mean([r[name] for r in runs]))
-        for name in list(signals) + [f"blend @L{DEFAULT_DINO_LAYER}"]:
+        for name in list(signals) + [f"blend @L{default_layer}"]:
             cells = ""
             for target in targets:
                 narrow = means.get(name, {}).get((target, False))
@@ -620,6 +674,9 @@ def main() -> None:
     ap.add_argument("--model", default="facebook/dinov2-base",
                     help="any DINO checkpoint dino_embed_offline can load")
     ap.add_argument("--batch", type=int, default=8)
+    ap.add_argument("--size", type=int, default=None,
+                    help="DINO input resolution, as dino_embed_offline --size (default: the "
+                         "processor's own). CLIP is unaffected.")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("synthetic", help="one picture x several restyles x several framings")

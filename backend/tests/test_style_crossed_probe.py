@@ -12,6 +12,8 @@ torch only inside the extraction path, which is what lets `combos`/`refs` run on
 that has no torch — and what lets this file collect in CI.
 """
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 from PIL import Image
@@ -91,6 +93,56 @@ def test_build_variants_covers_the_grid_and_reuses_existing_files(tmp_path):
     probe.build_variants([("src", src)], work)                 # second pass reuses
     assert sorted(p.name for p in work.iterdir()) == written
     assert {p: p.stat().st_mtime_ns for p in work.iterdir()} == stamps
+
+
+@pytest.mark.parametrize("count", ["", ":2"])
+def test_resolve_source_keeps_a_windows_drive_colon(tmp_path, count):
+    """`@C:/dir` used to split at the drive letter and die parsing "/dir" as a count."""
+    for name in ("x1.png", "x2.png", "x3.png"):
+        Image.new("RGB", (4, 4)).save(tmp_path / name)
+    label, files = probe.resolve_source(None, f"@{tmp_path}{count}")
+    assert Path(label) == tmp_path
+    assert len(files) == (2 if count else 3)
+
+
+def test_at_depth_is_identity_on_twelve_layers_and_relative_on_deeper_ones():
+    """Identity at 12 is what keeps the published DINOv2 / DINOv3 ViT-B tables
+    reproducible; 24 is DINOv3 ViT-L, where L7 of 12 sits at L14."""
+    assert [probe.at_depth(x, 12) for x in range(1, 13)] == list(range(1, 13))
+    assert [probe.at_depth(x, 24) for x in probe.BLEND_LAYERS] == [10, 14, 18, 24]
+
+
+def test_combos_at_twelve_reproduces_the_published_rows():
+    assert probe.combos_at(12) == [
+        ("L7 alone", (7,), "raw"),
+        ("L9 alone", (9,), "raw"),
+        ("L12 alone", (12,), "raw"),
+        ("all 12, plain mean", tuple(range(1, 13)), "raw"),
+        ("all 12, standardised", tuple(range(1, 13)), "z"),
+        ("L5-L9, plain mean", (5, 6, 7, 8, 9), "raw"),
+        ("L5-L9, standardised", (5, 6, 7, 8, 9), "z"),
+        ("L3-L7, standardised", (3, 4, 5, 6, 7), "z"),
+        ("L1-L6, standardised", (1, 2, 3, 4, 5, 6), "z"),
+    ]
+
+
+def test_combos_at_twenty_four_covers_the_same_spans_without_gaps():
+    rows = {name: idx for name, idx, _ in probe.combos_at(24)}
+    assert rows["L14 alone"] == (14,)
+    assert rows["all 24, plain mean"] == tuple(range(1, 25))
+    assert rows["L9-L18, standardised"] == tuple(range(9, 19))
+    assert rows["L1-L12, standardised"] == tuple(range(1, 13))
+
+
+def test_signal_table_rescales_its_blend_rows_to_a_deeper_cache():
+    rng = np.random.default_rng(0)
+    n = 5
+    layers = rng.random((n, 24, 8)).astype(np.float16)
+    a, b = np.triu_indices(n, k=1)
+    sig = probe.signal_table(layers, rng.random((n, 8)), rng.random((n, 8)), a, b)
+    assert {f"L{i}" for i in range(1, 25)} <= set(sig)
+    assert {"blend @L10", "blend @L14", "blend @L18", "blend @L24"} <= set(sig)
+    assert "blend @L7" not in sig
 
 
 def test_reframes_change_the_frame_and_full_does_not(tmp_path):

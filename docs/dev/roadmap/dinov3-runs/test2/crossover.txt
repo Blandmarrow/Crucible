@@ -1,0 +1,10 @@
+v2      depth 12 · margin by layer: +0.00 -0.04 -0.03 -0.05 +0.02 +0.14 +0.14 +0.06 -0.06 -0.13 -0.13 -0.22
+        last positive layer L8 = 67% of depth · peak L6 (+0.145)
+v3b224  depth 12 · margin by layer: +0.06 +0.06 +0.05 +0.01 +0.11 +0.20 +0.12 +0.01 -0.05 -0.10 -0.17 -0.19
+        last positive layer L8 = 67% of depth · peak L6 (+0.203)
+v3b512  depth 12 · margin by layer: +0.02 +0.05 +0.03 +0.02 +0.24 +0.33 +0.24 +0.09 -0.02 -0.12 -0.18 -0.20
+        last positive layer L8 = 67% of depth · peak L6 (+0.334)
+v3l224  depth 24 · margin by layer: +0.04 +0.05 +0.07 +0.07 +0.03 +0.03 +0.04 +0.11 +0.14 +0.23 +0.27 +0.30 +0.26 +0.25 +0.10 +0.01 +0.02 -0.05 -0.08 -0.07 -0.08 -0.13 -0.14 -0.19
+        last positive layer L17 = 71% of depth · peak L12 (+0.300)
+v3l512  depth 24 · margin by layer: +0.05 +0.05 +0.06 +0.08 +0.04 +0.03 +0.04 +0.15 +0.23 +0.37 +0.39 +0.37 +0.33 +0.33 +0.18 +0.08 +0.07 -0.02 -0.07 -0.05 -0.06 -0.10 -0.14 -0.20
+        last positive layer L17 = 71% of depth · peak L11 (+0.385)

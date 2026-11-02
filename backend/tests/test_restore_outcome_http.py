@@ -196,6 +196,38 @@ def test_pixel_values_come_back_while_the_snapshot_caption_stays(tmp_path, monke
     run(scenario())
 
 
+def test_a_failed_content_write_keeps_the_rating_of_the_pixels_on_disk(tmp_path, monkeypatch):
+    """The rating is a judgement of pixels, so it reconciles with them.
+
+    The snapshot's image was rated Cut; the replace-crop made new pixels, which
+    were rated Keep. When the restore cannot write the snapshot's bytes back, the
+    Keep pixels are what stays on disk, and a Cut laid over them would be a
+    decision nobody made about this picture.
+    """
+    async def scenario():
+        async with api_env(tmp_path, foreign_keys=True) as env:
+            await _mode(env, "manual")
+            ds = await env.create_dataset("d")
+            img = await upload_image(
+                env, ds["id"], "x.png", png_bytes((200, 10, 10), size=(100, 80))
+            )
+            await _set(env, img["id"], aesthetic_rating=1)
+            async with env.Session() as db:
+                ver = await version_service.create_snapshot(db, ds["id"], "orig", "")
+            await _crop(env, img["id"])
+            await _set(env, img["id"], aesthetic_rating=4, rating_stale=False)
+
+            _fail_object_copies(monkeypatch)
+            async with env.Session() as db:
+                await version_service.restore_snapshot(
+                    db, ds["id"], ver.id, pre_restore_snapshot=False
+                )
+            row = await _row(env, img["id"])
+            assert (row.aesthetic_rating, row.rating_stale) == (4, False)
+            assert (row.width, row.height) == (40, 40)
+    run(scenario())
+
+
 def test_a_failed_re_creation_leaves_no_row(tmp_path, monkeypatch):
     async def scenario():
         async with api_env(tmp_path, foreign_keys=True) as env:

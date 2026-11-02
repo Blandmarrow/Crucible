@@ -216,10 +216,14 @@ async def _write_object_atomically(
 # a restore writes the snapshot's values so that a file whose content could not
 # be restored gets them back (GPT-025). The ten scores and what qualifies them
 # were measured on the surviving pixels; the geometry is re-measured on top.
+# The keep/cut rating belongs here too, though a human wrote it: it is a
+# judgement *of these pixels*, and `rating_stale` says whether it still is, so a
+# snapshot's rating laid over pixels it was never about would be a false call.
 # Never `source_meta`: it is deferred, and it is provenance, not pixels.
 _PIXEL_QUALIFIERS = (
     "aesthetic_model", "scores_stale", "quality_flags", "dino_layer_scores",
     "processing_history", "width", "height", "file_size_bytes", "format", "phash",
+    "aesthetic_rating", "rating_stale",
 )
 
 

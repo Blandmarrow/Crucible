@@ -93,10 +93,15 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
         )
 
     query = select(Image.id, Image.file_path, Image.caption_text).where(Image.dataset_id == body.dataset_id)
+    if body.use_caption_as_prompt:
+        query = query.where(Image.caption_text.isnot(None), Image.caption_text != "")
     if body.image_ids is not None:
         # `is not None`, not truthiness (same convention as bulk-delete/crop):
         # an empty selection must match nothing, never widen to the dataset.
-        query = query.where(Image.id.in_(body.image_ids))
+        # Chunked: a select-all-matching list can pass SQLite's bind limit.
+        rows = []
+        for chunk in chunked(body.image_ids):
+            rows.extend((await db.execute(query.where(Image.id.in_(chunk)))).all())
     else:
         # Dataset-scope filters (mirror bulk-delete / crop). Explicit ids win and
         # bypass these; subfolder/flag scoping is only for whole-dataset runs.
@@ -106,10 +111,7 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
             valid_flags = [f for f in body.quality_flags if f in ALLOWED_FLAG_KEYS]
             if valid_flags:
                 query = query.where(and_(*[Image.quality_flags[f].as_boolean().is_not(True) for f in valid_flags]))
-    if body.use_caption_as_prompt:
-        query = query.where(Image.caption_text.isnot(None), Image.caption_text != "")
-    result = await db.execute(query)
-    rows = result.all()
+        rows = (await db.execute(query)).all()
 
     if not rows:
         return {"job_id": None, "message": "No images found"}
@@ -872,8 +874,11 @@ async def _fetch_bboxes_by_image(
 async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depends(get_db)):
     # Resolve image list (same triple as batch upscale: ids > dataset+subfolder+flags)
     if body.image_ids is not None:
-        result = await db.execute(select(Image.id).where(Image.id.in_(body.image_ids)))
-        image_ids = [r[0] for r in result.all()]
+        # Chunked: a select-all-matching list can pass SQLite's bind limit.
+        image_ids = []
+        for chunk in chunked(body.image_ids):
+            result = await db.execute(select(Image.id).where(Image.id.in_(chunk)))
+            image_ids.extend(r[0] for r in result.all())
     else:
         q = select(Image.id).where(Image.dataset_id == body.dataset_id)
         if body.subfolder is not None:

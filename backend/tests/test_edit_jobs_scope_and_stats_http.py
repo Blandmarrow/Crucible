@@ -9,6 +9,8 @@ is a compile-time option, and lowering it with `setlimit` would also have to sit
 below `chunked`'s 10,000 default while staying above the binds one `images`
 INSERT needs, which is no test of the real shape. The spy returns one id per
 chunk, which proves the caller loops rather than using `chunked` for show.
+Stage 1 follow-up 3 adds detection crop, the detection run and the batch
+resize and crop jobs, which reach the same select-all path.
 
 **B2.** `Dataset.image_count` and `total_size_bytes` are stored columns, and
 none of the three jobs refreshed them: copy mode adds a row, replace mode changes
@@ -16,6 +18,7 @@ a size. The refresh covers every dataset the run touched (PM-029).
 """
 from pathlib import Path
 
+import pytest
 from sqlalchemy import func, select
 
 from backend.models import Image
@@ -165,6 +168,102 @@ def test_inpaint_chunks_the_request_time_lookup(tmp_path, monkeypatch):
             job = await wait_for_job(env, started["job_id"], timeout=60)
             assert job["result_data"]["inpainted"] == 2
             assert set(calls[0]) == {a["id"], b["id"], "no-such-image"}, calls
+
+    run(scenario())
+
+
+# Follow-up 3: the same select-all path, through detection and the batch edits.
+
+def test_detection_crop_chunks_the_request_time_lookup(tmp_path, monkeypatch):
+    async def scenario():
+        import backend.routers.detection as detection_router
+        from backend.models.detection import Detection
+
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            a = await upload_image(env, ds["id"], "a.png", png_bytes(size=(40, 20)))
+            b = await upload_image(env, ds["id"], "b.png", png_bytes(size=(40, 20)))
+            async with env.Session() as db:
+                for img in (a, b):
+                    db.add(Detection(
+                        image_id=img["id"], label="face", bbox=[0.25, 0.25, 0.75, 0.75],
+                        score=0.9, model="test", task="detect",
+                    ))
+                await db.commit()
+
+            calls: list[list[str]] = []
+            monkeypatch.setattr(detection_router, "chunked", _spy(calls))
+            # The bbox fetch chunks the same ids, so it is marked in the log:
+            # without the fix, the first chunked call came from inside it.
+            real_fetch = detection_router._fetch_bboxes_by_image
+
+            async def marked_fetch(*args, **kwargs):
+                calls.append(["<bbox fetch>"])
+                return await real_fetch(*args, **kwargs)
+
+            monkeypatch.setattr(detection_router, "_fetch_bboxes_by_image", marked_fetch)
+            r = await env.client.post(f"{API}/detection/crop", json={
+                "dataset_id": ds["id"], "image_ids": [a["id"], b["id"]], "replace": False,
+            })
+            assert r.status_code == 200, r.text
+            job = await wait_for_job(env, r.json()["job_id"])
+            assert job["result_data"]["cropped"] == 2, job
+
+            assert set(calls[0]) == {a["id"], b["id"]}, calls
+
+    run(scenario())
+
+
+def test_detection_run_chunks_the_request_time_lookup(tmp_path, monkeypatch):
+    """Only the request side is pinned: the job needs a model, and how it ends
+    without one is not this test's business."""
+    async def scenario():
+        import backend.routers.detection as detection_router
+
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            a = await upload_image(env, ds["id"], "a.png", png_bytes())
+            b = await upload_image(env, ds["id"], "b.png", png_bytes())
+
+            calls: list[list[str]] = []
+            monkeypatch.setattr(detection_router, "chunked", _spy(calls))
+            r = await env.client.post(f"{API}/detection/run", json={
+                "dataset_id": ds["id"], "image_ids": [a["id"], b["id"]],
+                "model": "sam2", "task": "text_prompt", "custom_prompt": "cat",
+            })
+            assert r.status_code == 200, r.text
+            await wait_for_job(env, r.json()["job_id"])
+
+            assert set(calls[0]) == {a["id"], b["id"]}, calls
+
+    run(scenario())
+
+
+@pytest.mark.parametrize("route,body", [
+    ("resize", {"scale": 0.5}),
+    ("crop", {"target_ar": 1.0}),
+])
+def test_batch_edits_chunk_the_job_id_load(tmp_path, monkeypatch, route, body):
+    async def scenario():
+        import backend.routers.images as images_router
+
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            a = await upload_image(env, ds["id"], "a.png", png_bytes(size=(40, 20)))
+            b = await upload_image(env, ds["id"], "b.png", png_bytes(size=(40, 20)))
+            ids = {a["id"], b["id"]}
+
+            calls: list[list[str]] = []
+            monkeypatch.setattr(images_router, "chunked", _spy(calls))
+            r = await env.client.post(
+                f"{API}/images/batch/{route}", json={"image_ids": [a["id"], b["id"]], **body}
+            )
+            assert r.status_code == 200, r.text
+            job = await wait_for_job(env, r.json()["job_id"])
+            assert job["result_data"]["processed"] == 2, job
+
+            # The request's busy guard, then the job's load.
+            assert [set(c) for c in calls] == [ids, ids], calls
 
     run(scenario())
 

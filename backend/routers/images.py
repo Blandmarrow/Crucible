@@ -1340,8 +1340,11 @@ async def batch_resize(body: BatchResizeRequest, db: AsyncSession = Depends(get_
         from backend.database import AsyncSessionLocal
         from backend.workers.progress import broadcaster
         async with AsyncSessionLocal() as session:
-            result = await session.execute(select(Image.id).where(Image.id.in_(body.image_ids)))
-            image_ids = list(result.scalars().all())
+            # Chunked: a select-all-matching list can pass SQLite's bind limit.
+            image_ids = []
+            for chunk in chunked(body.image_ids):
+                result = await session.execute(select(Image.id).where(Image.id.in_(chunk)))
+                image_ids.extend(result.scalars().all())
             loop = asyncio.get_running_loop()
 
             # The whole outcome of the run, seeded like the LUT/upscale twins.
@@ -1466,8 +1469,11 @@ async def batch_crop(body: BatchCropRequest, db: AsyncSession = Depends(get_db))
         from backend.database import AsyncSessionLocal
         from backend.workers.progress import broadcaster
         async with AsyncSessionLocal() as session:
-            result = await session.execute(select(Image.id).where(Image.id.in_(body.image_ids)))
-            image_ids = list(result.scalars().all())
+            # Chunked: a select-all-matching list can pass SQLite's bind limit.
+            image_ids = []
+            for chunk in chunked(body.image_ids):
+                result = await session.execute(select(Image.id).where(Image.id.in_(chunk)))
+                image_ids.extend(result.scalars().all())
             loop = asyncio.get_running_loop()
 
             # Seeded and incremented exactly like the resize twin above.

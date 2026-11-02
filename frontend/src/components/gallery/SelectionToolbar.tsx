@@ -366,13 +366,15 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
   });
 
   const ratingMutation = useMutation({
-    mutationFn: (rating: number | null) => imagesApi.bulkRating(datasetId, { imageIds: ids, rating }),
-    onSuccess: (data, rating) => {
+    mutationFn: (vars: { rating: number | null; datasetIds: string[] }) =>
+      imagesApi.bulkRating(datasetId, { imageIds: ids, rating: vars.rating }),
+    onSuccess: (data, { rating, datasetIds }) => {
       // The whole dataset-content scope, never an inline key list: a rating
       // moves the gallery cards, the Stats distribution *and* the Export
       // preview's counts, and an open pane showing any of them would otherwise
-      // sit on numbers that no longer hold (constants/queryKeys.ts).
-      invalidateDatasetContentScope(qc, datasetId);
+      // sit on numbers that no longer hold (constants/queryKeys.ts). Every
+      // dataset the selection touched, as delete does (GPT-028).
+      for (const dsId of datasetIds) invalidateDatasetContentScope(qc, dsId);
       qc.invalidateQueries({ queryKey: ["export-preview"] });
       invalidateRatingMetrics(qc);
       setShowRating(false);
@@ -1423,7 +1425,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
         <SetRatingModal
           count={count}
           isPending={ratingMutation.isPending}
-          onConfirm={(rating) => ratingMutation.mutate(rating)}
+          onConfirm={(rating) => ratingMutation.mutate({ rating, datasetIds: selectionDatasetIds })}
           onClose={() => setShowRating(false)}
           sourceInfo={datasetBreakdown}
         />

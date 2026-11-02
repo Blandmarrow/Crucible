@@ -703,12 +703,18 @@ export default function ImageDetailPage() {
   // The keep/cut rating. A one-element id list rather than a single-image PATCH:
   // no such endpoint exists for any field but provenance, and the bulk one
   // already carries the clear predicate for `rating_stale`.
+  //
+  // The image travels in the variables, not the closure: an arrow key between the
+  // press and the response would otherwise refresh the image now on screen
+  // (frontend-jobs.md). Queued per image, like the label hotkeys, so two quick
+  // presses on one image land in the order they were made.
   const ratingMutation = useMutation({
-    mutationFn: (rating: number | null) =>
-      imagesApi.bulkRating(datasetId!, { imageIds: [imageId!], rating }),
-    onSuccess: (_data, rating) => {
-      qc.invalidateQueries({ queryKey: ["image", imageId] });
-      if (datasetId) invalidateDatasetContentScope(qc, datasetId);
+    scope: { id: `rating:${imageId}` },
+    mutationFn: (vars: { imageId: string; datasetId: string; rating: number | null }) =>
+      imagesApi.bulkRating(vars.datasetId, { imageIds: [vars.imageId], rating: vars.rating }),
+    onSuccess: (_data, { imageId: ratedId, datasetId: ratedDs, rating }) => {
+      qc.invalidateQueries({ queryKey: ["image", ratedId] });
+      invalidateDatasetContentScope(qc, ratedDs);
       qc.invalidateQueries({ queryKey: ["export-preview"] });
       invalidateRatingMetrics(qc);
       toast.success(rating === null ? "Rating cleared" : `Rated ${ratingLabel(rating)}`);
@@ -716,9 +722,12 @@ export default function ImageDetailPage() {
     onError: (err) => toast.error(apiErrorDetail(err, "Could not set the rating")),
   });
 
+  const { mutate: mutateRating } = ratingMutation;
   const rateImage = useCallback(
-    (rating: number | null) => ratingMutation.mutate(rating),
-    [ratingMutation]
+    (rating: number | null) => {
+      if (imageId && datasetId) mutateRating({ imageId, datasetId, rating });
+    },
+    [mutateRating, imageId, datasetId]
   );
 
   // Arrow-key navigation — skip when focus is inside a text field, a dialog is open,

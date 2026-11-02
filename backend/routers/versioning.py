@@ -340,24 +340,25 @@ async def rating_impact(
     number before the user commits. Read-only, and ungated on versioning mode
     like the other read routes.
 
-    `func.coalesce(col, 0)` on both sides rather than `IS DISTINCT FROM`, which
-    SQLite does not support. `0` is safe as the stand-in for NULL precisely
-    because it is outside the stored 1–4 domain — the same fact the gallery's
-    `rating_filter` sentinel rests on.
+    The snapshot side already stores unrated as `0`, and NULL there means "not
+    recorded" — a row from before the rating existed, whose restore leaves the
+    image's rating alone — so those rows are left out rather than counted as a
+    clear. The live side is `func.coalesce(col, 0)` into the same encoding,
+    rather than `IS DISTINCT FROM`, which SQLite does not support. `0` is safe
+    as the stand-in precisely because it is outside the stored 1–4 domain — the
+    same fact the gallery's `rating_filter` sentinel rests on.
     """
     ver = await db.get(DatasetVersion, version_id)
     if ver is None or ver.dataset_id != dataset_id:
         raise HTTPException(404, "Version not found")
 
-    snap_rating = func.coalesce(VersionImageState.aesthetic_rating, 0)
+    snap_rating = VersionImageState.aesthetic_rating
     live_rating = func.coalesce(Image.aesthetic_rating, 0)
 
     changed_q = (
         select(
             func.count().label("will_change"),
-            func.coalesce(
-                func.sum(case((VersionImageState.aesthetic_rating.is_(None), 1), else_=0)), 0
-            ).label("will_clear"),
+            func.coalesce(func.sum(case((snap_rating == 0, 1), else_=0)), 0).label("will_clear"),
         )
         .select_from(VersionImageState)
         .join(Image, Image.id == VersionImageState.image_id)
@@ -366,6 +367,7 @@ async def rating_impact(
             VersionImageState.is_present.is_(True),
             # The restore only writes rows that are still in this dataset.
             Image.dataset_id == dataset_id,
+            snap_rating.isnot(None),
             snap_rating != live_rating,
         )
     )

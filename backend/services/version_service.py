@@ -227,6 +227,26 @@ _PIXEL_QUALIFIERS = (
 )
 
 
+def rating_to_mirror(rating: int | None) -> int:
+    """An image's rating as a snapshot records it: unrated is `0`, never NULL.
+
+    The mirror keeps NULL for "not recorded" — a row from before the rating
+    existed — so a restore of an old snapshot leaves ratings alone rather than
+    clearing them (the `detections` rule). `0` is safe because it sits outside
+    the stored 1–4 domain, the fact `rating_filter`'s unrated sentinel rests on.
+    """
+    return 0 if rating is None else rating
+
+
+def rating_from_mirror(value: int | None) -> int | None:
+    """A *recorded* mirror value back to an image's rating (`0` → unrated).
+
+    Call it only after checking the row recorded one (`value is not None`);
+    where no current image exists to keep, a NULL also reads as unrated.
+    """
+    return value or None
+
+
 def _capture_pre_pixel(img: Image) -> dict:
     cols = sorted(score_columns(Image)) + list(_PIXEL_QUALIFIERS)
     # Deep copies: the JSON columns are reassigned later, and SQLAlchemy only
@@ -731,7 +751,7 @@ async def create_snapshot(
             luminance_score=img.luminance_score,
             style_similarity_score=img.style_similarity_score,
             scores_stale=img.scores_stale,
-            aesthetic_rating=img.aesthetic_rating,
+            aesthetic_rating=rating_to_mirror(img.aesthetic_rating),
             rating_stale=img.rating_stale,
             dino_layer_scores=img.dino_layer_scores,
             generation_metadata=img.generation_metadata,
@@ -989,6 +1009,14 @@ async def diff_versions(
                     # that predates the column.
                     if va is not None and vb is not None:
                         changes[field] = _detections_change(va, vb)
+                    continue
+                if field in ("aesthetic_rating", "rating_stale"):
+                    # The same "not recorded" rule, keyed on the rating: a
+                    # snapshot older than it says nothing about either column.
+                    if sa.aesthetic_rating is not None and sb.aesthetic_rating is not None:
+                        if field == "aesthetic_rating":
+                            va, vb = rating_from_mirror(va), rating_from_mirror(vb)
+                        changes[field] = {"from": va, "to": vb}
                     continue
                 # Heavy JSON columns (full ComfyUI workflow payloads, per-layer
                 # score dicts) are compared but never embedded — a compact marker
@@ -1485,8 +1513,11 @@ async def restore_snapshot(
         img.source_meta = state.source_meta
         img.processing_history = state.processing_history
         img.scores_stale = state.scores_stale
-        img.aesthetic_rating = state.aesthetic_rating
-        img.rating_stale = state.rating_stale
+        # NULL is a snapshot older than the rating: it recorded none, so the
+        # image keeps the one it has.
+        if state.aesthetic_rating is not None:
+            img.aesthetic_rating = rating_from_mirror(state.aesthetic_rating)
+            img.rating_stale = bool(state.rating_stale)
         img.sort_order = state.sort_order
         img.source_video_id = (
             state.source_video_id if state.source_video_id in live_video_ids else None

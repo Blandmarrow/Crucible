@@ -23,16 +23,21 @@ directions by `test_video_lineage_mirrors.py`; an unmirrored column is blanked b
 every restore. Both columns are *mutable* authored state, so unlike the immutable
 lineage carve-out in `_DIFF_COLS` they are compared as well as carried.
 
-**No batch mode** on either table. A nullable integer and a boolean with a server
-default — no FK, no CHECK, no constraint for SQLite reflection to lose — so
-neither table needs a rebuild. The DDL shape is `b2f6c8d0e1a4`'s `scores_stale`.
+**The mirror's NULL means "not recorded"**, the `detections` rule: no backfill and
+no default, so every existing snapshot row reads as predating the rating, and a
+restore of one leaves today's ratings alone. Snapshots taken from here on store
+unrated as `0`.
+
+**No batch mode** on either table. Nullable integers and booleans, the `images`
+bit with a server default — no FK, no CHECK, no constraint for SQLite reflection
+to lose — so neither table needs a rebuild. The DDL shape is `b2f6c8d0e1a4`'s `scores_stale`.
 
 **The index is `(dataset_id, aesthetic_rating)`**, matching every other composite
 in `Image.__table_args__`: the column is both filtered (the gallery rating chips,
 the export include/exclude) and sorted, always within one dataset.
 
-**No backfill.** Every existing row is genuinely unrated, and `False` is the
-correct historical answer for the bit — it means "we observed a rewrite after a
+**No backfill.** Every existing image is genuinely unrated, and `False` is the
+correct historical answer for its bit — it means "we observed a rewrite after a
 rating", and no pre-migration row carries a rating to have observed one against.
 `downgrade()` is a clean drop: nothing here moves data or touches disk.
 
@@ -63,9 +68,10 @@ def upgrade() -> None:
     op.add_column(
         "version_image_states", sa.Column("aesthetic_rating", sa.Integer(), nullable=True)
     )
+    # Both mirror columns nullable with no default: NULL is "not recorded", so a
+    # snapshot older than this migration leaves ratings alone on restore.
     op.add_column(
-        "version_image_states",
-        sa.Column("rating_stale", sa.Boolean(), server_default="0", nullable=False),
+        "version_image_states", sa.Column("rating_stale", sa.Boolean(), nullable=True)
     )
     op.create_index(
         "ix_images_dataset_rating", "images", ["dataset_id", "aesthetic_rating"]

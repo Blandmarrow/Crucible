@@ -110,8 +110,15 @@ class VersionImageState(Base):
     # this row holds, so an unmirrored column is silently blanked. Authored
     # *mutable* data, so both are diffed as well as mirrored. (No `info=` — only
     # the `Image` side is read by the rebuild-path guards.)
+    #
+    # **NULL means "not recorded", as `detections` below, and so unrated is
+    # stored as `0`.** A row from before these columns existed has no rating to
+    # give back, and reading its NULL as "unrated" would clear every rating made
+    # since on restoring an old snapshot. A restore leaves a NULL row's rating
+    # alone; every snapshot written since records 0–4 and a bit. Converted only
+    # through `version_service.rating_to_mirror` / `rating_from_mirror`.
     aesthetic_rating: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    rating_stale: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+    rating_stale: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
     dino_layer_scores: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     generation_metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)

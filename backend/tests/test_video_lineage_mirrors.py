@@ -129,6 +129,21 @@ def _columns(model) -> set[str]:
     return {c.key for c in model.__table__.columns}
 
 
+def _source_attr(v: ast.expr) -> tuple[str, str] | None:
+    """`y.z` → `(y, z)`, seeing through one single-argument conversion of it.
+
+    `rating_to_mirror(img.aesthetic_rating)` and `bool(state.rating_stale)` still
+    carry the column of that name — they only change its encoding across the
+    mirror — so they count, and `width=f(vid.height)` is still caught as copied
+    from the wrong attribute. Anything else computed is `None`.
+    """
+    if isinstance(v, ast.Call) and len(v.args) == 1 and not v.keywords:
+        v = v.args[0]
+    if isinstance(v, ast.Attribute) and isinstance(v.value, ast.Name):
+        return (v.value.id, v.attr)
+    return None
+
+
 def _ctor_kwargs(func, ctor_name: str) -> list[dict[str, tuple[str, str] | None]]:
     """One dict per `ctor_name(...)` call in `func`'s source: kwarg name → the
     `(variable, attribute)` it copies, or `None` where the value is computed.
@@ -149,11 +164,7 @@ def _ctor_kwargs(func, ctor_name: str) -> list[dict[str, tuple[str, str] | None]
         for kw in n.keywords:
             if kw.arg is None:
                 continue
-            v = kw.value
-            if isinstance(v, ast.Attribute) and isinstance(v.value, ast.Name):
-                kwargs[kw.arg] = (v.value.id, v.attr)
-            else:
-                kwargs[kw.arg] = None
+            kwargs[kw.arg] = _source_attr(kw.value)
         out.append(kwargs)
     return out
 
@@ -175,11 +186,7 @@ def _assigned_attrs(func, target_var: str) -> dict[str, tuple[str, str] | None]:
         t = n.targets[0]
         if not (isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name) and t.value.id == target_var):
             continue
-        v = n.value
-        if isinstance(v, ast.Attribute) and isinstance(v.value, ast.Name):
-            out[t.attr] = (v.value.id, v.attr)
-        else:
-            out[t.attr] = None
+        out[t.attr] = _source_attr(n.value)
     return out
 
 

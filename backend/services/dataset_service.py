@@ -25,6 +25,7 @@ from backend.services.image_service import (
     get_image_info,
     read_provenance_sidecar,
 )
+from backend.services.version_service import rating_from_mirror
 from backend.services.video_service import UnreadableVideoError, claimed_poster_stems, probe_and_poster
 from backend.utils import (
     chunked,
@@ -2219,8 +2220,10 @@ async def duplicate_dataset(
                     luminance_score=state.luminance_score,
                     style_similarity_score=state.style_similarity_score,
                     scores_stale=state.scores_stale,
-                    aesthetic_rating=state.aesthetic_rating,
-                    rating_stale=state.rating_stale,
+                    # A copy has no current rating to keep, so a snapshot
+                    # older than the rating reads as unrated here.
+                    aesthetic_rating=rating_from_mirror(state.aesthetic_rating),
+                    rating_stale=bool(state.rating_stale),
                     dino_layer_scores=state.dino_layer_scores,
                     generation_metadata=state.generation_metadata,
                     processing_history=state.processing_history,

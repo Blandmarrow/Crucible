@@ -44,7 +44,7 @@ def test_a_key_can_be_rebound_and_unbound(tmp_path):
 def test_a_key_outside_the_charset_is_refused(tmp_path):
     async def scenario():
         async with api_env(tmp_path) as env:
-            for bad in ("K", "ab", " ", "ArrowLeft", "-"):
+            for bad in ("K", "ab", " ", "ArrowLeft", "-", "4\n", "\n"):
                 r = await env.client.patch(
                     f"{API}/settings/thresholds", json={"rating_key_keep": bad}
                 )

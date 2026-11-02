@@ -375,6 +375,8 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
       // sit on numbers that no longer hold (constants/queryKeys.ts). Every
       // dataset the selection touched, as delete does (GPT-028).
       for (const dsId of datasetIds) invalidateDatasetContentScope(qc, dsId);
+      // An open detail pane reads `["image", id]`, outside the dataset scope.
+      qc.invalidateQueries({ queryKey: ["image"] });
       qc.invalidateQueries({ queryKey: ["export-preview"] });
       invalidateRatingMetrics(qc);
       setShowRating(false);

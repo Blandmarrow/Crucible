@@ -137,3 +137,28 @@ def test_the_diff_reports_a_rating_only_when_both_sides_recorded_one(tmp_path):
             [entry] = (await diff(mid, new))["modified"]
             assert entry["changes"]["aesthetic_rating"] == {"from": None, "to": 4}
     run(scenario())
+
+
+def test_an_old_snapshot_that_brings_back_older_pixels_marks_the_kept_rating_stale(tmp_path):
+    """The rating is kept, but it was given about the pixels the restore replaced.
+
+    Edited in place after the snapshot, then rated: the rating is current. The
+    restore writes the snapshot's older pixels back, so the kept rating now
+    describes pixels that are gone — the same statement an in-place edit makes.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds_id, img_id = await _setup(env)
+            vid = await _snapshot(env, ds_id, "v1")
+            await _forget_ratings(env, vid)
+            r = await env.client.post(
+                f"{API}/images/{img_id}/crop",
+                json={"x": 0, "y": 0, "width": 8, "height": 8, "replace": True},
+            )
+            assert r.status_code == 200, r.text
+            await _rate(env, ds_id, img_id, 4)
+            assert await _rating(env, img_id) == (4, False)
+
+            await _restore(env, ds_id, vid)
+            assert await _rating(env, img_id) == (4, True)
+    run(scenario())

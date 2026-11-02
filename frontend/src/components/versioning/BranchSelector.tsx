@@ -11,6 +11,7 @@ import { BRANCH_SNAPSHOT_KEY } from "../../constants/storage";
 import JobProgressBar from "../common/JobProgressBar";
 import type { Branch } from "../../types";
 import { showRestoreSummaryToast } from "../../utils/restoreToast";
+import { invalidateRatingMetrics } from "../../constants/queryKeys";
 
 interface Props {
   datasetId: string;
@@ -157,6 +158,10 @@ export default function BranchSelector({ datasetId, branches, activeBranchId, cu
       qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
       qc.invalidateQueries({ queryKey: ["score-values", datasetId] });
       qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
+      // A restore underneath, so it reverts ratings like the Versions page's
+      // restore does — and the rating metrics are dataset-free.
+      qc.invalidateQueries({ queryKey: ["export-preview"] });
+      invalidateRatingMetrics(qc);
       // Checkout is a restore underneath, and a partial one still switches
       // branch: the toast reads result_data and warns (GPT-025).
       if (checkoutJobId) showRestoreSummaryToast(checkoutJobId, "Switched branch");

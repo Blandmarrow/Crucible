@@ -1813,6 +1813,11 @@ async def restore_snapshot(
             # edited image's phash and a re-created row got NULL, dropping out
             # of duplicate scans. Size, format and geometry come along.
             await _measure_into(p.img)
+            # A snapshot older than the rating left today's rating in place
+            # (Pass 2c), but these are not the pixels it was given about. The
+            # rating stands, marked stale, as an in-place edit would mark it.
+            if state.aesthetic_rating is None and p.img.aesthetic_rating is not None:
+                p.img.rating_stale = True
 
         # Regenerate the thumbnail whenever the file content changed or the stem
         # moved (a renamed image needs a thumbnail under its new stem, and its old

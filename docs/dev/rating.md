@@ -40,6 +40,9 @@ trusts.
 It is written by `utils.record_in_place` — the single writer of `processing_history`,
 `scores_stale` and this — and only for a row that actually carries a rating, on exactly the
 reasoning that governs `scores_stale`: a row nobody judged has no judgement to invalidate.
+A restore is the one other place that sets it: a snapshot older than the rating keeps
+today's rating (§ Versioning), so when that restore writes older pixels back, the kept
+rating is marked stale as an in-place edit would mark it.
 
 It is **not** a reuse of `scores_stale`, because the *clear* predicates diverge. A quality
 run that re-measured clears `scores_stale`; nothing but a human looking again clears

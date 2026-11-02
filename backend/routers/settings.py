@@ -24,7 +24,7 @@ _VALID_VERSIONING_MODES = {"off", "manual", "auto"}
 # The label hotkeys' charset (`routers/labels.py`), so one capture rule binds both,
 # and "" for unbound. Kept structural rather than a reserved list for the same
 # reason labels give: it cannot express the keys the detail page already binds.
-_RATING_KEY_RE = re.compile(r"^[a-z0-9]?$")
+_RATING_KEY_RE = re.compile(r"[a-z0-9]?")
 RATING_KEY_FIELDS = (
     "rating_key_keep", "rating_key_probably", "rating_key_probably_not",
     "rating_key_cut", "rating_key_clear",
@@ -77,7 +77,9 @@ class ThresholdsUpdate(BaseModel):
     @field_validator(*RATING_KEY_FIELDS)
     @classmethod
     def validate_rating_key(cls, v: str | None) -> str | None:
-        if v is not None and not _RATING_KEY_RE.match(v):
+        # `fullmatch`, never `match` with `$`: `$` also matches before a final
+        # newline, so "4\n" would save a key no keypress can ever produce.
+        if v is not None and not _RATING_KEY_RE.fullmatch(v):
             raise ValueError("a rating key is one of a-z or 0-9, or empty for unbound")
         return v
 

@@ -851,7 +851,8 @@ async def bulk_rating(body: BulkRatingRequest, db: AsyncSession = Depends(get_db
     `.values()` — even when the value is unchanged, because looking again is the
     whole event the bit is about. Clearing to NULL clears it too: no rating,
     nothing stale. Nothing else may write `False` there (`utils.record_in_place`
-    is the only writer of the `True`), and that divergence from `scores_stale`'s
+    writes the `True` for an edit, and a restore for older pixels coming back
+    under a rating it kept), and that divergence from `scores_stale`'s
     clear predicate — a quality run that re-measured — is exactly why the two are
     separate columns.
 

@@ -848,6 +848,9 @@ export default function GalleryPage() {
             : `Rated ${r.updated.toLocaleString()} image${r.updated !== 1 ? "s" : ""} ${ratingLabel(rating)}`
         );
         invalidateDatasetContentScope(qc, datasetId);
+        // A detail pane open on a rated image reads `["image", id]`, which the
+        // dataset scope's `["images", ds]` does not prefix-match.
+        qc.invalidateQueries({ queryKey: ["image"] });
         // Listed by hand, like the other two rating writers: `export-preview` is
         // deliberately outside DATASET_CONTENT_SCOPE, and a rating filter in a
         // split-pane Export preview otherwise shows counts from before this write.

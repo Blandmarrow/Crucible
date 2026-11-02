@@ -674,7 +674,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
         <button
           className="btn-ghost btn-sm flex items-center gap-1.5"
           onClick={() => setShowRating(true)}
-          title="Set the keep/cut rating (or press 1–4 in the gallery)"
+          title="Set the keep/cut rating (or press a rating key in the gallery)"
           data-testid="toolbar-set-rating"
         >
           <Star size={14} /> Rate

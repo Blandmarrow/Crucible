@@ -172,7 +172,8 @@ function RatingDistribution({
       </p>
       {rated === 0 ? (
         <p style={{ color: "var(--fg-dim)", fontSize: 12, margin: 0 }}>
-          Nothing rated yet. Rate images from the gallery with the number keys 1–4.
+          Nothing rated yet. Rate images from the gallery: select them and press a rating key
+          (4 Keep to 1 Cut unless rebound in Settings → Gallery).
         </p>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>

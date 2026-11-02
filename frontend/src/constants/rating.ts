@@ -9,8 +9,9 @@
  * **Higher is better: 4 = Keep … 1 = Cut.** Every other numeric column in the
  * app runs that way, `SORT_OPTIONS` reads "Aesthetic ↓" for best-first, and a
  * star rating in any photo tool means more-is-better — an inverted scale would
- * make "Rating ↑" mean best-first and read wrong beside its neighbour. The cost
- * is that "press 1 for Keep" is unavailable; `0` clears instead, as in Lightroom.
+ * make "Rating ↑" mean best-first and read wrong beside its neighbour. The keys
+ * default to the numerals (and `0` clears, as in Lightroom) but are rebindable,
+ * in `threshold_settings` via `useRatingKeys`.
  *
  * Decision language, not quality language: these say what to *do* with the
  * image, which is the judgement a human can actually make quickly. "Good" and
@@ -52,7 +53,7 @@ export function ratingColor(value: number | null | undefined): string {
   return BY_VALUE.get(value)?.color ?? "var(--fg-mute)";
 }
 
-/** Short badge glyph — the numeral itself, which is also the key that sets it. */
+/** Short badge glyph — the numeral itself, which is the tier's default key. */
 export function ratingShort(value: number | null | undefined): string {
   if (value === null || value === undefined || value === RATING_UNRATED) return "—";
   return String(value);

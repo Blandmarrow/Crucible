@@ -47,6 +47,7 @@ import { MEDIA_ACCEPT, isMediaDragItem, isMediaFile } from "../constants/mediaTy
 import { imagesCountKey, invalidateDatasetContentScope, invalidateRatingMetrics } from "../constants/queryKeys";
 import { RATING_FILTER_ENTRIES, RATING_UNRATED, encodeRatingFilter, ratingLabel } from "../constants/rating";
 import { usePaneContext } from "../contexts/PaneContext";
+import { useRatingKeys } from "../hooks/useRatingKeys";
 import { usePaneStore } from "../store/paneStore";
 
 type QualityFilter = "" | "is_blurry" | "is_noisy" | "is_uniform" | "has_watermark" | "is_duplicate" | "is_nsfw" | "has_ai_artifacts";
@@ -813,9 +814,10 @@ export default function GalleryPage() {
   const allMatchingSelected = totalCount !== undefined && totalCount > 0 && selectedHere === totalCount;
   const [selectingAll, setSelectingAll] = useState(false);
 
-  // ── Rate the selection with 1–4 (0 clears) ────────────────────────────────
+  // ── Rate the selection from the keyboard ──────────────────────────────────
   // The rating is written from the keyboard because that is the only way a
-  // triage pass is fast enough to be worth doing: select, glance, press.
+  // triage pass is fast enough to be worth doing: select, glance, press. The
+  // keys are Settings' (4/3/2/1, 0 clears, until rebound) — `useRatingKeys`.
   //
   // The guard shape is `ImageDetailPage`'s keydown, verbatim — pane, modal,
   // text field — because a window listener in a split-pane app is otherwise a
@@ -827,13 +829,14 @@ export default function GalleryPage() {
     () => [...selectedIds].filter((id) => datasetByImageId.get(id) === datasetId),
     [selectedIds, datasetByImageId, datasetId]
   );
+  const ratingKeys = useRatingKeys();
   const rateSelection = useCallback((rating: number | null) => {
     const ids = selectedIdsHere;
     if (!datasetId) return;
     if (ids.length === 0) {
       // A toast rather than nothing: the keys are invisible, so a silent no-op
       // reads as "the shortcut is broken" rather than "select something first".
-      toast("Select images first, then press 1–4 to rate them (0 clears)");
+      toast(`Select images first, then press a rating key (${ratingKeys.hint})`);
       return;
     }
     imagesApi
@@ -852,12 +855,16 @@ export default function GalleryPage() {
         invalidateRatingMetrics(qc);
       })
       .catch((err) => toast.error(apiErrorDetail(err, "Could not set the rating")));
-  }, [datasetId, qc, selectedIdsHere]);
+  }, [datasetId, qc, selectedIdsHere, ratingKeys.hint]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (paneCtx && paneCtx.paneId !== activePaneId) return;
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      // Shift too, like the label hotkeys: a bound letter's capital is a
+      // different keypress. And no auto-repeat — every write is an event in
+      // the self-agreement log, so a held key would flood it.
+      if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+      if (e.repeat) return;
       const target = e.target as HTMLElement;
       if (
         target.tagName === "INPUT" || target.tagName === "TEXTAREA" ||
@@ -869,12 +876,16 @@ export default function GalleryPage() {
       // first time one is added. `useModalBehavior` puts `role="dialog"` on
       // every panel in the app, which makes this the one honest question.
       if (document.querySelector('[role="dialog"]')) return;
-      if (e.key === "0") { e.preventDefault(); rateSelection(null); return; }
-      if (e.key >= "1" && e.key <= "4") { e.preventDefault(); rateSelection(Number(e.key)); }
+      // The gallery binds no label hotkeys, so a bound rating key always rates
+      // here; the detail page is where a label can win the key.
+      const key = e.key.toLowerCase();
+      if (!ratingKeys.byKey.has(key)) return;
+      e.preventDefault();
+      rateSelection(ratingKeys.byKey.get(key) ?? null);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [rateSelection, paneCtx, activePaneId]);
+  }, [rateSelection, ratingKeys.byKey, paneCtx, activePaneId]);
 
   const selectAllMatching = useCallback(() => {
     setSelectingAll(true);
@@ -1944,7 +1955,9 @@ export default function GalleryPage() {
                   title={
                     entry.value === RATING_UNRATED
                       ? "Images nobody has rated yet"
-                      : `Press ${entry.value} on a selection to rate it ${entry.label}`
+                      : ratingKeys.keyFor.has(entry.value)
+                      ? `Press ${ratingKeys.keyFor.get(entry.value)} on a selection to rate it ${entry.label}`
+                      : `Rate a selection ${entry.label} from the toolbar's Rate button`
                   }
                   style={{
                     display: "inline-flex", alignItems: "center", gap: 4,

@@ -27,6 +27,7 @@ import ConfirmDialog from "../components/common/ConfirmDialog";
 import DirPickerModal from "../components/common/DirPickerModal";
 import ModelPicker from "../components/providers/ModelPicker";
 import LabelsPanel from "../components/settings/LabelsPanel";
+import RatingKeysPanel from "../components/settings/RatingKeysPanel";
 import SecretField from "../components/settings/SecretField";
 
 const DEFAULTS: Thresholds = {
@@ -43,6 +44,13 @@ const DEFAULTS: Thresholds = {
   auto_unload_after_scoring: true,
   comfyui_url: "",
   comfy_workflow_dir: "",
+  // Never saved through this form (RatingKeysPanel saves each key on its own);
+  // present only because `Thresholds` declares them.
+  rating_key_keep: "4",
+  rating_key_probably: "3",
+  rating_key_probably_not: "2",
+  rating_key_cut: "1",
+  rating_key_clear: "0",
 };
 
 interface ThresholdField {
@@ -651,6 +659,16 @@ export default function SettingsPage() {
                 />
                 Show the keep/cut rating on gallery cards
               </label>
+            </div>
+
+            <div>
+              <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 4 }}>Rating keys</div>
+              <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "0 0 10px" }}>
+                The keys that rate the selected images in the gallery, or the open image in the detail
+                view. Click a key and press a new one (a–z or 0–9); Backspace unbinds it. If a label
+                hotkey uses the same key, the label wins on the detail page.
+              </p>
+              <RatingKeysPanel />
             </div>
 
             <div>

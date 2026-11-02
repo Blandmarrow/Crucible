@@ -17,7 +17,7 @@ interface Props {
  * Set the keep/cut rating on a selection.
  *
  * One click per tier rather than a picker plus an Apply button: this is a
- * one-field decision, and the keyboard path (1–4 in the gallery) already exists
+ * one-field decision, and the keyboard path (the rating keys) already exists
  * for the fast case — this modal is for the times the selection came from
  * somewhere the keys are awkward, like select-all-matching-filters.
  *

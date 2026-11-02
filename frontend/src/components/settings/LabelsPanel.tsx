@@ -10,6 +10,7 @@ import { useLabels } from "../../hooks/useLabels";
 import { usePopover } from "../../hooks/usePopover";
 import { useUiPrefsStore } from "../../store/uiPrefsStore";
 import { apiErrorDetail } from "../../utils/apiError";
+import { RATING_KEY_ACTIONS, useRatingKeys } from "../../hooks/useRatingKeys";
 import HotkeyCaptureButton from "./HotkeyCaptureButton";
 
 /** A strict superset of the original nine, so no existing label loses its
@@ -144,6 +145,7 @@ export default function LabelsPanel() {
   const qc = useQueryClient();
   const { labels, isLoading } = useLabels();
   const hotkeysEnabled = useUiPrefsStore((s) => s.labelHotkeysEnabled);
+  const ratingKeys = useRatingKeys();
   const setHotkeysEnabled = useUiPrefsStore((s) => s.setLabelHotkeysEnabled);
 
   const [newName, setNewName] = useState("");
@@ -314,6 +316,12 @@ export default function LabelsPanel() {
                 value={label.hotkey}
                 disabled={busy}
                 ownerOf={(key) => labels.find((l) => l.id !== label.id && l.hotkey === key)?.name ?? null}
+                warnOf={(key) => {
+                  const action = RATING_KEY_ACTIONS.find((a) => ratingKeys.keyFor.get(a.rating) === key);
+                  return action
+                    ? `Also the rating key for “${action.label}”; this label wins it on the detail page`
+                    : null;
+                }}
                 onChange={(key) => updateMutation.mutate({ id: label.id, body: { hotkey: key } })}
               />
 

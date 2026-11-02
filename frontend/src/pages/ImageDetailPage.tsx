@@ -46,6 +46,7 @@ import type { CaptionData, Detection, ImageDetail } from "../types";
 import { injectNavId, navIdsParams, navPageParams, readNavContext, removeNavId, serverPageContext, writeNavContext, type GalleryNavContext } from "../utils/galleryNav";
 import { isTextEntryTarget } from "../utils/keyboard";
 import { useAssignImageLabels, useLabels } from "../hooks/useLabels";
+import { useRatingKeys } from "../hooks/useRatingKeys";
 import { useTokenCount } from "../utils/tokenCount";
 import { imagesCountKey, invalidateDatasetContentScope, invalidateRatingMetrics } from "../constants/queryKeys";
 import { TERMINAL_JOB_STATUSES } from "../constants/jobs";
@@ -730,6 +731,12 @@ export default function ImageDetailPage() {
     [mutateRating, imageId, datasetId]
   );
 
+  // Read here rather than beside the label-hotkey effect below, because the
+  // rating keys in the next effect yield to a label bound to the same key.
+  const { byHotkey } = useLabels();
+  const labelHotkeysEnabled = useUiPrefsStore((s) => s.labelHotkeysEnabled);
+  const ratingKeys = useRatingKeys();
+
   // Arrow-key navigation — skip when focus is inside a text field, a dialog is open,
   // or this pane is not the active pane in split-pane mode.
   useEffect(() => {
@@ -756,15 +763,23 @@ export default function ImageDetailPage() {
       // Rating, folded into this effect rather than given a third window
       // listener: it wants the identical pane/modal/text-field guard, and a
       // separate listener is how two of them drift apart. Modifier chords are
-      // left to the browser — Ctrl+1 switches panes in some setups.
-      if (!e.ctrlKey && !e.metaKey && !e.altKey && imageId && datasetId) {
-        if (e.key === "0") { e.preventDefault(); rateImage(null); }
-        else if (e.key >= "1" && e.key <= "4") { e.preventDefault(); rateImage(Number(e.key)); }
+      // left to the browser — Ctrl+1 switches panes in some setups — and Shift
+      // and auto-repeat are skipped as the label hotkeys skip them: each write
+      // is an event in the self-agreement log.
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && !e.repeat && imageId && datasetId) {
+        const key = e.key.toLowerCase();
+        // A label bound to the same key wins (the 2026-11-02 ruling): its own
+        // effect below toggles it, and Settings warns about the clash.
+        if (labelHotkeysEnabled && byHotkey.has(key)) return;
+        if (ratingKeys.byKey.has(key)) {
+          e.preventDefault();
+          rateImage(ratingKeys.byKey.get(key) ?? null);
+        }
       }
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [prevId, nextId, goTo, anyModalOpen, toggle, imageId, datasetId, rateImage, paneCtx, activePaneId, drawMode, refineTarget, pendingBox, enterMode]);
+  }, [prevId, nextId, goTo, anyModalOpen, toggle, imageId, datasetId, rateImage, ratingKeys.byKey, labelHotkeysEnabled, byHotkey, paneCtx, activePaneId, drawMode, refineTarget, pendingBox, enterMode]);
 
   // Delete opens the confirm. Guarded on the active pane like the arrow keys
   // above: `splitPane` clones the current view, so without it one keypress opens
@@ -802,9 +817,9 @@ export default function ImageDetailPage() {
   // hotkey charset cannot express Escape, Space, ArrowLeft/Right or Delete — the
   // five keys the two effects above bind — so there is no reserved-key set to
   // keep in step, and none can go stale when a sixth binding is added. Adding
-  // `RESERVED = new Set([...])` here is the version that rots.
-  const { byHotkey } = useLabels();
-  const labelHotkeysEnabled = useUiPrefsStore((s) => s.labelHotkeysEnabled);
+  // `RESERVED = new Set([...])` here is the version that rots. A rating key it
+  // shares is yielded by the effect above, so the label wins it. (`byHotkey`
+  // and the pref are read above that effect.)
 
   // Queued per image and refetched once the last one settles, which is also what
   // rolls back the optimistic flip below when an assign fails — see the hook.
@@ -2295,10 +2310,10 @@ export default function ImageDetailPage() {
             </p>
           ) : null}
 
-          {/* Keep/cut rating. Visible buttons as well as the 1–4 keys, because a
-              keyboard-only control is undiscoverable and this is the one field
+          {/* Keep/cut rating. Visible buttons as well as the rating keys, because
+              a keyboard-only control is undiscoverable and this is the one field
               on the page a human is expected to write on every image. The
-              numeral on each button *is* the key that sets it. */}
+              numeral is the tier; each title names the key bound to it. */}
           <div className="mt-3" data-testid="rating-control">
             <div className="flex items-center justify-between mb-1">
               <div className="label !mb-0">Rating</div>
@@ -2308,7 +2323,9 @@ export default function ImageDetailPage() {
                   style={{ padding: "0 4px", fontSize: 11 }}
                   disabled={ratingMutation.isPending}
                   onClick={() => rateImage(null)}
-                  title="Clear the rating (or press 0)"
+                  title={ratingKeys.keyFor.has(null)
+                    ? `Clear the rating (or press ${ratingKeys.keyFor.get(null)})`
+                    : "Clear the rating"}
                 >
                   clear
                 </button>
@@ -2324,7 +2341,9 @@ export default function ImageDetailPage() {
                     data-active={on ? "true" : "false"}
                     disabled={ratingMutation.isPending}
                     onClick={() => rateImage(opt.value)}
-                    title={`${opt.label} — or press ${opt.value}`}
+                    title={ratingKeys.keyFor.has(opt.value)
+                      ? `${opt.label} — or press ${ratingKeys.keyFor.get(opt.value)}`
+                      : opt.label}
                     style={{
                       flex: 1, padding: "3px 4px", borderRadius: "var(--r)", cursor: "pointer",
                       background: on ? "var(--surface-3)" : "transparent",

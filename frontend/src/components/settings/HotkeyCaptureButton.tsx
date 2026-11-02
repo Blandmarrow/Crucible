@@ -8,6 +8,13 @@ interface Props {
   /** The label that already owns the pressed key, if any — shown as a warning
    *  so a collision is pre-empted in the UI rather than only as a server 409. */
   ownerOf: (key: string) => string | null;
+  /** A clash that is allowed but worth knowing: shown beside the bound key,
+   *  never refusing it. The label hotkeys and the rating keys warn about each
+   *  other this way, because a label wins a shared key on the detail page. */
+  warnOf?: (key: string) => string | null;
+  /** What the key is for, in the accessible name ("Keep key 4"), when several
+   *  buttons share a page. Defaults to the label row's "Hotkey". */
+  name?: string;
   disabled?: boolean;
 }
 
@@ -26,7 +33,7 @@ interface Props {
  * (sending `null`, which the PATCH honours because it uses `exclude_unset`), and
  * modifier chords are ignored.
  */
-export default function HotkeyCaptureButton({ value, onChange, ownerOf, disabled }: Props) {
+export default function HotkeyCaptureButton({ value, onChange, ownerOf, warnOf, name, disabled }: Props) {
   const [capturing, setCapturing] = useState(false);
   const [conflict, setConflict] = useState<string | null>(null);
 
@@ -64,7 +71,7 @@ export default function HotkeyCaptureButton({ value, onChange, ownerOf, disabled
         type="button"
         className="btn-ghost btn-sm"
         disabled={disabled}
-        aria-label={value ? `Hotkey ${value}` : "Set hotkey"}
+        aria-label={value ? `${name ? `${name} key` : "Hotkey"} ${value}` : `Set ${name ? `${name} key` : "hotkey"}`}
         onClick={() => {
           setConflict(null);
           setCapturing((c) => !c);
@@ -93,6 +100,9 @@ export default function HotkeyCaptureButton({ value, onChange, ownerOf, disabled
         <span style={{ fontSize: 11.5, color: "var(--danger, #f87171)" }}>
           Used by “{conflict}”
         </span>
+      )}
+      {!capturing && !conflict && value && warnOf?.(value) && (
+        <span style={{ fontSize: 11.5, color: "var(--warn)" }}>{warnOf(value)}</span>
       )}
     </span>
   );

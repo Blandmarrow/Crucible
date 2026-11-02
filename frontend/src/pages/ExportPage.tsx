@@ -1227,7 +1227,7 @@ export default function ExportPage() {
                       {preview.unrated_count.toLocaleString()} image
                       {preview.unrated_count !== 1 ? "s have" : " has"} no rating and{" "}
                       {preview.unrated_count !== 1 ? "are" : "is"} therefore excluded by
-                      "Rating ≥". Rate them in the gallery (select, then press 1–4), or switch
+                      "Rating ≥". Rate them in the gallery (select, then press a rating key), or switch
                       the threshold off to include them.
                     </div>
                   )}

@@ -14,6 +14,13 @@ export interface Thresholds {
   auto_unload_after_scoring: boolean;
   comfyui_url: string;
   comfy_workflow_dir: string;
+  /** The keep/cut rating keys, one `[a-z0-9]` key each; "" = unbound. Server-side
+   *  beside the label hotkeys they can clash with. See `useRatingKeys`. */
+  rating_key_keep: string;
+  rating_key_probably: string;
+  rating_key_probably_not: string;
+  rating_key_cut: string;
+  rating_key_clear: string;
 }
 
 /** One secret as the server reports it: never the plaintext, only a mask and its origin. */

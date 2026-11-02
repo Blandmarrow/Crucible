@@ -1025,6 +1025,9 @@ export default function ImageDetailPage() {
     } else if (upscaleJobProgress.status === "failed") {
       setUpscaleJobId(null);
       toast.error("Upscaling failed");
+    } else if (upscaleJobProgress.status === "cancelled") {
+      // Clear it, or `upscaleRunning` holds Run once the store drops the entry.
+      setUpscaleJobId(null);
     }
   }, [upscaleJobProgress?.status, upscaleJobId, datasetId, imageId, upscaleReplace, qc, paneGo]);
 
@@ -1069,6 +1072,9 @@ export default function ImageDetailPage() {
     } else if (lutJobProgress.status === "failed") {
       setLutJobId(null);
       toast.error("LUT grading failed");
+    } else if (lutJobProgress.status === "cancelled") {
+      // Clear it, or `lutRunning` holds Run once the store drops the entry.
+      setLutJobId(null);
     }
   }, [lutJobProgress?.status, lutJobId, datasetId, imageId, lutReplace, qc, paneGo]);
 
@@ -1319,11 +1325,13 @@ export default function ImageDetailPage() {
         target_width: parseInt(upscaleTargetW) > 0 ? parseInt(upscaleTargetW) : null,
         target_height: parseInt(upscaleTargetH) > 0 ? parseInt(upscaleTargetH) : null,
       }),
-    onMutate: () => {
-      upscaleRunGenRef.current = ++upscaleGenRef.current;
-    },
-    onSuccess: (data) => {
+    // The generation is bumped at the click and bound to the job only once its
+    // id exists, so an earlier job finishing during this POST is never mistaken
+    // for this run.
+    onMutate: () => ++upscaleGenRef.current,
+    onSuccess: (data, _vars, gen) => {
       if (data.job_id) {
+        upscaleRunGenRef.current = gen ?? 0;
         setUpscaleJobId(data.job_id);
         toast.success("Upscaling…");
       }
@@ -1340,11 +1348,11 @@ export default function ImageDetailPage() {
         intensity: lutIntensity / 100,
         replace: lutReplace,
       }),
-    onMutate: () => {
-      lutRunGenRef.current = ++lutGenRef.current;
-    },
-    onSuccess: (data) => {
+    // Bound to the job once its id exists, as upscale does above.
+    onMutate: () => ++lutGenRef.current,
+    onSuccess: (data, _vars, gen) => {
       if (data.job_id) {
+        lutRunGenRef.current = gen ?? 0;
         setLutJobId(data.job_id);
         toast.success("Applying LUT…");
       }
@@ -1479,9 +1487,13 @@ export default function ImageDetailPage() {
   // Scoped to the job's own image: on a neighbour the panel is idle.
   const aiJobHere = !!aiJob && aiJob.imageId === imageId;
   const aiRunning = aiJobHere && aiJobProgress?.status === "running";
-  const upscaleRunning = !!upscaleJobId && upscaleJobProgress?.status === "running";
+  // Upscale and LUT hold Run from the POST's success to a terminal status,
+  // `pending` and a not-yet-seen job included: one queued behind another job
+  // would otherwise let a second click start a second run on the same image.
+  const upscaleRunning =
+    !!upscaleJobId && !TERMINAL_JOB_STATUSES.has(upscaleJobProgress?.status ?? "");
   const cropUpscaleRunning = !!cropUpscaleJobId && cropUpscaleJobProgress?.status === "running";
-  const lutRunning = !!lutJobId && lutJobProgress?.status === "running";
+  const lutRunning = !!lutJobId && !TERMINAL_JOB_STATUSES.has(lutJobProgress?.status ?? "");
   const manualRunning = !!manualJobId && manualJobProgress?.status === "running";
   const refineRunning = !!refineJobId && refineJobProgress?.status === "running";
   const detections: Detection[] = image.detections ?? [];

@@ -78,6 +78,17 @@ Still open:
     `detection.py`'s `crop_to_detection` refresh stats after the loop with no guard for a raise
     out of it; detection crop's `protect_file_before_overwrite` sits outside its per-image `try`.
     Item 5's wrapper, `refresh_stats_after_abort` around `_run`, closes each.
+11. **Two hard-cancel edges in item 5's wrapper**, both minor and both corrected by the next
+    refresh. On shutdown the refresh runs inside `JobQueue.stop()`'s `STOP_UNWIND_SECONDS`, so a
+    SQLite lock held past it abandons the worker and leaves the job row `running` until the
+    next startup's sweep. And a hard cancel landing inside the `commit()` just before
+    `touched.add` leaves that one dataset out of the refresh. Moving `touched.add` above the
+    commit closes the second.
+12. **After navigating away mid-job, the detail page refreshes the wrong image.** The upscale and
+    LUT completion effects invalidate `["image", imageId]` for the image now on screen, not the
+    one edited, and the stale-outcome branch item 6 added skips `injectNavId` for a copy-mode
+    result, so the new image is missing from the arrows until the gallery refetches. Stage 6
+    replaces both effects, so it is folded in there, as item 7 is.
 
 ## Stages 2 to 4: no port conflict
 

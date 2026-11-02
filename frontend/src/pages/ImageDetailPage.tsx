@@ -2,7 +2,8 @@ import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { usePaneDatasetId, usePaneImageId } from "../hooks/usePaneDatasetId";
 import { usePaneNavigate } from "../hooks/usePaneNavigate";
 import { usePaneContext } from "../contexts/PaneContext";
-import { usePaneStore } from "../store/paneStore";
+import { currentPaneView, usePaneStore } from "../store/paneStore";
+import { matchPath } from "react-router";
 import { useUiPrefsStore } from "../store/uiPrefsStore";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ChevronLeft, ChevronRight, Save, Crop, AlertTriangle, Copy, Sparkles, ChevronDown, ChevronUp, Type, Eye, EyeOff, ScanSearch, Pencil, Maximize2, Palette, CheckSquare, Square, Crosshair, Combine, Focus, BoxSelect, Eraser } from "lucide-react";
@@ -221,17 +222,39 @@ function syncGalleryStatePage(datasetId: string, page: number) {
  *  `null` when the job cannot be read, and the caller falls back to the status. */
 async function fetchEditOutcome(
   jobId: string,
-): Promise<{ processed: number; failed: number; summary: string | null } | null> {
+): Promise<{
+  processed: number; failed: number; skipped: number; missing: number; summary: string | null;
+} | null> {
   try {
     const r = (await jobsApi.get(jobId)).result_data ?? {};
     return {
       processed: Number(r.processed ?? 0),
       failed: Number(r.failed ?? 0),
+      skipped: Number(r.skipped ?? 0),
+      missing: Number(r.missing ?? 0),
       summary: typeof r.failure_summary === "string" ? r.failure_summary : null,
     };
   } catch {
     return null;
   }
+}
+
+/** The image the user has asked for *now*. A navigation renders as a React
+ *  transition, so this render's `imageId` can lag the click for as long as the
+ *  next render is held up, and an edit outcome landing in that gap would read the
+ *  old one and drag the user back. The URL, or the pane store, moves at the click. */
+function intendedImageId(paneId: string | undefined): string | undefined {
+  if (paneId) return currentPaneView(paneId)?.imageId;
+  return matchPath("/datasets/:datasetId/image/:imageId", window.location.pathname)?.params.imageId;
+}
+
+/** Why a one-image upscale or LUT that failed nothing still processed nothing.
+ *  `missing` is a row deleted between enqueue and run; the rest of `skipped` is
+ *  the replace-mode name collision, which copy mode never has. */
+function nothingDoneReason(outcome: { skipped: number; missing: number }): string {
+  if (outcome.missing > 0) return "the image was deleted before the job ran";
+  if (outcome.skipped > 0) return "a file with the new name already exists";
+  return "nothing was changed";
 }
 
 export default function ImageDetailPage() {
@@ -272,6 +295,17 @@ export default function ImageDetailPage() {
   const [lutIntensity, setLutIntensity] = useState(100);
   const [lutReplace, setLutReplace] = useState(false);
   const [lutJobId, setLutJobId] = useState<string | null>(null);
+  // A generation per tool, bumped when a run starts and when the page moves to
+  // another image; `*RunRef` holds the generation and the image the in-flight
+  // job started in. The job id is cleared before `fetchEditOutcome` returns, so
+  // by then a second run or another image may own the page: a stale outcome
+  // still toasts, but must not close the tool or navigate. The image is checked
+  // against `intendedImageId` too, because a navigation's render can still be
+  // pending when the outcome lands, with this generation not yet bumped.
+  const upscaleGenRef = useRef(0);
+  const upscaleRunRef = useRef<{ gen: number; imageId?: string }>({ gen: 0 });
+  const lutGenRef = useRef(0);
+  const lutRunRef = useRef<{ gen: number; imageId?: string }>({ gen: 0 });
 
   const owNum = parseInt(outputWidth);
   const ohNum = parseInt(outputHeight);
@@ -650,6 +684,10 @@ export default function ImageDetailPage() {
     setPendingBox(null);
     setRefineTarget(null);
     setCropInitialArea(null);
+    // An upscale or LUT started on the previous image must not close the tool
+    // or navigate away from this one when it finishes.
+    upscaleGenRef.current += 1;
+    lutGenRef.current += 1;
   }, [imageId]);
 
   // The form dialogs this page opens over the image. All are scoped to
@@ -966,6 +1004,7 @@ export default function ImageDetailPage() {
       qc.invalidateQueries({ queryKey: ["image", imageId] });
       const finishedId = upscaleJobId;
       const newImageId = upscaleJobProgress.image_id;
+      const run = upscaleRunRef.current;
       setUpscaleJobId(null);
       void fetchEditOutcome(finishedId).then((outcome) => {
         // Nothing processed: say why, and leave the tool open to try again.
@@ -973,8 +1012,13 @@ export default function ImageDetailPage() {
           if (outcome.failed > 0) {
             toast.error(outcome.summary ?? "Upscaling failed", { duration: 10000 });
           } else {
-            toast("Upscaling skipped — a file with the new name already exists", { icon: "⚠️" });
+            toast(`Upscaling skipped — ${nothingDoneReason(outcome)}`, { icon: "⚠️" });
           }
+          return;
+        }
+        // Another run or another image owns the page now: report, touch nothing.
+        if (upscaleGenRef.current !== run.gen || intendedImageId(paneCtx?.paneId) !== run.imageId) {
+          toast.success("Upscaling complete");
           return;
         }
         setUpscaleMode(false);
@@ -993,8 +1037,11 @@ export default function ImageDetailPage() {
     } else if (upscaleJobProgress.status === "failed") {
       setUpscaleJobId(null);
       toast.error("Upscaling failed");
+    } else if (upscaleJobProgress.status === "cancelled") {
+      // Clear it, or `upscaleRunning` holds Run once the store drops the entry.
+      setUpscaleJobId(null);
     }
-  }, [upscaleJobProgress?.status, upscaleJobId, datasetId, imageId, upscaleReplace, qc, paneGo]);
+  }, [upscaleJobProgress?.status, upscaleJobId, datasetId, imageId, upscaleReplace, qc, paneGo, paneCtx]);
 
   // LUT job tracking
   useEffect(() => {
@@ -1004,6 +1051,7 @@ export default function ImageDetailPage() {
       qc.invalidateQueries({ queryKey: ["image", imageId] });
       const finishedId = lutJobId;
       const newImageId = lutJobProgress.image_id;
+      const run = lutRunRef.current;
       setLutJobId(null);
       void fetchEditOutcome(finishedId).then((outcome) => {
         // Nothing processed: say why, and leave the tool open to try again.
@@ -1011,8 +1059,13 @@ export default function ImageDetailPage() {
           if (outcome.failed > 0) {
             toast.error(outcome.summary ?? "LUT grading failed", { duration: 10000 });
           } else {
-            toast("LUT skipped — a file with the new name already exists", { icon: "⚠️" });
+            toast(`LUT skipped — ${nothingDoneReason(outcome)}`, { icon: "⚠️" });
           }
+          return;
+        }
+        // Another run or another image owns the page now: report, touch nothing.
+        if (lutGenRef.current !== run.gen || intendedImageId(paneCtx?.paneId) !== run.imageId) {
+          toast.success("LUT applied");
           return;
         }
         setLutMode(false);
@@ -1031,8 +1084,11 @@ export default function ImageDetailPage() {
     } else if (lutJobProgress.status === "failed") {
       setLutJobId(null);
       toast.error("LUT grading failed");
+    } else if (lutJobProgress.status === "cancelled") {
+      // Clear it, or `lutRunning` holds Run once the store drops the entry.
+      setLutJobId(null);
     }
-  }, [lutJobProgress?.status, lutJobId, datasetId, imageId, lutReplace, qc, paneGo]);
+  }, [lutJobProgress?.status, lutJobId, datasetId, imageId, lutReplace, qc, paneGo, paneCtx]);
 
   // Crop+upscale job tracking
   useEffect(() => {
@@ -1281,8 +1337,13 @@ export default function ImageDetailPage() {
         target_width: parseInt(upscaleTargetW) > 0 ? parseInt(upscaleTargetW) : null,
         target_height: parseInt(upscaleTargetH) > 0 ? parseInt(upscaleTargetH) : null,
       }),
-    onSuccess: (data) => {
+    // The generation is bumped at the click and bound to the job only once its
+    // id exists, so an earlier job finishing during this POST is never mistaken
+    // for this run. `onMutate` runs at the click, with the image this run is for.
+    onMutate: () => ({ gen: ++upscaleGenRef.current, imageId }),
+    onSuccess: (data, _vars, run) => {
       if (data.job_id) {
+        if (run) upscaleRunRef.current = run;
         setUpscaleJobId(data.job_id);
         toast.success("Upscaling…");
       }
@@ -1299,8 +1360,11 @@ export default function ImageDetailPage() {
         intensity: lutIntensity / 100,
         replace: lutReplace,
       }),
-    onSuccess: (data) => {
+    // Bound to the job once its id exists, as upscale does above.
+    onMutate: () => ({ gen: ++lutGenRef.current, imageId }),
+    onSuccess: (data, _vars, run) => {
       if (data.job_id) {
+        if (run) lutRunRef.current = run;
         setLutJobId(data.job_id);
         toast.success("Applying LUT…");
       }
@@ -1435,9 +1499,13 @@ export default function ImageDetailPage() {
   // Scoped to the job's own image: on a neighbour the panel is idle.
   const aiJobHere = !!aiJob && aiJob.imageId === imageId;
   const aiRunning = aiJobHere && aiJobProgress?.status === "running";
-  const upscaleRunning = !!upscaleJobId && upscaleJobProgress?.status === "running";
+  // Upscale and LUT hold Run from the POST's success to a terminal status,
+  // `pending` and a not-yet-seen job included: one queued behind another job
+  // would otherwise let a second click start a second run on the same image.
+  const upscaleRunning =
+    !!upscaleJobId && !TERMINAL_JOB_STATUSES.has(upscaleJobProgress?.status ?? "");
   const cropUpscaleRunning = !!cropUpscaleJobId && cropUpscaleJobProgress?.status === "running";
-  const lutRunning = !!lutJobId && lutJobProgress?.status === "running";
+  const lutRunning = !!lutJobId && !TERMINAL_JOB_STATUSES.has(lutJobProgress?.status ?? "");
   const manualRunning = !!manualJobId && manualJobProgress?.status === "running";
   const refineRunning = !!refineJobId && refineJobProgress?.status === "running";
   const detections: Detection[] = image.detections ?? [];

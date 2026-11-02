@@ -9,6 +9,8 @@ is a compile-time option, and lowering it with `setlimit` would also have to sit
 below `chunked`'s 10,000 default while staying above the binds one `images`
 INSERT needs, which is no test of the real shape. The spy returns one id per
 chunk, which proves the caller loops rather than using `chunked` for show.
+Stage 1 follow-up 3 adds detection crop, the detection run and the batch
+resize and crop jobs, which reach the same select-all path.
 
 **B2.** `Dataset.image_count` and `total_size_bytes` are stored columns, and
 none of the three jobs refreshed them: copy mode adds a row, replace mode changes
@@ -16,6 +18,7 @@ a size. The refresh covers every dataset the run touched (PM-029).
 """
 from pathlib import Path
 
+import pytest
 from sqlalchemy import func, select
 
 from backend.models import Image
@@ -169,6 +172,135 @@ def test_inpaint_chunks_the_request_time_lookup(tmp_path, monkeypatch):
     run(scenario())
 
 
+# Follow-up 3: the same select-all path, through detection and the batch edits.
+
+def test_detection_crop_chunks_the_request_time_lookup(tmp_path, monkeypatch):
+    async def scenario():
+        import backend.routers.detection as detection_router
+        from backend.models.detection import Detection
+
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            a = await upload_image(env, ds["id"], "a.png", png_bytes(size=(40, 20)))
+            b = await upload_image(env, ds["id"], "b.png", png_bytes(size=(40, 20)))
+            async with env.Session() as db:
+                for img in (a, b):
+                    db.add(Detection(
+                        image_id=img["id"], label="face", bbox=[0.25, 0.25, 0.75, 0.75],
+                        score=0.9, model="test", task="detect",
+                    ))
+                await db.commit()
+
+            calls: list[list[str]] = []
+            monkeypatch.setattr(detection_router, "chunked", _spy(calls))
+            # The bbox fetch chunks the same ids, so it is marked in the log:
+            # without the fix, the first chunked call came from inside it.
+            real_fetch = detection_router._fetch_bboxes_by_image
+
+            async def marked_fetch(*args, **kwargs):
+                calls.append(["<bbox fetch>"])
+                return await real_fetch(*args, **kwargs)
+
+            monkeypatch.setattr(detection_router, "_fetch_bboxes_by_image", marked_fetch)
+            r = await env.client.post(f"{API}/detection/crop", json={
+                "dataset_id": ds["id"], "image_ids": [a["id"], b["id"]], "replace": False,
+            })
+            assert r.status_code == 200, r.text
+            job = await wait_for_job(env, r.json()["job_id"])
+            assert job["result_data"]["cropped"] == 2, job
+
+            assert set(calls[0]) == {a["id"], b["id"]}, calls
+
+    run(scenario())
+
+
+def test_detection_run_chunks_the_request_time_lookup(tmp_path, monkeypatch):
+    """Only the request side is pinned: the job needs a model, and how it ends
+    without one is not this test's business. The loader is stubbed to fail, so
+    a machine with torch never loads real SAM2 weights for it."""
+    async def scenario():
+        import backend.routers.detection as detection_router
+        from backend.ml.model_manager import model_manager
+
+        async def no_sam2(**_kwargs):
+            raise RuntimeError("no model in this test")
+
+        monkeypatch.setattr(model_manager, "load_sam2", no_sam2)
+
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            a = await upload_image(env, ds["id"], "a.png", png_bytes())
+            b = await upload_image(env, ds["id"], "b.png", png_bytes())
+
+            calls: list[list[str]] = []
+            monkeypatch.setattr(detection_router, "chunked", _spy(calls))
+            r = await env.client.post(f"{API}/detection/run", json={
+                "dataset_id": ds["id"], "image_ids": [a["id"], b["id"]],
+                "model": "sam2", "task": "text_prompt", "custom_prompt": "cat",
+            })
+            assert r.status_code == 200, r.text
+            await wait_for_job(env, r.json()["job_id"])
+
+            assert set(calls[0]) == {a["id"], b["id"]}, calls
+
+    run(scenario())
+
+
+@pytest.mark.parametrize("route,body", [
+    ("resize", {"scale": 0.5}),
+    ("crop", {"target_ar": 1.0}),
+])
+def test_batch_edits_chunk_the_job_id_load(tmp_path, monkeypatch, route, body):
+    async def scenario():
+        import backend.routers.images as images_router
+
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            a = await upload_image(env, ds["id"], "a.png", png_bytes(size=(40, 20)))
+            b = await upload_image(env, ds["id"], "b.png", png_bytes(size=(40, 20)))
+            ids = {a["id"], b["id"]}
+
+            calls: list[list[str]] = []
+            monkeypatch.setattr(images_router, "chunked", _spy(calls))
+            r = await env.client.post(
+                f"{API}/images/batch/{route}", json={"image_ids": [a["id"], b["id"]], **body}
+            )
+            assert r.status_code == 200, r.text
+            job = await wait_for_job(env, r.json()["job_id"])
+            assert job["result_data"]["processed"] == 2, job
+
+            # The request's busy guard, then the job's load.
+            assert [set(c) for c in calls] == [ids, ids], calls
+
+    run(scenario())
+
+
+def test_a_repeated_id_is_edited_once_across_chunks(tmp_path, monkeypatch):
+    """One `IN` collapsed a repeated id; chunks do not, and the spy puts each
+    id in its own chunk, as a list past `chunked`'s size would. Without the
+    dedupe the image is halved twice."""
+    async def scenario():
+        import backend.routers.images as images_router
+
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            img = await upload_image(env, ds["id"], "a.png", png_bytes(size=(40, 20)))
+
+            monkeypatch.setattr(images_router, "chunked", _spy([]))
+            r = await env.client.post(f"{API}/images/batch/resize", json={
+                "image_ids": [img["id"], img["id"]], "scale": 0.5,
+            })
+            assert r.status_code == 200, r.text
+            job = await wait_for_job(env, r.json()["job_id"])
+            assert job["result_data"]["processed"] == 1, job
+
+            async with env.Session() as db:
+                row = await db.get(Image, img["id"])
+            assert (row.width, row.height) == (20, 10)
+
+    run(scenario())
+
+
 # ── B2: stats refreshed after the run ─────────────────────────────────────────
 
 def test_upscale_copy_refreshes_the_image_count(tmp_path, monkeypatch):
@@ -278,5 +410,86 @@ def test_inpaint_copy_refreshes_the_image_count(tmp_path, monkeypatch):
             stored = await _stored_stats(env, ds["id"])
             assert stored == await _true_stats(env, ds["id"])
             assert stored[0] == 2
+
+    run(scenario())
+
+
+# Follow-up 5: a raise outside the per-image `try` failed the job with earlier
+# images committed, and skipped the tail refresh that would have counted them.
+
+def _raise_on_the_second_backup(monkeypatch):
+    """The versioning hook runs before each replace and outside the per-image
+    `try` in all three jobs, so failing it on the second image raises out of the
+    loop with the first image's replace already committed."""
+    from backend.services import version_service
+
+    real = version_service.protect_file_before_overwrite
+    calls = 0
+
+    async def flaky(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("the database went away mid-run")
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(version_service, "protect_file_before_overwrite", flaky)
+
+
+async def _assert_refreshed_after_failure(env, ds_id, job, before) -> None:
+    assert job["status"] == "failed", job
+    after = await _stored_stats(env, ds_id)
+    assert after == await _true_stats(env, ds_id)
+    assert after[1] != before[1], "the first image's replace should have moved the size"
+
+
+def test_upscale_refreshes_stats_when_it_fails_partway(tmp_path, monkeypatch):
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            _install_fake_upscale(monkeypatch)
+            ds = await env.create_dataset("d")
+            a = await upload_image(env, ds["id"], "a.png", png_bytes())
+            b = await upload_image(env, ds["id"], "b.png", png_bytes())
+            before = await _stored_stats(env, ds["id"])
+            _raise_on_the_second_backup(monkeypatch)
+
+            job = await _upscale(env, ds["id"], [a["id"], b["id"]], replace=True)
+            await _assert_refreshed_after_failure(env, ds["id"], job, before)
+
+    run(scenario())
+
+
+def test_lut_refreshes_stats_when_it_fails_partway(tmp_path, monkeypatch):
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            a = await upload_image(env, ds["id"], "a.jpg", jpeg_bytes())
+            b = await upload_image(env, ds["id"], "b.jpg", jpeg_bytes())
+            lut = _identity_cube(tmp_path / "identity.cube")
+            before = await _stored_stats(env, ds["id"])
+            _raise_on_the_second_backup(monkeypatch)
+
+            job = await _lut(env, ds["id"], [a["id"], b["id"]], lut, replace=True)
+            await _assert_refreshed_after_failure(env, ds["id"], job, before)
+
+    run(scenario())
+
+
+def test_inpaint_refreshes_stats_when_it_fails_partway(tmp_path, monkeypatch):
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            _install_fake_inpaint(monkeypatch)
+            ds = await env.create_dataset("d")
+            # JPEGs, re-encoded on save, so the first replace moves the size.
+            a = await upload_image(env, ds["id"], "a.jpg", jpeg_bytes(size=(48, 32)))
+            b = await upload_image(env, ds["id"], "b.jpg", jpeg_bytes(size=(48, 32)))
+            await _add_detection(env, a["id"])
+            await _add_detection(env, b["id"])
+            before = await _stored_stats(env, ds["id"])
+            _raise_on_the_second_backup(monkeypatch)
+
+            started = await _run_inpaint(env, ds["id"], [a["id"], b["id"]], replace=True)
+            job = await wait_for_job(env, started["job_id"], timeout=60)
+            await _assert_refreshed_after_failure(env, ds["id"], job, before)
 
     run(scenario())

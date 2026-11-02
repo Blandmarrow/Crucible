@@ -83,3 +83,62 @@ def test_a_clean_run_records_no_failure(tmp_path):
             assert rd["failed_count"] == 0 and rd["failure_summary"] is None
 
     run(scenario())
+
+
+# Follow-up 4: a one-image run that did nothing has to say which skip it was.
+# The detail page used to blame a name collision for every processed-0 run.
+
+def _vanish_on_the_job_load():
+    """`chunked` that answers the request's lookup and finds nothing at the
+    job's load: to the job, the row was deleted between enqueue and run."""
+    calls = 0
+
+    def chunked(seq, size=10_000):
+        nonlocal calls
+        calls += 1
+        return [list(seq)] if calls == 1 else []
+    return chunked
+
+
+def test_an_upscale_whose_row_vanished_counts_it_missing(tmp_path, monkeypatch):
+    async def scenario():
+        import backend.routers.upscaling as upscale_router
+
+        async with api_env(tmp_path) as env:
+            _install_fake(monkeypatch)
+            ds = await env.create_dataset("d")
+            img = await upload_image(env, ds["id"], "shot.png", png_bytes())
+            monkeypatch.setattr(upscale_router, "chunked", _vanish_on_the_job_load())
+
+            r = await env.client.post(f"{API}/upscaling/run", json={
+                "dataset_id": ds["id"], "image_ids": [img["id"]],
+                "model_path": MODEL, "replace": True,
+            })
+            job = await wait_for_job(env, r.json()["job_id"], timeout=60)
+
+            rd = job["result_data"]
+            assert (rd["processed"], rd["skipped"], rd["missing"]) == (0, 1, 1), rd
+
+    run(scenario())
+
+
+def test_a_lut_whose_row_vanished_counts_it_missing(tmp_path, monkeypatch):
+    async def scenario():
+        import backend.routers.lut as lut_router
+
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            img = await upload_image(env, ds["id"], "shot.png", png_bytes())
+            lut = _identity_cube(tmp_path / "identity.cube")
+            monkeypatch.setattr(lut_router, "chunked", _vanish_on_the_job_load())
+
+            r = await env.client.post(f"{API}/lut/run", json={
+                "dataset_id": ds["id"], "image_ids": [img["id"]],
+                "lut_path": str(lut), "intensity": 1.0, "replace": True,
+            })
+            job = await wait_for_job(env, r.json()["job_id"], timeout=60)
+
+            rd = job["result_data"]
+            assert (rd["processed"], rd["skipped"], rd["missing"]) == (0, 1, 1), rd
+
+    run(scenario())

@@ -1243,6 +1243,17 @@ def _require_in_tree(img: Image) -> None:
         raise HTTPException(403, OUT_OF_TREE_MSG)
 
 
+def _in_tree_thumbnail(img: Image, context: str) -> str | None:
+    """Where an in-place edit may recut `img`'s thumbnail, or None to skip it.
+
+    `generate_thumbnail` mkdirs its parent, so an out-of-tree `thumbnail_path` is
+    a write primitive though nothing is unlinked (`bulk_thumbnails`' reasoning).
+    None also for a row with no thumbnail: callers that count a refusal as a
+    stale tile tell the two apart by `img.thumbnail_path`."""
+    t = contained_path(img.thumbnail_path, settings.datasets_dir, context=context, ident=img.id)
+    return str(t) if t is not None else None
+
+
 async def _refuse_out_of_tree(
     img: Image, counts: dict, job_id: str, job_type: str, i: int, total: int
 ) -> bool:
@@ -1329,8 +1340,13 @@ async def batch_resize(body: BatchResizeRequest, db: AsyncSession = Depends(get_
         from backend.database import AsyncSessionLocal
         from backend.workers.progress import broadcaster
         async with AsyncSessionLocal() as session:
-            result = await session.execute(select(Image.id).where(Image.id.in_(body.image_ids)))
-            image_ids = list(result.scalars().all())
+            # Chunked: a select-all-matching list can pass SQLite's bind limit.
+            # Deduplicated first: one IN collapsed a repeated id, separate chunks
+            # would each return the row, and the job would edit it twice.
+            image_ids = []
+            for chunk in chunked(list(dict.fromkeys(body.image_ids))):
+                result = await session.execute(select(Image.id).where(Image.id.in_(chunk)))
+                image_ids.extend(result.scalars().all())
             loop = asyncio.get_running_loop()
 
             # The whole outcome of the run, seeded like the LUT/upscale twins.
@@ -1400,10 +1416,13 @@ async def batch_resize(body: BatchResizeRequest, db: AsyncSession = Depends(get_
                 # --- epilogue: best-effort, cannot undo the resize ---
                 # `expire_on_commit=False` (backend/database.py) keeps `img`
                 # readable after the commit without a refresh.
-                if img.thumbnail_path:
+                thumb_target = _in_tree_thumbnail(img, "Batch resize thumbnail")
+                if img.thumbnail_path and thumb_target is None:
+                    counts["thumbnails_stale"] += 1
+                elif thumb_target is not None:
                     try:
                         await loop.run_in_executor(
-                            None, generate_thumbnail, img.file_path, img.thumbnail_path
+                            None, generate_thumbnail, img.file_path, thumb_target
                         )
                     except Exception as exc:
                         counts["thumbnails_stale"] += 1
@@ -1452,8 +1471,13 @@ async def batch_crop(body: BatchCropRequest, db: AsyncSession = Depends(get_db))
         from backend.database import AsyncSessionLocal
         from backend.workers.progress import broadcaster
         async with AsyncSessionLocal() as session:
-            result = await session.execute(select(Image.id).where(Image.id.in_(body.image_ids)))
-            image_ids = list(result.scalars().all())
+            # Chunked: a select-all-matching list can pass SQLite's bind limit.
+            # Deduplicated first: one IN collapsed a repeated id, separate chunks
+            # would each return the row, and the job would edit it twice.
+            image_ids = []
+            for chunk in chunked(list(dict.fromkeys(body.image_ids))):
+                result = await session.execute(select(Image.id).where(Image.id.in_(chunk)))
+                image_ids.extend(result.scalars().all())
             loop = asyncio.get_running_loop()
 
             # Seeded and incremented exactly like the resize twin above.
@@ -1518,10 +1542,13 @@ async def batch_crop(body: BatchCropRequest, db: AsyncSession = Depends(get_db))
                 touched.add(img.dataset_id)
 
                 # --- epilogue: best-effort, cannot undo the crop ---
-                if img.thumbnail_path:
+                thumb_target = _in_tree_thumbnail(img, "Batch crop thumbnail")
+                if img.thumbnail_path and thumb_target is None:
+                    counts["thumbnails_stale"] += 1
+                elif thumb_target is not None:
                     try:
                         await loop.run_in_executor(
-                            None, generate_thumbnail, img.file_path, img.thumbnail_path
+                            None, generate_thumbnail, img.file_path, thumb_target
                         )
                     except Exception as exc:
                         counts["thumbnails_stale"] += 1
@@ -1586,10 +1613,11 @@ async def resize(image_id: str, body: ImageResizeRequest, db: AsyncSession = Dep
 
     # --- epilogue: best-effort, cannot undo the resize ---
     # `expire_on_commit=False` (backend/database.py) keeps `img` readable here.
-    if img.thumbnail_path:
+    thumb_target = _in_tree_thumbnail(img, "Resize thumbnail")
+    if thumb_target is not None:
         try:
             await asyncio.get_running_loop().run_in_executor(
-                None, generate_thumbnail, img.file_path, img.thumbnail_path
+                None, generate_thumbnail, img.file_path, thumb_target
             )
         except Exception as exc:
             # A stale thumbnail is cosmetic; the resized image is committed and
@@ -1673,10 +1701,11 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
             await db.commit()
 
             # --- epilogue: best-effort, cannot undo the crop ---
-            if img.thumbnail_path:
+            thumb_target = _in_tree_thumbnail(img, "Crop thumbnail")
+            if thumb_target is not None:
                 try:
                     await loop.run_in_executor(
-                        None, generate_thumbnail, str(src_path), img.thumbnail_path
+                        None, generate_thumbnail, str(src_path), thumb_target
                     )
                 except Exception as exc:
                     # Cosmetic; the crop is committed and serves. No
@@ -1700,7 +1729,12 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
         replace_cfg = {
             "tmp_path": str(tmp_path),
             "dest_path": str(src_path),
-            "thumb_path": img.thumbnail_path or thumbnail_path_for(src_path),
+            # None when a stored thumbnail is refused: the job then counts the
+            # tile stale rather than write outside the datasets folder.
+            "thumb_path": (
+                _in_tree_thumbnail(img, "Crop+upscale thumbnail")
+                if img.thumbnail_path else thumbnail_path_for(src_path)
+            ),
             "image_id": img.id,
             "upscale_model": body.upscale_model,
             "upscale_target_width": body.upscale_target_width,
@@ -1818,20 +1852,23 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
                                 "Crop+upscale: could not remove superseded %s: %s",
                                 superseded.name, exc,
                             )
-                    try:
-                        await loop2.run_in_executor(
-                            None, generate_thumbnail, str(final_path), replace_cfg["thumb_path"]
-                        )
-                    except Exception as exc:
-                        # A stale thumbnail is cosmetic; the image is committed
-                        # and serves. Counted rather than merely logged so the
-                        # run can say so: TopBar reads this count and points at
-                        # Bulk Edit → Thumbnails.
-                        stale = 1
-                        logger.warning(
-                            "Crop+upscale: thumbnail for %s could not be regenerated: %s",
-                            final_path.name, exc,
-                        )
+                    if replace_cfg["thumb_path"] is None:
+                        stale = 1  # refused as out-of-tree when the cfg was built
+                    else:
+                        try:
+                            await loop2.run_in_executor(
+                                None, generate_thumbnail, str(final_path), replace_cfg["thumb_path"]
+                            )
+                        except Exception as exc:
+                            # A stale thumbnail is cosmetic; the image is committed
+                            # and serves. Counted rather than merely logged so the
+                            # run can say so: TopBar reads this count and points at
+                            # Bulk Edit → Thumbnails.
+                            stale = 1
+                            logger.warning(
+                                "Crop+upscale: thumbnail for %s could not be regenerated: %s",
+                                final_path.name, exc,
+                            )
                     await _refresh_stats_after_edit(session, updated.dataset_id)
 
                 # Written and committed **inside** this `async with`, and

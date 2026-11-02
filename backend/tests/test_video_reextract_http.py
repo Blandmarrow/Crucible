@@ -720,6 +720,30 @@ def test_a_frame_whose_file_resolves_outside_the_tree_is_refused(tmp_path):
     run(scenario())
 
 
+def test_a_thumbnail_path_outside_the_tree_is_not_written(tmp_path):
+    """`generate_thumbnail` mkdirs its parent, so the recut is a write primitive
+    of its own. The frame is still rewritten; only its tile is left stale."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            _video, frames = await _triage(env, ds["id"], long_edge=160)
+            target = frames[0]
+            outside_dir = tmp_path / "elsewhere" / "made-by-the-rewrite"
+            async with env.Session() as db:
+                row = await db.get(Image, target.id)
+                row.thumbnail_path = str(outside_dir / "frame.webp")
+                await db.commit()
+
+            _payload, jobs = await _reextract_and_wait(env, image_ids=[target.id])
+            assert jobs[0]["status"] == "completed", jobs
+            assert jobs[0]["result_data"]["rewritten"] == 1
+            assert jobs[0]["result_data"]["failed"] == 0
+            assert jobs[0]["result_data"]["thumbnails_stale"] == 1
+            assert not outside_dir.exists()
+
+    run(scenario())
+
+
 def test_a_run_whose_every_frame_is_refused_still_completes(tmp_path, monkeypatch):
     """A name collision is not a decode fault. It counts as `failed` — the user
     asked for that frame and did not get it — but it must not feed the

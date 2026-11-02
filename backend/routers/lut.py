@@ -14,7 +14,7 @@ from backend.licenses import copy_provenance
 from backend.models import BackgroundJob, Image
 from backend.ml.lut_processor import scan_lut_models, apply_lut_sync
 from backend.schemas.lut import LutModelInfo, LutRunRequest
-from backend.services.dataset_service import refresh_stats
+from backend.services.dataset_service import refresh_stats, refresh_stats_after_abort
 from backend.services.image_service import generate_thumbnail
 from backend.services.label_service import copy_labels
 from backend.services import version_service
@@ -34,8 +34,10 @@ async def list_lut_models():
 async def run_lut(body: LutRunRequest, db: AsyncSession = Depends(get_db)):
     if body.image_ids is not None:
         # Chunked: a select-all-matching list can pass SQLite's bind limit.
+        # Deduplicated first: one IN collapsed a repeated id, separate chunks
+        # would each return the row, and the job would edit it twice.
         image_ids = []
-        for chunk in chunked(body.image_ids):
+        for chunk in chunked(list(dict.fromkeys(body.image_ids))):
             result = await db.execute(select(Image.id).where(Image.id.in_(chunk)))
             image_ids.extend(r[0] for r in result.all())
     else:
@@ -63,6 +65,21 @@ async def run_lut(body: LutRunRequest, db: AsyncSession = Depends(get_db)):
     await db.commit()
 
     cfg = body.model_dump()
+
+    # Every dataset whose stored stats the run moved, refreshed after the loop.
+    # A set, not `body.dataset_id`: a selection can span datasets (PM-029). Out
+    # here so `_run_with_stats` can still refresh them when `_run` raises.
+    touched: set[str] = set()
+
+    async def _run_with_stats(job_id: str) -> None:
+        # The loop's tail refreshes on completion and on a soft cancel; a raise
+        # outside the per-image `try`, or a hard cancel, skips it with earlier
+        # images already committed.
+        try:
+            await _run(job_id)
+        except BaseException:
+            await refresh_stats_after_abort(touched, context="LUT")
+            raise
 
     async def _run(job_id: str) -> None:
         from backend.database import AsyncSessionLocal
@@ -95,9 +112,15 @@ async def run_lut(body: LutRunRequest, db: AsyncSession = Depends(get_db)):
             # be recut. The image itself is correct and committed — but the
             # gallery keeps rendering the old tile, and the realistic trigger (a
             # full volume, a read-only thumbnails/) hits every image in the run.
+            #
+            # `missing` is the vanished-row part of `skipped`, kept apart so a
+            # one-image run can say *which* skip it was: the rest of `skipped`
+            # is the replace-mode name collision below.
+            missing = len(image_ids) - len(images)
             counts = {
                 "processed": 0,
-                "skipped": len(image_ids) - len(images),
+                "skipped": missing,
+                "missing": missing,
                 "failed": 0,
                 "thumbnails_stale": 0,
             }
@@ -127,11 +150,6 @@ async def run_lut(body: LutRunRequest, db: AsyncSession = Depends(get_db)):
             # same reason it carries `copy_provenance` — "this image is a reject"
             # is a fact about the picture, not about the file.
             derivative_ids: dict[str, str] = {}
-
-            # Every dataset whose stored stats the run moved, refreshed after
-            # the loop. A set, not `body.dataset_id`: a selection can span
-            # datasets (PM-029).
-            touched: set[str] = set()
 
             cancelled = False
             for i, img in enumerate(images):
@@ -297,10 +315,22 @@ async def run_lut(body: LutRunRequest, db: AsyncSession = Depends(get_db)):
                             logger.warning(
                                 "LUT: could not remove superseded %s: %s", superseded.name, exc
                             )
-                    if img.thumbnail_path:
+                    # `generate_thumbnail` mkdirs its parent, so an out-of-tree
+                    # `thumbnail_path` is a write primitive: gated like
+                    # `file_path`, as inpaint does. A refusal is a stale tile.
+                    thumb_target = (
+                        contained_path(
+                            img.thumbnail_path, settings.datasets_dir,
+                            context="LUT thumbnail", ident=img.id,
+                        )
+                        if img.thumbnail_path else None
+                    )
+                    if img.thumbnail_path and thumb_target is None:
+                        counts["thumbnails_stale"] += 1
+                    elif thumb_target is not None:
                         try:
                             await loop.run_in_executor(
-                                None, generate_thumbnail, actual_out_path, img.thumbnail_path
+                                None, generate_thumbnail, actual_out_path, str(thumb_target)
                             )
                         except Exception as exc:
                             # A stale thumbnail is cosmetic; the graded image is
@@ -378,5 +408,5 @@ async def run_lut(body: LutRunRequest, db: AsyncSession = Depends(get_db)):
             if cancelled:
                 job_queue.raise_if_cancelled(job_id)
 
-    await job_queue.enqueue(job, _run)
+    await job_queue.enqueue(job, _run_with_stats)
     return {"job_id": job.id, "total": total}

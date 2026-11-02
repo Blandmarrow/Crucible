@@ -1757,10 +1757,19 @@ async def _run_reextraction(session: AsyncSession, job_id: str, cfg: dict) -> No
                         "video_reextract: could not remove superseded %s: %s",
                         superseded.name, exc,
                     )
-            if img.thumbnail_path:
+            # `generate_thumbnail` mkdirs its parent, so an out-of-tree
+            # `thumbnail_path` is a write primitive: gated like `file_path`
+            # above. A refusal is a stale tile, not a failed frame.
+            thumb_target = contained_path(
+                img.thumbnail_path, settings.datasets_dir,
+                context="video_reextract thumbnail", ident=img.id,
+            )
+            if img.thumbnail_path and thumb_target is None:
+                counts["thumbnails_stale"] += 1
+            elif thumb_target is not None:
                 try:
                     await loop.run_in_executor(
-                        None, generate_thumbnail, str(target), img.thumbnail_path
+                        None, generate_thumbnail, str(target), str(thumb_target)
                     )
                 except Exception as exc:
                     # A stale thumbnail is cosmetic and self-healing; counting the

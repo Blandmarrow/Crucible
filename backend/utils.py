@@ -34,6 +34,10 @@ def chunked(seq: Sequence[_T], size: int = 10_000) -> Iterator[Sequence[_T]]:
     would already exceed it, so a comment citing 999 is describing the wrong limit,
     not a tighter one. Empty ``seq`` yields nothing. Use this in every batched
     ``IN`` query; never re-inline a ``range(0, len(x), N)`` slice loop.
+
+    Deduplicate a client's id list before chunking it
+    (``chunked(list(dict.fromkeys(ids)))``): one ``IN`` collapsed a repeated id,
+    but two chunks holding it each return the row, and a job then edits it twice.
     """
     if size <= 0:
         raise ValueError("size must be positive")
@@ -234,7 +238,10 @@ def contained_path(
     crop, video re-extraction) use it as a **gate only**: once it passes they
     keep reading, writing and storing the row's own spelling. With
     `datasets_dir` behind a link the resolved path is the link's target, and
-    writing that into a row would leave it matching no other row's prefix.
+    writing that into a row would leave it matching no other row's prefix. They
+    gate the `thumbnail_path` they recut as well (`generate_thumbnail` mkdirs its
+    parent) and write the thumbnail to the resolved path, storing nothing; a
+    refused thumbnail is a stale tile, never a failed edit.
 
     Callers: `images.delete_image`/`batch_delete`/`bulk_delete_filtered`,
     `videos._delete_previous_frames`, `quality.resolve_duplicates`,

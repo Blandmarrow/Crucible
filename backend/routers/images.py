@@ -867,14 +867,26 @@ async def bulk_rating(body: BulkRatingRequest, db: AsyncSession = Depends(get_db
     No single-image PATCH twin: none exists for any other field except
     provenance, and the keyboard paths post a one-element id list.
     """
-    subq = _apply_bulk_filters(
-        select(Image.id, Image.dataset_id),
-        body.image_ids, body.subfolder, body.quality_flags,
-        include_flagged=body.include_flagged,
-    )
-    if not body.image_ids:
-        subq = subq.where(Image.dataset_id == body.dataset_id)
-    rows = (await db.execute(subq)).all()
+    if body.image_ids is not None:
+        # Chunked, because nothing bounds a request body's id count (B3). Deduped
+        # first, as `utils.chunked`'s docstring requires: one `IN` collapsed a
+        # repeated id for free, but split across two chunks it would come back
+        # twice and write two events for one decision.
+        rows = []
+        for batch in chunked(list(dict.fromkeys(body.image_ids))):
+            subq = _apply_bulk_filters(
+                select(Image.id, Image.dataset_id),
+                list(batch), body.subfolder, body.quality_flags,
+                include_flagged=body.include_flagged,
+            )
+            rows.extend((await db.execute(subq)).all())
+    else:
+        subq = _apply_bulk_filters(
+            select(Image.id, Image.dataset_id),
+            None, body.subfolder, body.quality_flags,
+            include_flagged=body.include_flagged,
+        ).where(Image.dataset_id == body.dataset_id)
+        rows = (await db.execute(subq)).all()
     touched = {r.dataset_id for r in rows} or {body.dataset_id}
     for ds_id in touched:
         ensure_not_busy(ds_id)

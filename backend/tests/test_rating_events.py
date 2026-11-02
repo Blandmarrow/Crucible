@@ -214,15 +214,43 @@ def test_events_chunk_with_the_id_list(tmp_path, monkeypatch):
             monkeypatch.setattr(images_router, "chunked", counting_chunked)
             r = await _rate(env, ds["id"], ids, 2)
             assert r.json() == {"updated": 7}
-            # One loop drives both statements, so seven ids at size 2 is four
-            # passes and not eight.
-            assert seen == [2, 2, 2, 1]
+            # Two loops: the scope read over the request's ids, then one loop
+            # driving both write statements — four passes each, not eight for
+            # the writes.
+            assert seen == [2, 2, 2, 1, 2, 2, 2, 1]
 
             events = await _events(env)
             assert len(events) == 7
             assert {e.image_id for e in events} == set(ids)
             # batch_size is the whole write, not the chunk it happened to land in.
             assert {e.batch_size for e in events} == {7}
+
+    run(scenario())
+
+
+def test_a_repeated_id_is_one_decision_across_chunks(tmp_path, monkeypatch):
+    """A client list naming an image twice is one rating and one event.
+
+    One unchunked `IN` collapsed the repeat for free. Chunked, the two copies can
+    land in different chunks and the scope read returns the row twice — two
+    events for one decision, which the self-agreement ceiling would count as a
+    re-rating that agreed with itself. The size-2 chunk puts the copies apart.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            ids = await _seed(env, ds["id"], n=3)
+
+            real_chunked = images_router.chunked
+            monkeypatch.setattr(
+                images_router, "chunked", lambda seq, size=2: real_chunked(seq, 2)
+            )
+            r = await _rate(env, ds["id"], [ids[0], ids[1], ids[0], ids[2]], 3)
+            assert r.json() == {"updated": 3}
+
+            events = await _events(env)
+            assert sorted(e.image_id for e in events) == sorted(ids)
+            assert {e.batch_size for e in events} == {3}
 
     run(scenario())
 

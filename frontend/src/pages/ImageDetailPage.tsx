@@ -285,6 +285,15 @@ export default function ImageDetailPage() {
   const [lutIntensity, setLutIntensity] = useState(100);
   const [lutReplace, setLutReplace] = useState(false);
   const [lutJobId, setLutJobId] = useState<string | null>(null);
+  // A generation per tool, bumped when a run starts and when the page moves to
+  // another image; `*RunGenRef` is the one the in-flight job started in. The
+  // job id is cleared before `fetchEditOutcome` returns, so by then a second run
+  // or another image may own the page: a stale outcome still toasts, but must
+  // not close the tool or navigate.
+  const upscaleGenRef = useRef(0);
+  const upscaleRunGenRef = useRef(0);
+  const lutGenRef = useRef(0);
+  const lutRunGenRef = useRef(0);
 
   const owNum = parseInt(outputWidth);
   const ohNum = parseInt(outputHeight);
@@ -663,6 +672,10 @@ export default function ImageDetailPage() {
     setPendingBox(null);
     setRefineTarget(null);
     setCropInitialArea(null);
+    // An upscale or LUT started on the previous image must not close the tool
+    // or navigate away from this one when it finishes.
+    upscaleGenRef.current += 1;
+    lutGenRef.current += 1;
   }, [imageId]);
 
   // The form dialogs this page opens over the image. All are scoped to
@@ -979,6 +992,7 @@ export default function ImageDetailPage() {
       qc.invalidateQueries({ queryKey: ["image", imageId] });
       const finishedId = upscaleJobId;
       const newImageId = upscaleJobProgress.image_id;
+      const runGen = upscaleRunGenRef.current;
       setUpscaleJobId(null);
       void fetchEditOutcome(finishedId).then((outcome) => {
         // Nothing processed: say why, and leave the tool open to try again.
@@ -988,6 +1002,11 @@ export default function ImageDetailPage() {
           } else {
             toast(`Upscaling skipped — ${nothingDoneReason(outcome)}`, { icon: "⚠️" });
           }
+          return;
+        }
+        // Another run or another image owns the page now: report, touch nothing.
+        if (upscaleGenRef.current !== runGen) {
+          toast.success("Upscaling complete");
           return;
         }
         setUpscaleMode(false);
@@ -1017,6 +1036,7 @@ export default function ImageDetailPage() {
       qc.invalidateQueries({ queryKey: ["image", imageId] });
       const finishedId = lutJobId;
       const newImageId = lutJobProgress.image_id;
+      const runGen = lutRunGenRef.current;
       setLutJobId(null);
       void fetchEditOutcome(finishedId).then((outcome) => {
         // Nothing processed: say why, and leave the tool open to try again.
@@ -1026,6 +1046,11 @@ export default function ImageDetailPage() {
           } else {
             toast(`LUT skipped — ${nothingDoneReason(outcome)}`, { icon: "⚠️" });
           }
+          return;
+        }
+        // Another run or another image owns the page now: report, touch nothing.
+        if (lutGenRef.current !== runGen) {
+          toast.success("LUT applied");
           return;
         }
         setLutMode(false);
@@ -1294,6 +1319,9 @@ export default function ImageDetailPage() {
         target_width: parseInt(upscaleTargetW) > 0 ? parseInt(upscaleTargetW) : null,
         target_height: parseInt(upscaleTargetH) > 0 ? parseInt(upscaleTargetH) : null,
       }),
+    onMutate: () => {
+      upscaleRunGenRef.current = ++upscaleGenRef.current;
+    },
     onSuccess: (data) => {
       if (data.job_id) {
         setUpscaleJobId(data.job_id);
@@ -1312,6 +1340,9 @@ export default function ImageDetailPage() {
         intensity: lutIntensity / 100,
         replace: lutReplace,
       }),
+    onMutate: () => {
+      lutRunGenRef.current = ++lutGenRef.current;
+    },
     onSuccess: (data) => {
       if (data.job_id) {
         setLutJobId(data.job_id);

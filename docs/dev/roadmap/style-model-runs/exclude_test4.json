@@ -1,0 +1,67 @@
+{
+ "_why": "Judged from the contact sheets only, before any embedding, on the pre-registered reasons: not one character, comic or text-heavy, edits or near-copies, looks AI-generated. No image was judged to look AI-generated.",
+ "_reasons": {
+  "jinri_shijie": "artist dropped: nearly every image is a mecha-series poster with large title typography (text-heavy); only 0009 would remain, below the floor of 20",
+  "premium_(prmsub) 0014": "near-copy of 0009",
+  "nashi_(shi_ra_nu_i) 0009, 0010": "character reference sheets with text panels (text-heavy)",
+  "apricotlemontea 0000": "a drawing pasted onto a photograph (edit)",
+  "edomura_niniko 0019, 0128, 0154": "not judged: 138-432 MP originals that Pillow refuses to open (screen.py error), so never screened"
+ },
+ "jinri_shijie": [
+  "0000",
+  "0001",
+  "0003",
+  "0004",
+  "0005",
+  "0006",
+  "0008",
+  "0009",
+  "0010",
+  "0011",
+  "0013",
+  "0014",
+  "0015",
+  "0017",
+  "0018",
+  "0019",
+  "0020",
+  "0022",
+  "0023",
+  "0024",
+  "0025",
+  "0027",
+  "0028",
+  "0029",
+  "0031",
+  "0032",
+  "0033",
+  "0034",
+  "0036",
+  "0037",
+  "0038",
+  "0039",
+  "0041",
+  "0042",
+  "0043",
+  "0045",
+  "0046",
+  "0047",
+  "0048",
+  "0050",
+  "0051",
+  "0052",
+  "0053",
+  "0055",
+  "0056"
+ ],
+ "premium_(prmsub)": [
+  "0014"
+ ],
+ "nashi_(shi_ra_nu_i)": [
+  "0009",
+  "0010"
+ ],
+ "apricotlemontea": [
+  "0000"
+ ]
+}

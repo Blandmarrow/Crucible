@@ -1,0 +1,14 @@
+extract_all.sh console output, 2026-11-03 (RTX 5090; times include model load). Verbatim.
+test4_clip rc=0 13s ·   verify: 204 compared · mean cos 1.000000 · min 1.000000 · max 1.000000
+test4_v2 rc=0 10s ·   verify: 204 compared · mean cos 0.999997 · min 0.999990 · max 0.999998
+test4_kalo rc=0 14s ·   RoPE: transformers periods round to the export's bf16 periods exactly   self-check: cos(same, same) 0.999950 · norms [1. 1.]
+test4_csd rc=0 15s ·   self-check: cos(same, same) 1.000000 · norms [1. 1.]
+test4_pe rc=0 22s ·   self-check: cos(same, same) 0.999999 · norms [1. 1.]
+test3_clip rc=0 13s ·   verify: 200 compared · mean cos 1.000000 · min 1.000000 · max 1.000000
+test3_v2 rc=0 10s ·   verify: 200 compared · mean cos 0.999996 · min 0.999990 · max 0.999998
+test3_kalo rc=0 14s ·   RoPE: transformers periods round to the export's bf16 periods exactly   self-check: cos(same, same) 0.999970 · norms [1. 1.]
+test3_csd rc=0 14s ·   self-check: cos(same, same) 0.999973 · norms [1. 1.]
+test3_pe rc=0 22s ·   self-check: cos(same, same) 0.999931 · norms [1. 1.]
+Added after the review (run separately, same harness):
+test4_clipq self-check: cos(same, same) 0.999925 · norms [1. 1.]
+test3_clipq self-check: cos(same, same) 1.000077 · norms [1. 1.]

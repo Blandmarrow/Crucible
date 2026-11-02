@@ -1,0 +1,79 @@
+=== test4 (primary): 7 styles ===
+setting                             mean  d base   won  apricotle edomura_n nashi_(sh     pappi premium_( suzuneiro   tetenka
+0.30 CLIP + v2 L7                 0.8320 +0.0000  0/7       0.786     0.975     0.877     0.818     0.636     0.927     0.805
+0.38 CLIP + v2 final (main)       0.7407 -0.0913  1/7       0.724     0.821     0.759     0.520     0.741     0.821     0.799
+K: kalo                           0.9991 +0.1671  7/7       0.999     1.000     1.000     0.996     0.999     1.000     1.000
+C: csd                            0.8884 +0.0563  7/7       0.840     0.992     0.890     0.856     0.737     0.941     0.961
+P: 0.30 PE + v2 L7                0.8502 +0.0181  5/7       0.801     0.956     0.903     0.779     0.741     0.936     0.835
+CLIP alone                        0.8209 -0.0112  1/7       0.780     0.964     0.860     0.793     0.708     0.894     0.748
+pe alone                          0.8446 +0.0125  3/7       0.796     0.937     0.887     0.776     0.823     0.908     0.785
+0.30 CLIP + kalo                  0.9992 +0.1672  7/7       0.999     1.000     1.000     0.997     0.999     1.000     1.000
+0.30 CLIP + csd                   0.8899 +0.0578  7/7       0.839     0.991     0.896     0.867     0.747     0.948     0.941
+kalo pooled 1536 (exploratory)    0.9966 +0.1646  7/7       0.998     1.000     0.999     0.989     0.991     1.000     1.000
+CLIP-QuickGELU alone (expl.)      0.8364 +0.0044  2/7       0.781     0.980     0.837     0.772     0.795     0.898     0.792
+0.30 CLIP-QuickGELU + v2 L7 (expl.)  0.8460 +0.0140  5/7       0.789     0.985     0.854     0.793     0.729     0.930     0.843
+
+paired wins over the baseline per style (of 20 draws); SD over draws
+  K: kalo                        apricotle:20 edomura_n:20 nashi_(sh:20 pappi:20 premium_(:20 suzuneiro:20 tetenka:20   SD 0.000-0.003
+  C: csd                         apricotle:20 edomura_n:20 nashi_(sh:18 pappi:20 premium_(:18 suzuneiro:16 tetenka:20   SD 0.005-0.054
+  P: 0.30 PE + v2 L7             apricotle:14 edomura_n: 0 nashi_(sh:16 pappi: 4 premium_(:20 suzuneiro:14 tetenka:17   SD 0.015-0.093
+  0.30 CLIP + kalo               apricotle:20 edomura_n:20 nashi_(sh:20 pappi:20 premium_(:20 suzuneiro:20 tetenka:20   SD 0.000-0.003
+  0.30 CLIP + csd                apricotle:20 edomura_n:20 nashi_(sh:19 pappi:20 premium_(:18 suzuneiro:19 tetenka:20   SD 0.005-0.051
+  pe alone                       apricotle:14 edomura_n: 0 nashi_(sh:12 pappi: 4 premium_(:20 suzuneiro: 4 tetenka: 6   SD 0.019-0.106
+
+=== test4 without edomura_niniko (sensitivity): 6 styles ===
+setting                             mean  d base   won  apricotle nashi_(sh     pappi premium_( suzuneiro   tetenka
+0.30 CLIP + v2 L7                 0.8038 +0.0000  0/6       0.769     0.869     0.828     0.652     0.907     0.799
+0.38 CLIP + v2 final (main)       0.7147 -0.0891  1/6       0.702     0.756     0.517     0.753     0.796     0.764
+K: kalo                           0.9988 +0.1950  6/6       0.999     1.000     0.995     0.999     1.000     1.000
+C: csd                            0.8627 +0.0589  5/6       0.814     0.866     0.870     0.740     0.928     0.958
+P: 0.30 PE + v2 L7                0.8161 +0.0124  5/6       0.784     0.888     0.772     0.715     0.922     0.816
+CLIP alone                        0.8001 -0.0036  1/6       0.766     0.859     0.815     0.735     0.877     0.748
+pe alone                          0.8166 +0.0128  3/6       0.782     0.879     0.776     0.800     0.894     0.767
+0.30 CLIP + kalo                  0.9989 +0.1951  6/6       0.999     1.000     0.996     0.998     1.000     1.000
+0.30 CLIP + csd                   0.8670 +0.0633  6/6       0.814     0.876     0.881     0.755     0.935     0.941
+kalo pooled 1536 (exploratory)    0.9946 +0.1908  6/6       0.997     0.997     0.984     0.989     1.000     1.000
+CLIP-QuickGELU alone (expl.)      0.8243 +0.0205  2/6       0.785     0.851     0.809     0.814     0.891     0.796
+0.30 CLIP-QuickGELU + v2 L7 (expl.)  0.8259 +0.0222  4/6       0.784     0.861     0.819     0.736     0.916     0.840
+
+paired wins over the baseline per style (of 20 draws); SD over draws
+  K: kalo                        apricotle:20 nashi_(sh:20 pappi:20 premium_(:20 suzuneiro:20 tetenka:20   SD 0.000-0.004
+  C: csd                         apricotle:19 nashi_(sh:11 pappi:17 premium_(:17 suzuneiro:17 tetenka:20   SD 0.015-0.069
+  P: 0.30 PE + v2 L7             apricotle:13 nashi_(sh:16 pappi: 2 premium_(:19 suzuneiro:16 tetenka:15   SD 0.032-0.087
+  0.30 CLIP + kalo               apricotle:20 nashi_(sh:20 pappi:20 premium_(:20 suzuneiro:20 tetenka:20   SD 0.000-0.004
+  0.30 CLIP + csd                apricotle:19 nashi_(sh:15 pappi:20 premium_(:20 suzuneiro:20 tetenka:20   SD 0.022-0.065
+  pe alone                       apricotle:14 nashi_(sh:14 pappi: 4 premium_(:20 suzuneiro: 5 tetenka: 4   SD 0.036-0.090
+
+=== test3 (secondary): 7 styles ===
+setting                             mean  d base   won      bauer   bilibin    clarke     dulac     goble   nielsen   rackham
+0.30 CLIP + v2 L7                 0.7909 +0.0000  0/7       0.680     0.624     0.932     0.704     0.855     0.932     0.810
+0.38 CLIP + v2 final (main)       0.7057 -0.0851  0/7       0.541     0.566     0.894     0.680     0.716     0.807     0.736
+K: kalo                           0.9063 +0.1154  7/7       0.866     0.839     0.933     0.883     0.957     0.980     0.886
+C: csd                            0.8417 +0.0508  5/7       0.822     0.733     0.882     0.771     0.887     0.914     0.883
+P: 0.30 PE + v2 L7                0.8202 +0.0293  4/7       0.761     0.769     0.939     0.707     0.837     0.929     0.800
+CLIP alone                        0.7766 -0.0143  2/7       0.643     0.639     0.919     0.653     0.834     0.929     0.819
+pe alone                          0.8095 +0.0186  2/7       0.749     0.785     0.931     0.667     0.807     0.924     0.804
+0.30 CLIP + kalo                  0.9050 +0.1141  7/7       0.848     0.838     0.945     0.862     0.957     0.987     0.898
+0.30 CLIP + csd                   0.8432 +0.0523  5/7       0.808     0.728     0.900     0.764     0.890     0.925     0.887
+kalo pooled 1536 (exploratory)    0.8699 +0.0791  6/7       0.761     0.753     0.917     0.838     0.953     0.974     0.895
+CLIP-QuickGELU alone (expl.)      0.7924 +0.0015  3/7       0.686     0.709     0.878     0.671     0.854     0.922     0.827
+0.30 CLIP-QuickGELU + v2 L7 (expl.)  0.8068 +0.0159  5/7       0.715     0.693     0.908     0.714     0.869     0.929     0.819
+
+paired wins over the baseline per style (of 20 draws); SD over draws
+  K: kalo                        bauer:20 bilibin:20 clarke:13 dulac:20 goble:20 nielsen:20 rackham:20   SD 0.012-0.056
+  C: csd                         bauer:16 bilibin:20 clarke: 0 dulac:19 goble:13 nielsen: 7 rackham:20   SD 0.025-0.098
+  P: 0.30 PE + v2 L7             bauer:18 bilibin:20 clarke:13 dulac:11 goble: 5 nielsen: 5 rackham: 6   SD 0.018-0.098
+  0.30 CLIP + kalo               bauer:20 bilibin:20 clarke:17 dulac:20 goble:20 nielsen:20 rackham:20   SD 0.010-0.060
+  0.30 CLIP + csd                bauer:17 bilibin:20 clarke: 1 dulac:19 goble:16 nielsen: 9 rackham:20   SD 0.023-0.092
+  pe alone                       bauer:17 bilibin:20 clarke: 9 dulac: 3 goble: 2 nielsen: 5 rackham: 9   SD 0.018-0.090
+
+=== verdicts (rule 1 on test4, rule 2 on test3) ===
+  K: kalo                rule1 pass (d +0.1671, won 7/7) · rule2 pass (d +0.1154) → PASS · without edomura rule1 pass
+  C: csd                 rule1 pass (d +0.0563, won 7/7) · rule2 pass (d +0.0508) → PASS · without edomura rule1 pass
+  P: 0.30 PE + v2 L7     rule1 fail (d +0.0181, won 5/7) · rule2 pass (d +0.0293) → FAIL · without edomura rule1 fail
+
+=== hypotheses (reported, not deciding) ===
+  H1 test4 K - C            +0.1107  (need >= +0.03)
+  H2 test3 C - CLIP alone   +0.0651  (need >= +0.03)
+  H3 pe - CLIP alone        test4 +0.0237 · test3 +0.0329  (need >= +0.03 on both)
+  H4 test4 blend - alone    kalo +0.0001 · csd +0.0015  (predicted < 0)

@@ -1,0 +1,10 @@
+positives uploaded after 2026-10-02; references from on or before it; 20 draws of 4
+
+style                  n post   kalo    csd   baseline (0.30 CLIP + v2 L7)
+apricotlemontea            16  0.987  0.754  0.669
+edomura_niniko              0   (too few)
+nashi_(shi_ra_nu_i)         5  1.000  0.984  0.976
+pappi                       0   (too few)
+premium_(prmsub)            0   (too few)
+suzuneiroekaki              3  1.000  0.941  0.912
+tetenka                     1   (too few)

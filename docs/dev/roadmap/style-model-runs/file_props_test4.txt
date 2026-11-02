@@ -1,0 +1,10 @@
+test4 file properties of the ORIGINALS, per artist (the imported files are all 1024x1024 JPEG q90)
+
+artist                  n   png  jpg webp  short side median (min-max)  upload years
+apricotlemontea        27     0   27    0   1447 (1050-2894)             {'2025': 4, '2026': 23}
+edomura_niniko         30    30    0    0   4600 (2000-8000)             {'2026': 30}
+nashi_(shi_ra_nu_i)    27     7   10   10   1512 (1075-3000)             {'2024': 3, '2026': 24}
+pappi                  30     8   22    0   1492 (1095-3008)             {'2026': 30}
+premium_(prmsub)       30     0   30    0   1400 (1226-2000)             {'2023': 2, '2024': 1, '2025': 2, '2026': 25}
+suzuneiroekaki         30     0   30    0   1448 (1448-2894)             {'2026': 30}
+tetenka                30     0   30    0   1442 (1111-2048)             {'2022': 1, '2025': 1, '2026': 28}

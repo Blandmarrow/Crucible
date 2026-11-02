@@ -1,0 +1,35 @@
+style_embed_offline.py --kalo-check output, 2026-11-03, verbatim (top 5 of 44,129 classes, softmax).
+
+1. Known artists (in Kaloscope's classes), recent Danbooru posts, run before any test4 embedding:
+kantoku_11582258.jpg                     murota_yuuhei 0.00 · cuteg 0.00 · kantoku 0.00 · gio_(maroon0924) 0.00 · utamaru_(konomix) 0.00
+kantoku_11736428.jpg                     kantoku 0.66 · hakuishi_aoi 0.00 · tousaki_shiina 0.00 · ryouka_(suzuya) 0.00 · kusakabe_rei 0.00
+mika_pikazo_12062090.jpg                 mika_pikazo 0.89 · kanyoko_(yuzukano_17) 0.00 · shinishi_chiho 0.00 · taki_tohko 0.00 · yakousei_a 0.00
+mika_pikazo_12067541.jpg                 mika_pikazo 0.90 · starshadowmagician 0.00 · atomicmrshmallw 0.00 · kanyoko_(yuzukano_17) 0.00 · asahina_(asahina_0428) 0.00
+ningen_mame_12142744.jpg                 mikaku 0.00 · vami 0.00 · shinia 0.00 · tenobe 0.00 · uosaasou 0.00
+rella_11470626.jpg                       cat_princess 0.02 · bobbbob 0.00 · par0llel 0.00 · shinia 0.00 · dinned 0.00
+rella_11470635.jpg                       fumi_(rdbm) 0.02 · kazari_tayu 0.02 · yonu_(yonurime) 0.01 · lobelia_(saclia) 0.01 · cat_princess 0.01
+tiv_10503656.jpg                         tiv 0.17 · usuke_(u_skeeep) 0.01 · honnryou_hanaru 0.00 · sonnambulo777 0.00 · hikashima_(shiofune) 0.00
+tiv_11325588.jpg                         gapamopa 0.02 · kiato 0.01 · terada_tera 0.01 · tiv 0.01 · suuroku 0.01
+
+2. test4 artists (not in its classes), 3 images each, run after the scoring:
+apricotlemontea_0001.jpg                 rco_as 0.08 · yoi0341 0.01 · caraku 0.00 · rabbithole_(qnzp113) 0.00 · minahoshi_taichi 0.00
+apricotlemontea_0011.jpg                 lmg7811 0.01 · rco_as 0.01 · caraku 0.00 · shuuichi_(gothics) 0.00 · zizhucan 0.00
+apricotlemontea_0021.jpg                 hanazora_satsuki 0.01 · kooan 0.00 · cang_se_ye_hua 0.00 · kibisake 0.00 · cyanaqua 0.00
+edomura_niniko_0000.jpg                  mikan_ame_(gumi) 0.00 · sasucchi95 0.00 · ishida_aya 0.00 · mohemohemincho 0.00 · maryquant 0.00
+edomura_niniko_0056.jpg                  satom 0.00 · nagomi_(_nagomi_) 0.00 · meiko_(nattu303) 0.00 · hotori_(sion) 0.00 · mokkyo_(motkyo) 0.00
+edomura_niniko_0109.jpg                  rinndouk 0.00 · aoshima 0.00 · uji_(966qrr) 0.00 · nishiwaki_yuuri 0.00 · seo_kouji 0.00
+nashi_(shi_ra_nu_i)_0000.jpg             inu3 0.01 · kuwahara_taiki 0.01 · chubb 0.00 · idass_(idass16) 0.00 · mathiamo13 0.00
+nashi_(shi_ra_nu_i)_0012.jpg             mei_mu 0.01 · hato_haru 0.00 · sateto_(user_knrf2332) 0.00 · momoi_shigeki 0.00 · rinndouk 0.00
+nashi_(shi_ra_nu_i)_0022.jpg             kraken_mikan 0.01 · puffphox 0.00 · tyazakura_sayu 0.00 · hayuk0 0.00 · hiro_0607 0.00
+pappi_0000.jpg                           nanonin 0.00 · kumabachi315 0.00 · shiloroshi 0.00 · mchi125 0.00 · deku_suke 0.00
+pappi_0016.jpg                           mitsuki_(micky_m1212) 0.00 · innosick 0.00 · molingxiang_chimangguo 0.00 · jfjf 0.00 · lenslans 0.00
+pappi_0033.jpg                           tone_haruma 0.01 · amik0824 0.00 · aburi-gatana 0.00 · karate_(karatedazey) 0.00 · noz_2to 0.00
+premium_(prmsub)_0000.jpg                shiontaso 0.01 · ji_mag_(artist) 0.00 · mizuki_maya 0.00 · inoriac 0.00 · horezai 0.00
+premium_(prmsub)_0020.jpg                shingetsu_(doru0222) 0.00 · shuri_(84k) 0.00 · irarei_(araisanblog) 0.00 · njaja_kanja 0.00 · repunit 0.00
+premium_(prmsub)_0039.jpg                sagawa_haruka 0.01 · nise_dorothia 0.00 · mistel_(sukebemistel) 0.00 · ohta_guk_hip 0.00 · buu_(buu02) 0.00
+suzuneiroekaki_0000.jpg                  take_(shokumu-taiman) 0.01 · kawamochi_(kawauti919) 0.01 · toriga_naku 0.00 · mukakin 0.00 · luizhtx 0.00
+suzuneiroekaki_0034.jpg                  aosora2823 0.04 · kurony_(sirony) 0.01 · boushi-ya 0.00 · mitorizu_02 0.00 · echieichi 0.00
+suzuneiroekaki_0069.jpg                  qingchen_(694757286) 0.00 · hachiko_(kota091986) 0.00 · aimai_(luckyfive) 0.00 · mitorizu_02 0.00 · jamesrt 0.00
+tetenka_0000.jpg                         saitou_naoki 0.02 · himurohiromu 0.01 · bongnom 0.01 · newbear 0.00 · custom_(cus-tom) 0.00
+tetenka_0067.jpg                         caraku 0.00 · pekeko_(pepekekeko) 0.00 · uni_gyoza 0.00 · shiromaru_illust 0.00 · utakapen 0.00
+tetenka_0134.jpg                         coco_irasuto 0.00 · nekopote 0.00 · enjoy_mix 0.00 · kutata 0.00 · uki_(room_405) 0.00

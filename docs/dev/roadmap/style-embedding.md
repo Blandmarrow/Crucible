@@ -717,6 +717,16 @@ paper tone and print texture split with the label, and every model gets that cue
 The centre-crop removes part of each composition. Plates per artist were 25–30, and the
 styles are one era of book illustration.
 
+## The style-model run — 2026-11-03, pre-registered: Kaloscope and CSD pass
+
+Three models built for style or newer than CLIP, tested against `0.30 CLIP + v2 L7` on a new
+anime set (`test4`: seven Danbooru artists that the anime model never trained on, 204
+images) and on `test3`. **Kaloscope 3.0** (a DINOv3-B fine-tune for Danbooru artist
+retrieval) scored 0.999 against 0.832 on `test4` and 0.906 against 0.791 on `test3`. **CSD**
+scored 0.888 and 0.842. **PE-Core** tied. The layer-7 baseline beat `main` by +0.09 on both
+sets again. The record, the leakage checks and what adoption would need are in
+`style-model-runs/README.md`, next to this file.
+
 ## Proposed stages
 
 Deliberately ordered so the cheapest, least committal win comes first. **Stages 1 and 2a

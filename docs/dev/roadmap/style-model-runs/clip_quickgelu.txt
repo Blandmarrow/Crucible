@@ -1,0 +1,2 @@
+test4: cosine between GELU-built and QuickGELU-built CLIP, same image: mean 0.9278 min 0.8451
+test3: cosine between GELU-built and QuickGELU-built CLIP, same image: mean 0.9167 min 0.8364

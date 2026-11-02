@@ -89,6 +89,12 @@ Still open:
     one edited, and the stale-outcome branch item 6 added skips `injectNavId` for a copy-mode
     result, so the new image is missing from the arrows until the gallery refetches. Stage 6
     replaces both effects, so it is folded in there, as item 7 is.
+13. **The detail page's toolbar overflows under the right-hand panel.** With the upscale or LUT
+    tool open, Run sits beneath the info panel at a 1280px viewport, and at 1700px once the
+    gallery arrows are in the toolbar too, so it cannot be clicked;
+    `frontend/e2e/detail-edit-outcome.spec.ts` sets a 1920px viewport to get past it. Seen only
+    in Playwright's Chromium so far, so confirm by hand first. Stage 6 moves those controls into
+    forms, so it is folded in there.
 
 ## Stages 2 to 4: no port conflict
 

@@ -31,7 +31,7 @@ restates its stages.
    `backend/routers/images.py`'s `backend.utils` import line gained `OUT_OF_TREE_MSG` in M8,
    and `feat/scoring-arc` changes that line too, so keep the name when resolving it.
 4. M8's follow-ups 9, 10 and 11 can go any time, beside M4 or after it. Batch move and copy, in
-   item 9, must wait for M4. Items 7, 8 and 12 wait for stages 6 and 3, which replace that code.
+   item 9, must wait for M4. Items 7, 8, 12 and 13 wait for stages 6 and 3, which replace that code.
 5. Two docs seams stay queued in [pending-splits.md](pending-splits.md) with nothing over
    budget: `README.md`'s § Features deletion (deferred when its budget went to 4,000) and
    `docs/scoring.md`'s residual seam. Either is picked up by the next session that appends
@@ -132,8 +132,8 @@ Detail, hazards and what to leave alone:
   `fix/m8-stage1-followups`. Items 7 and 8 there are folded into stages 6 and 3.
 - [ ] Stage 1 follow-ups 9 (the rest of the unchunked `IN` class), 10 (batch resize, crop and
   detection crop's stats on a partway failure) and 11 (two hard-cancel edges in the stats
-  wrapper). No order between them; item 9's batch move and copy need M4 merged. Item 12 is
-  folded into stage 6, beside item 7.
+  wrapper). No order between them; item 9's batch move and copy need M4 merged. Items 12 and
+  13 are folded into stage 6, beside item 7.
 - [ ] Stage 2: one shared helper for a job's image scope.
 - [ ] Stage 3: a shared job loop for upscale and LUT. Needs stage 2.
 - [ ] Stage 4: `DatasetsPage` dialogs into components.

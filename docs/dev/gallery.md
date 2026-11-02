@@ -15,7 +15,7 @@ filter sends is `docs/dev/image-filters.md`.
 | [selection.md](gallery/selection.md) | `ImageCard`'s `onSelect`, `GalleryCheckbox` and the overlay z-order, the shift-click range model, select-all-matching-filters, the count key and pagination |
 | [subfolders.md](gallery/subfolders.md) | The subfolder sidebar: the `(root)` row, create/delete/move/copy, the upload target, expand/collapse and its persistence, the row context menu |
 | [subfolder-rename.md](gallery/subfolder-rename.md) | `PATCH /datasets/{id}/subfolders`, `repath_subfolder`, `repathSubfolderMutation`'s path-keyed bookkeeping, the inline rename, `MoveSubfolderModal` |
-| [filters.md](gallery/filters.md) | The toolbar's two flex groups, every filter control and what it persists, `SORT_OPTIONS` and the server's sort allowlist |
+| [filters.md](gallery/filters.md) | The toolbar's two flex groups, every filter control (the rating chip row included) and what it persists, `SORT_OPTIONS` and the server's sort allowlist |
 | [drag-drop.md](gallery/drag-drop.md) | The `DndContext`, droppable-id namespaces and collision detection, dragging cards and folders onto subfolder rows, manual `sort_order` ordering |
 | [state.md](gallery/state.md) | The `gallery-state-*` blob, the debounce rules (PM-012), the save effect and unmount flush, **Reset filters** |
 | [nav.md](gallery/nav.md) | The `gallery-nav-*` context the detail view's arrows walk, `injectNavId`, `atEnd`, the live refresh and live total |

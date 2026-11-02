@@ -17,6 +17,7 @@ The order images travel through the app:
 | 2 | Caption with local ML models or any OpenAI-compatible API | [AI Captioning](captioning.md) |
 | 2 | Mark images with a shared vocabulary of labels — a second axis alongside subfolders | [Labels](labels.md) |
 | 3 | Score for aesthetics, technical quality, watermarks and NSFW | [Quality Scoring](scoring.md) |
+| 3 | Rate images Keep/Cut from the keyboard, then filter, sort and export by it | [Keep/Cut Rating](rating.md) |
 | 3 | Compare images against reference images for style, read as a percentile | [Style Similarity](style-similarity.md) |
 | 3 | Review and clear the duplicate groups a scoring run found | [Duplicate Resolution](duplicates.md) |
 | 4 | Detect and segment objects; crop to subject; locate watermarks | [Object Detection](detection.md) |
@@ -31,7 +32,8 @@ The order images travel through the app:
 | Sidebar item | Documented in |
 |---|---|
 | Datasets | [datasets.md](datasets.md) |
-| Gallery, image detail | [gallery.md](gallery.md) · [subfolders.md](subfolders.md) |
+| Gallery, image detail | [gallery.md](gallery.md) · [subfolders.md](subfolders.md) · [rating.md](rating.md) |
+| Aesthetic Rating | [rating.md](rating.md#the-aesthetic-rating-page) |
 | Videos strip, video detail | [video.md](video.md) · [video-extraction.md](video-extraction.md) · [video-reextract.md](video-reextract.md) |
 | Captioning | [captioning.md](captioning.md) |
 | Score images | [scoring.md](scoring.md) · [style-similarity.md](style-similarity.md) · [duplicates.md](duplicates.md) |

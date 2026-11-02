@@ -1,11 +1,13 @@
 # Rating plan — aesthetic rating, the model picker, the learned head
 
-Scoped in design sessions on 2026-08-01 and 2026-08-02, not yet implemented. The 2026-08-02
-session collapsed what were three separate threads (V2.5, the marker layer, the learned
-style head) into **one feature shipping in three stages**, and added a manual rating column
-that was in none of them. One thread remains independent: DINOv3 (§5). The token UI (§6)
-**shipped on 2026-08-02** and its section is deleted per the lifecycle rule below; its
-durable rationale now lives in `docs/dev/settings.md` § API Keys tab.
+Scoped in design sessions on 2026-08-01 and 2026-08-02. The 2026-08-02 session collapsed
+what were three separate threads (V2.5, the marker layer, the learned style head) into **one
+feature shipping in three stages**, and added a manual rating column that was in none of
+them. One thread remains independent: DINOv3 (§5). The token UI (§6) **shipped on
+2026-08-02**, and the rating column (§1) and head phase 0 shipped on the unmerged
+`feat/scoring-arc` on 2026-08-03 and reached `main` with M4's port on 2026-11-02. Their
+sections are deleted per the lifecycle rule below; the durable rationale lives in
+`docs/dev/settings.md` § API Keys tab, `docs/dev/rating.md` and `docs/dev/rating-metrics.md`.
 
 **Lifecycle**: this file is transient, like the video arc's `roadmap.md` (retired in
 `dd53b13`) and the detection/SAM 3 roadmap (retired in `f31a9dc`). When a stage lands, move
@@ -16,8 +18,9 @@ repo-wide sequencing roadmap, which points here for this feature's build order. 
 is registered in `TRANSIENT_DIRS` in `scripts/check_docs.py`: it needs no Documentation Map
 row and carries no word budget, but its links and paths are checked.
 
-Nothing here is decided by the code yet. Read `CLAUDE.md` and the topic files named per
-stage before implementing, and prefer the repo's conventions over the sketches below.
+What remains is the learned head (§3, phases 1+), which is conditional on phase 0's
+numbers, and DINOv3 (§5). Read `CLAUDE.md` and the topic files named per stage before
+implementing, and prefer the repo's conventions over the sketches below.
 
 ## What this feature is
 
@@ -40,8 +43,9 @@ of work as §N, and those numbers never move; the build order is this table alon
 |---|---|---|---|
 | ✓ | **Token UI** (§6) | — | **Shipped 2026-08-02.** Settings → API Keys. |
 | ✓ | **Aesthetic model picker** (§2) | — | **Shipped 2026-08-02.** `Image.aesthetic_model` + Aesthetic Predictor V2.5 + the two consumer guards. Now documented in `docs/dev/quality/aesthetic-model.md`; this section is deleted per this file's own lifecycle rule. |
-| 3 | **Rating column** (§1) | — | Ships alone. Useful without any ML. |
-| 4 | **The learned head** (§3) | §1, §2 | The expensive one. |
+| ✓ | **Rating column** (§1) | — | **Shipped 2026-08-03.** `Image.aesthetic_rating` + `rating_stale`, the gallery/export/stats/restore surfaces. Now documented in `docs/dev/rating.md`; this section is deleted per this file's own lifecycle rule. |
+| ✓ | **Head phase 0 — the measurement gate** (§3) | §1, §2 | **Shipped 2026-08-03.** `image_rating_events`, `backend/ml/rating_metrics.py`, `GET /rating/summary` + `/rating/scorer-agreement`, and the Aesthetic Rating page. Documented in `docs/dev/rating-metrics.md` § The event log and § Phase 0 metrics. It builds none of §3 — it measures whether §3 is worth building. |
+| 3 | **The learned head** (§3, phases 1+) | Phase 0's numbers | The expensive one, and now **conditional**: if ρ for LAION or V2.5 already sits near its own `spearman_ceiling`, §3 is answered and the remaining phases do not get built. The self-agreement rate is a separate caveat on that reading, not a term in it — see § The gate. |
 | — | DINOv3 (§5) | §2 | Lowest priority, still deferred. (§6, its other dependency, has shipped.) |
 
 **§6 led on a code reason, not just its size**, and that reason is now settled: it removed
@@ -54,10 +58,10 @@ relies on the ambient `HF_TOKEN` that `services/secrets_service.py::sync_env` ma
 singleton is **not** frozen — it is a plain mutable pydantic instance. Nothing may assign to
 it, but that is a chosen invariant, not something the type enforces.)
 
-**§1 no longer leads, but its own argument is unchanged**: it is a hard prerequisite for §3
-*and* stands alone, so if it turns out nobody rates anything, that is discovered for the
-price of a column rather than after building a trainer. Nothing in §2 touched the rating
-column, so moving it third cost it nothing.
+**§1's argument held all the way through**: it was a hard prerequisite for §3 *and* stood
+alone, so if it turns out nobody rates anything, that is discovered for the price of a
+column rather than after building a trainer. §3 now has the label column it needs; whether
+it is worth building is a question the ratings themselves answer.
 
 ## Decisions overturned on 2026-08-02
 
@@ -106,7 +110,7 @@ Cheap to get wrong twice, so recorded explicitly.
   guarded against turned out to be **latent rather than live**: the real V2.5 head does use
   that exact filename, but the `aesthetic-predictor-v2-5` package fetches it through
   `torch.hub.load_state_dict_from_url`, so it lands in the torch hub cache and never in
-  `models_cache_dir`. See `docs/dev/model-registry.md` § Aesthetic Predictor V2.5.
+  `models_cache_dir`. See `docs/dev/ml-models.md`.
 - **`QualityPage` already persists a global, cross-dataset "workflow" blob**
   (`QUALITY_WORKFLOW_KEY`, whose own comment says "global, shared across all datasets"),
   holding `embeddingType` and `dinoLayer` — mutually exclusive *model* choices made per run
@@ -165,59 +169,6 @@ Cheap to get wrong twice, so recorded explicitly.
   of this file asserted. Per *decision* the two are comparable. The real argument for tier
   sort is information per decision, not speed — see § Why tier sort.
 
-## 1. The rating column — third
-
-Read `docs/dev/gallery.md`, `docs/dev/image-filters.md`, `docs/dev/bulk-ops.md`,
-`docs/dev/export.md` and `docs/dev/versioning/mirrors.md`.
-
-**Decided — four buckets, decision language.** `Keep / Probably / Probably not / Cut`,
-stored as a nullable small int 1–4 in `Image.aesthetic_rating`.
-
-- **Four, not five**, deliberately: an odd number gives a middle bucket, and a middle bucket
-  is where everything lands. No neutral option forces a call to one side.
-- **Decision language, not quality language** ("Keep", not "Great"). It is far easier to
-  answer consistently because it is a call you already make. The cost is that it is
-  *contextual* — "Keep" in a weak dataset is worse than "Cut" in a strong one — which is
-  what the anchor set in §3 exists to absorb. If §3 is never built, that cost never
-  materialises, because a rating you read yourself needs no cross-dataset calibration.
-
-**Decided — it is authored, mutable data.** Therefore mirrored on `VersionImageState` *and*
-present in both `_DIFF_COLS` and `_DIFF_COMPARE_FIELDS`, the same treatment `scores_stale`
-gets and for the same reason. `test_video_lineage_mirrors.py` fails CI without the mirror.
-
-**Decided — `rating_stale` is its own bit, never `scores_stale`.** They have different clear
-predicates: `scores_stale` is cleared by a quality run that actually re-measured, whereas a
-stale *rating* can only be cleared by a human looking at the image again — no job can do it.
-Sharing the bit lets a routine re-score mark stale ratings trustworthy, which then feeds
-labels about deleted pixels into §3's fit. `utils.record_in_place` stays the single writer
-of both, so the existing invariant in `CLAUDE.md` is extended, not broken.
-
-**Decided — travel rules.** The rating travels on cross-dataset move and copy (moving a file
-does not change your opinion of it, so it behaves like a caption). Derivatives — crop,
-upscale, LUT, crop-to-detection — do **not** inherit it: a derivative has different pixels
-and deserves its own call, and inheriting would put an unjudged image into §3's training set
-under the user's name. This makes `aesthetic_rating` a new entry in the field-by-field
-rebuild paths that `CLAUDE.md` § Key invariants describes, with the opposite disposition to
-`source_video_id`.
-
-Sites in this stage:
-
-| Site | What lands |
-|---|---|
-| `Image.aesthetic_rating`, `Image.rating_stale` | Migration, model, `VersionImageState` mirror, both diff lists |
-| Gallery | Card badge, filter chips, sort option, keyboard <kbd>1</kbd>–<kbd>4</kbd> on the selection |
-| `SelectionToolbar` | Bulk assign across a selection and across select-all-matching-filters |
-| `ImageFilterParams` | Filter param shared by `GET /images/`, `/count` and `/ids` |
-| Export | Include **and** exclude by rating |
-| Stats | Rating distribution and the unrated count |
-
-**The include-filter hazard is real and was accepted knowingly.** "Only Keep" over a dataset
-where 214 of 1,970 images are rated exports 214 images and reports success — nothing errors,
-and the export is 89% short of what was meant. This is precisely the failure the earlier
-"never a filter" rule existed to prevent. The mitigation is that the filter must state its
-own population against the unrated count *before* it runs ("214 match · 1,715 unrated and
-therefore excluded"), not that the filter is withheld.
-
 ## 3. The learned head — last
 
 Source: a handoff spec supplied by the user (Bradley-Terry linear head over frozen
@@ -226,14 +177,18 @@ embeddings). Read `docs/dev/quality/style-similarity.md`, `docs/dev/quality/scor
 
 ### Where it lives
 
-A new **top-level** routed page, "Aesthetic Rating", beside Datasets and File Browser — not
-a per-dataset one, because a head trained from labels pooled across datasets cannot live
-under a single dataset. The per-dataset half is the picker §2 shipped (see
-`docs/dev/quality/aesthetic-model.md`), a panel on the existing
-Score images page. One new routed page, not two; note the *seventh* site in
-`docs/dev/panes-routing.md`'s checklist, since this page is pickable from `PaneHeader`.
+**Shipped 2026-08-03 with Phase 0.** The page is a **top-level** route, "Aesthetic Rating",
+beside Datasets and File Browser — not a per-dataset one, because a head trained from labels
+pooled across datasets cannot live under a single dataset. The per-dataset half is the
+picker §2 shipped (see `docs/dev/quality/aesthetic-model.md`), a panel on the
+existing Score images page. One new routed page, not two; it satisfies all **eight** sites in
+`docs/dev/panes-routing.md`'s checklist, `PaneHeader`'s `PAGE_OPTIONS` among them — that
+list read "six" until this page was built, and the two it omitted are exactly the two a
+pickable, sidebar-reachable page needs.
 
-The page exists from §1 (rating queue, history, bulk work) and grows a **Train** tab in §3.
+**§1 shipped without it.** Scope was confirmed as existing surfaces only — the gallery's
+keys and chips, the selection toolbar, `ImageDetailPage` — so the page arrived with Phase 0
+rather than with §1, already carrying a rated corpus rather than an empty queue.
 
 ### Why tier sort
 
@@ -301,9 +256,14 @@ meaning.
 - **LAION's opinion is hidden while judging and revealed after committing**, so it cannot
   anchor the rating. The running disagreement figure is the first honest signal about
   whether a personal head is worth training at all.
-- **Do not add scikit-learn.** Implement PCA + Bradley-Terry in numpy/scipy (both already
-  declared). This also puts the head in the same CI-testable, torch-free class as
-  `similarity_scorer.py`.
+- **Do not add scikit-learn.** Implement PCA + Bradley-Terry in **numpy only**. An earlier
+  version of this line said "numpy/scipy (both already declared)", and scipy is *not*
+  declared: `backend/requirements-ci.txt` carries `numpy>=1.26` and no scipy. Scipy is
+  nonetheless installed on the runner, because `imagehash>=4.3` requires it — which is a
+  fact about a pHash library's dependency list rather than a commitment, and not something
+  a fitted head should rest on. Phase 0's `rating_metrics.py` hand-rolls Spearman for
+  exactly that reason and cross-checks against scipy behind an `importorskip`. Numpy-only
+  also puts the head in the same CI-testable, torch-free class as `similarity_scorer.py`.
 - **The DINOv2 here is `dinov2-base` (768-dim)**, not `dinov2-large` (1024). The spec's
   dimension arithmetic and its overfitting argument should be restated against 768.
 - **Preference data keys on `Image.id`** with `ON DELETE CASCADE`. Keying on `phash` would
@@ -321,8 +281,18 @@ Four tiles, three of which are nearly free:
 - **Your own ceiling** — re-show ~40 already-rated images and count how often the same
   answer comes back. Contradict yourself 12.5% of the time and a head at 84% is *at
   ceiling*; more rating buys nothing. Without this tile, 84% reads as "needs work" forever.
+  **Phase 0 shipped the counting half** — `image_rating_events` plus `self_agreement`'s
+  consecutive-pair statistic, its singleton/bulk split and its three named biases — and
+  deliberately **not** the re-show. What exists today is computed over re-ratings the user
+  *chose* to make with the previous answer visible, which is a rough floor rather than a
+  ceiling; the page says so unconditionally. The system-selected, previous-answer-hidden
+  re-show is Phase 2, and it is what turns the number real.
 - **LAION on the same images** — the only honest answer to *is this better than what I had*.
-  If the head fails to beat it meaningfully, stop.
+  If the head fails to beat it meaningfully, stop. **Phase 0 shipped this whole tile**:
+  `GET /rating/scorer-agreement` already reports ρ, its ceiling, the four tier means and the
+  three per-boundary AUCs for every `aesthetic_model` marker in the corpus, so the
+  comparison exists before the head does — which is what makes it a gate rather than a
+  post-hoc defence.
 - **Luminance correlation** — `luminance_score` already exists, so this is a two-column SQL
   query with no decoding. A head that has quietly learned "brighter is better" shows up here
   and nowhere else.
@@ -356,16 +326,42 @@ DINOv2-conditional per-layer row in `QualityPage` plus `frontend/e2e/quality.spe
 
 ## Still open
 
-**Nothing here blocks §1.** What used to lead this list — where the aesthetic model
-selection lives — was settled as a per-run choice with a sticky default and shipped with
-§2; it is now documented behaviour in `docs/dev/quality/aesthetic-model.md`, not a question.
+Everything remaining is a §3 question. What used to lead this list — where the aesthetic
+model selection lives — was settled as a per-run choice with a sticky default and shipped
+with §2; it is now documented behaviour in `docs/dev/quality/aesthetic-model.md`, not a question.
 
-- How large is the anchor set beyond the ten-per-bucket floor, and does the schema commit to
-  per-user or per-install? Larger is more stable and costs re-rating it every session.
-- Restoring an old snapshot reinstates ratings as of that snapshot, overwriting any given
-  since. Correct, and surprising the first time — decide whether the restore modal says so.
-- Whether the head's uncertainty sampling should weight the boundary the user acts on
-  (Probably-not / Cut) above the others.
+Both of the questions that stood here were answered on 2026-08-03 alongside Phase 0, and are
+recorded rather than deleted because each was decided against its stated alternative:
+
+- **The anchor set is per-install**, and the schema commits to nothing else. There is no user
+  concept anywhere in it — no `User` model, no `user_id`, no auth — so "per-user" was never a
+  real option to weigh. Its size beyond the ten-per-bucket floor is a Phase 1 question and
+  does not block anything.
+- **Uncertainty sampling stays uniform in v1**, with per-boundary accuracy reported instead
+  (`ordering_auc`, one figure per adjacent tier pair). The parenthetical here named
+  Probably-not/Cut as "the boundary the user acts on" — but the export filters that shipped
+  with §1 act on **both** ends: `rating_min` ≥ 3 or 4 at the top, and `exclude_ratings`
+  naming Cut at the bottom, which is precisely the 1-vs-2 boundary. So no boundary is free,
+  and uniform sampling stands on different ground than the earlier note claimed: with three
+  boundaries and no evidence yet about which one a given install's decisions concentrate on,
+  weighting any of them is a guess. `ordering_auc` reports all three so the evidence can
+  arrive before the weighting does.
+
+### The gate
+
+What remains open is a single **gate**, and it is the point of Phase 0: if ρ for LAION or
+V2.5 already sits near its own **`spearman_ceiling`**, §3 is answered and phases 1+ do not
+get built. The ceiling is the right comparator because it is the only quantity on ρ's scale
+— a bound the four-tier tie structure imposes on *any* scorer, so "0.31 of a possible 0.97"
+is a fraction of the achievable and 0.31 alone is not.
+
+The **self-agreement rate is not a term in that comparison** and never was: it is a
+proportion of agreeing re-rating pairs, and nothing maps a proportion of pairs onto a rank
+correlation's scale. It qualifies the gate from the side — a scorer measured against labels
+the user reproduces 60% of the time is measured against noise, so a low ρ says as much about
+the corpus as about the scorer. Read the two apart, as
+`docs/dev/rating-metrics.md` § Phase 0 metrics already presents them. Nothing further is decidable
+until the corpus has re-ratings in it.
 
 ## Traps worth restating
 
@@ -373,8 +369,9 @@ selection lives — was settled as a per-run choice with a sticky default and sh
 - A masked secret echoed back as its own new value (§6, shipped) — closed structurally
   rather than by convention: the read shape nests (`{masked, source}`) while the write shape
   is plain strings, so echoing a GET into a PATCH is a **422**, not a silent save.
-- **Reusing `scores_stale` for ratings** (§1) — different clear predicates, so a routine
-  re-score would mark stale ratings trustworthy.
+- **Reusing `scores_stale` for ratings** (§1, shipped) — different clear predicates, so a
+  routine re-score would mark stale ratings trustworthy. Closed by giving the rating its own
+  `rating_stale` bit; see `docs/dev/rating.md` § Two staleness bits, not one.
 - **Synthetic pairs counted at face value** (§3) — 800 tier decisions yield ~128,000 pairs
   carrying 800 decisions' worth of information. Fit unweighted and the standard errors shrink
   by roughly 13×: the accuracy tile looks superb and the ordering is confidently wrong.
@@ -383,6 +380,14 @@ selection lives — was settled as a per-run choice with a sticky default and sh
   scores only up to an additive constant per connected component. Rate dataset A on Monday
   and B on Tuesday with no shared images and their two means compare nothing at all. The
   interleaved anchors are what make a cross-dataset number exist.
+- **A threshold branch tested against a corpus the test does not own** (§3 Phase 0, shipped)
+  — the Aesthetic Rating page has no dataset scope, so the whole shared e2e database is its
+  corpus. A spec asserting the below-floor branch ("not enough re-ratings yet") keeps passing
+  as the suite grows, right up until the corpus crosses the floor, at which point it quietly
+  begins exercising the *other* branch and stops testing the refusal it was written for.
+  Closed with an explicit `expect(pairs).toBeLessThan(10)`; see `docs/dev/rating-metrics.md`
+  § Testing the page: no dataset scope means no absolute counts. Phase 2's labeling queue
+  lands on this same page and inherits the hazard.
 - **A predicted rating mistaken for an authored one** (§1, §3) — the visual distinction is
   the only thing separating the training set from the model's own output. Any surface that
   loses it (a bulk operation, an export manifest, a stats query counting both) closes a

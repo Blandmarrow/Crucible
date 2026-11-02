@@ -104,6 +104,8 @@ the next one is about to change, and overwrite its optimistic flip. For the same
 reason the handler cancels any `["image", imageId]` refetch already in flight
 before it flips the chip.
 
+**A rating key on the same character loses to the label.** The detail page's rating handler returns early when `labelHotkeysEnabled` and `byHotkey` has the key, so one press never both toggles a label and writes a rating. Settings warns on both sides (`HotkeyCaptureButton`'s non-blocking `warnOf`, passed by `LabelsPanel` and `RatingKeysPanel`) rather than refusing, so the order the keys were bound in does not decide the outcome. The modal guard both effects use is the page's one hoisted `anyModalOpen`. See `docs/dev/rating.md` § The keys.
+
 **Add-or-remove is read from the query cache at keypress time**, never from a value
 the effect closed over. The effect re-subscribes only after React commits, so a
 key pressed just after a refetch rendered toggled against the *previous* label

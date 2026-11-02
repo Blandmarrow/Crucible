@@ -19,19 +19,17 @@ restates its stages.
 
 ## Next session (updated 2026-11-02)
 
-1. M5's five stages merged on 2026-10-30 as PR #101. Only its cleanup is open, and that waits
-   a release. See [server-state-plan/README.md](server-state-plan/README.md) for what was
-   checked by hand.
-2. M8's stage 1 follow-ups 1–6 are done on `fix/m8-stage1-followups`: merge its PR before
-   cutting M4's port branch. Stage 1 itself merged as PR #103.
-3. **Next: M4**, as a port and not a fresh build: the rating column (§1) already exists on
-   `feat/scoring-arc`. Follow § Porting the unmerged branches. Read the plan as it stands on
-   that branch (docs/dev/roadmap/roadmap.md there), because `main`'s
-   [rating-plan/README.md](rating-plan/README.md) predates the work and still calls §1 unbuilt.
-   `backend/routers/images.py`'s `backend.utils` import line gained `OUT_OF_TREE_MSG` in M8,
-   and `feat/scoring-arc` changes that line too, so keep the name when resolving it.
-4. M8's follow-ups 9, 10 and 11 can go any time, beside M4 or after it. Batch move and copy, in
-   item 9, must wait for M4. Items 7, 8, 12 and 13 wait for stages 6 and 3, which replace that code.
+1. M4's port is on `feat/m4-rating-port`, awaiting review and merge. Leave `feat/scoring-arc`
+   untouched until it merges, then it can go. Its two rulings are
+   [decision 4](decisions/04-rating-keys-and-old-snapshots.md).
+2. M5's five stages merged on 2026-10-30 as PR #101 and first shipped in Version-1.2.2
+   (2026-11-02). Its cleanup waits until browsers have had time to run that release; the user
+   chose to hold it on 2026-11-02. See [server-state-plan/README.md](server-state-plan/README.md).
+3. **Next, once M4 merges: M6**, the smallest port. Follow § Porting the unmerged branches; its
+   migration re-parents onto the head M4 leaves (`e7c4a1b9d2f6`).
+4. M8's follow-ups 9, 10 and 11 can go any time. M4 is in, so item 9's batch move and copy are
+   unblocked once it merges. Items 7, 8, 12 and 13 wait for stages 6 and 3, which replace that
+   code.
 5. Two docs seams stay queued in [pending-splits.md](pending-splits.md) with nothing over
    budget: `README.md`'s § Features deletion (deferred when its budget went to 4,000) and
    `docs/scoring.md`'s residual seam. Either is picked up by the next session that appends
@@ -90,12 +88,14 @@ to copy their data over. Design: [server-state-plan/README.md](server-state-plan
 
 Gate: the rating column and head phase 0 shipped with their user docs, and the learned head
 either shipped or ruled out by phase 0's numbers. Build order and stage detail:
-[rating-plan/README.md § Sequencing](rating-plan/README.md#sequencing), which the port brings up
-to date. Open rulings go in the decision log as they are made.
+[rating-plan/README.md § Sequencing](rating-plan/README.md#sequencing). Open rulings go in the
+decision log as they are made; the port's two are
+[decision 4](decisions/04-rating-keys-and-old-snapshots.md).
 
 - [x] Token UI (§6) and the aesthetic model picker (§2), both shipped 2026-08-02.
-- [ ] Port the rating column (§1) and head phase 0 (the rating event log and metrics page) from
-  `feat/scoring-arc`: 67ac441, 9004f18, 4233da1, ce0c788. Needs no ML.
+- [x] Port the rating column (§1) and head phase 0 (the rating event log and metrics page) from
+  `feat/scoring-arc`: 67ac441, 9004f18, 4233da1, ce0c788. Ported 2026-11-02 on
+  `feat/m4-rating-port`, with rebindable rating keys and old snapshots leaving ratings alone.
 - [ ] The learned head (§3, phases 1+). Needs the port and re-ratings to measure. Not built if
   phase 0 shows an existing scorer already near its ceiling.
 - DINOv3 (§5) stays deferred, the lowest priority. M7's plan supersedes §5, so it is settled
@@ -132,7 +132,8 @@ Detail, hazards and what to leave alone:
   `fix/m8-stage1-followups`. Items 7 and 8 there are folded into stages 6 and 3.
 - [ ] Stage 1 follow-ups 9 (the rest of the unchunked `IN` class), 10 (batch resize, crop and
   detection crop's stats on a partway failure) and 11 (two hard-cancel edges in the stats
-  wrapper). No order between them; item 9's batch move and copy need M4 merged. Items 12 and
+  wrapper). No order between them; item 9's batch move and copy need M4 merged, and M4's own
+  `bulk-rating` scope read is already chunked. Items 12 and
   13 are folded into stage 6, beside item 7.
 - [ ] Stage 2: one shared helper for a job's image scope.
 - [ ] Stage 3: a shared job loop for upscale and LUT. Needs stage 2.

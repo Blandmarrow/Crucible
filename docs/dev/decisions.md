@@ -46,3 +46,10 @@ Amends decision 1. Full record:
 browser storage to the database, with a one-time import that keeps the old keys for one release;
 per-browser preferences stay in the browser. Full record:
 [decisions/03-app-stored-prompts.md](decisions/03-app-stored-prompts.md).
+
+## 4. Rating keys and old snapshots
+
+**Decided** (2026-11-02, by the user): a label hotkey wins a key it shares with a keep/cut
+rating action, and the five rating keys are rebindable in Settings; a snapshot older than the
+rating leaves current ratings alone on restore, its NULL meaning "not recorded". Full record:
+[decisions/04-rating-keys-and-old-snapshots.md](decisions/04-rating-keys-and-old-snapshots.md).

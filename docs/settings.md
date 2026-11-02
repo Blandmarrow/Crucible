@@ -4,13 +4,15 @@ Route: `/settings` — accessible from the sidebar. Settings are grouped into ei
 
 ## Gallery
 
-Browser-local preferences, each taking effect immediately:
+Preferences that take effect immediately (all browser-local except the rating keys, noted below):
 
 - Images per page: 25 / 50 / 100 / 200 — controls gallery pagination and detail-view prefetch; lower values reduce memory usage with large high-resolution datasets
 - Selection checkbox size: 14–32 px (default 18) — the size of the selection checkbox on gallery thumbnails. A live preview sits next to the slider, and open galleries update as you drag
 - Subfolder rename on move: *Rename to subfolder name* (default) or *Keep original filenames* — when disabled, moving images to a subfolder updates their subfolder metadata only, without renaming the files
 - License badge on cards (off by default) — shows each image's effective license on its gallery card, including a muted **No license** badge for images with none at either the image or dataset level. Applies immediately to every open gallery, and is not affected by the gallery toolbar's reset button (which is why it sits outside **Gallery defaults**). Off by default because most datasets are single-source, where a badge on every card is noise → [details](provenance.md)
 - Style match meter on cards (**on** by default) — a thin bar under each thumbnail showing where that image's style-similarity score falls within the dataset's own scores. A percentile rather than the raw number, because the raw score is a cosine whose scale depends on which embedding model produced it → [details](style-similarity.md#reading-the-score). Images with no style score show nothing, and switching this off stops the gallery asking the server for the distribution at all. Like the license badge, it applies immediately to every open gallery and is outside **Gallery defaults**
+- Keep/cut rating on cards (**on** by default) — the numeral you pressed in the corner of each rated card. Unrated images show nothing, so it costs nothing on a dataset you have not triaged; a dashed badge means the image was edited in place after you rated it → [details](rating.md). Like the two toggles above it, this applies immediately to every open gallery and sits outside **Gallery defaults**
+- **Rating keys** — the five keys that rate from the keyboard (Keep `4`, Probably `3`, Probably not `2`, Cut `1`, Clear `0` by default). Click a key button, press the letter or digit you want, and it saves at once; the **✕** beside it unbinds the action. Two rating actions cannot share a key → [details](rating.md#choosing-your-own-keys). Unlike the toggles above, these are stored with the app's other settings rather than in this browser. A label hotkey on the same key gets a warning here, and wins that key on the detail page
 - **Gallery defaults** — applied on first visit to a dataset, after which the filters you last used there take precedence (they are remembered per dataset and survive a browser restart; the gallery toolbar's **Reset filters** button clears them): default sort order, default caption filter (All / Captioned only / Uncaptioned only), default quality flag filter
 
 ## Captioning

@@ -415,3 +415,45 @@ test('a prepending sort relocates the open image onto its new page', async ({ pa
   await page.getByRole('button', { name: 'Back' }).click()
   await expect(page.getByText('Page 2 of 3 · 6 images')).toBeVisible()
 })
+
+// A rating filter is part of `filterParams` like any other, so the arrows must
+// replay it when they cross a page boundary. Rated: 01, 03, 05 (Keep); unrated:
+// 02, 04. At page size 2 the filtered pages are [01, 03] and [05], where the
+// unfiltered second page would be [03, 04] — so a build that drops
+// `rating_filter` lands on an image that is provably the wrong one.
+test('arrow nav across a page boundary stays inside the rating filter', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `nav-rating-${Date.now()}`)
+  for (const n of ['01_k.png', '02_u.png', '03_k.png', '04_u.png', '05_k.png']) {
+    await uploadViaApi(request, ds.id, n)
+  }
+  const ids = await idsByFilename(request, ds.id)
+  const rated = await request.post('/api/v1/images/bulk-rating', {
+    data: { dataset_id: ds.id, image_ids: [ids['01_k.png'], ids['03_k.png'], ids['05_k.png']], rating: 4 },
+  })
+  expect(rated.status(), await rated.text()).toBe(200)
+
+  await seedGalleryState(page, ds.id, { activeSubfolder: '', sortIdx: 4 })
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await expect(page.getByText('Page 1 of 3 · 5 images')).toBeVisible()
+  // Through the chip, the way a user sets it: seeding is for state the UI cannot
+  // reach, and this also proves the chip feeds the nav context.
+  await page.getByTestId('rating-chip-4').click()
+  await expect(page.getByText('Page 1 of 2 · 3 images')).toBeVisible()
+
+  await page.getByTestId('gallery-tile').first().click()
+  await expect(page).toHaveURL(new RegExp(`/image/${ids['01_k.png']}$`))
+  await expect(page.getByRole('button', { name: 'Back' })).toBeVisible()
+  await page.keyboard.press('ArrowRight')
+  await expect(page).toHaveURL(new RegExp(`/image/${ids['03_k.png']}$`))
+
+  await page.getByTitle('Next image (→)').click()
+  await expect(page).toHaveURL(new RegExp(`/image/${ids['05_k.png']}$`))
+  await expect(page.getByTitle('Next image (→)')).toBeDisabled()
+  await expect(page.getByText('1 / 1')).toBeVisible()
+
+  const stored = await page.evaluate(
+    (k) => JSON.parse(sessionStorage.getItem(k)!),
+    `gallery-nav-${ds.id}`,
+  )
+  expect(stored.filters.rating_filter).toBe(JSON.stringify([4]))
+})

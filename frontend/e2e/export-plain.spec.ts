@@ -209,3 +209,38 @@ test.describe('limit to subfolders', () => {
     await expect(willExport(page)).toHaveText('1')
   })
 })
+
+// "Exclude rated: Cut" drops only the images someone marked Cut. An unrated image
+// is never named by that filter, so it must still be written. Asserted on the
+// files on disk, as above: the preview is the half that is easy to get right.
+test('an export excluding Cut writes the unrated and drops the cut', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-export-rating-${Date.now()}`)
+  for (const n of ['keep.png', 'cut.png', 'unrated.png']) await uploadViaApi(request, ds.id, n)
+  const list = await (await request.get('/api/v1/images/', { params: { dataset_id: ds.id } })).json()
+  const idOf = (filename: string) => list.find((i: { filename: string }) => i.filename === filename).id
+  for (const [filename, rating] of [['keep.png', 4], ['cut.png', 1]] as const) {
+    const r = await request.post('/api/v1/images/bulk-rating', {
+      data: { dataset_id: ds.id, image_ids: [idOf(filename)], rating },
+    })
+    expect(r.status(), await r.text()).toBe(200)
+  }
+
+  const outDir = path.join(os.tmpdir(), `e2e-export-rating-${Date.now()}`)
+  await page.goto(`/datasets/${ds.id}/export`)
+  await page.getByRole('button', { name: 'plain folder' }).click()
+  await page.getByPlaceholder('C:\\training', { exact: false }).fill(outDir)
+  await page.locator('label').filter({ hasText: 'Has caption' }).getByRole('checkbox').uncheck()
+  // Scoped by the row's own span: the "Rating ≥" select in the neighbouring label also lists a Cut option.
+  await page.locator('label').filter({ has: page.locator('span', { hasText: /^1 — Cut$/ }) }).getByRole('checkbox').check()
+  await expect(
+    page.locator('.stat-card').filter({ hasText: 'Will export' }).locator('.sv'),
+  ).toHaveText('2')
+
+  await page.getByRole('button', { name: 'Build export' }).click()
+  await expect(page.getByText('Export complete', { exact: false })).toBeVisible({ timeout: 30_000 })
+
+  const listing = await request.get('/api/v1/filesystem/list', { params: { path: path.join(outDir, 'images') } })
+  expect(listing.status(), await listing.text()).toBe(200)
+  const files = (await listing.json()).entries.filter((e: { type: string }) => e.type === 'file')
+  expect(files.map((f: { name: string }) => f.name).sort()).toEqual(['keep.png', 'unrated.png'])
+})

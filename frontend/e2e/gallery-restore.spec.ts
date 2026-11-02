@@ -471,3 +471,40 @@ test('the search box × clears the query and returns to page 1', async ({ page, 
   await page.waitForTimeout(PERSIST_DEBOUNCE_MS * 3)
   await expect(page.getByText('Page 1 of 3 · 6 images')).toBeVisible()
 })
+
+// The rating chips ride in the same persisted blob. GalleryPage unmounts on every
+// trip to the detail view, so a chip missing from `gallery-state-*` comes back
+// off — and the grid with it unfiltered.
+test('gallery keeps a rating chip across a round trip', async ({ page, request }) => {
+  test.setTimeout(30_000 + PERSIST_DEBOUNCE_MS * 6)
+  const ds = await createDatasetViaApi(request, `rating-restore-${Date.now()}`)
+  await uploadViaApi(request, ds.id, 'a.png')
+  await uploadViaApi(request, ds.id, 'b.png')
+  const [first] = await (await request.get('/api/v1/images/', { params: { dataset_id: ds.id } })).json()
+  const rated = await request.post('/api/v1/images/bulk-rating', {
+    data: { dataset_id: ds.id, image_ids: [first.id], rating: 4 },
+  })
+  expect(rated.status(), await rated.text()).toBe(200)
+
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await expect(page.getByTestId('gallery-tile')).toHaveCount(2)
+  await page.getByTestId('rating-chip-4').click()
+  await expect(page.getByTestId('gallery-tile')).toHaveCount(1)
+
+  await page.waitForTimeout(PERSIST_DEBOUNCE_MS * 3)
+  expect(
+    await page.evaluate(
+      (k) => JSON.parse(localStorage.getItem(k)!).ratingFilter,
+      `gallery-state-${ds.id}`,
+    ),
+  ).toEqual([4])
+
+  await page.getByTestId('gallery-tile').first().click()
+  await expect(page.getByRole('button', { name: 'Back' })).toBeVisible()
+  await page.getByRole('button', { name: 'Back' }).click()
+
+  // Filtered, not merely chip-coloured: one tile of the two.
+  await expect(page.getByTestId('gallery-tile')).toHaveCount(1)
+  await page.waitForTimeout(PERSIST_DEBOUNCE_MS * 3)
+  await expect(page.getByTestId('gallery-tile')).toHaveCount(1)
+})

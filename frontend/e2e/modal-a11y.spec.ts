@@ -82,6 +82,30 @@ test('Escape closes the bulk labels modal', async ({ page, request }) => {
   await expect(dialog).toHaveCount(0)
 })
 
+// The rating modal is one click per tier, so what is worth pinning is the shared
+// modal contract: a named dialog, Escape closes it, focus returns to the Rate
+// button, and the selection it acted on survives being dismissed.
+test('Set rating is a named dialog that closes on Escape and restores focus', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-modal-rating-${Date.now()}`)
+  await uploadViaApi(request, ds.id, 'a.png')
+
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await page.getByTestId('select-all-btn').click()
+  await expect(page.getByText('1 selected')).toBeVisible()
+
+  const opener = page.getByTestId('toolbar-set-rating')
+  await opener.click()
+  const dialog = page.getByRole('dialog', { name: 'Set rating' })
+  await expect(dialog).toBeVisible()
+
+  await page.keyboard.press('Escape')
+  await expect(dialog).toHaveCount(0)
+  await expect(opener).toBeFocused()
+  await expect(page.getByText('1 selected')).toBeVisible()
+  // Dismissing is not choosing: nothing was rated.
+  await expect(page.getByTestId('rating-badge')).toHaveCount(0)
+})
+
 /** Press `key` `presses` times and assert focus never leaves `dialog`. */
 async function expectTabTrapped(page: Page, dialog: Locator, presses = 30, key = 'Tab') {
   for (let i = 0; i < presses; i++) {

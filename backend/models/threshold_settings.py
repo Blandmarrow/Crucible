@@ -22,6 +22,15 @@ class ThresholdSettings(Base):
     comfyui_url: Mapped[str] = mapped_column(String(500), nullable=False, server_default="")
     comfy_workflow_dir: Mapped[str] = mapped_column(String(1000), nullable=False, server_default="")
 
+    # The keep/cut rating keys, one per action. Server-side beside the label
+    # hotkeys they can clash with (a label wins on the detail page), so both sets
+    # follow the install. "" means unbound, never NULL — the PATCH skips a None.
+    rating_key_keep: Mapped[str] = mapped_column(String(1), nullable=False, server_default="4")
+    rating_key_probably: Mapped[str] = mapped_column(String(1), nullable=False, server_default="3")
+    rating_key_probably_not: Mapped[str] = mapped_column(String(1), nullable=False, server_default="2")
+    rating_key_cut: Mapped[str] = mapped_column(String(1), nullable=False, server_default="1")
+    rating_key_clear: Mapped[str] = mapped_column(String(1), nullable=False, server_default="0")
+
     # Secrets, editable from Settings -> API Keys. The column names MUST equal the
     # backend.config.Settings field names of the same secrets: secrets_service uses one
     # `field` string for both getattr(row, field) and getattr(settings, field). ""

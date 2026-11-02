@@ -1,6 +1,7 @@
+import re
 from typing import Literal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +21,15 @@ router = APIRouter(prefix="/settings", tags=["settings"])
 
 _VALID_VERSIONING_MODES = {"off", "manual", "auto"}
 
+# The label hotkeys' charset (`routers/labels.py`), so one capture rule binds both,
+# and "" for unbound. Kept structural rather than a reserved list for the same
+# reason labels give: it cannot express the keys the detail page already binds.
+_RATING_KEY_RE = re.compile(r"^[a-z0-9]?$")
+RATING_KEY_FIELDS = (
+    "rating_key_keep", "rating_key_probably", "rating_key_probably_not",
+    "rating_key_cut", "rating_key_clear",
+)
+
 
 class ThresholdsOut(BaseModel):
     blur_threshold: float
@@ -35,6 +45,11 @@ class ThresholdsOut(BaseModel):
     auto_unload_after_scoring: bool = True
     comfyui_url: str = ""
     comfy_workflow_dir: str = ""
+    rating_key_keep: str = "4"
+    rating_key_probably: str = "3"
+    rating_key_probably_not: str = "2"
+    rating_key_cut: str = "1"
+    rating_key_clear: str = "0"
 
     model_config = {"from_attributes": True}
 
@@ -53,6 +68,18 @@ class ThresholdsUpdate(BaseModel):
     auto_unload_after_scoring: bool | None = Field(default=None)
     comfyui_url: str | None = Field(default=None, max_length=500)
     comfy_workflow_dir: str | None = Field(default=None, max_length=1000)
+    rating_key_keep: str | None = Field(default=None)
+    rating_key_probably: str | None = Field(default=None)
+    rating_key_probably_not: str | None = Field(default=None)
+    rating_key_cut: str | None = Field(default=None)
+    rating_key_clear: str | None = Field(default=None)
+
+    @field_validator(*RATING_KEY_FIELDS)
+    @classmethod
+    def validate_rating_key(cls, v: str | None) -> str | None:
+        if v is not None and not _RATING_KEY_RE.match(v):
+            raise ValueError("a rating key is one of a-z or 0-9, or empty for unbound")
+        return v
 
     @field_validator("versioning_mode")
     @classmethod
@@ -76,6 +103,13 @@ async def update_thresholds(body: ThresholdsUpdate, db: AsyncSession = Depends(g
 
     for field, value in body.model_dump(exclude_none=True).items():
         setattr(row, field, value)
+
+    # Checked on the merged row, not the body: a one-key PATCH can collide with a
+    # key already saved. One key for two ratings would make the press ambiguous.
+    bound = [getattr(row, f) for f in RATING_KEY_FIELDS if getattr(row, f)]
+    if len(bound) != len(set(bound)):
+        await db.rollback()
+        raise HTTPException(422, "Each rating key must be different")
 
     await db.commit()
     await db.refresh(row)

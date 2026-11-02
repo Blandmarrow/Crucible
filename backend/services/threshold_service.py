@@ -18,6 +18,11 @@ DEFAULTS = dict(
     auto_unload_after_scoring=True,
     comfyui_url="",
     comfy_workflow_dir="",
+    rating_key_keep="4",
+    rating_key_probably="3",
+    rating_key_probably_not="2",
+    rating_key_cut="1",
+    rating_key_clear="0",
     # Secrets: "" means "no DB override, inherit the .env/OS-env value". These belong in
     # DEFAULTS even though "" is also the server_default, because get_thresholds builds a
     # *transient* ThresholdSettings(**DEFAULTS) when no row exists, and an unset attribute

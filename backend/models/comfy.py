@@ -66,7 +66,7 @@ class ComfyBlueprint(Base):
 
     One per plan. Expansion (services/blueprint_expand.py) turns it into
     `comfy_leaves`, and Apply mints rows for each leaf's shortfall. See
-    docs/dev/comfy-structured.md.
+    docs/dev/comfyui/structured.md.
     """
 
     __tablename__ = "comfy_blueprints"

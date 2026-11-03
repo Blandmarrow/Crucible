@@ -1,6 +1,6 @@
 # LLM providers
 
-This file covers OpenAI-compatible provider configuration: the `/providers` CRUD router, the `OpenAIProvider` row and its masked schema, the `ml/openai_compat_captioner.py` vision client and its `openai_compat:{provider_id}:{model_name}` model id, the Settings → LLM Providers tab and the `ModelPicker` component. Providers have two consumers — the `openai_compat:` branch of the caption dispatch chain, whose failure reporting (timeouts, empty replies) is in `docs/dev/captioning.md`, and the ComfyUI prompt generator in `docs/dev/comfy-prompts.md`. The user-facing setup is `docs/settings.md` § LLM Providers.
+This file covers OpenAI-compatible provider configuration: the `/providers` CRUD router, the `OpenAIProvider` row and its masked schema, the `ml/openai_compat_captioner.py` vision client and its `openai_compat:{provider_id}:{model_name}` model id, the Settings → LLM Providers tab and the `ModelPicker` component. Providers have two consumers — the `openai_compat:` branch of the caption dispatch chain, whose failure reporting (timeouts, empty replies) is in `docs/dev/captioning.md`, and the ComfyUI prompt generator in `docs/dev/comfyui/prompts.md`. The user-facing setup is `docs/settings.md` § LLM Providers.
 
 ## Router
 

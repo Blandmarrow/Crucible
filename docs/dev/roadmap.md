@@ -17,7 +17,7 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-03, after M6 §2c)
+## Next session (updated 2026-11-03, after the ComfyUI docs hub)
 
 1. M5's five stages merged on 2026-10-30 as PR #101. Only its cleanup is open, and that waits
    a release. See [server-state-plan/README.md](server-state-plan/README.md) for what was
@@ -45,12 +45,13 @@ restates its stages.
    ([decision 7](decisions/07-m6-built-whole-on-one-branch.md)): per-row folders are 8dee5de
    there, the plan is rewritten in
    [comfy-automation-plan/README.md](comfy-automation-plan/README.md) by decisions 8 and 9, and
-   `comfy-per-row-subfolders` is deleted. **Work on M6 happens on that branch.** The
-   `docs/dev/comfyui.md` split is done there: the run body is now `docs/dev/comfy-run.md` and the
-   page `docs/dev/comfy-page.md`. §7 (the mock ComfyUI server), §2a (blueprints, see
-   `docs/dev/comfy-structured.md`), §2b (the outline call) and §2c (Top up) have landed there
+   `comfy-per-row-subfolders` is deleted. **Work on M6 happens on that branch.** There the
+   ComfyUI dev docs now sit behind the hub `docs/dev/comfyui.md`, with eight files in
+   `docs/dev/comfyui/` (2026-11-03). §7 (the mock ComfyUI server), §2a (blueprints, see
+   `docs/dev/comfyui/structured.md`), §2b (the outline call) and §2c (Top up) have landed there
    too, so the arc's cut point is reached. The next M6 work is §3, the optional LLM rewrite
-   pass; §4 waits for M8 stages 2 and 3 on `main`.
+   pass, documented in `docs/dev/comfyui/structured-llm.md`; §4 waits for M8 stages 2 and 3
+   on `main`.
    Decisions 7–9 and this M6 checklist exist only on that branch until it
    merges, so `main`'s next decision takes number 10. Its migrations `e5c1a9d3f7b2` → `b7d2f4a9c1e3` follow
    `main`'s `c2b8e4f6a1d7`; rebase at stage boundaries.
@@ -60,9 +61,9 @@ restates its stages.
 6. Three docs seams stay queued in [pending-splits.md](pending-splits.md) on `main` with nothing over
    budget: `README.md`'s § Features deletion (deferred when its budget went to 4,000),
    `docs/scoring.md`'s residual seam, and `docs/dev/quality/style-similarity.md` at 91% after
-   the M7 port. On this branch a fourth is queued: `docs/dev/comfy-structured.md` (about 3,000
-   words), split before M6 §3 adds its rewrite pass. Each is picked up by the next session that
-   appends to its file. Re-measure first and check both halves land under 60% of budget — five of
+   the M7 port. This branch's fourth, comfy-structured.md, was split three ways on
+   2026-11-03 and its family hubbed (pending-splits.md records how). Each is picked up by the
+   next session that appends to its file. Re-measure first and check both halves land under 60% of budget — five of
    M3's seven recorded seams had to be re-cut on execution.
 7. A split moves sections, so `§` pointers that named a section in the same file now
    point across files. `check_docs.py` does not check them, so grep `§` in every touched
@@ -151,24 +152,28 @@ gates are green and it is pushed.
   8dee5de, with the migration re-parented onto `c2b8e4f6a1d7` and the plan moved into its own
   folder and rewritten. The old branch is deleted.
 - [x] Split `docs/dev/comfyui.md` along its two recorded seams. Done 2026-11-03: the run body
-  moved to `docs/dev/comfy-run.md` and the page to `docs/dev/comfy-page.md`, each with a Map row.
+  moved to `docs/dev/comfyui/run.md` and the page to `docs/dev/comfyui/page.md`, each with a Map row.
 - [x] §7: the mock ComfyUI server. Done 2026-11-03: `backend/tests/fake_comfy.py`, in-process
   for pytest (`test_comfy_run_body.py`) and on port 8198 for Playwright (`comfy-run.spec.ts`).
   Every later stage tests against it.
 - [x] §2a: blueprints, leaves, the pure expansion service and its guard rails, and prompts
   composed from templates. Done 2026-11-03: migration `b7d2f4a9c1e3` (which also carries §2b's
-  `brief`/`draft` columns), the *Blueprint* tab, and `docs/dev/comfy-structured.md`.
+  `brief`/`draft` columns), the *Blueprint* tab, and `docs/dev/comfyui/structured.md`.
 - [x] §2b: the outline call and the review panel, reachable without an LLM. Done 2026-11-03:
   the `comfy_outline` job saves a draft for *Use it* / *Discard*.
 - [x] §2c: Top up. The plan's cut point if the arc stops early. Done 2026-11-03: Apply, reset
   failed rows, run pending ones, in one press.
-- [ ] §3: the optional LLM rewrite pass.
+- [x] Split comfy-structured.md before §3 grows it. Done 2026-11-03, re-cut three ways, with
+  the ComfyUI family moved behind the hub `docs/dev/comfyui.md`.
+- [ ] §3: the optional LLM rewrite pass. Its docs go in `docs/dev/comfyui/structured-llm.md`.
 - [ ] Rebase onto `main` once M8 stages 2 and 3 have landed there. Needed by §4.
 - [ ] §4: the stepping run (`Run` row, `advance_run()`), its page and the VRAM handoff.
 - [ ] §5: the goal loop, gates and budgets. Needs §4.
 - [ ] §6: the dry run and the recipe library. Needs §4.
 - [ ] Merge: rebase onto `main`, re-parent the first migration onto M4's head if M4 merged
-  first, run every gate, open the PR.
+  first, run every gate, open the PR. The ComfyUI docs moved behind a hub on this branch, so
+  any doc `main` has added since that names an old path (comfy-prompts.md, comfyui-sync.md, or
+  `docs/dev/comfyui.md` meaning the queue) needs repointing; `check_docs.py` FAILs on the first two.
 
 ### M7 — Style embedding
 

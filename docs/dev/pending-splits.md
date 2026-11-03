@@ -64,6 +64,20 @@ staleness sweep while still recording the seam.
   until they are repointed. Do **not** take `### VRAM after a run` as the seam: it is six
   lines and belongs exactly where it is, under § Running a scoring run.
 
+The old flat docs/dev/comfy-structured.md → `docs/dev/comfyui/structured-llm.md` **and**
+`docs/dev/comfyui/structured-expansion.md` was executed on 2026-11-03 on
+`feat/m6-comfy-automation`, ahead of M6 §3, and was **re-cut on execution**. Re-measured at
+3,160 words, the recorded seam (§ The outline call, 575 words) would have left ~2,585 behind,
+74% of budget. So § The spec and § Expansion went too, along the module line: the pure
+`blueprint_expand.py`, with no DB and no HTTP, against the blueprint tables, fill accounting,
+orphans, Apply and Top up that stayed. The recorded filename held for the LLM half, which
+§3's rewrite pass joins. With eight ComfyUI files the family also went behind a hub in the
+same change (decision 2's "past about three files"): `docs/dev/comfyui.md` became the hub and
+its old content `docs/dev/comfyui/queue.md`, and the five other files moved into
+`docs/dev/comfyui/` under shorter names. The entry's Watch-for was right; it missed only
+`backend/services/blueprint_expand.py`'s docstring and `backend/ml/prompt_generator.py`'s
+banner comment, which now point at the two new halves.
+
 `docs/workspace.md` → `docs/server.md` **and** `docs/file-browser.md` was executed on 2026-10-29
 as an M3 task, the second of the user-docs queue, and was **re-cut on execution**, taking the
 entry's own fallback. Re-measured at 2,696 words, the recorded seam (§ Starting up,
@@ -205,20 +219,3 @@ utilities → `docs/dev/shared-utilities.md`.
   PM-009/PM-013 cite § Upscaling and § LUT grading; repoint the ones that mean the job.
   `docs/dev/video/reextract.md` cites § LUT Color Grading for the PNG fallback.
   The intro's sentence naming the shared loop points at "§ Upscaling's last paragraphs".
-
-## docs/dev/comfy-structured.md
-
-- **Moves:** § The outline call, plus §3's LLM rewrite pass when it lands (the M6 plan names
-  this file as its home)
-- **New file:** docs/dev/comfy-structured-llm.md (the LLM side of structured generation)
-- **Why here:** recorded 2026-11-03 at about 3,000 of 3,500 words, after M6 §2c, ahead of §3,
-  which would push it over. Everything else is deterministic: tables, expansion, fill
-  accounting, orphans, Apply and Top up, with no provider in sight. The outline call and the
-  rewrite pass are both LLM calls through `ml/prompt_generator.py`, sharing the
-  `json_schema`-then-plain fallback and the PM-004/PM-005 outcome rules. They read together,
-  next to `docs/dev/comfy-prompts.md`.
-- **Watch for:** `backend/routers/comfy.py`'s `outline_blueprint` docstring cites
-  "docs/dev/comfy-structured.md § The outline call", and so do `docs/dev/comfy-prompts.md`'s
-  intro and `docs/dev/comfy-page.md`'s outline-draft bullet. All three need repointing. The
-  plan folder's §3 section says the rewrite pass goes in comfy-structured.md; update that
-  sentence too.

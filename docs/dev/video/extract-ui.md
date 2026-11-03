@@ -13,7 +13,7 @@ gallery's `VideoStrip` and `VideoDetailPage` — are in `docs/dev/video/ui.md`, 
 `frontend/e2e/video-extract.spec.ts` coverage note in its § Elsewhere. Pass 2 and its
 `ReextractFramesForm` are in `docs/dev/video/reextract-endpoints.md`,
 `docs/dev/video/reextract.md` and `docs/dev/video/reextract-ui.md`. The re-attach pattern the hook
-inherits from — `GeneratePromptsModal` — is in `docs/dev/comfy-prompts.md`.
+inherits from — `GeneratePromptsModal` — is in `docs/dev/comfyui/prompts.md`.
 
 ## ExtractFramesModal
 
@@ -187,7 +187,7 @@ second submit landing during another video's `replace` step 409s.
 a `Map<videoId, JobProgress>` of live extractions, and both the modal and
 `VideoDetailPage` use it, so they show the same bar for the same run with no coordination.
 Three details are load-bearing, all inherited from `GeneratePromptsModal`
-(`docs/dev/comfy-prompts.md`):
+(`docs/dev/comfyui/prompts.md`):
 
 - **No `useJobSSE`.** `useAllJobsSSE` in `TopBar` already holds every event; a
   component-scoped subscription would re-create the component↔job coupling this pattern

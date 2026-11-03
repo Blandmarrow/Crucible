@@ -114,7 +114,7 @@ Which gate runs where — the one place this list lives:
 - **Windows filesystem rules** — the open-file locks of PM-021, symlink privilege — reach
   only the non-blocking Windows job; `manage.ps1` is parse-checked, never run.
 - **A real ComfyUI, the booru lookup, Restart and Shutdown**, which `qa-smoke` and e2e leave
-  out. e2e runs ComfyUI journeys against a fake one (`docs/dev/comfy-run.md` § Testing the
+  out. e2e runs ComfyUI journeys against a fake one (`docs/dev/comfyui/run.md` § Testing the
   run), so a change in what real ComfyUI sends still reaches no gate.
 
 ## Architecture
@@ -220,12 +220,7 @@ substantial edit.
 | `docs/dev/backend-tests.md` | Writing or fixing a backend test, or adding a test/CI dependency — which harness a test drives, what `backend/requirements-ci.txt` installs, the `needs_torch`/`needs_cv2`/`needs_symlinks` gates, `api_env` foreign keys, coverage, ruff and the migration drift check | ~320 |
 | `docs/dev/database.md` | Working on a model or Alembic migration, an index or FK `ondelete`, deferred columns, `check_migrations.py`, or the startup DB backup — the drift check's `ACCEPTED_DRIFT` and `db_maintenance` rotation | ~1885 |
 | `docs/dev/environment-setup.md` | Working on `manage.ps1`/`manage.sh`, the bind address or `--lan`, torch wheels, the startup splash, or the setup/update flow — the Node version check, `bind_host.py`/`CRUCIBLE_HOST` and lockfile reset | ~3140 |
-| `docs/dev/comfyui.md` | Working on the `comfy` router, `comfy_service.py`, or the ComfyUI data model — plans (workflow template + pinned params), prompt rows and their per-row folder, prompt library, ComfyClient | ~1650 |
-| `docs/dev/comfy-run.md` | Working on the `comfy_generate` job, `POST /comfy/run` or the fake ComfyUI (`fake_comfy.py`) — per-row folders and file stems, per-row `refresh_stats`, removing our own prompt from ComfyUI's queue on cancel/failure | ~2100 |
-| `docs/dev/comfy-page.md` | Working on `ComfyPage` or `frontend/src/components/comfy/` — the Folder cell, `activeRuns` run tracking, the prompt library modals, the Blueprint tab, its outline draft and Top up, `comfy.spec.ts` | ~2200 |
-| `docs/dev/comfy-prompts.md` | Generating prompts with an LLM or working on `prompt_generator.py` — `parse_prompts` filtering, `GeneratePromptsModal` re-attach | ~1880 |
-| `docs/dev/comfy-structured.md` | Working on a ComfyUI blueprint, `comfy_leaves`, `blueprint_expand.py`/`blueprint_service.py` or Apply — why seeds are sha256 and never `hash()`, images-not-rows targets, orphans and adoption, the plan lock, Top up, the `comfy_outline` draft job | ~3150 |
-| `docs/dev/comfyui-sync.md` | Working on workflow sync or the bridge extension — "Sync from canvas", `GET /comfy/canvas-workflow` and ComfyUI API constraints | ~710 |
+| `docs/dev/comfyui.md` | **Start here for anything ComfyUI** — the `comfy` router, `comfy_service.py` and ComfyClient, plans, pins and prompt rows, the `comfy_generate` run and the fake ComfyUI, `ComfyPage`, LLM prompt generation (`prompt_generator.py`), blueprints (`comfy_leaves`, `blueprint_expand.py`/`blueprint_service.py`, Apply, Top up, the `comfy_outline` draft job), workflow sync and the bridge extension; its § Where things live table routes from a code path to the file in `docs/dev/comfyui/` that owns it | ~950 (+ details) |
 | `docs/dev/postmortems.md` | Doing a code review or investigating a bug — the postmortem index: past incidents as one-line rows with LIVE/MITIGATED/STRUCTURAL status, linking `docs/dev/postmortems/` | ~2170 |
 | `docs/dev/roadmap.md` | Deciding what to work on next, landing a task, or picking up a branch mid-way — order and dependencies of open work and the dated "Next session" handoff; tick it in the same session | ~2350 |
 | `docs/dev/decisions.md` | Asking *why* the project does X, or proposing to change direction — the decision log: what was decided, by whom, and what was rejected | ~600 |

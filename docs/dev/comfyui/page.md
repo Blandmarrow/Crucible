@@ -4,8 +4,8 @@ The frontend of the ComfyUI queue: how `ComfyPage` is routed and registered, wha
 covers, the plan bar, `WorkflowPinPanel` and the workflow scan, the run-default strip, the rows
 table and its Folder column, the run bar and how the page tracks concurrent runs, the prompt
 library modals and the Rows toolbar. The data model and endpoints it calls are in
-`docs/dev/comfyui.md`; what a run does server-side is `docs/dev/comfy-run.md`; *Generate
-prompts* is `docs/dev/comfy-prompts.md` and *Sync from canvas* `docs/dev/comfyui-sync.md`.
+`docs/dev/comfyui/queue.md`; what a run does server-side is `docs/dev/comfyui/run.md`; *Generate
+prompts* is `docs/dev/comfyui/prompts.md` and *Sync from canvas* `docs/dev/comfyui/sync.md`.
 
 ### Frontend (`frontend/src/pages/ComfyPage.tsx`, `frontend/src/components/comfy/`)
 
@@ -23,14 +23,14 @@ through `GET …/rows`). Its textarea-count assertion is scoped to
 `data-testid="comfy-rows-table"` on purpose — the prompt cells must be the only textareas in
 the table, so it fails if the single-line Folder cell is ever rebuilt as one. It never starts
 a run. The journeys that press *Run* are `frontend/e2e/comfy-run.spec.ts`, against the fake
-ComfyUI in `docs/dev/comfy-run.md` § Testing the run: rows filed under their folders with the
+ComfyUI in `docs/dev/comfyui/run.md` § Testing the run: rows filed under their folders with the
 image's generation metadata on its detail page, and a failed row's error tooltip and
 *Reset failed*.
 
 - **Plan bar** — plan `<select>` (query `["comfy","plans",datasetId]`), inline create/rename,
   delete via `ConfirmDialog`; section tabs *Rows* / *Workflow & Pins* / *Blueprint*.
 - **`BlueprintPanel`** (the *Blueprint* tab, keyed by `plan.id`) edits the plan's blueprint.
-  What the server does with it is `docs/dev/comfy-structured.md`.
+  What the server does with it is `docs/dev/comfyui/structured.md`.
   - **Saving.** It is server-stored form state on the M5 pattern: `ServerStateGate` on
     `["comfy","blueprint",planId]`, autosaved through `useDebouncedPersist` +
     `writeToServer(blueprintPath, "PUT")` (`docs/dev/app-stored-data.md`).
@@ -50,7 +50,7 @@ image's generation metadata on its detail page, and a failed row's error tooltip
     the save and the preview 422.
   - **Read-only while the plan runs.** A disabled `<fieldset>`, since Apply would 409 anyway.
   - **The outline draft.** *✨ Draft from a description…* opens `OutlineModal`, which queues
-    the `comfy_outline` job (`docs/dev/comfy-structured.md` § The outline call).
+    the `comfy_outline` job (`docs/dev/comfyui/structured-llm.md` § The outline call).
     - Like `GeneratePromptsModal`, it derives its job from `jobStore` and adds no
       `useJobSSE`. Its provider and model default to the plan's saved "Generate prompts"
       settings, read only.
@@ -100,7 +100,7 @@ image's generation metadata on its detail page, and a failed row's error tooltip
     folders and `leaf_id`s, and runs them.
 - **`WorkflowPinPanel`** — paste textarea + `.json` file loader + *Scan folder…* button
   (opens `WorkflowScanModal`) + *Sync from canvas* button (`canvas-workflow` →
-  `SyncCanvasModal`, see `docs/dev/comfyui-sync.md`); validates API-format client-side; warns (non-blocking) when no
+  `SyncCanvasModal`, see `docs/dev/comfyui/sync.md`); validates API-format client-side; warns (non-blocking) when no
   node's `class_type` matches `/save/i` **and** no output node is selected, and when selected
   output nodes no longer exist in the workflow (runs then fail with a review-the-workflow row
   error — deliberate, no auto-heal). *Import images from*: toggle chips for Save/Preview-type
@@ -192,7 +192,7 @@ image's generation metadata on its detail page, and a failed row's error tooltip
 - Rows toolbar: *+ Add row*, *Paste prompts…* (modal, one prompt per line → `rows/bulk`;
   disabled until a pin is marked as prompt), *Import .txt* (browser file picker, no modal —
   **one file = one prompt**, inner newlines collapsed to spaces, straight to `rows/bulk`),
-  *✨ Generate prompts…* (`GeneratePromptsModal` — `docs/dev/comfy-prompts.md`),
+  *✨ Generate prompts…* (`GeneratePromptsModal` — `docs/dev/comfyui/prompts.md`),
   *Edit prompts…* (`BulkEditRowsModal`: find/replace, prepend, append, remove + regex toggle,
   scope all/selected → `rows/bulk-edit`), *Library…*, *Save to library (n)*,
   *Set folder (n)*, *Reset failed (n)*, *Delete selected (n)* (`ConfirmDialog`).

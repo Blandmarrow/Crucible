@@ -442,7 +442,7 @@ The illustration equivalent no longer needs curation, because the app can genera
 images**, where style and subject are crossed *by construction* and neither label is
 inferred. That removes every caveat in the list above except the backbone one. It is the
 natural next experiment and it costs GPU time rather than judgement — see
-`docs/dev/comfyui.md` for plans and pinned params.
+`docs/dev/comfyui/queue.md` for plans and pinned params.
 
 ## The photo dataset that settled it
 

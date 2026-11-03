@@ -19,7 +19,7 @@ named in § Documentation this arc owes and delete the stage from here; delete t
 everything is done.
 
 Nothing below §1 is decided by the code yet. Read `CLAUDE.md`, `docs/dev/comfyui.md`,
-`docs/dev/comfy-run.md` and `docs/dev/comfy-prompts.md` before implementing, and prefer the repo's conventions over the
+`docs/dev/comfyui/run.md` and `docs/dev/comfyui/prompts.md` before implementing, and prefer the repo's conventions over the
 sketches here.
 
 ## What this arc is
@@ -48,12 +48,12 @@ checklist alone. In short: the `docs/dev/comfyui.md` split and §7 (both done 20
 §2a, §2b, Top up (§2c), §3, a rebase after M8 stages 2–3, §4, §5, §6, then the merge.
 
 **§1 (per-row `subfolder` + `leaf_id`) is ported**, commit 8dee5de on the branch; its rationale
-lives in `docs/dev/comfyui.md` (the columns and endpoints) and `docs/dev/comfy-run.md` (how a run
+lives in `docs/dev/comfyui/queue.md` (the columns and endpoints) and `docs/dev/comfyui/run.md` (how a run
 files each row). The `comfy_leaves` table it left for later is §2a's to build:
 `leaf_id` is a column with no writer.
 
 **§7 (the mock ComfyUI server) has landed**, so every later stage tests against it:
-`backend/tests/fake_comfy.py`, documented in `docs/dev/comfy-run.md` § Testing the run. pytest
+`backend/tests/fake_comfy.py`, documented in `docs/dev/comfyui/run.md` § Testing the run. pytest
 reaches it in-process; Playwright reaches it on a real port. Each stage that adds a journey
 extends `frontend/e2e/comfy-run.spec.ts` until the whole arc runs there GPU-free, ComfyUI-free
 and LLM-free: hand-authored blueprint → expand → run → foldered gallery → Top up. `POST /free`
@@ -111,13 +111,13 @@ Recorded so an older draft cannot reintroduce them.
 
 ## 2. Structured generation — axes, templates, Top up
 
-Read `docs/dev/comfy-prompts.md`.
+Read `docs/dev/comfyui/prompts.md`.
 
 ### §2a — Blueprints, expansion and templates (landed)
 
 Built on 2026-11-03. Everything durable — the tables, the spec, the pure expansion and its
 walk, fill accounting, orphans, and Apply's guard rails — now lives in
-`docs/dev/comfy-structured.md`.
+`docs/dev/comfyui/structured.md`.
 
 Two departures from the sketch that stood here:
 - **Expansion runs inline and is never a job.** Its row cap makes every expansion small. The
@@ -133,7 +133,7 @@ Two departures from the sketch that stood here:
 Built on 2026-11-03. The review panel arrived with §2a, and it is reachable without an LLM,
 which is how the e2e journey reaches it. The outline call is the `comfy_outline` job; it saves
 a draft on the blueprint for *Use it* / *Discard*. Both are documented in
-`docs/dev/comfy-structured.md` § The outline call and `docs/dev/comfy-page.md`.
+`docs/dev/comfyui/structured-llm.md` § The outline call and `docs/dev/comfyui/page.md`.
 
 Grouping rows by leaf in `ComfyRowsTable` was optional and is not built: the Folder column
 already shows each row's leaf path.
@@ -142,18 +142,18 @@ already shows each row's leaf path.
 
 Built on 2026-11-03: `POST …/blueprint/top-up` is Apply, then reset the blueprint's failed
 rows, then run its pending ones through `_start_run`. It is documented in
-`docs/dev/comfy-structured.md` § Top up. §5's loop is this, repeated with gates; §4 calls the
+`docs/dev/comfyui/structured.md` § Top up. §5's loop is this, repeated with gates; §4 calls the
 same service functions (`blueprint_service.apply`, `prepare_top_up`).
 
 Rows whose leaf a blueprint edit deleted were settled with §2a (the user's ruling,
 2026-11-03): they count toward nothing, the preview reports them, and Apply can delete their
 pending rows only. Top up reuses Apply, so it inherits that. Shortfall counts images; pending,
 running and failed rows count as future images; and Top up resets failed rows to pending
-before running (`docs/dev/comfy-structured.md` § Fill accounting).
+before running (`docs/dev/comfyui/structured.md` § Fill accounting).
 
 ## 3. The optional LLM rewrite pass
 
-Read `docs/dev/comfy-prompts.md`, `docs/dev/llm-providers.md`, `backend/ml/prompt_generator.py`.
+Read `docs/dev/comfyui/prompts.md`, `docs/dev/llm-providers.md`, `backend/ml/prompt_generator.py`.
 
 Templates make this pass optional (decision 8): it rewrites a leaf's composed prompts into prose
 for natural-language models, sending the composed prompts and the descriptors as input. Off by
@@ -310,15 +310,19 @@ elsewhere.
 ## Documentation this arc owes
 
 `docs/dev/comfyui.md` went over budget at ~4,440 words after §1 and was split on 2026-11-03:
-the run body is now `docs/dev/comfy-run.md` and the page `docs/dev/comfy-page.md`. Later stages
-that edit the run body document it in comfy-run.md. Two new topic
-files are owed beyond that, each with a Map row:
+the run body is now `docs/dev/comfyui/run.md` and the page `docs/dev/comfyui/page.md`. Later stages
+that edit the run body document it in `docs/dev/comfyui/run.md`. Since 2026-11-03 the
+family sits behind the hub `docs/dev/comfyui.md`, so each new file goes in
+`docs/dev/comfyui/` with a row in the hub's tables, not a Map row:
 
-- comfy-structured.md — blueprints, axes, variations and templates, expansion and its guard
-  rails, Top up, and §3's rewrite pass. §1's two columns stay documented beside the row model;
+- Structured generation, written and then split three ways on 2026-11-03:
+  `docs/dev/comfyui/structured.md` (blueprints, fill accounting, orphans, Apply, Top up),
+  `docs/dev/comfyui/structured-expansion.md` (the spec, expansion and its guard rails) and
+  `docs/dev/comfyui/structured-llm.md` (the outline call). **§3's rewrite pass goes in
+  structured-llm.md.** §1's two columns stay documented beside the row model;
   cross-reference them rather than moving them.
-- comfy-automation.md — the `Run` row, `advance_run()`, stages, cancel, pause and resume, the VRAM
-  handoff, the goal loop, budgets and recipes.
+- docs/dev/comfyui/automation.md, still owed — the `Run` row, `advance_run()`, stages,
+  cancel, pause and resume, the VRAM handoff, the goal loop, budgets and recipes.
 
 `docs/dev/backend-infrastructure.md` (~2,000 words) gains a paragraph on the post-terminal
 `advance_run()` hook. User docs are owed in the same change as each feature — `docs/comfyui.md`

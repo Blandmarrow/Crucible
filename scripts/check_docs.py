@@ -166,6 +166,7 @@ SPLIT_INDEXES = {
     "docs/dev/gallery": "docs/dev/gallery.md",
     "docs/dev/video": "docs/dev/video.md",
     "docs/dev/versioning": "docs/dev/versioning.md",
+    "docs/dev/comfyui": "docs/dev/comfyui.md",
 }
 
 # docs/dev/*.md files that are not topic files and need no Documentation Map row

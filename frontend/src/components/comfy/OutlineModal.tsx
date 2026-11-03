@@ -21,7 +21,7 @@ interface Props {
 /** Asks an LLM to draft a blueprint from a description. The call runs as a `comfy_outline`
     background job and saves a draft on the blueprint; it never changes the spec. Closing
     this modal never cancels it. The attached job is derived from jobStore, not subscribed
-    to here (docs/dev/comfy-prompts.md § Frontend). */
+    to here (docs/dev/comfyui/prompts.md § Frontend). */
 export default function OutlineModal({ planId, initialBrief, onClose }: Props) {
   const { data: providers = [] } = useQuery({ queryKey: ["providers"], queryFn: providersApi.list });
   // Read for defaults only: what the user picks here is not written back.

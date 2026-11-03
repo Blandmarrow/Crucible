@@ -5,8 +5,8 @@ declared before the loop, the per-row loop (submit, poll, download, register, ca
 each image lands and what it is called, the per-row stats refresh, provenance stamping, the
 failure and cancel semantics, and how a cancelled or failed row's prompt is taken back out of
 ComfyUI. Plans, rows, `ComfyClient` and the router's other endpoints are in
-`docs/dev/comfyui.md`, which also keeps § Gotchas; the page's side of a run (`ComfyRunBar`,
-`activeRuns`) is `docs/dev/comfy-page.md`; LLM prompt generation is `docs/dev/comfy-prompts.md`.
+`docs/dev/comfyui/queue.md`, which also keeps § Gotchas; the page's side of a run (`ComfyRunBar`,
+`activeRuns`) is `docs/dev/comfyui/page.md`; LLM prompt generation is `docs/dev/comfyui/prompts.md`.
 
 ### The `comfy_generate` job
 
@@ -14,9 +14,9 @@ ComfyUI. Plans, rows, `ComfyClient` and the router's other endpoints are in
 run regardless of status; otherwise all `pending` rows in `sort_order`. A 409 guards against a
 second pending/running run for the same plan — matched on `job_type` **and**
 `config["plan_id"]`, so a prompt-generation job never blocks a run (see
-`docs/dev/comfy-prompts.md`). The pre-flight is `_run_preflight` and the rest of the route is
+`docs/dev/comfyui/prompts.md`). The pre-flight is `_run_preflight` and the rest of the route is
 `_start_run`, which a blueprint's Top up calls with explicit row ids
-(`docs/dev/comfy-structured.md` § Top up). The 409 check and the job's commit hold the
+(`docs/dev/comfyui/structured.md` § Top up). The 409 check and the job's commit hold the
 per-plan `_plan_lock`, which blueprint Apply shares. Standard job pattern (nested `_run(job_id)`
 closure, own `AsyncSessionLocal`, auto label `ComfyUI: {plan} — N rows`).
 
@@ -31,7 +31,7 @@ behaviour — the tree appears in the gallery sidebar as the run starts rather t
 row by row; a cancelled run leaves declared-but-empty folders, which `list_subfolders` already
 supports and the user can delete. Discarding `""` matters because `declare_subfolder("")` would
 append a nameless entry that `list_subfolders` then merges into every listing forever.
-`join_subfolder` rather than `normalize_subfolder` — see `docs/dev/comfyui.md` § Gotchas.
+`join_subfolder` rather than `normalize_subfolder` — see `docs/dev/comfyui/queue.md` § Gotchas.
 
 Per row, sequentially (one of ours outstanding at a time — a failed or cancelled row's prompt is
 taken out of ComfyUI before the next is submitted, see § Removing our prompt): mark `running` →
@@ -115,7 +115,7 @@ Failure/cancel semantics:
 
 #### Removing our prompt
 
-ComfyUI is shared: the sync-from-canvas workflow (`docs/dev/comfyui-sync.md`) assumes the
+ComfyUI is shared: the sync-from-canvas workflow (`docs/dev/comfyui/sync.md`) assumes the
 user also queues prompts from the canvas against the same server. A bare `POST /interrupt`
 stops *whatever is executing* — which, with a canvas prompt running and ours pending, killed
 the user's prompt and left ours queued; and a row timeout that merely raised left our prompt

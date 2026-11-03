@@ -3,7 +3,7 @@
 Pull a plan's `workflow_json` from ComfyUI instead of re-pasting *Export (API)* after
 every canvas edit. Two transports behind one endpoint: a live-canvas snapshot pushed by
 the `ComfyUI-CrucibleBridge` extension (main path), and the last-queued history entry
-(fallback, requires one real Queue Prompt). See `docs/dev/comfyui.md` for the plan/pin
+(fallback, requires one real Queue Prompt). See `docs/dev/comfyui/queue.md` for the plan/pin
 data model.
 
 ## Background / constraints (verified against a live ComfyUI 0.24 instance)

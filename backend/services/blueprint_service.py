@@ -3,7 +3,7 @@
 `preview` and `apply` share `_compute`, so what the review panel shows is what Apply
 writes. Every count here is recomputed from rows and images on each call, never kept
 in a stored counter: a deleted image or a reset row would otherwise leave the number
-quietly wrong. See docs/dev/comfy-structured.md § Fill accounting.
+quietly wrong. See docs/dev/comfyui/structured.md § Fill accounting.
 
 Not HTTP-aware: the errors below are mapped to status codes by the router, so §4's
 stepping run can call the same functions.

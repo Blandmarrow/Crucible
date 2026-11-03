@@ -2,7 +2,7 @@
 
 No DB, no HTTP, no `HTTPException`: `expand` returns leaves, errors and warnings, and
 the caller decides what is a 400. One function backs both the preview and Apply,
-which is what makes the preview trustworthy. See docs/dev/comfy-structured.md.
+which is what makes the preview trustworthy. See docs/dev/comfyui/structured-expansion.md.
 
 The load-bearing idea: the LLM (or the user) invents entities, and this code does
 the combinatorics and writes every prompt from a template, so one character reads

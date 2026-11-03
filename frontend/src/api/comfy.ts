@@ -122,7 +122,7 @@ export const COMFY_GEN_DEFAULTS: ComfyGenSettings = {
 /** Under `/api/v1`, for `writeToServer`: this form saves as the user types. */
 export const genSettingsPath = (planId: string) => `/comfy/plans/${planId}/gen-settings`;
 
-// ── Blueprint (structured generation, docs/dev/comfy-structured.md) ──────────
+// ── Blueprint (structured generation, docs/dev/comfyui/structured.md) ──────────
 
 export interface BlueprintEntity {
   /** Stable identity a leaf records; generated client-side and never shown. */

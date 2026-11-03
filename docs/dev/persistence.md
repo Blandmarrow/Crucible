@@ -36,7 +36,7 @@ is what earns it the exemption. The last two are exceptions to the single-owner 
 because a hand-off needs two ends:
 
 - `` `comfy-genprompts-job-${planId}` `` (`components/comfy/GeneratePromptsModal.tsx`) — the
-  re-attachable job id, keyed by plan. See `docs/dev/comfy-prompts.md`. The sibling
+  re-attachable job id, keyed by plan. See `docs/dev/comfyui/prompts.md`. The sibling
   `` `comfy-genprompts-${planId}` `` is where that form's settings lived before they moved to the
   server; `utils/legacyImport.ts` reads it once, and its pattern must keep excluding `job-`.
 - `` `video-extract-job-${videoId}` `` (`hooks/useVideoExtractJobs.ts`, via the exported

@@ -3,7 +3,7 @@
 A plan stores an API-format ComfyUI workflow plus pinned parameters; rows hold
 per-run values. The run endpoint queues a background job that submits each row
 to the ComfyUI server sequentially, downloads the outputs, and ingests them
-into the dataset. See docs/dev/comfyui.md, and docs/dev/comfy-run.md for the
+into the dataset. See docs/dev/comfyui.md, and docs/dev/comfyui/run.md for the
 job.
 """
 import asyncio
@@ -442,7 +442,7 @@ async def canvas_workflow(db: AsyncSession = Depends(get_db)):
 
     Tries the ComfyUI-CrucibleBridge snapshot (the live canvas, pushed by the
     browser extension) first; falls back to the last-queued history entry when
-    the bridge is not installed or has no snapshot. See docs/dev/comfyui-sync.md.
+    the bridge is not installed or has no snapshot. See docs/dev/comfyui/sync.md.
     """
     thresholds = await get_thresholds(db)
     base_url = (thresholds.comfyui_url or "").strip()
@@ -1067,7 +1067,7 @@ async def generate_prompts_job(
     committed as each batch lands, closing the modal (or navigating away, or a
     Stop) never discards LLM calls already paid for. Runs on the shared
     job_queue, so it serialises behind captioning/ComfyUI runs — see
-    docs/dev/comfy-prompts.md.
+    docs/dev/comfyui/prompts.md.
 
     Everything that could fail predictably is checked here rather than minutes
     later inside the job.
@@ -1393,7 +1393,7 @@ async def reset_rows(plan_id: str, body: RowResetRequest, db: AsyncSession = Dep
 
 
 # ── Blueprint (structured generation) ─────────────────────────────────────────
-# docs/dev/comfy-structured.md. Expansion is inline, never a job: it is pure CPU plus
+# docs/dev/comfyui/structured.md. Expansion is inline, never a job: it is pure CPU plus
 # one bulk insert under the row cap.
 
 # Pydantic's names for the branches of `Scenario.combine`'s union, which appear in an
@@ -1469,7 +1469,7 @@ async def top_up_blueprint(plan_id: str, body: BlueprintTopUpRequest, db: AsyncS
 
     Targets are absolute, so pressing it again once the folders are full adds nothing
     and queues nothing (`job_id: null`). The spec comes from the body, as for Apply, so
-    what runs is what the preview showed (docs/dev/comfy-structured.md § Top up).
+    what runs is what the preview showed (docs/dev/comfyui/structured.md § Top up).
     """
     plan = await _get_plan(db, plan_id)
     alias = _prompt_alias(plan)
@@ -1532,7 +1532,7 @@ async def outline_blueprint(plan_id: str, body: OutlineRequest, db: AsyncSession
     Its own job type, since it writes no rows: it never conflicts with a run or a
     prompt job, and the user reviews the draft before anything expands. The brief
     goes in the user message and is never written into the plan's saved
-    instructions, which the user owns (docs/dev/comfy-structured.md § The outline call).
+    instructions, which the user owns (docs/dev/comfyui/structured-llm.md § The outline call).
     """
     from backend.models.openai_provider import OpenAIProvider
 

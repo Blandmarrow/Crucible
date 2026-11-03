@@ -1,12 +1,15 @@
 # ComfyUI structured generation (blueprints)
 
 **Status: living.** How a plan's blueprint turns one description into a foldered prompt
-queue: the blueprint and leaf tables, the spec, the pure expansion and its template walk,
-fill accounting, and Apply's guard rails. The queue itself (plans, pins, rows and the
-row's `subfolder`/`leaf_id` columns) is `docs/dev/comfyui.md`; how a run files each row
-is `docs/dev/comfy-run.md`; the page is `docs/dev/comfy-page.md`. The arc's remaining
-stages are in `docs/dev/comfy-automation-plan/README.md`, and the rulings behind it are
-decision 8 (`docs/dev/decisions/08-templates-first-filed-by-folder.md`).
+queue: the blueprint and leaf tables, fill accounting, orphans, Apply's guard rails and
+Top up. The spec and the pure expansion that turns it into leaves (combinations, paths,
+templates, the template walk) are `docs/dev/comfyui/structured-expansion.md`; the outline
+call that drafts a spec with an LLM is `docs/dev/comfyui/structured-llm.md`. The queue
+itself (plans, pins, rows and the row's `subfolder`/`leaf_id` columns) is
+`docs/dev/comfyui/queue.md`; how a run files each row is `docs/dev/comfyui/run.md`; the
+page is `docs/dev/comfyui/page.md`. The arc's remaining stages are in
+`docs/dev/comfy-automation-plan/README.md`, and the rulings behind it are decision 8
+(`docs/dev/decisions/08-templates-first-filed-by-folder.md`).
 
 ## The idea
 
@@ -35,89 +38,10 @@ pasted verbatim into every prompt that names them.
   and Apply queues a second full target into a folder that is already full. Rows with no
   `leaf_id` (typed or pasted by hand) are never adopted.
 - `comfy_rows.leaf_id` has no foreign key on purpose. A row whose leaf was deleted keeps
-  naming it, as provenance (`docs/dev/comfyui.md` § Concepts & data model).
-- `cursor` is the next index of the leaf's template walk. It is a cursor and not a count:
+  naming it, as provenance (`docs/dev/comfyui/queue.md` § Concepts & data model).
+- `cursor` is the next index of the leaf's template walk
+  (`docs/dev/comfyui/structured-expansion.md` § Expansion). It is a cursor and not a count:
   nothing in fill accounting reads it, so it cannot make a shortfall wrong.
-
-## The spec (`backend/schemas/comfy_blueprint.py`)
-
-`BlueprintSpec` holds:
-- `axes`: name → entities `{id, label, descriptor}`
-- `variations`: name → pieces
-- `scenarios`: each with `name`, `combine`, `mode` (`full` | `sample:K`), `count`, `path`
-  and `template`
-
-A `combine` item is a bare axis name (take one) or `{axis, take}`.
-
-The Pydantic model checks **structure and bounds only**. Every list and string is bounded,
-because the spec is stored as JSON and returned on every read. Everything that needs the
-spec as a whole is the expansion's job, so a draft with mistakes can still be saved and
-shown with its errors.
-
-## Expansion (`backend/services/blueprint_expand.py`)
-
-**A pure service: no DB, no HTTP, no `HTTPException`.** `expand(spec, seed)` returns
-`Expansion(leaves, errors, warnings)`, and errors are collected rather than raised, so the
-review panel shows all of them at once. Any error discards every leaf. One function backs
-both the preview and Apply, which is what makes the preview trustworthy.
-
-- **Combinations.** A scenario is `itertools.product` over each item's
-  `itertools.combinations(entities, take)`: unordered and distinct. "Alone and together" is
-  `take`, not a separate mode.
-- **The whole blueprint is counted before anything is enumerated.** `_prepare` validates and
-  sizes every scenario with `math.comb`. Then two budgets apply across the blueprint:
-  `MAX_COMBINATIONS` (100,000) combinations, and `HARD_ROW_CAP` folders. Only then does
-  `_build` enumerate. Either budget exceeded is an error, never a truncation.
-  - The budgets are blueprint-wide, not per scenario, because the preview re-expands on
-    every debounced edit: 50 scenarios each under a per-scenario limit froze the server for
-    seconds.
-  - Expansion also runs in an executor (`_compute`), so it never holds the event loop.
-- **Errors are capped at `MAX_ERRORS` (50)** plus one "…and N more" line. A half-typed path
-  like `{a}` on the way to `{a}/{b}` makes every leaf a duplicate, which once meant 39,800
-  error strings in one response.
-- **`sample:K` ranks each combination by a hash of its entity ids** and keeps the K
-  smallest, in enumeration order.
-  - It deliberately does not call `random.sample`: that algorithm may change between Python
-    versions.
-  - A hash of the ids keeps most of a sample stable when an entity is added.
-- **Every derived seed comes from `sub_seed`** (sha256 of the blueprint seed and a
-  context), **never `hash()`**. Python randomizes `hash()` per process, so a seed built
-  from it would re-expand differently after every restart. A same-process test cannot catch
-  this, so `test_sample_is_stable_across_processes` asserts a hard-coded path list instead.
-- **No seed includes the scenario's name.** The sample rank is keyed by the path *pattern*
-  and the entity ids, and the walk by the rendered folder. Renaming a scenario is cosmetic,
-  and must neither re-draw a sample (orphaning folders) nor re-seed a walk past its stored
-  `cursor` (repeating prompts). A new path pattern renames every folder anyway, so it
-  re-drawing costs nothing extra.
-- **Paths.** `{axis}` renders the entity label's `slugify_filename` slug, and a multi-take
-  axis joins slugs with `_and_` (`iron_knight_and_salt_witch`). Only combined axes may
-  appear.
-  - **A blank path is `default_path`: one level per combined axis, in combine order**
-    (`{biome}/{character}`). Users expected the path to follow the axes and had to type it
-    by hand, so blank no longer means an error. `blueprintKeys.defaultPath` mirrors it for
-    the field's placeholder; keep the two in step.
-  - **The slug trap:** `slugify_filename` answers `"image"` for a label with no letter or
-    digit. As a folder name that is silently wrong, so such a label is an error. The test is
-    `[^\W_]`, not `\w`: `"_"` and `"-_-"` pass `\w` and still slug to `"image"`.
-  - Two labels on one axis that slug alike are an error, and so is a path two leaves share.
-  - So is an empty segment, `.` or `..`, and a path over 512 characters.
-- **Templates.**
-  - `{axis}` → descriptor. Several entities join with ", " and a final " and ", and an
-    empty descriptor falls back to the label.
-  - `{axis.label}` → label. `{variation}` → one piece.
-  - **A blank template is `default_template`: every combined axis, then every
-    variation** (`{biome}, {time}, {angles}`). It once joined only the descriptors, so a
-    variation the user had defined was silently unused, and the blueprint looked broken.
-    `blueprintKeys.defaultTemplate` mirrors it.
-  - An unknown name, or an axis the scenario does not combine, is an error.
-- **The template walk.** The variation sets the template names make a product of P
-  distinct prompts, indexed in mixed radix. A leaf's prompt *i* uses index
-  `(a·i + b) mod P`, with `a` coprime to P and `a`, `b` drawn from the leaf's sub-seed.
-  - It is a bijection per cycle, so a leaf's prompts differ from each other.
-  - Prompt *i* never changes when more are drawn, which is what lets Top up continue a
-    walk rather than repeat it.
-  - A scenario whose `count` exceeds P is a **warning** (prompts repeat), not an error:
-    repeated prompts still give different images under different seeds.
 
 ## Fill accounting (`backend/services/blueprint_service.py`)
 
@@ -191,7 +115,7 @@ This was the user's ruling on the plan's open question about edit-then-top-up.
     Apply then deletes.
   - A plan's first PUT and an Apply would both create the blueprint and hit its unique index.
 - **No `declare_subfolders`.** Apply writes row folders only. A run declares its whole
-  tree once, before its loop (`docs/dev/comfy-run.md`).
+  tree once, before its loop (`docs/dev/comfyui/run.md`).
 
 ## Top up
 
@@ -232,7 +156,7 @@ deleted_rows, job_id, total}`. In order:
 pressing Top up again once every folder is full adds no rows and starts no run.
 
 It does no `declare_subfolders`: the run declares its tree once, before its loop
-(`docs/dev/comfy-run.md`).
+(`docs/dev/comfyui/run.md`).
 
 The preview carries what Top up needs to show:
 - per leaf, `short` = target − kept (images, not rows)
@@ -246,73 +170,11 @@ The preview carries what Top up needs to show:
 - after an edit, the new folders run and the orphans do not
 - a missing ComfyUI URL or a `..` base folder writes nothing
 
-## The outline call
-
-**One LLM call turns a brief into a draft blueprint**: `POST …/blueprint/outline`
-(`{provider_id, model_name, brief, temperature, label}`, all bounded) queues a
-`comfy_outline` job.
-
-**Its own job type,** because it writes no rows. It never conflicts with a run or a prompt
-job on the same plan, only with a second outline job: the 409 is
-`_plan_job_active(…, ("comfy_outline",))`. Pre-flight matches `generate_prompts_job`:
-404 for the provider, 400 for the model. `_run` re-checks both on dequeue and raises
-rather than returns, since a silent return reads as success. One emit goes out before the
-call, carrying `plan_id`, so TopBar can tie the job to its plan.
-
-**The LLM function** is `ml/prompt_generator.generate_outline`. It makes a `json_schema`
-attempt with the mandatory plain fallback, the same rule and reason as `generate_prompts`
-(`docs/dev/comfy-prompts.md`).
-- The schema asks for axes and variations as **lists of named entries**, because a dict
-  with free-form keys is awkward under a strict schema. `parse_outline` turns them into
-  the spec's dicts. It also accepts the dict form, a `{"blueprint": …}` wrapper, `<think>`
-  blocks, fences and surrounding prose.
-  - **Prose is scanned with `raw_decode` at each `{`**, never cut from the first `{` to
-    the last `}`. Prose in this domain is full of `{axis}` placeholders, which make that
-    slice invalid JSON.
-  - A `null` section reads as empty. Two entries with one name merge rather than the
-    second replacing the first, which would silently halve an axis.
-  - **An outline with no axes and no scenarios is None**, so the plain fallback runs and
-    the job then fails (PM-004). Counted as a draft, it would report "draft ready" and let
-    *Use it* replace the user's spec with nothing.
-- The `<think>`/fence stripping is `_strip_reasoning`, shared with `parse_prompts`.
-  **`ParsedPrompts` is untouched** (PM-005).
-
-**The prompt layout.** The **brief goes in the user message**, with the instruction to
-write descriptors that can be pasted verbatim. The plan's saved "Generate prompts"
-instructions (`gen_settings.instructions`) are passed as standing rules for the templates.
-They are **read, never written**: the user owns them.
-
-**What is saved.** The result is validated as a `BlueprintSpec` **structurally only**.
-- A draft the schema cannot hold fails the job. The message names the deepest error
-  location with Pydantic's union-branch tags removed (`scenarios.0.combine.0.take`, not
-  `…constrained-str`).
-  - The tags are an exact set, `_UNION_BRANCH_TAGS`. A pattern such as "starts
-    uppercase" would also drop a user's invalid key (an axis named `Character`), the very
-    thing the message must name.
-- A draft with semantic errors is saved, and the review panel shows them.
-- **The brief is saved when the job is queued**, creating the blueprint (empty spec,
-  random seed) if needed, so a failed draft never costs a retype.
-- The draft goes to `blueprint.draft`. **The spec is never touched.**
-- `result_data` is `{plan_id, axes, scenarios}`.
-- **Cancellation is polled once, after the call**, the only slow step. A Stop pressed
-  during it saves no draft and ends the job `cancelled` (`raise_if_cancelled`). The call
-  itself is not aborted; as with prompt generation, it runs to the provider's timeout.
-
-**Using or discarding the draft.** `DELETE …/blueprint/draft` clears it (idempotent) for
-both *Use it* and *Discard*. *Use it* clears it only after the spec holding it is saved
-(`docs/dev/comfy-page.md`), so a failed save never loses the draft.
-
-There is no LLM in CI. `backend/tests/test_blueprint_outline_http.py` replaces
-`generate_outline` (imported lazily in `_run`, so patching the module attribute reaches
-it), and `backend/tests/test_parse_outline.py` covers the parser. A real provider is
-verified by hand.
-
 ## Testing
 
-`backend/tests/test_blueprint_expand.py` covers the pure expansion: combinations, paths,
-templates, every validation error, the walk's bijection and stable prefix, the
-cross-process sample, and the `plan_fill` table. `backend/tests/test_blueprint_http.py`
-runs the endpoints over `api_env`:
+The pure expansion's tests are `docs/dev/comfyui/structured-expansion.md` § Testing, and
+the outline call's are `docs/dev/comfyui/structured-llm.md`.
+`backend/tests/test_blueprint_http.py` runs the endpoints over `api_env`:
 - the preview equals what Apply writes
 - the 409 and 400 guard rails, and a double-clicked Apply adding its rows once
 - `kept` drops when an image is deleted

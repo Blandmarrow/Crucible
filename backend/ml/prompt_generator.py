@@ -234,7 +234,7 @@ async def generate_prompts(
     return parsed
 
 
-# ── Blueprint outline (M6 §2b, docs/dev/comfy-structured.md) ──────────────────
+# ── Blueprint outline (M6 §2b, docs/dev/comfyui/structured-llm.md) ──────────────
 
 _OUTLINE_SYSTEM = (
     "You design structured image datasets. From the user's brief, return ONE JSON object "

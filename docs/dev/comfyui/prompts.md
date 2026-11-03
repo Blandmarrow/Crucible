@@ -2,10 +2,10 @@
 
 Writing ComfyUI queue prompts with an LLM: the one-shot endpoint, the durable
 `comfy_prompts` background job, the output parser, and `GeneratePromptsModal`. The queue
-itself (plans, pins, rows) is `docs/dev/comfyui.md`, running it is `docs/dev/comfy-run.md`,
-and the page is `docs/dev/comfy-page.md`. The other LLM call in this module,
+itself (plans, pins, rows) is `docs/dev/comfyui/queue.md`, running it is `docs/dev/comfyui/run.md`,
+and the page is `docs/dev/comfyui/page.md`. The other LLM call in this module,
 `generate_outline` (a brief → a draft blueprint, the `comfy_outline` job), is
-`docs/dev/comfy-structured.md` § The outline call.
+`docs/dev/comfyui/structured-llm.md` § The outline call.
 
 ### Generating (`backend/routers/comfy.py`, `backend/ml/prompt_generator.py`)
 

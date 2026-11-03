@@ -168,7 +168,7 @@ framing, so a fact about the picture is still true of it. Five sites build a new
 
 | Site | Shape |
 |---|---|
-| `routers/lut.py`, `routers/upscaling.py`, `routers/detection.py` (crop-to-detection) | Accumulate `derivative_ids[parent] = new_img.id` through the loop, drain with one `copy_labels` **after** the loop — so a cancelled run still labels what it did copy — before the trailing commit |
+| `services/image_edit_job.py` (upscale and LUT), `routers/detection.py` (crop-to-detection) | Accumulate `derivative_ids[parent] = new_img.id` through the loop, drain with one `copy_labels` **after** the loop — so a cancelled run still labels what it did copy — before the trailing commit |
 | `routers/images.py::crop`, sync copy-mode tail | The `id=str(uuid4())` is assigned explicitly (the `batch_copy_dataset` precedent) so the join rows can name the crop, and `copy_labels` rides the same transaction |
 | `routers/images.py::crop`'s nested `_run_crop_upscale` | Runs in its own session with the parent ORM object gone, so `job_cfg` carries `parent_id`; `copy_labels` re-reads the parent's labels itself, and a `flush()` comes first because `Image.id` is a Python-side default |
 

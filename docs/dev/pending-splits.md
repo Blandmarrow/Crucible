@@ -186,3 +186,22 @@ utilities → `docs/dev/shared-utilities.md`.
   measured and not adopted and § Kaloscope, CSD and PE-Core by name, and § Which layer, and
   why it moved twice points at "the later model runs (below)" — that pointer becomes
   cross-file. `docs/dev/style-embedding-plan/README.md` Stage 2 cites § DINOv3.
+
+## docs/dev/image-processing-models.md
+
+- **Moves:** from § Upscaling, the five job paragraphs (Replace mode follows the PNG fallback;
+  Copy mode's occupied-stem sets; The run reports what it did; The stored path is a gate;
+  Upscale and LUT share one job loop), about 1,250 words, plus the LUT section's matching
+  job-behaviour lines
+- **New file:** docs/dev/image-edit-job.md, named after the module it documents
+  (`backend/services/image_edit_job.py`), with a Map row
+- **Why here:** recorded at 3,449 words (98% of budget) by M8 stage 3, which moved the
+  upscale and LUT job bodies into one shared loop. Those paragraphs now describe that loop,
+  not the models: the rest of the file (spandrel, the `.cube`/`.3dl` parsers, LaMa) changes
+  only when a model does. Moving them leaves about 2,200 words, near the 60% target; if it
+  lands over, move the LUT section's replace-mode paragraphs too.
+- **Watch for:** § Upscaling is cited for the job's behaviour by `docs/dev/inpaint.md`,
+  `docs/dev/frontend-jobs.md`, `docs/dev/shared-utilities.md` and the cleanup plan, and
+  PM-009/PM-013 cite § Upscaling and § LUT grading; repoint the ones that mean the job.
+  `docs/dev/video/reextract.md` cites § LUT Color Grading for the PNG fallback.
+  The intro's sentence naming the shared loop points at "§ Upscaling's last paragraphs".

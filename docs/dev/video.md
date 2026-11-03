@@ -95,8 +95,8 @@ thumbnails go in `{dataset}/videos/thumbnails/` — a **separate** directory, no
 thumbnail folder with a distinguishing suffix. **Ten modules** derive image-thumbnail-stem
 occupancy from a `thumb_dir.glob("*.webp")` over that folder. Nine build
 `occupied_thumb_stems` to *pick* a free name — `routers/images.py`,
-`captioning.py`, `comfy.py`, `lut.py`, `upscaling.py`, `detection.py`, `videos.py`,
-`services/version_service.py` and `dataset_service.py` (the count is modules, not call
+`captioning.py`, `comfy.py`, `detection.py`, `inpaint.py`, `videos.py`,
+`services/version_service.py`, `dataset_service.py` and `image_edit_job.py` (upscale and LUT) (the count is modules, not call
 sites; `routers/images.py` alone holds seven). `routers/videos.py` is in that list because
 frame extraction writes `Image` rows: it points `thumb_dir` at the dataset's *images*
 thumbnail folder, so it shares the collision domain despite living in the video router.

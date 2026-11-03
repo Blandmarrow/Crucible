@@ -1,7 +1,7 @@
 # Shared utilities: backend/utils.py, media_types.py & licenses.py
 
-The three cross-cutting modules every router and service imports from, plus the frontend
-components that recur across subsystems. Many of these helpers exist to enforce a rule in
+The three cross-cutting modules every router and service imports from, two job helpers in
+`backend/services/`, and the frontend components that recur across subsystems. Many of these helpers exist to enforce a rule in
 CLAUDE.md § Key invariants; read that section for the *why* behind the containment guards,
 the stem-collision rules and the in-place-rewrite bookkeeping. Siblings: `docs/dev/provenance.md` (the license and
 provenance rules built on `licenses.py`), `docs/dev/video.md` (`media_types.py` and the
@@ -36,6 +36,12 @@ poster-stem rules), `docs/dev/image-files.md` (naming and collisions) and `docs/
 ## `backend/licenses.py`
 
 **`backend/licenses.py`** — the license vocabulary (`LICENSES`, `LICENSE_IDS`, `FIELD_MAX_LEN`, `normalize_license`, `license_info`, `allows_commercial`) and the provenance rules built on it; `frontend/src/constants/licenses.ts` mirrors it under test. Read side: `resolve_provenance(img, ds)`. Write side: `merge_provenance(*layers)`, `clamp_provenance(values)`, `normalize_license_input(v)`, `copy_provenance(img)` (same-dataset derivative), `materialize_provenance(img, ds)` (cross-dataset copy/move), `materialize_by_source(rows, ds_by_id)` (the batch form). A **client-supplied** license-id list is read only through `utils.parse_license_filter_param` / `normalize_license_filter` — a JSON array, never comma-separated, because an `other:<free text>` id may contain commas; an empty list always means "no filter", never "match nothing". Whether `""` inside that list is meaningful **differs by endpoint**, so check which one you are on. See `docs/dev/provenance.md`. An **opaque-id** list (today: `label_filter`) uses `utils.parse_id_list_param(value, param_name)` instead — same JSON-array wire format, no license normalization, entries returned verbatim so the caller can 400 on a blank rather than silently narrowing the list. The label trio is then validated by `utils.validate_label_filter_params(label_ids, match, missing)` → the cleaned ids, raising 400 for a blank entry, an unrecognised `match`, `missing=True` alongside a non-empty list, or more than `MAX_LABEL_FILTER_IDS` (100) ids; the three image endpoints and all four export handlers share it, so a shape the gallery refuses cannot be smuggled in through an export body. See `docs/dev/label-consumers.md` § Filters.
+
+## Job scope and the shared edit loop
+
+**`backend/services/image_scope.py`** — a job's image scope, from the four request fields `dataset_id`, `image_ids`, `subfolder` and `quality_flags`. `resolve_scope_ids(db, …)` returns the id list (upscale, LUT, inpaint, detection crop); `scope_query(dataset_id, subfolder, quality_flags)` is the same filter as an unexecuted `select(Image.id)` for use as a subquery (detection bulk delete); `flag_exclusions(flags)` is the flag filter alone (detection run, caption bulk edit, captioning's `exclude_flags`). Explicit ids win, bypass subfolder and flags, and are not held to the dataset; unknown flags are dropped; the subfolder match is exact. Not in it, on purpose: `images._apply_bulk_filters`, which applies flags even with ids and has an `include_flagged` polarity, and export's flag filter, which runs in Python. Its module docstring has the rules.
+
+**`backend/services/image_edit_job.py`** — the one job loop for upscale and LUT: `run_image_edit_job(job_id, image_ids, replace=, spec=)` with an `EditSpec` holding what differs. A new in-place pixel edit with the same shape (one sync function from source to destination, copy or replace) belongs here, not in a fresh copy of the loop. See `docs/dev/image-processing-models.md` § Upscaling.
 
 ## Shared frontend components
 

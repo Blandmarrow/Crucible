@@ -64,7 +64,8 @@ Still open:
    that effect.
 8. **Only upscale and LUT keep a refusal's reason.** Detection crop, batch resize and crop,
    inpaint and re-extraction say why only in the live `Failed:` message and the log. Stage 3's
-   shared loop is the natural place to extend `failure_summary`.
+   shared loop took only upscale and LUT, so each of the others needs its own change, and
+   `InpaintForm` and `CropToDetectionForm` would need to toast the new field.
 9. **The rest of the unchunked `IN` class**, left out of item 3 by choice. Client id lists
    still reach one `Image.id.in_()` in `quality.py` (`score_quality`, style similarity and the
    reference-image lookups), `captioning.py` (`run_captioning`, `run_pipeline` and the pipeline
@@ -101,15 +102,32 @@ Still open:
 No port branch touches `upscaling.py`, `lut.py`, `inpaint.py`, `detection.py`, the upscale and
 LUT forms or `DatasetsPage.tsx`.
 
-- **Stage 2: one helper for a job's image scope.** Upscale, LUT, inpaint and `crop_to_detection`
-  each repeat "`image_ids`, or dataset plus subfolder plus quality flags". The flag filter exists
-  in about 7 places. Put the helper in a new module, not `utils.py`, which M4 and M6 both change.
-  Leave `images._apply_bulk_filters` in place for now: M4 adds a caller, so it moves in stage 8.
-- **Stage 3: a shared job loop for upscale and LUT.** Their job bodies are about 95% identical.
-  The real differences are the sync function, the suffix, the `record_in_place` arguments and
-  upscale's width and height. Leave inpaint and `crop_to_detection` out unless they fit without
-  flags.
+- **Stage 2 (landed on `refactor/m8-stages-2-3`): one helper for a job's image scope.**
+  `services/image_scope.py` holds `resolve_scope_ids`, `scope_query` and `flag_exclusions`,
+  indexed in `docs/dev/shared-utilities.md`. Upscale, LUT, inpaint and `crop_to_detection` use
+  the resolver; the detection run, detection bulk delete, caption bulk edit and captioning's
+  `exclude_flags` use the parts that match them. There was no behaviour change.
+- **Stage 3 (landed on the same branch): a shared job loop for upscale and LUT.**
+  `services/image_edit_job.py`, described in `docs/dev/image-processing-models.md` § Upscaling.
+  Inpaint and `crop_to_detection` stayed out: their count keys, commit order and model lease
+  would each need a flag.
 - **Stage 4: `DatasetsPage` dialogs.** Five independent forms move out, about 40% of the file.
+
+### Found during stages 2 and 3, left as they were
+
+A consolidation stage changes no behaviour, so these were recorded rather than fixed:
+
+- **Two id-list conventions.** The stage 2 sites treat `image_ids: []` as "nothing", but
+  `score_quality`, style similarity, `run_captioning`, `run_pipeline` and the exports test
+  `if body.image_ids:`, so an empty list widens to the whole dataset. M6 §4 calls score and
+  caption with id lists, so it must skip a stage with no ids rather than send `[]`.
+- **No scope 404s on an unknown `dataset_id`.** It reads as an empty scope, and upscale, LUT,
+  inpaint and detection crop still enqueue a job of 0 items, where the detection run, scoring
+  and captioning answer `{"job_id": null}`.
+- **Flags with explicit ids differ by site.** The stage 2 sites ignore flags when ids are
+  given; `_apply_bulk_filters`, caption bulk edit and captioning apply them. Stage 8 is the
+  place to settle that, with `_apply_bulk_filters`.
+- **Export's flag filter runs in Python**, after the query, so it is not `flag_exclusions`.
 
 ## Stages 5 to 8: after M4 and M7
 
@@ -134,7 +152,8 @@ These files carry port changes. M4 changes `GalleryPage` by 187 lines and `image
   `docs/dev/backend-tests.md`. The documented `--cov=backend` loses lines after an `await`:
   `images.py` reads 50% instead of 87%.
 - Correct CLAUDE.md § Data flow, which says logic lives in the service layer. Job bodies are
-  closures in routers, and that stays true after this plan.
+  closures in routers, and apart from stage 3's upscale and LUT loop that stays true after this
+  plan.
 
 ## Leave alone
 

@@ -6,9 +6,8 @@ import { createDatasetViaApi } from './helpers'
 const INSTRUCTIONS_PLACEHOLDER = /danbooru-style tag prompts/
 
 // ComfyUI journeys that need no ComfyUI server: plan creation and building the
-// prompt queue. CI has no ComfyUI (and no torch), so a run is never started —
-// the "Run" controls are deliberately left alone here; the cancel/import side of
-// a run is covered request-level by backend/tests/test_comfy_cancel_stats.py.
+// prompt queue. The "Run" controls are left alone here; the journeys that press
+// Run are comfy-run.spec.ts, against the fake ComfyUI that serve-comfy.mjs runs.
 const WORKFLOW = {
   '6': { class_type: 'CLIPTextEncode', inputs: { text: 'template prompt' } },
   '9': { class_type: 'SaveImage', inputs: {} },

@@ -162,10 +162,8 @@ workflow, 400 with an "Export (API)" hint for UI-format files. Both validate pat
 - `/interrupt` stops whatever is executing, not necessarily ours, and `POST /queue
   {"delete"}` only touches pending prompts — so neither alone removes our prompt, and a bare
   interrupt is never sent (`docs/dev/comfy-run.md` § Removing our prompt). Never use `{"clear": true}`.
-- **The mock ComfyUI server is partial.** `backend/tests/test_comfy_queue_cleanup.py`'s
-  `FakeComfy` (over `httpx.MockTransport`) serves `system_stats`, `prompt`, `history`, `view`
-  and `/queue`, and drives the run body through cancel, timeout, abort and connect-breaker
-  paths. It does not serve PNGs carrying an embedded workflow chunk, nor a prompt that fails
-  mid-execution, so import of generation metadata and the history-error path are still
-  uncovered end to end.
+- **Test against `FakeComfy`, not a hand-rolled stub.** `backend/tests/fake_comfy.py` serves
+  ComfyUI's real shapes in-process for pytest and on a real port for Playwright, and must not
+  import `conftest`. What it models and how a spec picks a failure:
+  `docs/dev/comfy-run.md` § Testing the run.
 - Workflow sync (bridge extension, sync button, history-pull): `docs/dev/comfyui-sync.md`.

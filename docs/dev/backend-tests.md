@@ -7,7 +7,10 @@ This file covers the conventions for writing or fixing a backend pytest test: wh
 ## Which harness
 
 Request-level tests drive `backend.main.app` over httpx (see
-`backend/tests/conftest.py`); everything else is service-level. Anything needing a
+`backend/tests/conftest.py`); everything else is service-level. A fake shared across test
+files lives in a non-`test_` module beside them, so pytest does not collect it, and imports no
+`conftest` if anything outside pytest runs it: `fake_comfy.py` is the example
+(`docs/dev/comfy-run.md` § Testing the run). Anything needing a
 decodable video is gated on cv2 — see `docs/dev/video/tests.md` (§ cv2 in CI, and the skip
 convention) before adding a test or a CI dependency there.
 

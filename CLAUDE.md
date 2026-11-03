@@ -114,7 +114,8 @@ Which gate runs where — the one place this list lives:
 - **Windows filesystem rules** — the open-file locks of PM-021, symlink privilege — reach
   only the non-blocking Windows job; `manage.ps1` is parse-checked, never run.
 - **A real ComfyUI, the booru lookup, Restart and Shutdown**, which `qa-smoke` and e2e leave
-  out.
+  out. e2e runs ComfyUI journeys against a fake one (`docs/dev/comfy-run.md` § Testing the
+  run), so a change in what real ComfyUI sends still reaches no gate.
 
 ## Architecture
 
@@ -220,7 +221,7 @@ substantial edit.
 | `docs/dev/database.md` | Working on a model or Alembic migration, an index or FK `ondelete`, deferred columns, `check_migrations.py`, or the startup DB backup — the drift check's `ACCEPTED_DRIFT` and `db_maintenance` rotation | ~1885 |
 | `docs/dev/environment-setup.md` | Working on `manage.ps1`/`manage.sh`, the bind address or `--lan`, torch wheels, the startup splash, or the setup/update flow — the Node version check, `bind_host.py`/`CRUCIBLE_HOST` and lockfile reset | ~3140 |
 | `docs/dev/comfyui.md` | Working on the `comfy` router, `comfy_service.py`, or the ComfyUI data model — plans (workflow template + pinned params), prompt rows and their per-row folder, prompt library, ComfyClient | ~1650 |
-| `docs/dev/comfy-run.md` | Working on the `comfy_generate` job or `POST /comfy/run` — per-row folders and file stems, per-row `refresh_stats`, removing our own prompt from ComfyUI's queue on cancel/failure | ~1600 |
+| `docs/dev/comfy-run.md` | Working on the `comfy_generate` job, `POST /comfy/run` or the fake ComfyUI (`fake_comfy.py`) — per-row folders and file stems, per-row `refresh_stats`, removing our own prompt from ComfyUI's queue on cancel/failure | ~2100 |
 | `docs/dev/comfy-page.md` | Working on `ComfyPage` or `frontend/src/components/comfy/` — the Folder cell, `activeRuns` run tracking, the prompt library modals, `comfy.spec.ts` | ~1500 |
 | `docs/dev/comfy-prompts.md` | Generating prompts with an LLM or working on `prompt_generator.py` — `parse_prompts` filtering, `GeneratePromptsModal` re-attach | ~1880 |
 | `docs/dev/comfyui-sync.md` | Working on workflow sync or the bridge extension — "Sync from canvas", `GET /comfy/canvas-workflow` and ComfyUI API constraints | ~710 |

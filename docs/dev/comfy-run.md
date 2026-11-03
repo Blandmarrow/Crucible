@@ -138,3 +138,51 @@ to decide as before.
 Residual risk, accepted: an old ComfyUI ignores the interrupt body and interrupts globally,
 so if our prompt finishes in the milliseconds between the `GET /queue` and the interrupt,
 whatever runs next is stopped.
+
+### Testing the run
+
+**One fake ComfyUI, two adapters**: `backend/tests/fake_comfy.py`. `FakeComfy.handler` holds
+all the behaviour. pytest hands `transport(fake)` (an `httpx.MockTransport`) to `ComfyClient`
+by patching `backend.routers.comfy.ComfyClient` with a `functools.partial`. The Playwright
+suite runs the same handler on a real socket, because its backend is a separate process the
+transport seam cannot reach: `frontend/e2e/serve-comfy.mjs` starts
+`python -m backend.tests.fake_comfy` as a second `webServer` on `E2E_COMFY_PORT` (default
+8198), and `comfy-run.spec.ts` points `comfyui_url` at it through `setComfyUrlViaApi`. The
+socket adapter is stdlib `http.server`, since `requirements-ci.txt` has no uvicorn.
+
+**The module imports no `conftest`**, which pulls in `backend.config`, the database and the
+app. The e2e server must not open a database to pretend to be ComfyUI, so the fake keeps its
+own `make_png`.
+
+`/prompt` refuses what ComfyUI would: a graph with no output node (400 `prompt_no_outputs`)
+and a link to a node the graph lacks (400 with `node_errors`), so a `patch_workflow`
+regression that breaks a link fails a test. On `complete=True`, a submit yields one image per
+`SaveImage` (`type: "output"`) and `PreviewImage` (`type: "temp"`) node of the graph actually
+submitted, and a `SaveImage`'s `filename_prefix` splits into subfolder and file prefix. The
+history entry has ComfyUI's shape (`prompt`, `outputs`, `status`). `/view` serves a PNG with
+the chunks real `SaveImage` writes: `prompt`, the submitted graph, always, and one per key of
+`extra_data.extra_pnginfo`. **`ComfyClient.submit` sends no `extra_data`**, so a run's images
+carry no `workflow` chunk, and `generation_metadata` holds the prompt text but no editor graph.
+`polls_before_done` keeps a prompt running for that many polls, which is how the e2e server
+lets the page show `running`. **A marker in the prompt text picks a failure**, so a browser
+spec chooses one per row with no control endpoint: `[[fake:reject]]` is a 400 with
+`node_errors`, `[[fake:fail]]` is an `execution_error` in history, and `[[fake:corrupt]]`
+serves the last output in *graph* order as junk bytes. With `output_node_ids` in graph order,
+the import then fails after earlier outputs were written. `POST /free` is recorded for the
+VRAM handoff to test against.
+
+`backend/tests/test_comfy_run_body.py` drives the run body through it: multi-output import
+(one from a ComfyUI subfolder) with generation metadata and provenance, a PreviewImage
+source, an execution error, a rejected and a refused graph, the per-row rollback and per-row
+folders, plus a real-socket round trip that guards the e2e adapter.
+`test_comfy_queue_cleanup.py` uses it for the cancel paths.
+
+Not modelled: websockets and progress previews, `/upload/image`, `/object_info`, the bridge's
+snapshot route, input types and values (only links are checked), and an interrupted prompt's
+history entry. **Nor is a partial validation failure**, and that one hides a live gap: real
+ComfyUI answers `/prompt` with a 200 *and* a non-empty `node_errors` when some outputs fail
+validation, queues only the valid ones, and `submit` ignores `node_errors` on a 200 — so a row
+whose second output node is invalid completes with one image and no error. Whether `submit`
+should fail or warn is an open question in the M6 plan. The older run tests (`test_provenance_http._FakeComfyClient`,
+`test_comfy_cancel_stats`, and `test_comfy_subfolder`, which imports the former) still replace
+`ComfyClient` wholesale. Moving them onto `FakeComfy` is an open follow-up.

@@ -11,7 +11,8 @@ name: e2e-smoke
 # needs to migrate and serve the app. A missing backend dep does NOT fail loudly
 # here — it surfaces as a Playwright "webServer timeout", which is why serve.mjs's
 # output is piped (stdout/stderr: "pipe" in playwright.config.ts) so the
-# traceback is visible in the logs.
+# traceback is visible in the logs. A second webServer, serve-comfy.mjs, runs the
+# fake ComfyUI (backend/tests/fake_comfy.py) on :8198 from the same install.
 
 on:
   pull_request:

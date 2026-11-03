@@ -17,7 +17,7 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-03, after the `comfyui.md` split)
+## Next session (updated 2026-11-03, after M6 §7)
 
 1. M5's five stages merged on 2026-10-30 as PR #101. Only its cleanup is open, and that waits
    a release. See [server-state-plan/README.md](server-state-plan/README.md) for what was
@@ -47,8 +47,9 @@ restates its stages.
    [comfy-automation-plan/README.md](comfy-automation-plan/README.md) by decisions 8 and 9, and
    `comfy-per-row-subfolders` is deleted. **Work on M6 happens on that branch.** The
    `docs/dev/comfyui.md` split is done there: the run body is now `docs/dev/comfy-run.md` and the
-   page `docs/dev/comfy-page.md`. The next M6 session starts §7, the mock ComfyUI server, and
-   documents it in comfy-run.md. Decisions 7–9 and this M6 checklist exist only on that branch until it
+   page `docs/dev/comfy-page.md`. §7, the mock ComfyUI server, has landed there too, so the
+   next M6 session starts §2a (blueprints, leaves and expansion) and tests against the fake.
+   Decisions 7–9 and this M6 checklist exist only on that branch until it
    merges, so `main`'s next decision takes number 10. Its migration `e5c1a9d3f7b2` follows
    `main`'s `c2b8e4f6a1d7`; rebase at stage boundaries.
 5. M8's follow-ups 9, 10 and 11 can go any time. Batch move and copy, in item 9, must wait for
@@ -147,8 +148,9 @@ gates are green and it is pushed.
   folder and rewritten. The old branch is deleted.
 - [x] Split `docs/dev/comfyui.md` along its two recorded seams. Done 2026-11-03: the run body
   moved to `docs/dev/comfy-run.md` and the page to `docs/dev/comfy-page.md`, each with a Map row.
-- [ ] §7: the mock ComfyUI server. Extend the pytest `FakeComfy`, and serve it on a real port
-  for Playwright. Every later stage tests against it.
+- [x] §7: the mock ComfyUI server. Done 2026-11-03: `backend/tests/fake_comfy.py`, in-process
+  for pytest (`test_comfy_run_body.py`) and on port 8198 for Playwright (`comfy-run.spec.ts`).
+  Every later stage tests against it.
 - [ ] §2a: blueprints, leaves, the pure expansion service and its guard rails, and prompts
   composed from templates.
 - [ ] §2b: the outline call and the review panel, reachable without an LLM.

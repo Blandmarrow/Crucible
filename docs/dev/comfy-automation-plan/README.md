@@ -44,17 +44,20 @@ blueprint rather than once per leaf.
 ## Sections
 
 **Section numbers are stable identities, not an order.** The build order is the roadmap's M6
-checklist alone. In short: the `docs/dev/comfyui.md` split (done 2026-11-03), then §7, §2a, §2b, Top up (§2c), §3,
-a rebase after M8 stages 2–3, §4, §5, §6, then the merge.
+checklist alone. In short: the `docs/dev/comfyui.md` split and §7 (both done 2026-11-03), then
+§2a, §2b, Top up (§2c), §3, a rebase after M8 stages 2–3, §4, §5, §6, then the merge.
 
 **§1 (per-row `subfolder` + `leaf_id`) is ported**, commit 8dee5de on the branch; its rationale
 lives in `docs/dev/comfyui.md` (the columns and endpoints) and `docs/dev/comfy-run.md` (how a run
 files each row). The `comfy_leaves` table it left for later is §2a's to build:
 `leaf_id` is a column with no writer.
 
-**§7 leads the second half rather than closing the arc.** Every later stage edits or builds on
-the `comfy_generate` run body, and the mock is the only route to a GPU-free, ComfyUI-free
-Playwright run of the whole feature.
+**§7 (the mock ComfyUI server) has landed**, so every later stage tests against it:
+`backend/tests/fake_comfy.py`, documented in `docs/dev/comfy-run.md` § Testing the run. pytest
+reaches it in-process; Playwright reaches it on a real port. Each stage that adds a journey
+extends `frontend/e2e/comfy-run.spec.ts` until the whole arc runs there GPU-free, ComfyUI-free
+and LLM-free: hand-authored blueprint → expand → run → foldered gallery → Top up. `POST /free`
+is already served and recorded, for §4's VRAM handoff.
 
 **If the arc has to be cut short, cut after Top up.** Foldered datasets that refill themselves
 on request are most of the value; a manual "run these stages in order" habit covers the rest.
@@ -358,24 +361,6 @@ Recipes are **global — no dataset or plan foreign key** — for the same reaso
 plan id.** Validate that on load as well as on save; a recipe is a document that can arrive from
 elsewhere.
 
-## 7. The mock ComfyUI server
-
-`main` already has half of it: `backend/tests/test_comfy_queue_cleanup.py`'s `FakeComfy`, an
-in-process ComfyUI behind `httpx.MockTransport`, passed through `ComfyClient`'s `transport`
-argument. It serves `system_stats`, `prompt`, `history`, `view` and `/queue` and drives the run
-body through cancel, timeout, abort and the connect breaker. See `docs/dev/comfyui.md` § Gotchas.
-
-- **Extend `FakeComfy` for pytest** and move it into a shared test module: `view` returning PNG
-  bytes with an embedded `prompt`/`workflow` chunk, multi-output prompts, a prompt that fails
-  mid-execution in `history`, a 400 carrying `node_errors`, and `/free`. pytest then covers the
-  run body end to end — import, provenance stamping, `source_meta`, the per-row rollback and §1's
-  folders.
-- **For Playwright, serve the same handler on a real ephemeral port.** The e2e backend is a
-  separate process started by `frontend/e2e/serve.mjs`, so the transport seam cannot reach it.
-  Start the fake as a small HTTP server beside it and point the e2e DB's ComfyUI URL at it.
-  That gives a GPU-free, ComfyUI-free, LLM-free journey: hand-authored blueprint → expand → run →
-  foldered gallery → Top up.
-
 ## Documentation this arc owes
 
 `docs/dev/comfyui.md` went over budget at ~4,440 words after §1 and was split on 2026-11-03:
@@ -395,6 +380,12 @@ or a new page, plus a row in `docs/features.md` and whatever `README.md` needs. 
 `python scripts/check_docs.py` and `python scripts/check_migrations.py` on every stage.
 
 ## Still open
+
+- What a 200 from `/prompt` with a non-empty `node_errors` should do. ComfyUI then queues only
+  the outputs that passed validation, and `ComfyClient.submit` ignores `node_errors`, so the
+  row completes with fewer images and no error. Fail the row, or complete it with a warning in
+  `error_msg`? Found while building §7; the fake does not model it yet
+  (`docs/dev/comfy-run.md` § Testing the run).
 
 - Whether per-leaf targets are editable individually in the review UI or only per scenario.
   Recommend scenario-level in the UI, leaf-level in the DB.

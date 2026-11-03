@@ -21,9 +21,11 @@ state → create a plan (which selects it and jumps to *Workflow & Pins*), *Past
 → rows, and per-row folders (typed into a cell, then bulk-set over the top, cross-checked
 through `GET …/rows`). Its textarea-count assertion is scoped to
 `data-testid="comfy-rows-table"` on purpose — the prompt cells must be the only textareas in
-the table, so it fails if the single-line Folder cell is ever rebuilt as one. It deliberately
-never starts a run — CI has no ComfyUI and no torch; the run body is
-covered request-level by `backend/tests/test_comfy_cancel_stats.py`.
+the table, so it fails if the single-line Folder cell is ever rebuilt as one. It never starts
+a run. The journeys that press *Run* are `frontend/e2e/comfy-run.spec.ts`, against the fake
+ComfyUI in `docs/dev/comfy-run.md` § Testing the run: rows filed under their folders with the
+image's generation metadata on its detail page, and a failed row's error tooltip and
+*Reset failed*.
 
 - **Plan bar** — plan `<select>` (query `["comfy","plans",datasetId]`), inline create/rename,
   delete via `ConfirmDialog`; section tabs *Rows* / *Workflow & Pins*.

@@ -3,7 +3,8 @@
 A plan stores an API-format ComfyUI workflow plus pinned parameters; rows hold
 per-run values. The run endpoint queues a background job that submits each row
 to the ComfyUI server sequentially, downloads the outputs, and ingests them
-into the dataset. See docs/dev/comfyui.md.
+into the dataset. See docs/dev/comfyui.md, and docs/dev/comfy-run.md for the
+job.
 """
 import asyncio
 import copy
@@ -985,7 +986,7 @@ async def generate_prompts_job(
     committed as each batch lands, closing the modal (or navigating away, or a
     Stop) never discards LLM calls already paid for. Runs on the shared
     job_queue, so it serialises behind captioning/ComfyUI runs — see
-    docs/dev/comfyui.md.
+    docs/dev/comfy-prompts.md.
 
     Everything that could fail predictably is checked here rather than minutes
     later inside the job.

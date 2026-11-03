@@ -17,7 +17,7 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-03, after the M6 port)
+## Next session (updated 2026-11-03, after the `comfyui.md` split)
 
 1. M5's five stages merged on 2026-10-30 as PR #101. Only its cleanup is open, and that waits
    a release. See [server-state-plan/README.md](server-state-plan/README.md) for what was
@@ -45,9 +45,10 @@ restates its stages.
    ([decision 7](decisions/07-m6-built-whole-on-one-branch.md)): per-row folders are 8dee5de
    there, the plan is rewritten in
    [comfy-automation-plan/README.md](comfy-automation-plan/README.md) by decisions 8 and 9, and
-   `comfy-per-row-subfolders` is deleted. **Work on M6 happens on that branch**, and the next
-   M6 session starts by splitting `docs/dev/comfyui.md` (4,440 words) along its two seams in
-   `pending-splits.md`. Decisions 7–9 and this M6 checklist exist only on that branch until it
+   `comfy-per-row-subfolders` is deleted. **Work on M6 happens on that branch.** The
+   `docs/dev/comfyui.md` split is done there: the run body is now `docs/dev/comfy-run.md` and the
+   page `docs/dev/comfy-page.md`. The next M6 session starts §7, the mock ComfyUI server, and
+   documents it in comfy-run.md. Decisions 7–9 and this M6 checklist exist only on that branch until it
    merges, so `main`'s next decision takes number 10. Its migration `e5c1a9d3f7b2` follows
    `main`'s `c2b8e4f6a1d7`; rebase at stage boundaries.
 5. M8's follow-ups 9, 10 and 11 can go any time. Batch move and copy, in item 9, must wait for
@@ -144,8 +145,8 @@ gates are green and it is pushed.
 - [x] Port per-row output folders from `comfy-per-row-subfolders`: c2d6a6d. Ported 2026-11-03 as
   8dee5de, with the migration re-parented onto `c2b8e4f6a1d7` and the plan moved into its own
   folder and rewritten. The old branch is deleted.
-- [ ] Split `docs/dev/comfyui.md` along its two recorded seams. The first action of the next
-  M6 session, since every later stage appends to it.
+- [x] Split `docs/dev/comfyui.md` along its two recorded seams. Done 2026-11-03: the run body
+  moved to `docs/dev/comfy-run.md` and the page to `docs/dev/comfy-page.md`, each with a Map row.
 - [ ] §7: the mock ComfyUI server. Extend the pytest `FakeComfy`, and serve it on a real port
   for Playwright. Every later stage tests against it.
 - [ ] §2a: blueprints, leaves, the pure expansion service and its guard rails, and prompts

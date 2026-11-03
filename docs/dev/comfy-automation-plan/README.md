@@ -18,8 +18,8 @@ no Map row and no word budget. When a stage lands, move its durable rationale in
 named in § Documentation this arc owes and delete the stage from here; delete the folder when
 everything is done.
 
-Nothing below §1 is decided by the code yet. Read `CLAUDE.md`, `docs/dev/comfyui.md` and
-`docs/dev/comfy-prompts.md` before implementing, and prefer the repo's conventions over the
+Nothing below §1 is decided by the code yet. Read `CLAUDE.md`, `docs/dev/comfyui.md`,
+`docs/dev/comfy-run.md` and `docs/dev/comfy-prompts.md` before implementing, and prefer the repo's conventions over the
 sketches here.
 
 ## What this arc is
@@ -44,11 +44,12 @@ blueprint rather than once per leaf.
 ## Sections
 
 **Section numbers are stable identities, not an order.** The build order is the roadmap's M6
-checklist alone. In short: the `docs/dev/comfyui.md` split, then §7, §2a, §2b, Top up (§2c), §3,
+checklist alone. In short: the `docs/dev/comfyui.md` split (done 2026-11-03), then §7, §2a, §2b, Top up (§2c), §3,
 a rebase after M8 stages 2–3, §4, §5, §6, then the merge.
 
 **§1 (per-row `subfolder` + `leaf_id`) is ported**, commit 8dee5de on the branch; its rationale
-lives in `docs/dev/comfyui.md`. The `comfy_leaves` table it left for later is §2a's to build:
+lives in `docs/dev/comfyui.md` (the columns and endpoints) and `docs/dev/comfy-run.md` (how a run
+files each row). The `comfy_leaves` table it left for later is §2a's to build:
 `leaf_id` is a column with no writer.
 
 **§7 leads the second half rather than closing the arc.** Every later stage edits or builds on
@@ -377,8 +378,9 @@ body through cancel, timeout, abort and the connect breaker. See `docs/dev/comfy
 
 ## Documentation this arc owes
 
-`docs/dev/comfyui.md` is over budget at ~4,440 words after §1; its split into comfy-page.md and
-comfy-run.md is queued in `docs/dev/pending-splits.md` and is the first M6 task. Two new topic
+`docs/dev/comfyui.md` went over budget at ~4,440 words after §1 and was split on 2026-11-03:
+the run body is now `docs/dev/comfy-run.md` and the page `docs/dev/comfy-page.md`. Later stages
+that edit the run body document it in comfy-run.md. Two new topic
 files are owed beyond that, each with a Map row:
 
 - comfy-structured.md — blueprints, axes, variations and templates, expansion and its guard

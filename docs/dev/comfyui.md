@@ -48,9 +48,10 @@ Two more row columns (migration `e5c1a9d3f7b2`) give each row its own destinatio
   a label, not a path. **The Python-side `default=""` is load-bearing**: `create_row` and
   `bulk_add_rows` construct `ComfyRow(...)` directly, so a `server_default` alone would leave
   `row.subfolder` as `None` until the object is refreshed. `status` already carries both.
-- `leaf_id` — `String(36)` NULL, plain index `ix_comfy_rows_leaf_id`. Column-only today: nothing
-  writes it, and `_row_out` serializes it read-only. It names the blueprint leaf that minted the
-  row once structured generation exists. **Deliberately no foreign key**: a row whose leaf a
+- `leaf_id` — `String(36)` NULL, plain index `ix_comfy_rows_leaf_id`. It names the blueprint
+  leaf (`comfy_leaves`) that minted the row. Blueprint Apply is its only writer, and `_row_out`
+  serializes it read-only. Blueprints, leaves and Apply are `docs/dev/comfy-structured.md`.
+  **Deliberately no foreign key**: a row whose leaf a
   blueprint edit deleted should keep naming it as provenance, and an inline column-level
   reference reads back off SQLite with no `ondelete`, which `scripts/check_migrations.py` then
   reports as permanent drift (`a7c3e5b1d9f2`'s docstring covers that at length).

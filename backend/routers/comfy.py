@@ -27,6 +27,8 @@ from backend.licenses import FIELD_MAX_LEN
 from backend.models import BackgroundJob, Dataset, Image
 from backend.models.comfy import ComfyLibraryPrompt, ComfyPlan, ComfyRow
 from backend.schemas.app_data import ComfyGenSettings
+from backend.schemas.comfy_blueprint import BlueprintSpec
+from backend.services import blueprint_service
 from backend.services.comfy_service import (
     MAX_CONSECUTIVE_CONNECT_ERRORS,
     PER_ROW_TIMEOUT_S,
@@ -214,6 +216,27 @@ class RunRequest(BaseModel):
     subfolder: str = ""
     set_caption: bool = True
     label: str | None = None
+
+
+_SEED = Field(ge=0, le=2**31 - 1)
+
+
+class BlueprintPut(BaseModel):
+    spec: BlueprintSpec
+    seed: int = _SEED
+
+
+class BlueprintPreviewRequest(BaseModel):
+    spec: BlueprintSpec
+    seed: int = _SEED
+    allow_over_cap: bool = False
+
+
+class BlueprintApplyRequest(BlueprintPreviewRequest):
+    # The preview's `rows_to_add`. A mismatch is a 409, so an edit that lands between
+    # review and Apply cannot turn a reviewed 300 rows into 30,000.
+    confirm_total: int = Field(ge=0)
+    delete_orphan_pending: bool = False
 
 
 def _plan_out(plan: ComfyPlan) -> dict:
@@ -798,6 +821,38 @@ async def list_plan_prompts(plan_id: str, db: AsyncSession = Depends(get_db)):
     }
 
 
+_plan_locks: dict[str, asyncio.Lock] = {}
+
+
+def _plan_lock(plan_id: str) -> asyncio.Lock:
+    """Serializes the plan's row writers from their 409 check to their commit.
+
+    Blueprint Apply, `run_plan` and `generate_prompts_job` each check for a live job
+    and then commit; the blueprint PUT takes it too, for the first save's create. Without one lock across all three, two double-clicked Applies
+    both pass and give each leaf its rows twice, and a run created between an Apply's
+    check and its commit loads pending rows that Apply then deletes. One process
+    serves the app, so an in-process lock is enough.
+    """
+    return _plan_locks.setdefault(plan_id, asyncio.Lock())
+
+
+async def _plan_job_active(db: AsyncSession, plan_id: str, job_types: tuple[str, ...]) -> bool:
+    """Is a job of one of these types pending or running for this plan?
+
+    Matched on job type *and* `config["plan_id"]`, so a run on one plan never blocks
+    prompt generation on another (`test_conflict_paths_http.py` pins both directions).
+    """
+    active = (
+        await db.execute(
+            select(BackgroundJob.config).where(
+                BackgroundJob.job_type.in_(job_types),
+                BackgroundJob.status.in_(("pending", "running")),
+            )
+        )
+    ).scalars().all()
+    return any((config or {}).get("plan_id") == plan_id for config in active)
+
+
 async def _next_sort_order(db: AsyncSession, plan_id: str) -> int:
     max_order = (
         await db.execute(select(func.max(ComfyRow.sort_order)).where(ComfyRow.plan_id == plan_id))
@@ -1007,40 +1062,34 @@ async def generate_prompts_job(
         raise HTTPException(400, "No model given and the provider has no default model")
 
     # One prompt-generation job at a time per plan (mirrors the run guard).
-    active = (
-        await db.execute(
-            select(BackgroundJob).where(
-                BackgroundJob.job_type == "comfy_prompts",
-                BackgroundJob.status.in_(("pending", "running")),
+    # Held to the job's commit, like the run's guard, against a blueprint Apply.
+    async with _plan_lock(plan_id):
+        if await _plan_job_active(db, plan_id, ("comfy_prompts",)):
+            raise HTTPException(409, "A prompt-generation job for this plan is already queued or running")
+
+        existing_count = len(_plan_prompt_texts(plan, await _plan_rows(db, plan_id)))
+        if existing_count >= body.target_count:
+            raise HTTPException(
+                400,
+                f"The plan already holds {existing_count} prompt{'s' if existing_count != 1 else ''} — "
+                f"raise the target above that to generate more",
             )
-        )
-    ).scalars().all()
-    if any((j.config or {}).get("plan_id") == plan_id for j in active):
-        raise HTTPException(409, "A prompt-generation job for this plan is already queued or running")
+        to_generate = body.target_count - existing_count
 
-    existing_count = len(_plan_prompt_texts(plan, await _plan_rows(db, plan_id)))
-    if existing_count >= body.target_count:
-        raise HTTPException(
-            400,
-            f"The plan already holds {existing_count} prompt{'s' if existing_count != 1 else ''} — "
-            f"raise the target above that to generate more",
+        # plan_id is a path param, so model_dump() omits it — but the 409 guard above
+        # reads config["plan_id"], so inject it explicitly.
+        config = body.model_dump()
+        config["plan_id"] = plan_id
+        auto_label = f"Prompts: {plan.name} — {to_generate} more (to {body.target_count})"
+        job = BackgroundJob(
+            job_type="comfy_prompts",
+            label=body.label or auto_label,
+            dataset_id=plan.dataset_id,
+            total_items=to_generate,
+            config=config,
         )
-    to_generate = body.target_count - existing_count
-
-    # plan_id is a path param, so model_dump() omits it — but the 409 guard above
-    # reads config["plan_id"], so inject it explicitly.
-    config = body.model_dump()
-    config["plan_id"] = plan_id
-    auto_label = f"Prompts: {plan.name} — {to_generate} more (to {body.target_count})"
-    job = BackgroundJob(
-        job_type="comfy_prompts",
-        label=body.label or auto_label,
-        dataset_id=plan.dataset_id,
-        total_items=to_generate,
-        config=config,
-    )
-    db.add(job)
-    await db.commit()
+        db.add(job)
+        await db.commit()
 
     dataset_id = plan.dataset_id
     provider_id = body.provider_id
@@ -1318,6 +1367,70 @@ async def reset_rows(plan_id: str, body: RowResetRequest, db: AsyncSession = Dep
     return {"reset": len(rows)}
 
 
+# ── Blueprint (structured generation) ─────────────────────────────────────────
+# docs/dev/comfy-structured.md. Expansion is inline, never a job: it is pure CPU plus
+# one bulk insert under the row cap.
+
+def _blueprint_out(bp) -> dict | None:
+    if bp is None:
+        return None
+    return {"spec": bp.spec or {}, "seed": bp.seed, "brief": bp.brief, "draft": bp.draft, "updated_at": bp.updated_at}
+
+
+@router.get("/plans/{plan_id}/blueprint")
+async def get_blueprint(plan_id: str, db: AsyncSession = Depends(get_db)):
+    await _get_plan(db, plan_id)
+    return {"value": _blueprint_out(await blueprint_service.load_blueprint(db, plan_id))}
+
+
+@router.put("/plans/{plan_id}/blueprint")
+async def put_blueprint(plan_id: str, body: BlueprintPut, db: AsyncSession = Depends(get_db)):
+    """Save the spec as the user edits it. Writes no rows; Apply does that."""
+    plan = await _get_plan(db, plan_id)
+    # Under the plan lock: a plan's first save and an Apply would otherwise both see
+    # no blueprint, both create one, and the second would hit its unique index.
+    async with _plan_lock(plan_id):
+        bp = await blueprint_service.save_spec(db, plan, body.spec, body.seed)
+        await db.commit()
+    return {"value": _blueprint_out(bp)}
+
+
+@router.post("/plans/{plan_id}/blueprint/preview")
+async def preview_blueprint(plan_id: str, body: BlueprintPreviewRequest, db: AsyncSession = Depends(get_db)):
+    """What Apply would do with this spec. Reads the spec from the body, not the saved
+    row, so the live preview follows edits that have not been saved yet."""
+    plan = await _get_plan(db, plan_id)
+    return await blueprint_service.preview(db, plan, body.spec, body.seed, allow_over_cap=body.allow_over_cap)
+
+
+@router.post("/plans/{plan_id}/blueprint/apply")
+async def apply_blueprint(plan_id: str, body: BlueprintApplyRequest, db: AsyncSession = Depends(get_db)):
+    plan = await _get_plan(db, plan_id)
+    alias = _prompt_alias(plan)
+    if not alias:
+        raise HTTPException(400, NO_PROMPT_PIN_MSG)
+    async with _plan_lock(plan_id):
+        # A run loaded its rows at start and must not lose pending ones to the orphan
+        # delete; a prompt job seeds its dedupe set once. Neither may overlap an Apply.
+        if await _plan_job_active(db, plan_id, ("comfy_generate", "comfy_prompts")):
+            raise HTTPException(409, "A run or prompt-generation job for this plan is queued or running — wait for it to finish")
+        try:
+            return await blueprint_service.apply(
+                db, plan, body.spec, body.seed,
+                prompt_alias=alias,
+                start_order=await _next_sort_order(db, plan_id),
+                confirm_total=body.confirm_total,
+                allow_over_cap=body.allow_over_cap,
+                delete_orphan_pending=body.delete_orphan_pending,
+            )
+        except blueprint_service.BlueprintInvalid as e:
+            raise HTTPException(400, f"The blueprint has errors: {e}")
+        except blueprint_service.OverCap as e:
+            raise HTTPException(400, str(e))
+        except blueprint_service.TotalChanged as e:
+            raise HTTPException(409, str(e))
+
+
 # ── Run ───────────────────────────────────────────────────────────────────────
 
 @router.post("/run")
@@ -1335,38 +1448,33 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
     if not dataset:
         raise HTTPException(404, "Dataset not found")
 
-    # One run at a time per plan.
-    active = (
-        await db.execute(
-            select(BackgroundJob).where(
-                BackgroundJob.job_type == "comfy_generate",
-                BackgroundJob.status.in_(("pending", "running")),
-            )
+    # One run at a time per plan. The check and the job's commit hold the plan lock,
+    # so a blueprint Apply cannot pass its own guard in between and then delete
+    # pending rows this run is about to load.
+    async with _plan_lock(body.plan_id):
+        if await _plan_job_active(db, body.plan_id, ("comfy_generate",)):
+            raise HTTPException(409, "A generation run for this plan is already queued or running")
+
+        if body.row_ids:
+            stmt = select(ComfyRow).where(ComfyRow.plan_id == body.plan_id, ComfyRow.id.in_(body.row_ids))
+        else:
+            stmt = select(ComfyRow).where(ComfyRow.plan_id == body.plan_id, ComfyRow.status == "pending")
+        rows = (await db.execute(stmt.order_by(ComfyRow.sort_order, ComfyRow.created_at))).scalars().all()
+        if not rows:
+            raise HTTPException(400, "No rows to run")
+        row_ids = [r.id for r in rows]
+
+        n = len(row_ids)
+        auto_label = f"ComfyUI: {plan.name} — {n} row{'s' if n != 1 else ''}"
+        job = BackgroundJob(
+            job_type="comfy_generate",
+            label=body.label or auto_label,
+            dataset_id=plan.dataset_id,
+            total_items=n,
+            config=body.model_dump(),
         )
-    ).scalars().all()
-    if any((j.config or {}).get("plan_id") == body.plan_id for j in active):
-        raise HTTPException(409, "A generation run for this plan is already queued or running")
-
-    if body.row_ids:
-        stmt = select(ComfyRow).where(ComfyRow.plan_id == body.plan_id, ComfyRow.id.in_(body.row_ids))
-    else:
-        stmt = select(ComfyRow).where(ComfyRow.plan_id == body.plan_id, ComfyRow.status == "pending")
-    rows = (await db.execute(stmt.order_by(ComfyRow.sort_order, ComfyRow.created_at))).scalars().all()
-    if not rows:
-        raise HTTPException(400, "No rows to run")
-    row_ids = [r.id for r in rows]
-
-    n = len(row_ids)
-    auto_label = f"ComfyUI: {plan.name} — {n} row{'s' if n != 1 else ''}"
-    job = BackgroundJob(
-        job_type="comfy_generate",
-        label=body.label or auto_label,
-        dataset_id=plan.dataset_id,
-        total_items=n,
-        config=body.model_dump(),
-    )
-    db.add(job)
-    await db.commit()
+        db.add(job)
+        await db.commit()
 
     plan_id = body.plan_id
     # Captured as a plain str for the stats refresh in `_run_with_stats`: that

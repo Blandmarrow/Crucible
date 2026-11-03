@@ -97,7 +97,8 @@ Recorded so an older draft cannot reintroduce them.
   that never sees the child finish, the test harness's loop-bound second queue, a parent
   cancelled while its child runs) went with it.
 - **A `pair:K` scenario mode.** Subsumed by `take: N`.
-- **A new job type for template expansion or the rewrite pass.** Reuse `comfy_prompts` — see §2a.
+- **A new job type for template expansion or the rewrite pass.** Expansion runs inline (§2a);
+  the rewrite pass reuses `comfy_prompts`.
 - **Inlining every stage into one giant job.** It would lift each stage's `_run` closure out of
   its router with high regression risk, and throw away every existing preflight check.
 - **Making the main queue multi-worker.** The single worker is what serializes GPU work. Two
@@ -112,65 +113,20 @@ Recorded so an older draft cannot reintroduce them.
 
 Read `docs/dev/comfy-prompts.md`.
 
-### §2a — Blueprints, expansion and templates
+### §2a — Blueprints, expansion and templates (landed)
 
-A blueprint is persisted in `comfy_blueprints` (belonging to a plan) and expands into
-`comfy_leaves` rows, each with its rendered path, its target count and the entity ids it
-combines:
+Built on 2026-11-03. Everything durable — the tables, the spec, the pure expansion and its
+walk, fill accounting, orphans, and Apply's guard rails — now lives in
+`docs/dev/comfy-structured.md`.
 
-```jsonc
-{"axes": {"character": [{"id": "knight", "label": "Iron Knight",
-                         "descriptor": "a tall knight in blackened plate, red sash, scarred jaw"}],
-          "biome":     [{"id": "fen", "label": "Salt Fen",
-                         "descriptor": "a brackish fen, reed banks, low fog"}]},
- "variations": {"camera": ["low angle", "wide shot", "close-up"],
-                "time":   ["dawn", "overcast noon", "dusk"]},
- "scenarios": [{"name": "solo", "combine": ["character", "biome"], "mode": "full",
-                "count": 10, "path": "{biome}/{character}",
-                "template": "{character}, standing in {biome}, {camera}, {time}"},
-               {"name": "pairs", "combine": [{"axis": "character", "take": 2}, "biome"],
-                "mode": "sample:20", "count": 10, "path": "{biome}/pairs/{character}",
-                "template": "{character} together, in {biome}, {camera}"}]}
-```
+Two departures from the sketch that stood here:
+- **Expansion runs inline and is never a job.** Its row cap makes every expansion small. The
+  mutual exclusion the sketch got from reusing `comfy_prompts` comes from Apply's 409 on a
+  live `comfy_generate` or `comfy_prompts` job, plus a per-plan lock.
+- **`sample:K` ranks combinations by a hash of their entity ids** rather than seeding
+  `random.sample`, so a Python upgrade cannot re-sample a blueprint.
 
-- A `combine` item is a bare axis name (take 1) or `{axis, take: N}`. `take > 1` is
-  `itertools.combinations` — unordered, distinct.
-- `mode` is `full` or `sample:K`, seeded off the blueprint so re-expansion is stable.
-- `path` renders from slugs of the combined entities' labels.
-- **`descriptor` is the point.** It is substituted verbatim wherever the template names that
-  axis, which keeps one character recognisable across every leaf they appear in.
-- **The template draws each leaf's `count` prompts from the variation pieces** — a seeded,
-  without-replacement walk over their product, so a leaf's prompts differ from each other and
-  re-expansion reproduces them. A leaf whose `count` exceeds the product is a review-time
-  warning, not a silent repeat.
-- A scenario with no `template` falls back to a default that joins the combined descriptors.
-  Tag-based models want comma-joined tags; natural-language models want §3's rewrite pass.
-
-**Expansion is a pure service**: no DB, no HTTP, no `HTTPException`. It returns leaves, prompts,
-a total and warnings; the router decides what is a 400. That makes the combinatorics directly
-unit-testable and lets one function back both the preview and the real expansion — which is
-what makes the preview trustworthy.
-
-Guard rails, because the cross product is multiplicative and a four-axis blueprint written in
-one sentence can mean 4,800 rows:
-
-- The preview shows total rows and leaf count **before** approval (and, with §3 on, estimated
-  LLM calls).
-- A hard row cap with an explicit override, refused rather than truncated silently.
-- A unique index on (blueprint, path), so a path collision is an error, not a silent merge.
-- Expand takes a `confirm_total` and **409s on mismatch**, so "reviewed 300, enqueued 30,000"
-  cannot happen after an edit lands between review and approval.
-
-Empty rendered path segments and unknown axis or variation names are validation errors at review
-time. `slugify_filename` returns `"image"` for an all-punctuation label — as a *path segment*
-that is a silently wrong folder, so treat it as a validation error rather than a fallback.
-
-**Expand writes rows with `leaf_id` and `subfolder`, as `job_type="comfy_prompts"`.** The reuse
-is load-bearing: the existing 409 guard matches on job type *and* `config["plan_id"]`, which is
-exactly the mutual exclusion needed — flat generation, expansion and the rewrite pass all insert
-rows and must never run concurrently on one plan. Carry `blueprint_id` / `leaf_index` /
-`leaf_total` on the progress events instead of minting a type. A small expansion may run inline;
-a large one goes through the job so it shows in `TopBar` and can be stopped.
+§3's rewrite pass is still the slow part, and it still reuses `comfy_prompts`.
 
 ### §2b — The outline call and the review panel
 
@@ -200,10 +156,11 @@ the shortfall per leaf and in total, adds the missing rows from the same seeded 
 (continuing past the prompts already used), and runs only the pending rows. Because targets are
 absolute, pressing it twice does nothing the second time. §5's loop is this, repeated with gates.
 
-**Open, for §2c:** what happens to rows whose leaf a blueprint edit deleted. A dangling `leaf_id`
-keeps the provenance, but those rows stop counting toward the new leaves' targets, so
-edit-then-top-up can double the dataset. Surface it in the preview rather than solving it
-silently.
+Rows whose leaf a blueprint edit deleted were settled with §2a (the user's ruling,
+2026-11-03): they count toward nothing, the preview reports them, and Apply can delete their
+pending rows only. Top up reuses Apply, so it inherits that. Shortfall counts images; pending,
+running and failed rows count as future images; and Top up resets failed rows to pending
+before running (`docs/dev/comfy-structured.md` § Fill accounting).
 
 ## 3. The optional LLM rewrite pass
 
@@ -381,13 +338,13 @@ or a new page, plus a row in `docs/features.md` and whatever `README.md` needs. 
 
 ## Still open
 
-- Whether per-leaf targets are editable individually in the review UI or only per scenario.
-  Recommend scenario-level in the UI, leaf-level in the DB.
-- What a deleted leaf's rows count toward (§2c).
 - Whether leaf-level LLM concurrency in §3 is worth exposing. It buys nothing against a
   single-GPU local server and real time against a hosted API.
 - Whether an entity filter (built on `comfy_leaves`, scoped to a blueprint) is wanted in the
   gallery. Not built until someone misses it (decision 8).
+
+Settled 2026-11-03 by the user: per-leaf targets are edited per scenario in the UI and stored
+per leaf in the DB; a deleted leaf's rows count toward nothing (see §2c).
 
 ## Traps worth restating
 

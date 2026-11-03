@@ -17,7 +17,7 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-03, after M6 §7)
+## Next session (updated 2026-11-03, after M6 §2a)
 
 1. M5's five stages merged on 2026-10-30 as PR #101. Only its cleanup is open, and that waits
    a release. See [server-state-plan/README.md](server-state-plan/README.md) for what was
@@ -47,10 +47,11 @@ restates its stages.
    [comfy-automation-plan/README.md](comfy-automation-plan/README.md) by decisions 8 and 9, and
    `comfy-per-row-subfolders` is deleted. **Work on M6 happens on that branch.** The
    `docs/dev/comfyui.md` split is done there: the run body is now `docs/dev/comfy-run.md` and the
-   page `docs/dev/comfy-page.md`. §7, the mock ComfyUI server, has landed there too, so the
-   next M6 session starts §2a (blueprints, leaves and expansion) and tests against the fake.
+   page `docs/dev/comfy-page.md`. §7 (the mock ComfyUI server) and §2a (blueprints, see
+   `docs/dev/comfy-structured.md`) have landed there too. The next M6 work is §2b, the outline
+   call, then §2c, Top up.
    Decisions 7–9 and this M6 checklist exist only on that branch until it
-   merges, so `main`'s next decision takes number 10. Its migration `e5c1a9d3f7b2` follows
+   merges, so `main`'s next decision takes number 10. Its migrations `e5c1a9d3f7b2` → `b7d2f4a9c1e3` follow
    `main`'s `c2b8e4f6a1d7`; rebase at stage boundaries.
 5. M8's follow-ups 9, 10 and 11 can go any time. Batch move and copy, in item 9, must wait for
    M4 to merge. Items 7, 8, 12 and 13 wait for stages 6 and 3, which replace that code.
@@ -151,8 +152,9 @@ gates are green and it is pushed.
 - [x] §7: the mock ComfyUI server. Done 2026-11-03: `backend/tests/fake_comfy.py`, in-process
   for pytest (`test_comfy_run_body.py`) and on port 8198 for Playwright (`comfy-run.spec.ts`).
   Every later stage tests against it.
-- [ ] §2a: blueprints, leaves, the pure expansion service and its guard rails, and prompts
-  composed from templates.
+- [x] §2a: blueprints, leaves, the pure expansion service and its guard rails, and prompts
+  composed from templates. Done 2026-11-03: migration `b7d2f4a9c1e3` (which also carries §2b's
+  `brief`/`draft` columns), the *Blueprint* tab, and `docs/dev/comfy-structured.md`.
 - [ ] §2b: the outline call and the review panel, reachable without an LLM.
 - [ ] §2c: Top up. The plan's cut point if the arc stops early.
 - [ ] §3: the optional LLM rewrite pass.

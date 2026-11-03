@@ -6,6 +6,7 @@ import { useJobSSE } from "../hooks/useSSE";
 import { useJobStore } from "../store/jobStore";
 import { comfyApi } from "../api/comfy";
 import ConfirmDialog from "../components/common/ConfirmDialog";
+import BlueprintPanel from "../components/comfy/BlueprintPanel";
 import WorkflowPinPanel from "../components/comfy/WorkflowPinPanel";
 import ComfyRowsTable from "../components/comfy/ComfyRowsTable";
 import ComfyRunBar from "../components/comfy/ComfyRunBar";
@@ -30,7 +31,7 @@ export default function ComfyPage() {
   const qc = useQueryClient();
 
   const [planId, setPlanId] = useState<string | null>(null);
-  const [section, setSection] = useState<"rows" | "workflow">("rows");
+  const [section, setSection] = useState<"rows" | "workflow" | "blueprint">("rows");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [subfolder, setSubfolder] = useState("");
   const [setCaption, setSetCaption] = useState(true);
@@ -359,6 +360,7 @@ export default function ComfyPage() {
           <div className="tabs" style={{ marginBottom: 0 }}>
             <button className={`tab${section === "rows" ? " active" : ""}`} onClick={() => setSection("rows")}>Rows</button>
             <button className={`tab${section === "workflow" ? " active" : ""}`} onClick={() => setSection("workflow")}>Workflow &amp; Pins</button>
+            <button className={`tab${section === "blueprint" ? " active" : ""}`} onClick={() => setSection("blueprint")}>Blueprint</button>
           </div>
         )}
       </div>
@@ -381,6 +383,16 @@ export default function ComfyPage() {
           plan={plan}
           saving={updatePlanMutation.isPending}
           onSave={(patch) => updatePlanMutation.mutate(patch)}
+        />
+      )}
+
+      {plan && section === "blueprint" && (
+        <BlueprintPanel
+          key={plan.id}
+          planId={plan.id}
+          datasetId={datasetId}
+          hasPromptPin={hasPromptPin}
+          running={isRunning}
         />
       )}
 

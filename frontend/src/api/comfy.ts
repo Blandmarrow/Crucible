@@ -122,6 +122,84 @@ export const COMFY_GEN_DEFAULTS: ComfyGenSettings = {
 /** Under `/api/v1`, for `writeToServer`: this form saves as the user types. */
 export const genSettingsPath = (planId: string) => `/comfy/plans/${planId}/gen-settings`;
 
+// ── Blueprint (structured generation, docs/dev/comfy-structured.md) ──────────
+
+export interface BlueprintEntity {
+  /** Stable identity a leaf records; generated client-side and never shown. */
+  id: string;
+  label: string;
+  /** Substituted verbatim wherever a template names this entity's axis. */
+  descriptor: string;
+}
+
+/** A bare axis name takes one entity; `take > 1` combines that many, unordered. */
+export type BlueprintCombineItem = string | { axis: string; take: number };
+
+export interface BlueprintScenario {
+  name: string;
+  combine: BlueprintCombineItem[];
+  /** "full" or "sample:K". */
+  mode: string;
+  /** Images each leaf (folder) should hold. */
+  count: number;
+  /** Folder pattern, e.g. "{biome}/{character}". */
+  path: string;
+  /** Prompt pattern; null/"" joins the combined descriptors. */
+  template: string | null;
+}
+
+export interface BlueprintSpec {
+  axes: Record<string, BlueprintEntity[]>;
+  variations: Record<string, string[]>;
+  scenarios: BlueprintScenario[];
+}
+
+/** The saved blueprint body; also the PUT body `writeToServer` sends. */
+export interface BlueprintValue {
+  spec: BlueprintSpec;
+  seed: number;
+}
+
+export interface SavedBlueprint extends BlueprintValue {
+  brief: string | null;
+  draft: BlueprintSpec | null;
+  updated_at: string;
+}
+
+export interface BlueprintPreviewLeaf {
+  path: string;
+  scenario: string;
+  target: number;
+  /** Images that still exist for this leaf. */
+  kept: number;
+  /** Pending, running and failed rows, each counted as `yield` future images. */
+  open: number;
+  failed: number;
+  /** Images per completed row. */
+  yield: number;
+  to_add: number;
+  /** The next prompts this leaf's rows would get; only the first 20 leaves carry them. */
+  samples: string[];
+}
+
+export interface BlueprintPreview {
+  /** At most 500; `leaf_count` is the true total. */
+  leaves: BlueprintPreviewLeaf[];
+  leaf_count: number;
+  rows_to_add: number;
+  row_cap: number;
+  over_cap: boolean;
+  /** Any error blocks Apply. */
+  errors: string[];
+  warnings: string[];
+  /** Rows (and their images) whose leaf this spec no longer makes. */
+  orphans: { leaves: number; pending: number; running: number; failed: number; completed: number; images: number };
+}
+
+export const blueprintPath = (planId: string) => `/comfy/plans/${planId}/blueprint`;
+
+export const EMPTY_BLUEPRINT_SPEC: BlueprintSpec = { axes: {}, variations: {}, scenarios: [] };
+
 export const comfyApi = {
   ping: (url?: string) =>
     client.get<{ ok: boolean; error?: string }>("/comfy/ping", { params: url ? { url } : {} }).then((r) => r.data),
@@ -213,4 +291,23 @@ export const comfyApi = {
 
   run: (params: ComfyRunParams) =>
     client.post<{ job_id: string; total: number }>("/comfy/run", params).then((r) => r.data),
+
+  /** `null` means no blueprint yet. */
+  getBlueprint: (planId: string) =>
+    client.get<{ value: SavedBlueprint | null }>(blueprintPath(planId)).then((r) => {
+      // The SPA catch-all can answer with 200 HTML, which must not read as "none yet".
+      if (typeof r.data !== "object" || r.data === null || !("value" in r.data)) {
+        throw new Error("Unexpected blueprint response");
+      }
+      return r.data.value;
+    }),
+  /** What Apply would do with this (possibly unsaved) spec. */
+  previewBlueprint: (planId: string, body: BlueprintValue & { allow_over_cap?: boolean }, signal?: AbortSignal) =>
+    client.post<BlueprintPreview>(`${blueprintPath(planId)}/preview`, body, { signal }).then((r) => r.data),
+  /** `confirm_total` is the reviewed preview's `rows_to_add`; a mismatch is a 409. */
+  applyBlueprint: (planId: string, body: BlueprintValue & {
+    confirm_total: number; allow_over_cap?: boolean; delete_orphan_pending?: boolean;
+  }) =>
+    client.post<{ created: number; leaves: number; deleted_rows: number }>(`${blueprintPath(planId)}/apply`, body)
+      .then((r) => r.data),
 };

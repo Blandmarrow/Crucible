@@ -1,0 +1,86 @@
+# ComfyUI Blueprints
+
+A blueprint describes a whole dataset once (*"these characters, in these places, alone
+and in pairs, so many images each"*) and turns it into a ComfyUI queue with one folder
+per combination. You choose the structure. Crucible makes every combination and writes
+every prompt, so each character is described the same way in every image they appear in.
+
+It lives on the **Blueprint** tab of a plan on the ComfyUI page. The plan itself (the
+workflow, the pins and running the queue) is described in [ComfyUI Generation](comfyui.md).
+Apply needs a pinned parameter marked as the prompt (★).
+
+## The three parts
+
+**Axes** are the things your dataset varies over, such as *character* or *biome*. Each axis
+holds entities. An entity has two parts:
+
+- A **label**, such as *Iron Knight*. It becomes a folder name, so it needs at least one
+  letter or digit.
+- A **descriptor**, such as *a tall knight in blackened plate, red sash*. It is pasted word
+  for word into every prompt that names the entity, so write it to stand on its own. A
+  blank descriptor uses the label.
+
+**Variations** are sets of interchangeable prompt pieces that change the shot without
+changing who or where: *camera* (low angle, wide shot, close-up), *time* (dawn, dusk).
+Enter one piece per line.
+
+**Scenarios** combine axes into folders. Each has:
+
+| Field | What it does |
+|---|---|
+| **Combine** | The axes this scenario uses. **Take** 2 or more on an axis makes groups of different entities together (pairs, trios), never the same one twice. |
+| **Mode** | **Full** makes every combination. **Sample K** picks K of them at random, and keeps the same K each time you reopen it. |
+| **Images per folder** | How many images each folder should end up holding. |
+| **Folder path** | Where each combination is filed, e.g. `{biome}/{character}`. Pairs become `iron_knight_and_salt_witch`. |
+| **Prompt template** | E.g. `{character}, standing in {biome}, {camera}, {time}`. Leave it blank to just join the descriptors. |
+
+In a template, `{axis}` is the entity's descriptor, `{axis.label}` is its label, and
+`{variation}` is one piece from that set. Each folder's prompts walk through the
+combinations of variation pieces, so a folder's prompts differ from each other. If a folder
+wants more images than there are combinations, the preview warns you that prompts will
+repeat. They still make different images, because each run gets its own seed.
+
+Names of axes and variations use letters, digits and `_`, like `main_character`.
+
+Everything saves as you type.
+
+## Preview and Apply
+
+The **Preview** updates as you edit. It shows:
+
+- how many folders the blueprint makes, and how many rows Apply would add
+- each folder with its target, the images it already holds (**Kept**), the rows still
+  waiting to run (**Open**), the rows to add, and sample prompts for the first 20 folders
+- **errors** in red, which you must fix before Apply works: an unknown placeholder, two
+  scenarios making the same folder, a label with no letters
+- warnings, such as repeating prompts
+
+**Apply** adds only the rows each folder is missing, each with its folder already set, then
+switch to **Rows** and run them as usual. Apply is safe to press again: a folder that
+already has enough images, or enough rows waiting to run, gets nothing more.
+
+- **Images are what count.** A workflow that makes four images per row needs a quarter of
+  the rows. If you delete images from a folder in the gallery, the preview shows it short
+  again, and Apply refills it.
+- **Waiting and failed rows count as future images**, so pressing Apply before a run does
+  not double anything.
+- **Big blueprints need a second click.** More than 2,000 new rows at once asks you to tick
+  **Allow a larger expansion** (up to 20,000).
+- **If the blueprint changed while you were reviewing** (another tab, say), Apply refuses and
+  the preview refreshes, so what you approve is what gets added.
+- **The Blueprint tab is read-only while the plan is running.**
+
+## Changing a blueprint after applying it
+
+A folder is identified by its path. Renaming an entity's label, or changing a folder path,
+makes new folders. The old folders' rows then belong to nothing: the preview reports how
+many rows and images that is, and they count toward no target. Changing it back is safe: a
+folder that comes back picks up the rows and images already in it, rather than starting
+from zero.
+
+Renaming an axis or a variation updates every scenario that uses it. Tick **Delete their pending
+rows** to remove the ones that have not run yet. Rows that already ran, and their images,
+are never deleted; tidy them up by hand if you want.
+
+**New sampling seed** changes which combinations a *Sample K* scenario picks and which
+prompts the template walk produces. Use it before you apply, not after.

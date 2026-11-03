@@ -106,3 +106,60 @@ test('a failed row shows ComfyUI\'s error and can be reset', async ({ page, requ
   const images = await (await request.get('/api/v1/images/', { params: { dataset_id: ds.id } })).json()
   expect(images).toHaveLength(1)
 })
+
+test('a hand-written blueprint expands into rows with folders, and they run', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-comfy-blueprint-${Date.now()}`)
+  const plan = await createPlanViaApi(request, ds.id, 'blueprint plan')
+
+  await page.goto(`/datasets/${ds.id}/comfy`)
+  await page.getByRole('button', { name: 'Blueprint', exact: true }).click()
+
+  // Axis: character with two entities.
+  await page.getByRole('button', { name: '+ Add axis' }).click()
+  await page.getByLabel('Axis name').fill('character')
+  await page.getByLabel('Axis name').blur()
+  const axis = page.getByTestId('axis-character')
+  await axis.getByRole('button', { name: '+ Add entity' }).click()
+  await axis.getByRole('button', { name: '+ Add entity' }).click()
+  await axis.getByLabel('character entity label').nth(0).fill('Iron Knight')
+  await axis.getByLabel('character entity descriptor').nth(0).fill('an iron knight')
+  await axis.getByLabel('character entity label').nth(1).fill('Salt Witch')
+  await axis.getByLabel('character entity descriptor').nth(1).fill('a salt witch')
+
+  // Variation: camera with two pieces.
+  await page.getByRole('button', { name: '+ Add variation' }).click()
+  await page.getByLabel('Variation name').fill('camera')
+  await page.getByLabel('Variation name').blur()
+  await page.getByLabel('camera pieces').fill('low angle\nwide shot')
+
+  // Scenario: one folder per character, two images each.
+  await page.getByRole('button', { name: '+ Add scenario' }).click()
+  const scenario = page.getByTestId('scenario-0')
+  await scenario.getByRole('button', { name: '+ Combine an axis' }).click()
+  await scenario.getByLabel('Images per folder').fill('2')
+  await scenario.getByLabel('Folder path').fill('knights/{character}')
+  await scenario.getByLabel('Prompt template').fill('{character}, {camera}')
+
+  await expect(page.getByTestId('blueprint-totals')).toHaveText('2 folders · 4 rows to add', { timeout: 15_000 })
+  const apply = page.getByRole('button', { name: 'Apply', exact: true })
+  await expect(apply).toBeEnabled()
+  await apply.click()
+
+  const rowsUrl = `/api/v1/comfy/plans/${plan.id}/rows`
+  type LeafRow = Row & { leaf_id: string | null }
+  await expect
+    .poll(async () => ((await (await request.get(rowsUrl)).json()) as LeafRow[]).length)
+    .toBe(4)
+  const rows: LeafRow[] = await (await request.get(rowsUrl)).json()
+  const bySub: Record<string, number> = {}
+  for (const r of rows) {
+    bySub[r.subfolder] = (bySub[r.subfolder] ?? 0) + 1
+    expect(r.leaf_id).not.toBeNull()
+  }
+  expect(bySub).toEqual({ 'knights/iron_knight': 2, 'knights/salt_witch': 2 })
+
+  // The rows are ordinary rows: they run.
+  await page.getByRole('button', { name: 'Rows', exact: true }).click()
+  await page.getByRole('button', { name: 'Run pending (4)' }).click()
+  await expect(page.getByTestId('comfy-rows-table').getByText('completed', { exact: true })).toHaveCount(4, { timeout: 30_000 })
+})

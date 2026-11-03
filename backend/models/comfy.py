@@ -49,9 +49,79 @@ class ComfyPlan(Base):
         back_populates="plan",
         cascade="all, delete-orphan",
     )
+    blueprint: Mapped["ComfyBlueprint | None"] = relationship(
+        "ComfyBlueprint",
+        back_populates="plan",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
 
     __table_args__ = (
         Index("uq_comfy_plan_dataset_name", "dataset_id", "name", unique=True),
+    )
+
+
+class ComfyBlueprint(Base):
+    """A plan's structured-generation spec: axes, variation pieces and scenarios.
+
+    One per plan. Expansion (services/blueprint_expand.py) turns it into
+    `comfy_leaves`, and Apply mints rows for each leaf's shortfall. See
+    docs/dev/comfy-structured.md.
+    """
+
+    __tablename__ = "comfy_blueprints"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    plan_id: Mapped[str] = mapped_column(String(36), ForeignKey("comfy_plans.id", ondelete="CASCADE"), nullable=False)
+    # schemas/comfy_blueprint.BlueprintSpec, stored as dumped JSON.
+    spec: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    # Seeds every sampled combination and template walk, so re-expansion is stable.
+    seed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # The outline call's last brief, and the draft spec it returned awaiting review.
+    brief: Mapped[str | None] = mapped_column(Text, nullable=True)
+    draft: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    plan: Mapped["ComfyPlan"] = relationship("ComfyPlan", back_populates="blueprint")
+    leaves: Mapped[list["ComfyLeaf"]] = relationship(
+        "ComfyLeaf",
+        back_populates="blueprint",
+        cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        Index("uq_comfy_blueprints_plan_id", "plan_id", unique=True),
+    )
+
+
+class ComfyLeaf(Base):
+    """One folder a blueprint expands to: its rendered path, image target and entities.
+
+    A leaf *is* its folder — identity is (blueprint_id, path), so renaming a label
+    makes a new leaf and leaves the old one's rows naming a deleted leaf.
+    """
+
+    __tablename__ = "comfy_leaves"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    blueprint_id: Mapped[str] = mapped_column(String(36), ForeignKey("comfy_blueprints.id", ondelete="CASCADE"), nullable=False, index=True)
+    scenario: Mapped[str] = mapped_column(String(100), nullable=False)
+    path: Mapped[str] = mapped_column(String(512), nullable=False)
+    # Absolute: the images this folder should hold, never "N more".
+    target: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # {axis: [entity ids]} — which entities this leaf combines.
+    entity_ids: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    # The next index of the leaf's template walk. A cursor, not a count of anything:
+    # shortfall is always recomputed from rows and images.
+    cursor: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    blueprint: Mapped["ComfyBlueprint"] = relationship("ComfyBlueprint", back_populates="leaves")
+
+    __table_args__ = (
+        Index("uq_comfy_leaves_blueprint_path", "blueprint_id", "path", unique=True),
     )
 
 
@@ -85,8 +155,8 @@ class ComfyRow(Base):
     # whose leaf a blueprint edit deleted should keep naming it as provenance, and an
     # inline column-level reference reads back from SQLite without its `ondelete`, which
     # `scripts/check_migrations.py` then reports as permanent drift (see the docstring
-    # of `a7c3e5b1d9f2_add_image_frame_lineage.py`). Column-only for now — nothing
-    # writes it and no `comfy_leaves` table exists yet.
+    # of `a7c3e5b1d9f2_add_image_frame_lineage.py`). Written by blueprint Apply
+    # (services/blueprint_service.py); never settable through the row endpoints.
     leaf_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     # {alias: json-native value}; absent alias = use template value
     values: Mapped[dict] = mapped_column(JSON, default=dict)

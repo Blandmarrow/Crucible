@@ -28,7 +28,38 @@ image's generation metadata on its detail page, and a failed row's error tooltip
 *Reset failed*.
 
 - **Plan bar** — plan `<select>` (query `["comfy","plans",datasetId]`), inline create/rename,
-  delete via `ConfirmDialog`; section tabs *Rows* / *Workflow & Pins*.
+  delete via `ConfirmDialog`; section tabs *Rows* / *Workflow & Pins* / *Blueprint*.
+- **`BlueprintPanel`** (the *Blueprint* tab, keyed by `plan.id`) edits the plan's blueprint.
+  What the server does with it is `docs/dev/comfy-structured.md`.
+  - **Saving.** It is server-stored form state on the M5 pattern: `ServerStateGate` on
+    `["comfy","blueprint",planId]`, autosaved through `useDebouncedPersist` +
+    `writeToServer(blueprintPath, "PUT")` (`docs/dev/app-stored-data.md`).
+  - **The seed.** A plan with no blueprint gets a random seed, saved only with the first
+    edit. *New sampling seed* rerolls it.
+    - That changes which combinations a `sample:K` scenario picks, and so which folders
+      exist (the preview shows the orphans).
+    - It also changes every leaf's template walk, so rows added later may repeat prompts
+      that existing rows already used.
+  - **The editors.** `BlueprintAxesEditor`, `BlueprintVariationsEditor` and
+    `BlueprintScenariosEditor` hold the three parts. `BlueprintNameField` renames an axis or
+    variation on blur, through `blueprintKeys.renameRefs`. That also rewrites every
+    scenario's `combine`, path and template references (`{name}`, `{name.label}`); renaming
+    only the key would turn each reference into an error. Entity ids are generated
+    client-side and never shown. The numeric
+    fields clamp to the schema's bounds (take ≤ 4, count ≤ 10,000), because past them both
+    the save and the preview 422.
+  - **Read-only while the plan runs.** A disabled `<fieldset>`, since Apply would 409 anyway.
+  - **`BlueprintPreview`** is a `useQuery` on
+    `["comfy","blueprint-preview",planId,debouncedJSON,allowOverCap]` (350 ms via
+    `hooks/useDebouncedValue.ts`, `keepPreviousData`).
+    - **Apply sends the debounced spec the shown preview came from**, never the live form,
+      with `confirm_total` = that preview's `rows_to_add`.
+    - It is disabled while the form lags the preview, while fetching or on placeholder data,
+      on errors, over the cap without the override, and with no prompt pin.
+    - A 409 toasts the server's reason and refetches. Success invalidates rows, plans,
+      prompts and the preview.
+  - **The e2e.** `comfy-run.spec.ts` authors a blueprint by hand, applies it, checks the rows'
+    folders and `leaf_id`s, and runs them.
 - **`WorkflowPinPanel`** — paste textarea + `.json` file loader + *Scan folder…* button
   (opens `WorkflowScanModal`) + *Sync from canvas* button (`canvas-workflow` →
   `SyncCanvasModal`, see `docs/dev/comfyui-sync.md`); validates API-format client-side; warns (non-blocking) when no

@@ -12,6 +12,7 @@ The order images travel through the app:
 | 1 | Browse, filter, select and sort a dataset's images | [Gallery](gallery.md) |
 | 1 | File images into subfolders; rename and re-nest them | [Subfolders](subfolders.md) |
 | 1 | Generate images with your own ComfyUI workflow | [ComfyUI Generation](comfyui.md) |
+| 1 | Describe a whole foldered dataset once and expand it into a ComfyUI queue | [ComfyUI Blueprints](comfy-structured.md) |
 | 1 | Hold videos as sources for frame extraction | [Videos](video.md) |
 | 1 | Extract frames from videos, shot by shot | [Frame Extraction](video-extraction.md) |
 | 2 | Caption with local ML models or any OpenAI-compatible API | [AI Captioning](captioning.md) |
@@ -39,7 +40,7 @@ The order images travel through the app:
 | Bulk Edit | [editing.md](editing.md) · [detection.md](detection.md) |
 | Consolidate Tags | [tag-consolidation.md](tag-consolidation.md) |
 | Versions | [versioning.md](versioning.md) |
-| ComfyUI | [comfyui.md](comfyui.md) |
+| ComfyUI | [comfyui.md](comfyui.md) · [comfy-structured.md](comfy-structured.md) |
 | Export | [export.md](export.md) |
 | Booru Browser | [workspace.md](workspace.md#booru-tag-lookup) |
 | File Browser | [file-browser.md](file-browser.md) |

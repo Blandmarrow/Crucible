@@ -22,6 +22,7 @@ Image.MAX_IMAGE_PIXELS = 60_000_000
 def main() -> None:
     src, out = Path(sys.argv[1]), Path(sys.argv[2])
     cap = int(sys.argv[sys.argv.index("--cap") + 1]) if "--cap" in sys.argv else 30
+    grey = "--grey" in sys.argv   # test6: so print toning cannot stand in for the photographer
     screen = json.loads((src / "screen.json").read_text(encoding="utf-8"))
     exclude = json.loads((src / "exclude.json").read_text(encoding="utf-8"))
     meta = {m["file"]: m for m in json.loads((src / "manifest.json").read_text(encoding="utf-8"))}
@@ -47,6 +48,8 @@ def main() -> None:
             with Image.open(f) as im:
                 sq = ImageOps.fit(ImageOps.exif_transpose(im).convert("RGB"), (1024, 1024),
                                   Image.LANCZOS, centering=(0.5, 0.5))
+            if grey:
+                sq = sq.convert("L").convert("RGB")
             dst = out / f.name
             sq.save(dst, "JPEG", quality=90)
             m = meta.get(f.name, {})

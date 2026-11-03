@@ -1,0 +1,79 @@
+{
+ "elephants_dream": {
+  "duration": 653.8,
+  "crop": "1920:1080:0:0",
+  "cuts": 174,
+  "shots_ge_1s": 106,
+  "frames": 45
+ },
+ "big_buck_bunny": {
+  "duration": 634.6,
+  "crop": "3840:2160:0:0",
+  "cuts": 139,
+  "shots_ge_1s": 124,
+  "frames": 45
+ },
+ "sintel": {
+  "duration": 888.1,
+  "crop": "2048:872:0:0",
+  "cuts": 187,
+  "shots_ge_1s": 145,
+  "frames": 45
+ },
+ "cosmos_laundromat": {
+  "duration": 730.6,
+  "crop": "1920:804:0:0",
+  "cuts": 100,
+  "shots_ge_1s": 88,
+  "frames": 45
+ },
+ "glass_half": {
+  "duration": 193.2,
+  "crop": "1700:1080:110:0",
+  "cuts": 22,
+  "shots_ge_1s": 17,
+  "frames": 17
+ },
+ "caminandes_3": {
+  "duration": 150.1,
+  "crop": "1920:1080:0:0",
+  "cuts": 38,
+  "shots_ge_1s": 29,
+  "frames": 29
+ },
+ "agent_327": {
+  "duration": 231.5,
+  "crop": "3840:1606:0:0",
+  "cuts": 86,
+  "shots_ge_1s": 62,
+  "frames": 45
+ },
+ "spring": {
+  "duration": 464.1,
+  "crop": "2048:858:0:0",
+  "cuts": 88,
+  "shots_ge_1s": 86,
+  "frames": 45
+ },
+ "sprite_fright": {
+  "duration": 629.9,
+  "crop": "2048:858:0:0",
+  "cuts": 105,
+  "shots_ge_1s": 93,
+  "frames": 45
+ },
+ "charge": {
+  "duration": 262.7,
+  "crop": "3840:1608:0:0",
+  "cuts": 88,
+  "shots_ge_1s": 60,
+  "frames": 45
+ },
+ "wing_it": {
+  "duration": 237.9,
+  "crop": "1920:1080:0:0",
+  "cuts": 95,
+  "shots_ge_1s": 73,
+  "frames": 45
+ }
+}

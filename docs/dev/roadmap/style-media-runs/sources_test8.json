@@ -1,0 +1,68 @@
+{
+ "elephants_dream": {
+  "page": "https://archive.org/details/ElephantsDream",
+  "url": "https://archive.org/download/ElephantsDream/ed_hd.avi",
+  "sha256": "40d41b3133e10dcba6ba6950cb730717f570d3d8b8b9453b594bda42b5fe67c3",
+  "file": "elephants_dream.avi"
+ },
+ "big_buck_bunny": {
+  "page": "https://download.blender.org/demo/movies/BBB/",
+  "url": "https://download.blender.org/demo/movies/BBB/bbb_sunflower_2160p_30fps_normal.mp4.zip",
+  "sha256": "750b255c6d9fee1e2a03a6716d4f358bca56e9115bf3e06a66162fc5272ae151",
+  "file": "big_buck_bunny.mp4"
+ },
+ "sintel": {
+  "page": "https://archive.org/details/Sintel",
+  "url": "https://archive.org/download/Sintel/sintel-2048-surround.mp4",
+  "sha256": "bf1f4b99a96239fc0c0f29e78ddbebbd66deb34555e75abfb07ce8766fda6726",
+  "file": "sintel.mp4"
+ },
+ "cosmos_laundromat": {
+  "page": "https://archive.org/details/CosmosLaundromatFirstCycle",
+  "url": "https://archive.org/download/CosmosLaundromatFirstCycle/Cosmos%20Laundromat%20-%20First%20Cycle%20%281080p%29.mp4",
+  "sha256": "ed4f43b895920072f8e995520d85f8470708a2909258ab5b6d102e7a3f5fca0f",
+  "file": "cosmos_laundromat.mp4"
+ },
+ "glass_half": {
+  "page": "https://archive.org/details/GlassHalf1080p",
+  "url": "https://archive.org/download/GlassHalf1080p/Glass%20Half-1080p.mp4",
+  "sha256": "64acb994a45943febc470550657a137fa32222046d9a296082f90681c497415a",
+  "file": "glass_half.mp4"
+ },
+ "caminandes_3": {
+  "page": "https://archive.org/details/CaminandesLlamigos",
+  "url": "https://archive.org/download/CaminandesLlamigos/Caminandes_%20Llamigos-1080p.mp4",
+  "sha256": "826513349ecf02d83b22f414514704e3bba10ff28fb45408a6cdf6cc57bacc06",
+  "file": "caminandes_3.mp4"
+ },
+ "agent_327": {
+  "page": "https://archive.org/details/agent327operationbarbershop",
+  "url": "https://archive.org/download/agent327operationbarbershop/agent327.mkv",
+  "sha256": "84c5c7af3765fe96380a62e20f85acc7672c0b66c1cd091a46c07361cd56a22b",
+  "file": "agent_327.mkv"
+ },
+ "spring": {
+  "page": "https://archive.org/details/spring_blenderopenmovie",
+  "url": "https://archive.org/download/spring_blenderopenmovie/Spring%20-%20Blender%20Open%20Movie%20-%20YouTube.mkv",
+  "sha256": "916523651f3d6a38ec98a9f35e48daf7591e21baba473e1d1cf9a7c5dac42031",
+  "file": "spring.mkv"
+ },
+ "sprite_fright": {
+  "page": "https://archive.org/details/sprite-fright-blender-open-movie",
+  "url": "https://archive.org/download/sprite-fright-blender-open-movie/Sprite%20Fright%20-%20Blender%20Open%20Movie.mkv",
+  "sha256": "9229e728f681674e6f0e6420543cae91b197293b1cf5ab338325a3632e2bcf4f",
+  "file": "sprite_fright.mkv"
+ },
+ "charge": {
+  "page": "https://archive.org/details/charge-blender-open-movie-1608p",
+  "url": "https://archive.org/download/charge-blender-open-movie-1608p/Charge%20-%20Blender%20Open%20Movie%201608p.mp4",
+  "sha256": "4288be5a6737379b1c16b95b56708bd288c72097665797b2beff1c40ec5ba3e2",
+  "file": "charge.mp4"
+ },
+ "wing_it": {
+  "page": "https://archive.org/details/wing_it",
+  "url": "https://archive.org/download/wing_it/wing_it.mp4",
+  "sha256": "6e57e8d0a0d746c04ae1024f1680a53c3b4b24e4cb58ae0bd24e28a9385ee124",
+  "file": "wing_it.mp4"
+ }
+}

@@ -1,0 +1,21 @@
+{
+ "_why": "Judged from the contact sheets only, before any embedding, on the pre-registered reasons: not one character, comic or text-heavy, edits or near-copies, looks AI-generated, not painted (flat cel shading). No image was judged to look AI-generated.",
+ "_reasons": {
+  "yuming_li 0000, 0026": "flat cel shading on a plain ground (not painted)",
+  "chan8016 0002, 0048, 0058": "line art with flat colour (not painted)",
+  "nyte_tyde 0014": "flat cel shading on white (not painted)",
+  "vlfdus_0 0045": "large title typography across the image (text-heavy)",
+  "fuyumurasaki 0015": "abstract brushwork, no character visible (not one character)",
+  "bm94199 0034": "stamps and printed labels over the image (text-heavy)",
+  "hatsburg 0007, 0008, 0020": "a screenshot with app or chat UI around the drawing (edit)",
+  "hatsburg 0015, 0026": "a meme or chart with large text (text-heavy)",
+  "_note tenjin_hidetaka": "kept whole, but nearly every image is a mecha on a space or battle ground: one subject class no other artist shares, a content confound like test4's edomura_niniko"
+ },
+ "yuming_li": ["0000", "0026"],
+ "chan8016": ["0002", "0048", "0058"],
+ "nyte_tyde": ["0014"],
+ "vlfdus_0": ["0045"],
+ "fuyumurasaki": ["0015"],
+ "bm94199": ["0034"],
+ "hatsburg": ["0007", "0008", "0015", "0020", "0026"]
+}

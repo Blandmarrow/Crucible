@@ -1,0 +1,186 @@
+=== test6 (primary): 5 styles ===
+setting                             mean  d base   won      evans     lange    mydans rothstein     shahn
+0.30 CLIP + v2 L7                 0.5939 +0.0000  0/5       0.567     0.647     0.535     0.522     0.699
+0.38 CLIP + v2 final (main)       0.5741 -0.0198  1/5       0.562     0.588     0.550     0.503     0.667
+K: kalo                           0.5732 -0.0208  1/5       0.443     0.609     0.531     0.499     0.784
+C: csd                            0.6070 +0.0131  3/5       0.584     0.707     0.516     0.478     0.751
+P: 0.30 PE + v2 L7                0.6166 +0.0227  4/5       0.618     0.720     0.560     0.477     0.708
+CLIP alone                        0.5842 -0.0097  2/5       0.562     0.676     0.512     0.529     0.641
+pe alone                          0.6152 +0.0212  3/5       0.630     0.759     0.551     0.460     0.676
+0.30 CLIP + kalo                  0.5889 -0.0051  1/5       0.470     0.642     0.532     0.515     0.786
+0.30 CLIP + csd                   0.6061 +0.0122  3/5       0.582     0.709     0.515     0.485     0.739
+kalo pooled 1536 (exploratory)    0.5969 +0.0030  2/5       0.538     0.636     0.587     0.451     0.772
+CLIP-QuickGELU alone (expl.)      0.6063 +0.0123  2/5       0.620     0.692     0.530     0.501     0.688
+0.30 CLIP-QuickGELU + v2 L7 (expl.)  0.6093 +0.0154  4/5       0.614     0.661     0.546     0.499     0.727
+
+paired wins over the baseline per style (of 20 draws); SD over draws
+  K: kalo                        evans: 1 lange: 6 mydans: 9 rothstein: 3 shahn:20   SD 0.024-0.084
+  C: csd                         evans:12 lange:19 mydans: 5 rothstein: 1 shahn:20   SD 0.037-0.059
+  P: 0.30 PE + v2 L7             evans:19 lange:19 mydans:15 rothstein: 1 shahn:15   SD 0.037-0.072
+  0.30 CLIP + kalo               evans: 1 lange:10 mydans: 9 rothstein: 9 shahn:20   SD 0.026-0.077
+  0.30 CLIP + csd                evans:12 lange:20 mydans: 4 rothstein: 2 shahn:20   SD 0.038-0.061
+  pe alone                       evans:19 lange:20 mydans:15 rothstein: 3 shahn: 4   SD 0.044-0.069
+
+=== test6 without shahn (sensitivity): 4 styles ===
+setting                             mean  d base   won      evans     lange    mydans rothstein
+0.30 CLIP + v2 L7                 0.5959 +0.0000  0/4       0.604     0.673     0.557     0.549
+0.38 CLIP + v2 final (main)       0.5793 -0.0166  2/4       0.608     0.618     0.568     0.523
+K: kalo                           0.5631 -0.0328  1/4       0.479     0.651     0.580     0.543
+C: csd                            0.6081 +0.0122  2/4       0.634     0.741     0.548     0.509
+P: 0.30 PE + v2 L7                0.6255 +0.0296  3/4       0.668     0.744     0.588     0.503
+CLIP alone                        0.5873 -0.0086  2/4       0.585     0.695     0.520     0.549
+pe alone                          0.6237 +0.0278  3/4       0.671     0.778     0.568     0.478
+0.30 CLIP + kalo                  0.5821 -0.0138  3/4       0.508     0.683     0.577     0.560
+0.30 CLIP + csd                   0.6078 +0.0120  2/4       0.630     0.742     0.544     0.516
+kalo pooled 1536 (exploratory)    0.5787 -0.0171  1/4       0.562     0.663     0.624     0.465
+CLIP-QuickGELU alone (expl.)      0.6102 +0.0143  2/4       0.657     0.713     0.545     0.525
+0.30 CLIP-QuickGELU + v2 L7 (expl.)  0.6129 +0.0170  3/4       0.661     0.689     0.573     0.529
+
+paired wins over the baseline per style (of 20 draws); SD over draws
+  K: kalo                        evans: 1 lange: 7 mydans:13 rothstein:10   SD 0.027-0.079
+  C: csd                         evans:15 lange:20 mydans:10 rothstein: 2   SD 0.051-0.057
+  P: 0.30 PE + v2 L7             evans:19 lange:19 mydans:16 rothstein: 1   SD 0.047-0.071
+  0.30 CLIP + kalo               evans: 1 lange:10 mydans:14 rothstein:14   SD 0.034-0.072
+  0.30 CLIP + csd                evans:15 lange:20 mydans: 7 rothstein: 2   SD 0.043-0.061
+  pe alone                       evans:19 lange:20 mydans:14 rothstein: 1   SD 0.049-0.066
+
+=== test6 without lange (sensitivity): 4 styles ===
+setting                             mean  d base   won      evans    mydans rothstein     shahn
+0.30 CLIP + v2 L7                 0.5650 +0.0000  0/4       0.550     0.516     0.523     0.671
+0.38 CLIP + v2 final (main)       0.5614 -0.0035  1/4       0.547     0.543     0.505     0.651
+K: kalo                           0.5709 +0.0059  2/4       0.449     0.545     0.504     0.785
+C: csd                            0.5685 +0.0036  2/4       0.568     0.491     0.491     0.724
+P: 0.30 PE + v2 L7                0.5815 +0.0166  3/4       0.600     0.541     0.492     0.692
+CLIP alone                        0.5476 -0.0174  1/4       0.545     0.497     0.531     0.618
+pe alone                          0.5719 +0.0069  2/4       0.612     0.536     0.478     0.662
+0.30 CLIP + kalo                  0.5731 +0.0081  2/4       0.468     0.535     0.514     0.775
+0.30 CLIP + csd                   0.5669 +0.0020  2/4       0.565     0.493     0.497     0.713
+kalo pooled 1536 (exploratory)    0.5895 +0.0245  2/4       0.542     0.602     0.468     0.747
+CLIP-QuickGELU alone (expl.)      0.5611 -0.0038  1/4       0.591     0.500     0.498     0.656
+0.30 CLIP-QuickGELU + v2 L7 (expl.)  0.5755 +0.0105  3/4       0.587     0.519     0.499     0.697
+
+paired wins over the baseline per style (of 20 draws); SD over draws
+  K: kalo                        evans: 3 mydans:13 rothstein: 4 shahn:20   SD 0.042-0.083
+  C: csd                         evans:14 mydans: 3 rothstein: 5 shahn:20   SD 0.040-0.060
+  P: 0.30 PE + v2 L7             evans:19 mydans:15 rothstein: 2 shahn:14   SD 0.037-0.064
+  0.30 CLIP + kalo               evans: 3 mydans:14 rothstein: 5 shahn:20   SD 0.038-0.075
+  0.30 CLIP + csd                evans:14 mydans: 3 rothstein: 5 shahn:20   SD 0.039-0.059
+  pe alone                       evans:19 mydans:13 rothstein: 2 shahn: 9   SD 0.040-0.063
+
+=== test7 (primary): 8 styles ===
+setting                             mean  d base   won    bm94199  chan8016 fuyumuras  hatsburg nyte_tyde tenjin_hi  vlfdus_0 yuming_li
+0.30 CLIP + v2 L7                 0.9046 +0.0000  0/8       0.926     0.975     0.710     0.885     0.912     0.999     0.972     0.857
+0.38 CLIP + v2 final (main)       0.8242 -0.0803  1/8       0.854     0.874     0.717     0.731     0.899     0.995     0.916     0.608
+K: kalo                           0.9951 +0.0905  8/8       0.991     1.000     0.994     0.994     0.996     1.000     1.000     0.986
+C: csd                            0.9257 +0.0212  4/8       0.958     0.970     0.828     0.860     0.944     0.999     0.950     0.897
+P: 0.30 PE + v2 L7                0.8869 -0.0177  3/8       0.904     0.985     0.646     0.878     0.936     1.000     0.962     0.785
+CLIP alone                        0.8668 -0.0377  1/8       0.907     0.975     0.608     0.842     0.843     0.999     0.951     0.809
+pe alone                          0.8524 -0.0522  2/8       0.881     0.983     0.556     0.837     0.879     1.000     0.943     0.740
+0.30 CLIP + kalo                  0.9935 +0.0889  8/8       0.986     1.000     0.989     0.994     0.996     1.000     1.000     0.982
+0.30 CLIP + csd                   0.9260 +0.0215  6/8       0.955     0.977     0.812     0.870     0.941     0.999     0.954     0.899
+kalo pooled 1536 (exploratory)    0.9746 +0.0700  8/8       0.967     1.000     0.958     0.934     0.993     1.000     0.998     0.947
+CLIP-QuickGELU alone (expl.)      0.8597 -0.0449  1/8       0.892     0.965     0.603     0.839     0.842     1.000     0.949     0.787
+0.30 CLIP-QuickGELU + v2 L7 (expl.)  0.8973 -0.0073  2/8       0.914     0.968     0.700     0.880     0.916     1.000     0.968     0.833
+
+paired wins over the baseline per style (of 20 draws); SD over draws
+  K: kalo                        bm94199:20 chan8016:20 fuyumuras:20 hatsburg:20 nyte_tyde:20 tenjin_hi:13 vlfdus_0:20 yuming_li:20   SD 0.000-0.008
+  C: csd                         bm94199:20 chan8016: 8 fuyumuras:20 hatsburg: 6 nyte_tyde:16 tenjin_hi: 6 vlfdus_0: 1 yuming_li:17   SD 0.001-0.055
+  P: 0.30 PE + v2 L7             bm94199: 0 chan8016:20 fuyumuras: 1 hatsburg: 6 nyte_tyde:16 tenjin_hi:15 vlfdus_0: 2 yuming_li: 0   SD 0.000-0.061
+  0.30 CLIP + kalo               bm94199:20 chan8016:20 fuyumuras:20 hatsburg:20 nyte_tyde:20 tenjin_hi:15 vlfdus_0:20 yuming_li:20   SD 0.000-0.009
+  0.30 CLIP + csd                bm94199:20 chan8016:10 fuyumuras:20 hatsburg: 8 nyte_tyde:16 tenjin_hi: 7 vlfdus_0: 1 yuming_li:19   SD 0.000-0.053
+  pe alone                       bm94199: 0 chan8016:18 fuyumuras: 0 hatsburg: 0 nyte_tyde: 2 tenjin_hi:15 vlfdus_0: 0 yuming_li: 0   SD 0.000-0.061
+
+=== test7 without tenjin_hidetaka (sensitivity): 7 styles ===
+setting                             mean  d base   won    bm94199  chan8016 fuyumuras  hatsburg nyte_tyde  vlfdus_0 yuming_li
+0.30 CLIP + v2 L7                 0.8733 +0.0000  0/7       0.913     0.971     0.663     0.866     0.898     0.969     0.833
+0.38 CLIP + v2 final (main)       0.7675 -0.1058  1/7       0.829     0.856     0.674     0.687     0.882     0.906     0.539
+K: kalo                           0.9922 +0.1189  7/7       0.989     1.000     0.993     0.993     0.996     1.000     0.975
+C: csd                            0.8992 +0.0259  4/7       0.951     0.965     0.800     0.836     0.935     0.944     0.864
+P: 0.30 PE + v2 L7                0.8511 -0.0222  2/7       0.888     0.982     0.588     0.858     0.925     0.959     0.758
+CLIP alone                        0.8250 -0.0483  0/7       0.893     0.971     0.551     0.816     0.819     0.946     0.780
+pe alone                          0.8057 -0.0676  1/7       0.861     0.981     0.488     0.810     0.859     0.937     0.705
+0.30 CLIP + kalo                  0.9902 +0.1170  7/7       0.983     1.000     0.988     0.993     0.996     1.000     0.972
+0.30 CLIP + csd                   0.9000 +0.0267  5/7       0.947     0.973     0.781     0.848     0.932     0.949     0.869
+kalo pooled 1536 (exploratory)    0.9657 +0.0924  7/7       0.962     1.000     0.951     0.923     0.991     0.998     0.934
+CLIP-QuickGELU alone (expl.)      0.8160 -0.0573  0/7       0.874     0.959     0.545     0.812     0.816     0.941     0.764
+0.30 CLIP-QuickGELU + v2 L7 (expl.)  0.8644 -0.0088  1/7       0.899     0.963     0.651     0.860     0.902     0.964     0.812
+
+paired wins over the baseline per style (of 20 draws); SD over draws
+  K: kalo                        bm94199:20 chan8016:20 fuyumuras:20 hatsburg:20 nyte_tyde:20 vlfdus_0:20 yuming_li:20   SD 0.000-0.015
+  C: csd                         bm94199:20 chan8016: 8 fuyumuras:20 hatsburg: 6 nyte_tyde:16 vlfdus_0: 1 yuming_li:13   SD 0.011-0.064
+  P: 0.30 PE + v2 L7             bm94199: 0 chan8016:20 fuyumuras: 1 hatsburg: 6 nyte_tyde:16 vlfdus_0: 1 yuming_li: 0   SD 0.013-0.071
+  0.30 CLIP + kalo               bm94199:20 chan8016:20 fuyumuras:20 hatsburg:20 nyte_tyde:20 vlfdus_0:20 yuming_li:20   SD 0.000-0.015
+  0.30 CLIP + csd                bm94199:20 chan8016:10 fuyumuras:20 hatsburg: 8 nyte_tyde:16 vlfdus_0: 1 yuming_li:16   SD 0.011-0.062
+  pe alone                       bm94199: 0 chan8016:18 fuyumuras: 0 hatsburg: 0 nyte_tyde: 2 vlfdus_0: 0 yuming_li: 0   SD 0.013-0.070
+
+=== test8 (primary): 10 styles ===
+setting                             mean  d base   won  agent_327 big_buck_ caminande    charge cosmos_la elephants    sintel    spring sprite_fr   wing_it
+0.30 CLIP + v2 L7                 0.9369 +0.0000  0/10      0.946     0.978     0.940     0.959     0.808     0.958     0.915     0.925     0.952     0.987
+0.38 CLIP + v2 final (main)       0.8920 -0.0450  1/10      0.867     0.972     0.896     0.934     0.746     0.900     0.878     0.793     0.969     0.964
+K: kalo                           0.9384 +0.0014  7/10      0.957     0.984     0.965     0.962     0.844     0.935     0.867     0.894     0.988     0.988
+C: csd                            0.9432 +0.0063  7/10      0.988     0.987     0.980     0.991     0.768     0.946     0.857     0.934     0.990     0.991
+P: 0.30 PE + v2 L7                0.9676 +0.0307 10/10      0.978     0.995     0.966     0.985     0.877     0.972     0.971     0.956     0.977     0.999
+CLIP alone                        0.9252 -0.0117  0/10      0.945     0.976     0.919     0.938     0.804     0.948     0.912     0.916     0.922     0.973
+pe alone                          0.9695 +0.0326 10/10      0.986     0.996     0.968     0.981     0.888     0.973     0.983     0.962     0.958     0.999
+0.30 CLIP + kalo                  0.9530 +0.0161  9/10      0.962     0.988     0.966     0.976     0.861     0.958     0.915     0.927     0.989     0.988
+0.30 CLIP + csd                   0.9505 +0.0136  7/10      0.988     0.989     0.980     0.993     0.782     0.957     0.886     0.951     0.988     0.992
+kalo pooled 1536 (exploratory)    0.9261 -0.0108  7/10      0.950     0.979     0.958     0.969     0.830     0.923     0.776     0.903     0.980     0.994
+CLIP-QuickGELU alone (expl.)      0.9444 +0.0075  7/10      0.971     0.991     0.896     0.971     0.828     0.979     0.957     0.938     0.937     0.975
+0.30 CLIP-QuickGELU + v2 L7 (expl.)  0.9488 +0.0119  8/10      0.964     0.989     0.917     0.980     0.820     0.979     0.952     0.944     0.959     0.984
+
+paired wins over the baseline per style (of 20 draws); SD over draws
+  K: kalo                        agent_327:15 big_buck_:15 caminande:19 charge: 9 cosmos_la:12 elephants: 4 sintel: 3 spring: 7 sprite_fr:18 wing_it:11   SD 0.008-0.063
+  C: csd                         agent_327:20 big_buck_:16 caminande:20 charge:18 cosmos_la: 3 elephants: 9 sintel: 2 spring:10 sprite_fr:20 wing_it:14   SD 0.005-0.063
+  P: 0.30 PE + v2 L7             agent_327:20 big_buck_:20 caminande:20 charge:20 cosmos_la:20 elephants:13 sintel:19 spring:15 sprite_fr:19 wing_it:18   SD 0.001-0.040
+  0.30 CLIP + kalo               agent_327:18 big_buck_:18 caminande:20 charge:17 cosmos_la:16 elephants:11 sintel:13 spring:12 sprite_fr:20 wing_it:12   SD 0.008-0.046
+  0.30 CLIP + csd                agent_327:20 big_buck_:20 caminande:20 charge:19 cosmos_la: 4 elephants:10 sintel: 6 spring:12 sprite_fr:20 wing_it:16   SD 0.005-0.063
+  pe alone                       agent_327:20 big_buck_:20 caminande:20 charge:19 cosmos_la:20 elephants:14 sintel:20 spring:17 sprite_fr:11 wing_it:18   SD 0.001-0.034
+
+=== flickr6 (exploratory): 6 styles ===
+setting                             mean  d base   won     barnyz Giuseppe  Jonathan  @Doug8888 Ed Yourdo Nouhaille
+0.30 CLIP + v2 L7                 0.8319 +0.0000  0/6       0.897     0.850     0.782     0.865     0.858     0.739
+0.38 CLIP + v2 final (main)       0.8105 -0.0214  3/6       0.822     0.739     0.879     0.785     0.866     0.770
+K: kalo                           0.8333 +0.0015  4/6       0.938     0.712     0.801     0.855     0.920     0.775
+C: csd                            0.8738 +0.0419  5/6       0.925     0.852     0.864     0.851     0.964     0.788
+P: 0.30 PE + v2 L7                0.8892 +0.0573  5/6       0.946     0.827     0.934     0.894     0.950     0.784
+CLIP alone                        0.7612 -0.0707  0/6       0.879     0.793     0.682     0.796     0.679     0.738
+pe alone                          0.8702 +0.0383  5/6       0.931     0.792     0.924     0.870     0.912     0.793
+0.30 CLIP + kalo                  0.8465 +0.0146  5/6       0.941     0.767     0.800     0.870     0.919     0.781
+0.30 CLIP + csd                   0.8774 +0.0455  5/6       0.931     0.866     0.856     0.863     0.956     0.791
+kalo pooled 1536 (exploratory)    0.8136 -0.0183  3/6       0.945     0.709     0.764     0.757     0.911     0.795
+CLIP-QuickGELU alone (expl.)      0.7690 -0.0629  1/6       0.889     0.772     0.721     0.780     0.701     0.751
+0.30 CLIP-QuickGELU + v2 L7 (expl.)  0.8343 +0.0024  4/6       0.899     0.835     0.791     0.850     0.875     0.755
+
+paired wins over the baseline per style (of 20 draws); SD over draws
+  K: kalo                        barnyz:17 Giuseppe : 0 Jonathan :13 @Doug8888:10 Ed Yourdo:17 Nouhaille:16   SD 0.013-0.082
+  C: csd                         barnyz:15 Giuseppe :13 Jonathan :16 @Doug8888: 7 Ed Yourdo:20 Nouhaille:19   SD 0.019-0.114
+  P: 0.30 PE + v2 L7             barnyz:20 Giuseppe : 4 Jonathan :20 @Doug8888:16 Ed Yourdo:20 Nouhaille:19   SD 0.019-0.108
+  0.30 CLIP + kalo               barnyz:20 Giuseppe : 2 Jonathan :13 @Doug8888:14 Ed Yourdo:18 Nouhaille:16   SD 0.010-0.085
+  0.30 CLIP + csd                barnyz:16 Giuseppe :13 Jonathan :15 @Doug8888:11 Ed Yourdo:20 Nouhaille:20   SD 0.021-0.108
+  pe alone                       barnyz:17 Giuseppe : 4 Jonathan :20 @Doug8888:11 Ed Yourdo:17 Nouhaille:18   SD 0.021-0.108
+
+=== verdicts (per medium: helps / tie / hurts; then over the media) ===
+  K: kalo                test6 tie (d -0.0208, won 1/5) · test7 helps (upper bound) (d +0.0905, won 8/8) · test8 tie (d +0.0014, won 7/10) → NEUTRAL OUTSIDE DRAWN ART
+      without test6 shahn: test6 hurts → NOT GENERAL  [FRAGILE]
+      without test6 lange: test6 tie → NEUTRAL OUTSIDE DRAWN ART
+      without test7 tenjin_hidetaka: test7 helps → NEUTRAL OUTSIDE DRAWN ART
+  C: csd                 test6 tie (d +0.0131, won 3/5) · test7 tie (d +0.0212, won 4/8) · test8 tie (d +0.0063, won 7/10) → NEUTRAL OUTSIDE DRAWN ART
+      without test6 shahn: test6 tie → NEUTRAL OUTSIDE DRAWN ART
+      without test6 lange: test6 tie → NEUTRAL OUTSIDE DRAWN ART
+      without test7 tenjin_hidetaka: test7 tie → NEUTRAL OUTSIDE DRAWN ART
+  P: 0.30 PE + v2 L7     test6 tie (d +0.0227, won 4/5) · test7 tie (d -0.0177, won 3/8) · test8 helps (d +0.0307, won 10/10) → NEUTRAL OUTSIDE DRAWN ART
+      without test6 shahn: test6 tie → NEUTRAL OUTSIDE DRAWN ART
+      without test6 lange: test6 tie → NEUTRAL OUTSIDE DRAWN ART
+      without test7 tenjin_hidetaka: test7 tie → NEUTRAL OUTSIDE DRAWN ART
+
+=== test6 leave-one-out (exploratory, after the review) ===
+  without evans      K -0.0386 1/4 hurts → NOT GENERAL · C +0.0109 2/4 tie → NEUTRAL OUTSIDE DRAWN ART · P +0.0215 3/4 tie → NEUTRAL OUTSIDE DRAWN ART
+  without lange      K +0.0059 2/4 tie → NEUTRAL OUTSIDE DRAWN ART · C +0.0036 2/4 tie → NEUTRAL OUTSIDE DRAWN ART · P +0.0166 3/4 tie → NEUTRAL OUTSIDE DRAWN ART
+  without mydans     K -0.0194 1/4 tie → NEUTRAL OUTSIDE DRAWN ART · C +0.0143 3/4 tie → NEUTRAL OUTSIDE DRAWN ART · P +0.0247 3/4 tie → NEUTRAL OUTSIDE DRAWN ART
+  without rothstein  K -0.0242 1/4 tie → NEUTRAL OUTSIDE DRAWN ART · C +0.0209 3/4 tie → NEUTRAL OUTSIDE DRAWN ART · P +0.0332 4/4 helps → GENERAL
+  without shahn      K -0.0328 1/4 hurts → NOT GENERAL · C +0.0122 2/4 tie → NEUTRAL OUTSIDE DRAWN ART · P +0.0296 3/4 tie → NEUTRAL OUTSIDE DRAWN ART
+
+=== hypotheses (reported, not deciding) ===
+  H5 test6 K - base          -0.0208  (predicted: not 'helps', i.e. < +0.03 or half the styles not won) → K is 'tie'
+  H6 test7 C - base          +0.0212  (predicted 'helps') → C is 'tie'
+  H7 base - main             test6 +0.0198 · test7 +0.0803 · test8 +0.0450  (predicted >= -0.03 on each)

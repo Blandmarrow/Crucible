@@ -27,6 +27,9 @@ ARTISTS = {
 }
 SKIP_WORDS = ("portrait", "photograph", "grave", "signature", "cover", "title page", "stamp",
               "exhibition", "house", "museum", "statue", "plaque")
+THUMB_WIDTH = 1280                # the downloaded copy's width
+MIN_SIDE = 700                    # an original's short side, at least
+INFO_BATCH = 40                   # titles per imageinfo request; long titles need fewer
 
 
 def api(params: dict) -> dict:
@@ -73,9 +76,9 @@ def crawl(root: str, depth: int = 3) -> list[str]:
 
 def info(titles: list[str]) -> list[dict]:
     out = []
-    for i in range(0, len(titles), 40):
-        res = api({"action": "query", "titles": "|".join(titles[i:i + 40]), "prop": "imageinfo",
-                   "iiprop": "url|size|mime|extmetadata", "iiurlwidth": 1280,
+    for i in range(0, len(titles), INFO_BATCH):
+        res = api({"action": "query", "titles": "|".join(titles[i:i + INFO_BATCH]), "prop": "imageinfo",
+                   "iiprop": "url|size|mime|extmetadata", "iiurlwidth": THUMB_WIDTH,
                    "iiextmetadatafilter": "LicenseShortName|Artist"})
         for p in res.get("query", {}).get("pages", {}).values():
             ii = (p.get("imageinfo") or [{}])[0]
@@ -102,7 +105,7 @@ def cmd_list(outdir: Path) -> None:
                   if not any(w in t.lower() for w in SKIP_WORDS)]
         rows = [r for r in info(titles)
                 if r["mime"] in ("image/jpeg", "image/png", "image/tiff")
-                and min(r["width"] or 0, r["height"] or 0) >= 700]
+                and min(r["width"] or 0, r["height"] or 0) >= MIN_SIDE]
         result[artist] = rows
         lic = {}
         for r in rows:
@@ -135,9 +138,18 @@ def cmd_fetch(outdir: Path, per: int) -> None:
             r = rows[i]
             dst = d / f"{artist}_{i:04d}.jpg"
             if not dst.exists():
-                time.sleep(0.5)
-                resp = S.get(r["thumb"], timeout=60)
+                url = r["thumb"]
+                if f"/{THUMB_WIDTH}px-" not in url:   # a list made at another width: re-resolve
+                    res = api({"action": "query", "titles": r["title"], "prop": "imageinfo",
+                               "iiprop": "url", "iiurlwidth": THUMB_WIDTH})
+                    url = next(iter(res["query"]["pages"].values()))["imageinfo"][0]["thumburl"]
+                for attempt in range(5):   # 429s come in bursts when Commons renders new sizes
+                    time.sleep(0.5 if attempt == 0 else 15 * attempt)
+                    resp = S.get(url, timeout=60)
+                    if resp.status_code != 429:
+                        break
                 if resp.status_code != 200 or not resp.headers.get("content-type", "").startswith("image/"):
+                    print(f"  {dst.name}: {resp.status_code}", flush=True)
                     continue
                 dst.write_bytes(resp.content)
             manifest.append({"file": dst.name, "artist": artist, **r})

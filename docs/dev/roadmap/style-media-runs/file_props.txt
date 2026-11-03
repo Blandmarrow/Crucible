@@ -1,0 +1,38 @@
+== test6
+evans            n=30 short side median  3044 (min 1220, max 3840) | {'JPEG': 30} | fetched 1920 wide: 3
+lange            n=30 short side median  1542 (min 1400, max 3840) | {'JPEG': 30} | fetched 1920 wide: 25
+mydans           n=29 short side median  2781 (min 1173, max 3840) | {'JPEG': 28, 'PNG': 1} | fetched 1920 wide: 5
+rothstein        n=30 short side median  2865 (min 1322, max 3840) | {'JPEG': 30} | fetched 1920 wide: 4
+shahn            n=30 short side median  2672 (min 1384, max 3090) | {'JPEG': 30} | fetched 1920 wide: 2
+== test7
+bm94199          n=30 short side median  2393 (min 1080, max 3811) | {'PNG': 4, 'orig png': 4, 'JPEG': 26, 'orig jpg': 26} | years {'2022': 11, '2023': 1, '2024': 1, '2025': 16, '2026': 1}
+chan8016         n=30 short side median  1514 (min 1198, max 2040) | {'JPEG': 30, 'orig jpg': 30} | years {'2023': 2, '2024': 21, '2025': 7}
+fuyumurasaki     n=30 short side median  1416 (min 1225, max 1771) | {'JPEG': 30, 'orig jpg': 30} | years {'2024': 8, '2025': 22}
+hatsburg         n=30 short side median  1500 (min 1134, max 2941) | {'JPEG': 30, 'orig jpg': 30} | years {'2025': 16, '2026': 14}
+nyte_tyde        n=30 short side median  2480 (min 1642, max 2480) | {'JPEG': 30, 'orig jpg': 30} | years {'2025': 13, '2026': 17}
+tenjin_hidetaka  n=30 short side median  2160 (min 1080, max 2160) | {'JPEG': 30, 'orig jpg': 30} | years {'2009': 1, '2025': 24, '2026': 5}
+vlfdus_0         n=30 short side median  1582 (min 1111, max 3792) | {'JPEG': 29, 'orig jpg': 29, 'PNG': 1, 'orig png': 1} | years {'2020': 1, '2021': 2, '2022': 6, '2023': 1, '2024': 4, '2025': 16}
+yuming_li        n=30 short side median  1700 (min 1266, max 3238) | {'JPEG': 30, 'orig jpg': 30} | years {'2023': 5, '2024': 24, '2026': 1}
+== test8
+agent_327        n=30 short side median   800 (min 800, max 800) | {'JPEG': 30}
+big_buck_bunny   n=30 short side median   800 (min 800, max 800) | {'JPEG': 30}
+caminandes_3     n=26 short side median   800 (min 800, max 800) | {'JPEG': 26}
+charge           n=30 short side median   800 (min 800, max 800) | {'JPEG': 30}
+cosmos_laundromat n=26 short side median   800 (min 800, max 800) | {'JPEG': 26}
+elephants_dream  n=30 short side median   800 (min 800, max 800) | {'JPEG': 30}
+sintel           n=30 short side median   800 (min 800, max 800) | {'JPEG': 30}
+spring           n=30 short side median   800 (min 800, max 800) | {'JPEG': 30}
+sprite_fright    n=30 short side median   800 (min 800, max 800) | {'JPEG': 30}
+wing_it          n=30 short side median   800 (min 800, max 800) | {'JPEG': 30}
+== test8 sources (frames are 800 px centre squares of the letterbox-cropped frame)
+elephants_dream    elephants_dream.avi      crop 1920:1080:0:0    sha256 40d41b3133e10dcb
+big_buck_bunny     big_buck_bunny.mp4       crop 3840:2160:0:0    sha256 750b255c6d9fee1e
+sintel             sintel.mp4               crop 2048:872:0:0     sha256 bf1f4b99a96239fc
+cosmos_laundromat  cosmos_laundromat.mp4    crop 1920:804:0:0     sha256 ed4f43b895920072
+glass_half         glass_half.mp4           crop 1700:1080:110:0  sha256 64acb994a45943fe
+caminandes_3       caminandes_3.mp4         crop 1920:1080:0:0    sha256 826513349ecf02d8
+agent_327          agent_327.mkv            crop 3840:1606:0:0    sha256 84c5c7af3765fe96
+spring             spring.mkv               crop 2048:858:0:0     sha256 916523651f3d6a38
+sprite_fright      sprite_fright.mkv        crop 2048:858:0:0     sha256 9229e728f681674e
+charge             charge.mp4               crop 3840:1608:0:0    sha256 4288be5a6737379b
+wing_it            wing_it.mp4              crop 1920:1080:0:0    sha256 6e57e8d0a0d746c0

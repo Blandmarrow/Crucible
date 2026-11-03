@@ -2,7 +2,7 @@ import type { BlueprintCombineItem, BlueprintScenario, BlueprintSpec } from "../
 import NumberField from "../common/NumberField";
 import { defaultPath, defaultTemplate } from "./blueprintKeys";
 
-const NEW_SCENARIO: BlueprintScenario = { name: "", combine: [], mode: "full", count: 1, path: "", template: "" };
+const NEW_SCENARIO: BlueprintScenario = { name: "", combine: [], mode: "full", count: 1, path: "", template: "", rewrite: false };
 
 const axisOf = (c: BlueprintCombineItem) => (typeof c === "string" ? c : c.axis);
 const takeOf = (c: BlueprintCombineItem) => (typeof c === "string" ? 1 : c.take);
@@ -137,6 +137,12 @@ export default function BlueprintScenariosEditor({ spec, onChange }: Props) {
                   placeholder={defaultTemplate(s.combine.map(axisOf), Object.keys(spec.variations))
                     || "{character}, standing in {biome}, {camera}"}
                   value={s.template ?? ""} onChange={(e) => patch(i, { template: e.target.value })} />
+              </label>
+              <label style={{ ...smallLabel, cursor: "pointer" }}
+                title="Optional. After Apply, an LLM rewrites this scenario's template prompts into prose. It costs LLM calls and you confirm the budget first.">
+                <input type="checkbox" className="checkbox" aria-label="Rewrite into prose (LLM)"
+                  checked={!!s.rewrite} onChange={(e) => patch(i, { rewrite: e.target.checked })} />
+                Rewrite into prose (LLM) <span style={{ fontWeight: 400 }}>(optional, costs LLM calls)</span>
               </label>
               <div style={{ fontSize: 11, color: "var(--fg-mute)" }}>
                 Placeholders: <span className="mono">{"{axis}"}</span> (descriptor),{" "}

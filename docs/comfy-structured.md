@@ -33,6 +33,7 @@ Enter one piece per line.
 | **Images per folder** | How many images each folder should end up holding. |
 | **Folder path** | Where each combination is filed, e.g. `{biome}/{character}`. Leave it blank for one folder level per axis, in the order you combined them. Pairs become `iron_knight_and_salt_witch`. |
 | **Prompt template** | E.g. `{character}, standing in {biome}, {camera}, {time}`. Leave it blank to list every axis, then one piece of every variation. |
+| **Rewrite into prose (LLM)** | Off by default. Tick it to have an LLM turn this scenario's prompts into sentences before they run. See [Rewriting prompts into prose](#rewriting-prompts-into-prose). |
 
 In a template, `{axis}` is the entity's descriptor, `{axis.label}` is its label, and
 `{variation}` is one piece from that set. Each folder's prompts walk through the
@@ -103,6 +104,36 @@ some of its images in the gallery, perhaps the ones you didn't like.
 
 Pressing Top up when every folder is full does nothing, so it is safe to press whenever
 you have finished pruning.
+
+If a scenario has **Rewrite into prose** ticked and some of its rows have not been
+rewritten yet, Top up adds the missing rows and then stops. It tells you how many rows
+wait, so they never run as plain templates by mistake. Press **Rewrite**, then Top up
+again.
+
+## Rewriting prompts into prose
+
+Template prompts read like tag lists, which suits tag-based models. Models that read
+sentences can do better with prose. Tick **Rewrite into prose (LLM)** on a scenario, Apply,
+then press **Rewrite N prompts** under the preview. An LLM rewrites each folder's prompts
+into sentences that keep every detail, and describes each character the same way
+throughout.
+
+- **Pick a provider and model** in the dialog. It starts from the plan's **Generate
+  prompts** settings, and follows the **Instructions** saved there. It never changes them.
+- **It shows the cost first:** how many prompts and folders, and the most LLM calls it
+  will make. It never goes over that number.
+- **It runs in the background**, one folder at a time, and saves each batch as it comes
+  back. You can stop it at any time and keep what is done.
+- **It never loses a prompt.** If a folder fails, its prompts stay as they were, and the
+  rest carry on. Press Rewrite again later to retry what is left.
+- **It never touches a prompt you edited by hand**, or one that has already run. While it
+  runs, the plan's prompts can't be edited, so an edit can't undo a rewrite that just
+  landed.
+- **It rewrites the scenarios you saw in the dialog.** One you tick while it waits in the
+  queue waits for the next rewrite. A scenario you renamed needs an Apply first.
+
+The preview's totals show how many prompts wait for a rewrite, and the most calls that
+would take.
 
 ## Changing a blueprint after applying it
 

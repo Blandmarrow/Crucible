@@ -97,8 +97,12 @@ Recorded so an older draft cannot reintroduce them.
   that never sees the child finish, the test harness's loop-bound second queue, a parent
   cancelled while its child runs) went with it.
 - **A `pair:K` scenario mode.** Subsumed by `take: N`.
-- **A new job type for template expansion or the rewrite pass.** Expansion runs inline (§2a);
-  the rewrite pass reuses `comfy_prompts`.
+- **A new job type for template expansion.** Expansion runs inline (§2a).
+- **The rewrite pass reusing `comfy_prompts`** (overturned by the user, 2026-11-03). Reuse would
+  have kept the 409 guards for free, but that job appends rows and reports "N generated", while
+  the rewrite updates rows and reports different numbers. The job, `TopBar` and
+  `jobReconcile.ts` would all have branched on a mode flag. It is `comfy_rewrite`, added to the
+  four guards by hand (§3).
 - **Inlining every stage into one giant job.** It would lift each stage's `_run` closure out of
   its router with high regression risk, and throw away every existing preflight check.
 - **Making the main queue multi-worker.** The single worker is what serializes GPU work. Two
@@ -126,7 +130,7 @@ Two departures from the sketch that stood here:
 - **`sample:K` ranks combinations by a hash of their entity ids** rather than seeding
   `random.sample`, so a Python upgrade cannot re-sample a blueprint.
 
-§3's rewrite pass is still the slow part, and it still reuses `comfy_prompts`.
+§3's rewrite pass is the slow part, so it is a job of its own, `comfy_rewrite`.
 
 ### §2b — The outline call and the review panel (landed)
 
@@ -151,40 +155,24 @@ pending rows only. Top up reuses Apply, so it inherits that. Shortfall counts im
 running and failed rows count as future images; and Top up resets failed rows to pending
 before running (`docs/dev/comfyui/structured.md` § Fill accounting).
 
-## 3. The optional LLM rewrite pass
+## 3. The optional LLM rewrite pass (landed)
 
-Read `docs/dev/comfyui/prompts.md`, `docs/dev/llm-providers.md`, `backend/ml/prompt_generator.py`.
+Built on 2026-11-03, with the outline's instruction-order fix. Everything durable is in
+`docs/dev/comfyui/structured-llm.md` § The rewrite pass; `prompt_origin` is in
+`docs/dev/comfyui/queue.md`, and Top up's refusal in `docs/dev/comfyui/structured.md` § Top up.
 
-Templates make this pass optional (decision 8): it rewrites a leaf's composed prompts into prose
-for natural-language models, sending the composed prompts and the descriptors as input. Off by
-default per scenario. The current generation loop was tuned for one flat run of up to 200 prompts
-and behaves badly applied per leaf. Facts first, checked on 2026-11-03:
+The user settled four points that day: the pass is its own job type (`comfy_rewrite`), Top
+up refuses to run rows still waiting for it, hand edits are protected by `prompt_origin`,
+and leaves are rewritten one at a time.
 
-- **One "call" is up to two HTTP requests.** The `json_schema` attempt falls back to a plain
-  call whenever it errors *or* parses to zero prompts. On LM Studio with a thinking model the
-  schema attempt returns empty content, so the fallback is the normal path.
-- **The call cap is `max(12, ceil(total/batch)*3)`** (`backend/routers/comfy.py`), sensible for a
-  200-prompt run and absurd per 10-prompt leaf.
-- **There are no retries** — `max_retries=0` on the client, on purpose, so the provider's own
-  timeout is the real ceiling (`docs/dev/llm-providers.md`). The timeout is per provider now
-  (4b44072), no longer a 120 s constant; `max_tokens` is floored at 8192.
-
-Changes:
-
-- **Probe the schema path once per run**, then stick with whatever worked.
-- **Per-leaf cap `ceil(target/batch) + 2`**, plus a run-level call budget shown in the preview and
-  enforced as a hard stop.
-- **Bounded retry with jittered backoff** on timeout, connection reset, 5xx and 429, in the pass's
-  own loop (the client keeps `max_retries=0`). Never retry a schema rejection. **Poll the cancel
-  flag inside the backoff and before each attempt.**
-- **Per-leaf failure isolation** with a run-level threshold (abort past roughly a quarter of
-  leaves failed). A failed leaf keeps its template prompts, so the pass can only improve rows,
-  never lose them.
-
-**Do not widen `ParsedPrompts` to carry probe state.**
-`docs/dev/postmortems/PM-005-tuple-return-widened-broke-caller.md` is that mistake. Probe state
-belongs on a caller object that owns the connection for the run; keep the module-level function
-as a thin wrapper so the one-shot endpoint is untouched.
+Departures from the sketch that stood here, all from the review before it merged:
+- **A strict parser of its own**, `parse_rewrite`, instead of `parse_prompts`. That parser's
+  line-splitting fallback accepted a reply cut off at the token limit as one prompt.
+- **Any 4xx other than 401, 403 or 404 fails one leaf rather than the run**, and a refused
+  schema never fixes the mode by itself.
+- **The row routes that write `values` 409 while a rewrite is live.** The table PATCHes a
+  whole cached row, so an edit during the pass undid it.
+- **The job rewrites only the scenarios the user reviewed**, stored in its config.
 
 ## 4. The stepping run
 
@@ -235,7 +223,7 @@ nothing on that queue may wait for another job on it. Instead of waiting, a run 
 | Stage | Shape |
 |---|---|
 | `snapshot` | direct; opt-in, skips with a note when versioning is off |
-| `prompts` | job — §2a expansion / Top up, and §3 if on |
+| `prompts` | §2a expansion / Top up, then a `comfy_rewrite` job when a scenario has §3 on |
 | `vram_handoff` | direct; both directions, can appear twice |
 | `generate` | job (`comfy_generate`) |
 | `score` | job, scoped by image ids |
@@ -318,8 +306,8 @@ family sits behind the hub `docs/dev/comfyui.md`, so each new file goes in
 - Structured generation, written and then split three ways on 2026-11-03:
   `docs/dev/comfyui/structured.md` (blueprints, fill accounting, orphans, Apply, Top up),
   `docs/dev/comfyui/structured-expansion.md` (the spec, expansion and its guard rails) and
-  `docs/dev/comfyui/structured-llm.md` (the outline call). **§3's rewrite pass goes in
-  structured-llm.md.** §1's two columns stay documented beside the row model;
+  `docs/dev/comfyui/structured-llm.md` (the outline call, and §3's rewrite pass since
+  2026-11-03). §1's two columns stay documented beside the row model;
   cross-reference them rather than moving them.
 - docs/dev/comfyui/automation.md, still owed — the `Run` row, `advance_run()`, stages,
   cancel, pause and resume, the VRAM handoff, the goal loop, budgets and recipes.
@@ -331,13 +319,12 @@ or a new page, plus a row in `docs/features.md` and whatever `README.md` needs. 
 
 ## Still open
 
-- Whether leaf-level LLM concurrency in §3 is worth exposing. It buys nothing against a
-  single-GPU local server and real time against a hosted API.
 - Whether an entity filter (built on `comfy_leaves`, scoped to a blueprint) is wanted in the
   gallery. Not built until someone misses it (decision 8).
 
 Settled 2026-11-03 by the user: per-leaf targets are edited per scenario in the UI and stored
-per leaf in the DB; a deleted leaf's rows count toward nothing (see §2c).
+per leaf in the DB; a deleted leaf's rows count toward nothing (see §2c). Also settled that day:
+§3 rewrites one leaf at a time, with no concurrency setting.
 
 ## Traps worth restating
 

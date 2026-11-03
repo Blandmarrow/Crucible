@@ -158,6 +158,11 @@ class ComfyRow(Base):
     # of `a7c3e5b1d9f2_add_image_frame_lineage.py`). Written by blueprint Apply
     # (services/blueprint_service.py); never settable through the row endpoints.
     leaf_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    # Where the prompt text came from: "template" (blueprint Apply), "rewritten" (the
+    # §3 LLM pass), "manual" (a hand edit of the prompt through the row endpoints),
+    # NULL (flat generation, bulk add). The rewrite pass touches only "template" rows,
+    # which is what keeps it off a prompt the user corrected (services/blueprint_rewrite.py).
+    prompt_origin: Mapped[str | None] = mapped_column(String(16), nullable=True)
     # {alias: json-native value}; absent alias = use template value
     values: Mapped[dict] = mapped_column(JSON, default=dict)
     # pending | running | completed | failed

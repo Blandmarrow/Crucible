@@ -59,7 +59,7 @@ def test_top_up_fills_only_what_is_short_and_a_second_press_does_nothing(tmp_pat
             pv = await _preview(env, plan_id)
             assert (pv["rows_to_add"], pv["images_short"]) == (0, 0)
             out = await _top_up(env, plan_id, 0)
-            assert out == {"created": 0, "reset": 0, "deleted_rows": 0, "job_id": None, "total": 0}
+            assert out == {"created": 0, "reset": 0, "deleted_rows": 0, "job_id": None, "total": 0, "awaiting_rewrite": 0}
 
             # Delete one image in the gallery: that folder alone is short by one.
             gone = next(i for i in images if i["subfolder"] == "gen/knights/salt_witch")

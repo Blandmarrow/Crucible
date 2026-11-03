@@ -30,6 +30,7 @@ const DATASET_MODIFYING_JOB_TYPES = new Set(["duplicate", "import"]);
 // branch below because its whole point is surviving the modal that started it.
 const PROMPT_JOB_TYPE = "comfy_prompts";
 const OUTLINE_JOB_TYPE = "comfy_outline";
+const REWRITE_JOB_TYPE = "comfy_rewrite";
 // The eight jobs that re-cut an image thumbnail as a best-effort post-commit
 // epilogue. Each reports a `thumbnails_stale` count; the branch below is the one
 // place that turns it into something the user sees. It lives here rather than in
@@ -123,6 +124,8 @@ export default function TopBar() {
   const promptDoneRef = useRef<Map<string, number>>(new Map());
   const promptTerminalRef = useRef<Set<string>>(new Set());
   const outlineTerminalRef = useRef<Set<string>>(new Set());
+  const rewriteTerminalRef = useRef<Set<string>>(new Set());
+  const rewriteDoneRef = useRef<Map<string, number>>(new Map());
   useEffect(() => {
     jobs.forEach((progress, jobId) => {
       // Prompt-generation jobs (ComfyUI "generate until N"): rows land per batch,
@@ -180,6 +183,64 @@ export default function TopBar() {
           } else {
             toast("Blueprint draft stopped");
           }
+        }
+      }
+      // Prompt rewrite (ComfyUI blueprint "Rewrite"): rows change in place and the modal
+      // that started it may be closed, so the refresh and the toast live here. Its own
+      // type, never read as comfy_prompts: it writes `rewritten`, not `created`.
+      if (progress.job_type === REWRITE_JOB_TYPE) {
+        // Rows change per batch: refresh the table as each lands, as the comfy_prompts
+        // branch does, so it never shows template text the pass has already replaced.
+        const done = progress.done ?? 0;
+        if (progress.status === "running" && done > (rewriteDoneRef.current.get(jobId) ?? -1)) {
+          rewriteDoneRef.current.set(jobId, done);
+          if (progress.plan_id) qc.invalidateQueries({ queryKey: ["comfy", "rows", progress.plan_id] });
+        }
+        if (TERMINAL_JOB_STATUSES.has(progress.status) && !progress.optimistic && !rewriteTerminalRef.current.has(jobId)) {
+          rewriteTerminalRef.current.add(jobId);
+          const planId = progress.plan_id;
+          if (planId) {
+            qc.invalidateQueries({ queryKey: ["comfy", "rows", planId] });
+            qc.invalidateQueries({ queryKey: ["comfy", "blueprint-preview", planId] });
+            qc.invalidateQueries({ queryKey: ["comfy", "blueprint-rewrite", planId] });
+            qc.invalidateQueries({ queryKey: ["comfy", "prompts", planId] });
+          }
+          const status = progress.status;
+          const plural = (n: number, w: string) => `${n} ${w}${n !== 1 ? "s" : ""}`;
+          jobsApi.get(jobId).then((job) => {
+            const r = job.result_data ?? {};
+            const rewritten = Number(r.rewritten ?? 0);
+            if (status === "completed") {
+              const kept = Number(r.leaves_failed ?? 0);
+              const leaves = Number(r.leaves_done ?? 0);
+              const left = Number(r.requested ?? rewritten) - rewritten;
+              const msg = `Rewrote ${plural(rewritten, "prompt")} in ${plural(leaves, "folder")}`
+                + (kept > 0 ? `; ${plural(kept, "folder")} kept their templates` : "");
+              // A run that stopped early, or left prompts behind, is not a plain success:
+              // Top up refuses while those prompts wait, so say why and how many.
+              const why: Record<string, string> = {
+                call_budget: "the LLM call budget ran out",
+                provider_error: String(r.error || "the provider refused"),
+                too_many_failures: "too many folders failed",
+                write_error: String(r.error || "saving a batch failed"),
+              };
+              const reason = why[String(r.stop_reason)];
+              if (reason || left > 0) {
+                toast(`${msg}. Stopped: ${reason || "some prompts could not be rewritten"} — `
+                  + `${plural(left, "prompt")} still wait${left === 1 ? "s" : ""}; press Rewrite to try again`,
+                  { icon: "⚠️", duration: 9000 });
+              } else {
+                toast.success(msg);
+              }
+            } else if (status === "failed") {
+              toast.error(job.error_msg || progress.message || "Prompt rewrite failed");
+            } else {
+              toast(`Rewrite stopped — ${plural(rewritten, "prompt")} rewritten`);
+            }
+          }).catch(() => {
+            if (status === "failed") toast.error(progress.message || "Prompt rewrite failed");
+            else toast(status === "completed" ? "Prompt rewrite finished" : "Rewrite stopped");
+          });
         }
       }
       // Every terminal status, not just "completed": these jobs commit per item, so

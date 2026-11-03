@@ -58,6 +58,22 @@ Two more row columns (migration `e5c1a9d3f7b2`) give each row its own destinatio
   `VersionImageState.label_ids` and `quality_flags["duplicate_of"]` are FK-less for related
   reasons. `ComfyRow` is not `Image` — none of the `VersionImageState` mirror rules apply.
 
+`prompt_origin` (`String(16)` NULL, migration `d4a8c2e6f1b9`) records where a row's prompt
+text came from, so the optional rewrite pass (`docs/dev/comfyui/structured-llm.md` § The
+rewrite pass) touches only text a template wrote:
+
+| Value | Written by |
+|---|---|
+| `template` | blueprint Apply; the migration backfilled every row with a `leaf_id` |
+| `rewritten` | the rewrite pass |
+| `manual` | `PATCH /rows/{id}`, `rows/set-value` and `rows/bulk-edit`, whenever the prompt alias's value changes |
+| NULL | flat generation, `rows/bulk`, a hand-added row |
+
+**A new writer of a row's prompt text must set it** (`_mark_manual_if_prompt_changed` in
+the router), or the pass will overwrite a prompt the user corrected. It must also 409 while
+a rewrite is live (`_refuse_during_rewrite`), as those three do. `_row_out` serializes it
+read-only.
+
 The ComfyUI server URL is the global `ThresholdSettings.comfyui_url` (Settings → ComfyUI tab,
 with a Test-connection button → `GET /comfy/ping`, which hits `{url}/system_stats`). The same
 tab also holds `ThresholdSettings.comfy_workflow_dir` — the default folder scanned for

@@ -204,3 +204,56 @@ test('the Blueprint tab opens the draft-from-a-description dialog', async ({ pag
   await expect(page.getByTestId('outline-modal').getByText(/Provider|No LLM providers/).first()).toBeVisible()
   await expect(page.getByTestId('blueprint-draft-banner')).toHaveCount(0)
 })
+
+test('a scenario can opt in to the LLM rewrite: Top up waits for it, and the dialog shows the estimate', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-comfy-rewrite-${Date.now()}`)
+  const plan = await createPlanViaApi(request, ds.id, 'rewrite plan')
+
+  await page.goto(`/datasets/${ds.id}/comfy`)
+  await page.getByRole('button', { name: 'Blueprint', exact: true }).click()
+
+  await page.getByRole('button', { name: '+ Add axis' }).click()
+  await page.getByLabel('Axis name').fill('character')
+  await page.getByLabel('Axis name').blur()
+  const axis = page.getByTestId('axis-character')
+  await axis.getByRole('button', { name: '+ Add entity' }).click()
+  await axis.getByRole('button', { name: '+ Add entity' }).click()
+  await axis.getByLabel('character entity label').nth(0).fill('Iron Knight')
+  await axis.getByLabel('character entity descriptor').nth(0).fill('an iron knight')
+  await axis.getByLabel('character entity label').nth(1).fill('Salt Witch')
+  await axis.getByLabel('character entity descriptor').nth(1).fill('a salt witch')
+
+  await page.getByRole('button', { name: '+ Add scenario' }).click()
+  const scenario = page.getByTestId('scenario-0')
+  await scenario.getByRole('button', { name: '+ Combine an axis' }).click()
+  await scenario.getByLabel('Images per folder').fill('2')
+  await scenario.getByLabel('Folder path').fill('knights/{character}')
+  await scenario.getByLabel('Prompt template').fill('{character}, standing')
+
+  // Nothing to rewrite until the scenario opts in.
+  const totals = page.getByTestId('blueprint-totals')
+  await expect(totals).toHaveText('2 folders · 4 rows to add · 4 images short', { timeout: 15_000 })
+  await scenario.getByLabel('Rewrite into prose (LLM)').check()
+  await expect(totals).toContainText(/4 to rewrite · ≤ \d+ LLM calls/, { timeout: 15_000 })
+
+  // Before Apply no row exists, so the button is disabled with a reason.
+  const rewrite = page.getByTestId('blueprint-rewrite')
+  await expect(rewrite).toBeDisabled()
+  await page.getByRole('button', { name: 'Apply', exact: true }).click()
+  const rowsUrl = `/api/v1/comfy/plans/${plan.id}/rows`
+  await expect.poll(async () => ((await (await request.get(rowsUrl)).json()) as Row[]).length).toBe(4)
+  await expect(rewrite).toBeEnabled({ timeout: 15_000 })
+  await expect(rewrite).toHaveText('Rewrite 4 prompts')
+
+  // Top up refuses to run while template prompts wait: it says so and starts nothing.
+  await page.getByTestId('blueprint-topup').click()
+  await expect(page.getByTestId('blueprint-awaiting-rewrite')).toContainText('4 rows wait for the rewrite')
+  const rows: Row[] = await (await request.get(rowsUrl)).json()
+  expect(rows.map((r) => r.status)).toEqual(['pending', 'pending', 'pending', 'pending'])
+
+  // No LLM is called: the dialog shows the estimate, or says none is configured.
+  await rewrite.click()
+  const modal = page.getByTestId('rewrite-modal')
+  await expect(modal).toBeVisible()
+  await expect(modal.getByText(/No LLM providers|4 prompts in 2 folders/).first()).toBeVisible({ timeout: 15_000 })
+})

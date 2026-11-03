@@ -109,6 +109,18 @@ def _strip_reasoning(raw: str) -> str:
     return text
 
 
+def _with_standing(system: str, instructions: str, lead: str) -> str:
+    """`system` with the user's standing instructions in front of it, under `lead`.
+
+    In front, so the format mandate at the end of `system` wins on conflict: an
+    instruction such as "one prompt per line" must not beat "return a JSON array".
+    Every call that sends the plan's saved instructions builds its system message
+    here, so the three cannot drift apart again (the outline once put them last).
+    """
+    instructions = instructions.strip()
+    return f"{lead}\n{instructions}\n\n{system}" if instructions else system
+
+
 def parse_prompts(raw: str) -> ParsedPrompts:
     """Parse LLM output into prompts + a dropped-line count.
 
@@ -156,12 +168,10 @@ async def generate_prompts(
     """
     from openai import AsyncOpenAI
 
-    system = _SYSTEM.format(count=batch_size)
-    if system_instructions.strip():
-        system = (
-            "Follow these standing instructions for how every prompt must be written:\n"
-            f"{system_instructions.strip()}\n\n{system}"
-        )
+    system = _with_standing(
+        _SYSTEM.format(count=batch_size), system_instructions,
+        "Follow these standing instructions for how every prompt must be written:",
+    )
 
     user = f"Generate {batch_size} prompts.\n\nRequest: {instruction.strip()}"
     if existing:
@@ -312,6 +322,13 @@ _OUTLINE_SCHEMA = {
 }
 
 
+def _outline_system(instructions: str) -> str:
+    return _with_standing(
+        _OUTLINE_SYSTEM, instructions,
+        "The prompts the templates produce must follow these standing instructions:",
+    )
+
+
 def _named_entries(value, inner: str) -> dict | None:
     """`[{name, <inner>}]` → `{name: <inner>}`; a dict passes through, null is empty.
 
@@ -393,12 +410,7 @@ async def generate_outline(
     """
     from openai import AsyncOpenAI
 
-    system = _OUTLINE_SYSTEM
-    if system_instructions.strip():
-        system = (
-            f"{system}\n\nThe prompts the templates produce must follow these standing "
-            f"instructions:\n{system_instructions.strip()}"
-        )
+    system = _outline_system(system_instructions)
     user = (
         f"Brief: {brief.strip()}\n\n"
         "Write each descriptor so it can be pasted verbatim into any prompt that names it."
@@ -438,3 +450,221 @@ async def generate_outline(
             )
         raise RuntimeError("the model did not return a blueprint as JSON")
     return outline
+
+
+# ── Rewrite pass (M6 §3, docs/dev/comfyui/structured-llm.md § The rewrite pass) ────────
+
+_REWRITE_SYSTEM = (
+    "You rewrite image-generation prompts into natural-language prose, for image models "
+    "that read sentences rather than tag lists. Each input prompt was assembled from a "
+    "template. Rewrite each one as fluent prose describing the same image: keep every "
+    "subject, descriptor detail, setting and shot detail it contains, and add no new "
+    "subjects, change no one's appearance and move no one elsewhere. Describe each named "
+    "entity the same way in every prompt, so it stays recognisable. Return EXACTLY {count} "
+    "prompts as a JSON array of strings, in the same order as the input — no markdown, no "
+    "commentary, no numbering, no code fences."
+)
+
+_REWRITE_SCHEMA = {
+    "name": "prompt_rewrite",
+    "schema": {
+        "type": "object",
+        "properties": {"prompts": {"type": "array", "items": {"type": "string"}}},
+        "required": ["prompts"],
+        "additionalProperties": False,
+    },
+}
+
+
+class RewriteError(Exception):
+    """One rewrite attempt failed. `kind` tells the pass what to do next:
+
+    - "transient": a timeout, a dropped connection, a 429 or a 5xx. Worth a retry.
+    - "mismatch": the model answered, but not with a JSON list of one prompt per input.
+      Worth asking again, never worth a backoff.
+    - "rejected": the provider refused this request (a 400, 413 or 422: say, one leaf's
+      descriptors overflowing the context). The leaf fails; the next may not.
+    - "fatal": a refusal the next leaf would repeat (401, 403, an unknown model, a token
+      limit). The pass stops.
+    """
+
+    def __init__(self, message: str, kind: str):
+        super().__init__(message)
+        self.kind = kind
+
+
+class BudgetExhausted(Exception):
+    """The next HTTP request would exceed the run's call budget."""
+
+
+# Read off the exception rather than `isinstance` against the SDK's classes: `openai`
+# is not in requirements-ci.txt, and this must classify a test's stand-in errors too.
+# The SDK's APITimeoutError subclasses APIConnectionError, so one name covers both.
+_TRANSIENT_NAMES = {"APIConnectionError", "APITimeoutError"}
+
+
+def _status(exc: Exception) -> int | None:
+    status = getattr(exc, "status_code", None)
+    return status if isinstance(status, int) else None
+
+
+def _classify(exc: Exception) -> str:
+    status = _status(exc)
+    if status is not None:
+        if status == 429 or status >= 500:
+            return "transient"
+        # Only these say something about the provider rather than the request.
+        return "fatal" if status in (401, 403, 404) else "rejected"
+    if isinstance(exc, (TimeoutError, ConnectionError)) or any(
+        c.__name__ in _TRANSIENT_NAMES for c in type(exc).__mro__
+    ):
+        return "transient"
+    return "fatal"
+
+
+def parse_rewrite(raw: str) -> list[str] | None:
+    """A rewrite answer as its list of prompts, or None when it is not one.
+
+    Strict where `parse_prompts` is lenient: only a JSON list of strings, bare or as
+    `{"prompts": [...]}`, after `_strip_reasoning`, and **never the line-splitting
+    fallback**. A row takes whatever comes back as its prompt, so a reply cut off at the
+    token limit (`{"prompts": ["An iron knight stands in the`) must not pass as one
+    prompt for one template, and an answer under another key is no answer. Prose around
+    the JSON is scanned with `raw_decode` at each bracket, as `parse_outline` does.
+    """
+    text = _strip_reasoning(raw)
+    decoder = json.JSONDecoder()
+    i = 0
+    while i < len(text):
+        if text[i] not in "[{":
+            i += 1
+            continue
+        try:
+            parsed, end = decoder.raw_decode(text, i)
+        except ValueError:
+            i += 1
+            continue
+        if isinstance(parsed, dict):
+            parsed = parsed.get("prompts") if set(parsed) == {"prompts"} else None
+        if isinstance(parsed, list) and parsed and all(isinstance(p, str) and p.strip() for p in parsed):
+            return [p.strip() for p in parsed]
+        # Past the whole value: a list nested in an off-schema object
+        # (`{"rewritten": [...]}`) is not an answer either.
+        i = end
+    return None
+
+
+class RewriteSession:
+    """One rewrite pass's connection to the provider, and what it has learned about it.
+
+    Probe state lives here, on a caller object, and never on `ParsedPrompts`: widening a
+    shared return type for one caller is PM-005. `generate_prompts` is not used, so the
+    one-shot endpoint and the flat job are untouched.
+
+    `mode` starts unknown. The first attempt tries `json_schema`. A refusal of it, or
+    content that does not parse, gets one plain request in the same attempt. Whichever
+    request parses fixes the mode for the rest of the run, so a provider that answers
+    schema requests with nothing (LM Studio with a thinking model) costs two requests
+    once rather than on every batch. A refusal alone never fixes the mode: a 400 for a
+    leaf whose context overflows is not a verdict on the schema.
+
+    `requests` counts every HTTP request sent, which is the run's cost; `max_requests`
+    is a hard stop enforced before each one.
+    """
+
+    def __init__(
+        self, *, base_url: str, api_key: str, model_name: str, system_instructions: str = "",
+        temperature: float = 0.7, max_tokens: int = 2048, timeout_s: float = 300.0,
+        max_requests: int | None = None, client=None,
+    ):
+        if client is None:
+            from openai import AsyncOpenAI
+
+            # max_retries=0, as everywhere here: the pass owns its retries, so the
+            # provider's timeout stays the real ceiling of one request.
+            client = AsyncOpenAI(base_url=base_url, api_key=api_key or "none", timeout=timeout_s, max_retries=0)
+        self._client = client
+        self._model = model_name
+        self._instructions = system_instructions
+        self._temperature = temperature
+        self._max_tokens = max(max_tokens, 8192)
+        self.max_requests = max_requests
+        self.mode: str | None = None
+        self.requests = 0
+
+    def _messages(self, templates: list[str], descriptors: list[str]) -> list[dict]:
+        system = _with_standing(
+            _REWRITE_SYSTEM.format(count=len(templates)), self._instructions,
+            "The rewritten prompts must follow these standing instructions:",
+        )
+        user = ""
+        if descriptors:
+            user += "The entities these prompts name:\n" + "\n".join(f"- {d}" for d in descriptors) + "\n\n"
+        user += f"Rewrite these {len(templates)} prompts:\n" + "\n".join(
+            f"{i}. {t}" for i, t in enumerate(templates, 1)
+        )
+        return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+    async def _send(self, messages: list[dict], schema: bool) -> tuple[list[str] | None, str | None]:
+        if self.max_requests is not None and self.requests >= self.max_requests:
+            raise BudgetExhausted()
+        self.requests += 1
+        kwargs = dict(
+            model=self._model, max_tokens=self._max_tokens, temperature=self._temperature,
+            messages=messages,
+        )
+        if schema:
+            kwargs["response_format"] = {"type": "json_schema", "json_schema": _REWRITE_SCHEMA}
+        resp = await self._client.chat.completions.create(**kwargs)
+        choice = resp.choices[0] if resp.choices else None
+        raw = (choice.message.content or "") if choice else ""
+        return parse_rewrite(raw), (choice.finish_reason if choice else None)
+
+    async def rewrite(self, templates: list[str], descriptors: list[str]) -> list[str]:
+        """One attempt: `templates` → as many prose prompts, in order.
+
+        Raises RewriteError (see its `kind`) or BudgetExhausted. One attempt is one
+        request, or two while the mode is still being probed.
+        """
+        messages = self._messages(templates, descriptors)
+        want = len(templates)
+        try:
+            prompts: list[str] | None = None
+            finish = None
+            if self.mode in (None, "schema"):
+                try:
+                    prompts, finish = await self._send(messages, schema=True)
+                except BudgetExhausted:
+                    raise
+                except Exception as e:
+                    # Probing, a refusal (a 400/422, or any error a provider without
+                    # structured output raises) falls back to plain, as generate_prompts
+                    # does. A transient error is retried by the pass with the mode still
+                    # unknown; once the mode is "schema", it raises.
+                    if self.mode == "schema" or _classify(e) == "transient":
+                        raise
+                    logger.info("prompt_generator: rewrite json_schema refused (%s) — trying plain", e)
+                else:
+                    if prompts is not None and self.mode is None:
+                        self.mode = "schema"
+            if self.mode == "plain" or (self.mode is None and prompts is None):
+                prompts, finish = await self._send(messages, schema=False)
+                if prompts is not None and self.mode is None:
+                    self.mode = "plain"
+        except (BudgetExhausted, RewriteError):
+            raise
+        except Exception as e:
+            raise RewriteError(str(e) or type(e).__name__, _classify(e)) from e
+
+        # Whatever the count: a cut-off answer is not a finished one.
+        if finish == "length":
+            raise RewriteError(
+                "the model ran out of tokens before finishing (thinking model?) — "
+                "raise the provider's max tokens in Settings → LLM Providers",
+                "fatal",
+            )
+        if prompts is None:
+            raise RewriteError("the model did not return the prompts as a JSON list", "mismatch")
+        if len(prompts) != want:
+            raise RewriteError(f"the model returned {len(prompts)} prompts for {want}", "mismatch")
+        return prompts

@@ -4,6 +4,7 @@ import toast from "react-hot-toast";
 import { comfyApi, type BlueprintValue } from "../../api/comfy";
 import { useDebouncedValue } from "../../hooks/useDebouncedValue";
 import { apiErrorDetail } from "../../utils/apiError";
+import RewriteModal from "./RewriteModal";
 
 const PREVIEW_DEBOUNCE_MS = 350;
 
@@ -27,6 +28,9 @@ export default function BlueprintPreview({ planId, datasetId, value, hasPromptPi
   const qc = useQueryClient();
   const [allowOverCap, setAllowOverCap] = useState(false);
   const [deleteOrphans, setDeleteOrphans] = useState(false);
+  const [showRewrite, setShowRewrite] = useState(false);
+  // Top up applied but left rows waiting for the rewrite: it ran nothing, so say why.
+  const [awaitingRewrite, setAwaitingRewrite] = useState(0);
 
   const liveJSON = JSON.stringify(value);
   const debouncedJSON = useDebouncedValue(liveJSON, PREVIEW_DEBOUNCE_MS);
@@ -47,6 +51,22 @@ export default function BlueprintPreview({ planId, datasetId, value, hasPromptPi
     refetchInterval: 20_000,
   });
 
+  // The rewrite button counts rows that exist now (the preview's count also includes rows
+  // Apply would add), at the batch size the modal will default to.
+  const { data: gen } = useQuery({
+    queryKey: ["comfy", "gen-settings-defaults", planId],
+    queryFn: () => comfyApi.getGenSettings(planId),
+    staleTime: 0,
+  });
+  const estimateBatch = Math.min(10, Math.max(1, gen?.batch_size ?? 5));
+  const rewriteWanted = (preview?.rewrite_rows ?? 0) > 0;
+  const { data: estimate } = useQuery({
+    queryKey: ["comfy", "blueprint-rewrite", planId, estimateBatch],
+    queryFn: ({ signal }) => comfyApi.rewriteEstimate(planId, estimateBatch, signal),
+    enabled: rewriteWanted,
+    staleTime: 0,
+  });
+
   const applyMutation = useMutation({
     // Exactly what the displayed preview was computed from, not the live form.
     mutationFn: (vars: { body: BlueprintValue; total: number; deleteOrphans: boolean }) =>
@@ -57,6 +77,8 @@ export default function BlueprintPreview({ planId, datasetId, value, hasPromptPi
       const deleted = data.deleted_rows > 0 ? `, deleted ${data.deleted_rows} pending` : "";
       toast.success(`Added ${data.created} row${data.created !== 1 ? "s" : ""} across ${data.leaves} folder${data.leaves !== 1 ? "s" : ""}${deleted}`);
       setDeleteOrphans(false);
+      setAwaitingRewrite(0);
+      qc.invalidateQueries({ queryKey: ["comfy", "blueprint-rewrite", planId] });
       qc.invalidateQueries({ queryKey: ["comfy", "rows", planId] });
       qc.invalidateQueries({ queryKey: ["comfy", "plans", datasetId] });
       qc.invalidateQueries({ queryKey: ["comfy", "prompts", planId] });
@@ -78,13 +100,18 @@ export default function BlueprintPreview({ planId, datasetId, value, hasPromptPi
         delete_orphan_pending: vars.deleteOrphans, subfolder, set_caption: setCaption,
       }),
     onSuccess: (data, vars) => {
-      if (data.job_id) {
+      setAwaitingRewrite(data.awaiting_rewrite ?? 0);
+      if (data.awaiting_rewrite > 0) {
+        // Applied, but nothing was reset or run: the notice below says what to do.
+        toast.success(`Added ${data.created} row${data.created !== 1 ? "s" : ""}`);
+      } else if (data.job_id) {
         onRunStarted(data.job_id, vars.planId);
         toast.success(`Top up: added ${data.created} row${data.created !== 1 ? "s" : ""}, reset ${data.reset} failed — running ${data.total} row${data.total !== 1 ? "s" : ""}`);
       } else {
         toast.success("Every folder is full");
       }
       setDeleteOrphans(false);
+      qc.invalidateQueries({ queryKey: ["comfy", "blueprint-rewrite", vars.planId] });
       qc.invalidateQueries({ queryKey: ["comfy", "rows", vars.planId] });
       qc.invalidateQueries({ queryKey: ["comfy", "plans", datasetId] });
       qc.invalidateQueries({ queryKey: ["comfy", "prompts", vars.planId] });
@@ -133,6 +160,9 @@ export default function BlueprintPreview({ planId, datasetId, value, hasPromptPi
   const topUpBlocked = blockedReason || (allFull ? "Every folder is full" : "");
   const canTopUp = !!preview && !topUpBlocked && !topUpMutation.isPending && !applyMutation.isPending;
 
+  const rewriteRows = estimate?.rows ?? 0;
+  const rewriteReason = rewriteRows === 0 ? "Apply first: there are no pending or failed template prompts to rewrite yet" : "";
+
   return (
     <div className="panel" style={{ marginBottom: 12 }} data-testid="blueprint-preview">
       <div className="panel-h" style={{ flexWrap: "wrap", gap: 8 }}>
@@ -141,6 +171,7 @@ export default function BlueprintPreview({ planId, datasetId, value, hasPromptPi
           {preview
             ? `${preview.leaf_count} folder${preview.leaf_count !== 1 ? "s" : ""} · ${preview.rows_to_add} row${preview.rows_to_add !== 1 ? "s" : ""} to add · ${preview.images_short} image${preview.images_short !== 1 ? "s" : ""} short`
               + (preview.rows_pending + preview.rows_failed > 0 ? ` · ${preview.rows_pending} pending · ${preview.rows_failed} failed` : "")
+              + (preview.rewrite_rows > 0 ? ` · ${preview.rewrite_rows} to rewrite · ≤ ${preview.rewrite_call_budget} LLM calls` : "")
             : "Working it out…"}
           {stale && preview ? " (updating…)" : ""}
         </span>
@@ -149,6 +180,15 @@ export default function BlueprintPreview({ planId, datasetId, value, hasPromptPi
           into Base folder: {subfolder ? <span className="mono">{subfolder}</span> : "(dataset root)"}
           {setCaption ? ", prompt as caption" : ""}
         </span>
+        {rewriteWanted && (
+          <button
+            className="btn" data-testid="blueprint-rewrite" disabled={rewriteRows === 0}
+            title={rewriteReason || "Rewrite the template prompts into prose with an LLM"}
+            onClick={() => setShowRewrite(true)}
+          >
+            Rewrite {rewriteRows} prompt{rewriteRows !== 1 ? "s" : ""}
+          </button>
+        )}
         <button
           className="btn" disabled={!canTopUp} title={topUpBlocked || "Add the missing rows, reset failed ones and run them"}
           data-testid="blueprint-topup"
@@ -169,6 +209,11 @@ export default function BlueprintPreview({ planId, datasetId, value, hasPromptPi
         </button>
       </div>
       <div className="panel-b" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {awaitingRewrite > 0 && (
+          <p style={{ fontSize: 12, color: "var(--warn, var(--fg-mute))", margin: 0 }} data-testid="blueprint-awaiting-rewrite">
+            Applied. {awaitingRewrite} row{awaitingRewrite !== 1 ? "s" : ""} wait{awaitingRewrite === 1 ? "s" : ""} for the rewrite — press Rewrite, then Top up again.
+          </p>
+        )}
         {!hasPromptPin && (
           <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: 0 }}>
             Apply needs a prompt pin. Mark a pinned parameter as the prompt in Workflow &amp; Pins.
@@ -250,6 +295,7 @@ export default function BlueprintPreview({ planId, datasetId, value, hasPromptPi
           </div>
         )}
       </div>
+      {showRewrite && <RewriteModal planId={planId} onClose={() => setShowRewrite(false)} />}
     </div>
   );
 }

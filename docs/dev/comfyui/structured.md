@@ -87,13 +87,14 @@ This was the user's ruling on the plan's open question about edit-then-top-up.
 - `POST …/blueprint/preview` `{spec, seed, allow_over_cap}` reads the spec **from the body**,
   so the live preview follows unsaved edits. It returns leaves (at most 500, and samples
   for only the first 20), `leaf_count`, `rows_to_add`, `row_cap`, `over_cap`, `errors`,
-  `warnings` and `orphans`.
+  `warnings` and `orphans`. Its three `rewrite_*` figures belong to § Top up.
 - `POST …/blueprint/apply` adds `confirm_total` and `delete_orphan_pending`, and returns
   `{created, leaves, deleted_rows}`. In order:
   - **400:** no prompt pin (`NO_PROMPT_PIN_MSG`).
-  - **409:** a `comfy_generate` or `comfy_prompts` job is pending or running for the plan
-    (`_plan_job_active`). A run loaded its rows at start and must not lose pending ones to
-    the orphan delete. A prompt job seeds its dedupe set once. This comes before the spec is
+  - **409:** a `comfy_generate`, `comfy_prompts` or `comfy_rewrite` job is pending or
+    running for the plan (`_plan_job_active` over `_ROW_JOB_TYPES`). A run loaded its rows
+    at start and must not lose pending ones to the orphan delete. A prompt job seeds its
+    dedupe set once. A rewrite is changing rows this would count. This comes before the spec is
     looked at, so an invalid spec during a run is a 409, not a 400.
   - **400:** any expansion error. Then `rows_to_add` over the cap: 2,000 by default, or
     20,000 with `allow_over_cap`. The total is refused, never truncated.
@@ -102,12 +103,13 @@ This was the user's ruling on the plan's open question about edit-then-top-up.
   - Then, in one commit: it saves the spec, upserts leaves by path, deletes the leaves the
     expansion no longer makes, optionally deletes orphaned pending rows, and inserts each
     leaf's rows. Each row gets `subfolder = leaf.path`, `leaf_id`, the prompt in the prompt
-    pin's alias, and `sort_order` continuing the plan's. Each leaf's `cursor` advances.
+    pin's alias, `prompt_origin = 'template'`, and `sort_order` continuing the plan's. Each leaf's `cursor` advances.
 - **Expansion runs inline, never as a job.** It is pure CPU plus one bulk insert under the
   cap. (The plan allowed a job for a large expansion; the cap makes every expansion
   small.)
 - **One per-plan lock, `_plan_lock`, covers every writer from its 409 check to its
-  commit:** Apply, the blueprint PUT, `run_plan` and `generate_prompts_job`. One process
+  commit:** Apply, the blueprint PUT, `run_plan`, `generate_prompts_job` and the rewrite
+  route (`docs/dev/comfyui/structured-llm.md` § The rewrite pass). One process
   serves the app, so an in-process `asyncio.Lock` is enough. Each holder closes one race:
   - Two double-clicked Applies would both pass the guards and give each leaf its rows twice.
     Now the second waits, sees zero rows to add, and gets the `confirm_total` 409.
@@ -122,15 +124,20 @@ This was the user's ruling on the plan's open question about edit-then-top-up.
 `POST …/blueprint/top-up` fills every folder that came up short in one press. Its body
 is Apply's (`spec`, `seed`, `confirm_total`, `allow_over_cap`, `delete_orphan_pending`)
 plus the run's `subfolder`, `set_caption` and `label`. It returns `{created, reset,
-deleted_rows, job_id, total}`. In order:
+deleted_rows, job_id, total, awaiting_rewrite}`. In order:
 
 1. **Before anything is written:** the prompt pin 400, the run's pre-flight
    (`_run_preflight`: workflow present, ComfyUI URL set, dataset exists), and
    `normalize_subfolder` on the base folder (a `..` is a 400). Otherwise a missing URL or a
    bad folder would add rows for a run that is then refused.
-2. **Under the plan lock, all the way to the run's commit:** the 409 for a live run or
-   prompt job, then Apply itself, with the same `confirm_total` rule, so what runs is what
-   the preview showed.
+2. **Under the plan lock, all the way to the run's commit:** the 409 for a live run,
+   prompt or rewrite job, then Apply itself, with the same `confirm_total` rule, so what
+   runs is what the preview showed.
+   - **Then it stops if any row waits for the rewrite** (M6 §3): a `template` row, not
+     completed, in a scenario with `rewrite` on (`blueprint_rewrite.count_awaiting`). It
+     returns `awaiting_rewrite: N` with `job_id: null`, having reset and run nothing, so
+     switching rewrite on always means prose. The user's choice, 2026-11-03; §4 will chain
+     Apply → rewrite → run. A plain *Run* is unchanged: it runs what the user queued.
 3. **`blueprint_service.prepare_top_up`:** reset the current leaves' failed rows to pending
    (clearing `error_msg` and `prompt_id`, as `rows/reset` does), then list their pending
    rows in queue order.
@@ -162,6 +169,11 @@ The preview carries what Top up needs to show:
 - per leaf, `short` = target − kept (images, not rows)
 - in total, `images_short`, `rows_pending` and `rows_failed`, summed over every leaf rather
   than the 500 listed
+- `rewrite_rows`, `rewrite_calls` and `rewrite_call_budget`: what the rewrite would face
+  once this spec is applied. That is the rows still holding template text plus the rows
+  Apply would add, in the scenarios with `rewrite` on, at the plan's saved batch size. The
+  dialog's own figures come from `GET …/blueprint/rewrite`, which counts only rows that
+  exist.
 
 `backend/tests/test_blueprint_top_up_http.py` runs it against `FakeComfy`:
 - the first press fills the folders, and a second does nothing

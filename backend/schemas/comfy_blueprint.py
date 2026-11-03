@@ -37,6 +37,9 @@ class Scenario(BaseModel):
     path: str = Field(default="", max_length=400)
     # None/"" = join the combined descriptors.
     template: str | None = Field(default=None, max_length=4000)
+    # Opt-in LLM pass (M6 §3) that rewrites this scenario's composed prompts into prose.
+    # Never set by the outline call: `_OUTLINE_SCHEMA` leaves it out on purpose.
+    rewrite: bool = False
 
 
 Piece = Annotated[str, StringConstraints(max_length=300)]

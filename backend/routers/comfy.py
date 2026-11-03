@@ -30,7 +30,7 @@ from backend.models import BackgroundJob, Dataset, Image
 from backend.models.comfy import ComfyLibraryPrompt, ComfyPlan, ComfyRow
 from backend.schemas.app_data import ComfyGenSettings
 from backend.schemas.comfy_blueprint import BlueprintSpec
-from backend.services import blueprint_service
+from backend.services import blueprint_rewrite, blueprint_service
 from backend.services.comfy_service import (
     MAX_CONSECUTIVE_CONNECT_ERRORS,
     PER_ROW_TIMEOUT_S,
@@ -264,6 +264,26 @@ class OutlineRequest(BaseModel):
     label: str | None = Field(default=None, max_length=200)
 
 
+class RewriteRequest(BaseModel):
+    """Body of the §3 rewrite job. Bounded and secret-free, like OutlineRequest, for
+    the same reason: `model_dump()` lands in the job's config."""
+
+    provider_id: str = Field(max_length=36)
+    model_name: str = Field(default="", max_length=500)  # empty → provider default_model
+    batch_size: int = Field(default=5, ge=1, le=10)
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    # The budget the user was shown (GET …/blueprint/rewrite). A mismatch is a 409, as
+    # Apply's `confirm_total` is: rows edited in between change what the run may spend.
+    confirm_budget: int = Field(ge=0)
+    label: str | None = Field(default=None, max_length=200)
+
+
+# Every job that writes or runs a plan's rows. A rewrite changes row text, so it may
+# overlap none of them: a run loads its rows when it starts, and Apply and Top up
+# count rows a rewrite is about to change.
+_ROW_JOB_TYPES = ("comfy_generate", "comfy_prompts", "comfy_rewrite")
+
+
 def _plan_out(plan: ComfyPlan) -> dict:
     return {
         "id": plan.id,
@@ -285,6 +305,7 @@ def _row_out(row: ComfyRow) -> dict:
         "sort_order": row.sort_order,
         "subfolder": row.subfolder or "",
         "leaf_id": row.leaf_id,
+        "prompt_origin": row.prompt_origin,
         "values": row.values or {},
         "status": row.status,
         "error_msg": row.error_msg,
@@ -878,6 +899,24 @@ async def _plan_job_active(db: AsyncSession, plan_id: str, job_types: tuple[str,
     return any((config or {}).get("plan_id") == plan_id for config in active)
 
 
+_REWRITE_LIVE_MSG = "A prompt rewrite for this plan is queued or running — edit its rows when it finishes"
+
+
+async def _refuse_during_rewrite(db: AsyncSession, plan_id: str) -> None:
+    """409 for a write of row `values` while a rewrite is live. The table builds a PATCH
+    from its cached row, so an edit to any cell would put back the template text the
+    pass just replaced, and mark it `manual` so it is never rewritten again; and the
+    pass's read-then-UPDATE would lose an edit landing between the two."""
+    if await _plan_job_active(db, plan_id, ("comfy_rewrite",)):
+        raise HTTPException(409, _REWRITE_LIVE_MSG)
+
+
+def _mark_manual_if_prompt_changed(row: ComfyRow, alias: str | None, old: dict, new: dict) -> None:
+    """A hand edit of the prompt makes it the user's: the §3 rewrite never touches it."""
+    if alias and old.get(alias) != new.get(alias):
+        row.prompt_origin = blueprint_rewrite.ORIGIN_MANUAL
+
+
 async def _next_sort_order(db: AsyncSession, plan_id: str) -> int:
     max_order = (
         await db.execute(select(func.max(ComfyRow.sort_order)).where(ComfyRow.plan_id == plan_id))
@@ -914,6 +953,10 @@ async def update_row(row_id: str, body: RowUpdate, db: AsyncSession = Depends(ge
     if not row:
         raise HTTPException(404, "Row not found")
     if body.values is not None:
+        await _refuse_during_rewrite(db, row.plan_id)
+        _mark_manual_if_prompt_changed(
+            row, _prompt_alias(await _get_plan(db, row.plan_id)), row.values or {}, body.values
+        )
         row.values = dict(body.values)
         # Edited values invalidate a previous result; keep image links for reference.
         if row.status in ("completed", "failed"):
@@ -971,7 +1014,9 @@ async def set_value_all_rows(plan_id: str, body: SetValueRequest, db: AsyncSessi
     aliases = {p["alias"] for p in (plan.pinned_params or [])}
     if body.alias not in aliases:
         raise HTTPException(400, f"No pinned parameter with alias {body.alias!r}")
+    await _refuse_during_rewrite(db, plan_id)
     clear = body.value in (None, "")
+    prompt_alias = _prompt_alias(plan)
     rows = (
         await db.execute(select(ComfyRow).where(ComfyRow.plan_id == plan_id))
     ).scalars().all()
@@ -986,6 +1031,7 @@ async def set_value_all_rows(plan_id: str, body: SetValueRequest, db: AsyncSessi
             if vals.get(body.alias) == body.value:
                 continue
             vals[body.alias] = body.value
+        _mark_manual_if_prompt_changed(r, prompt_alias, r.values or {}, vals)
         r.values = vals
         if r.status in ("completed", "failed"):
             r.status = "pending"
@@ -1091,6 +1137,8 @@ async def generate_prompts_job(
     async with _plan_lock(plan_id):
         if await _plan_job_active(db, plan_id, ("comfy_prompts",)):
             raise HTTPException(409, "A prompt-generation job for this plan is already queued or running")
+        if await _plan_job_active(db, plan_id, ("comfy_rewrite",)):
+            raise HTTPException(409, "A prompt rewrite for this plan is queued or running — wait for it to finish")
 
         existing_count = len(_plan_prompt_texts(plan, await _plan_rows(db, plan_id)))
         if existing_count >= body.target_count:
@@ -1315,6 +1363,7 @@ async def bulk_edit_rows(plan_id: str, body: RowsBulkEditRequest, db: AsyncSessi
     prompt_alias = _prompt_alias(plan)
     if not prompt_alias:
         raise HTTPException(400, NO_PROMPT_PIN_MSG)
+    await _refuse_during_rewrite(db, plan_id)
     workflow = plan.workflow_json or {}
 
     stmt = select(ComfyRow).where(ComfyRow.plan_id == plan_id)
@@ -1368,6 +1417,7 @@ async def bulk_edit_rows(plan_id: str, body: RowsBulkEditRequest, db: AsyncSessi
         vals = dict(row.values or {})
         vals[prompt_alias] = new
         row.values = vals
+        row.prompt_origin = blueprint_rewrite.ORIGIN_MANUAL
         if row.status in ("completed", "failed"):
             row.status = "pending"
             row.error_msg = None
@@ -1443,8 +1493,8 @@ async def apply_blueprint(plan_id: str, body: BlueprintApplyRequest, db: AsyncSe
     async with _plan_lock(plan_id):
         # A run loaded its rows at start and must not lose pending ones to the orphan
         # delete; a prompt job seeds its dedupe set once. Neither may overlap an Apply.
-        if await _plan_job_active(db, plan_id, ("comfy_generate", "comfy_prompts")):
-            raise HTTPException(409, "A run or prompt-generation job for this plan is queued or running — wait for it to finish")
+        if await _plan_job_active(db, plan_id, _ROW_JOB_TYPES):
+            raise HTTPException(409, "A run, prompt-generation or rewrite job for this plan is queued or running — wait for it to finish")
         try:
             return await blueprint_service.apply(
                 db, plan, body.spec, body.seed,
@@ -1483,8 +1533,8 @@ async def top_up_blueprint(plan_id: str, body: BlueprintTopUpRequest, db: AsyncS
     # press queued on the lock would pass the check (no job yet), add nothing, and then
     # hit the run's 409 — an error toast over a run that did start.
     async with _plan_lock(plan_id):
-        if await _plan_job_active(db, plan_id, ("comfy_generate", "comfy_prompts")):
-            raise HTTPException(409, "A run or prompt-generation job for this plan is queued or running — wait for it to finish")
+        if await _plan_job_active(db, plan_id, _ROW_JOB_TYPES):
+            raise HTTPException(409, "A run, prompt-generation or rewrite job for this plan is queued or running — wait for it to finish")
         try:
             applied = await blueprint_service.apply(
                 db, plan, body.spec, body.seed,
@@ -1500,9 +1550,17 @@ async def top_up_blueprint(plan_id: str, body: BlueprintTopUpRequest, db: AsyncS
             raise HTTPException(400, str(e))
         except blueprint_service.TotalChanged as e:
             raise HTTPException(409, str(e))
+        # Rows a rewrite-enabled scenario has not had rewritten yet would run as
+        # template text, so Top up stops here and says so. Nothing is reset or run.
+        awaiting = await blueprint_rewrite.count_awaiting(db, plan_id, alias)
+        if awaiting:
+            return {
+                "created": applied["created"], "reset": 0, "deleted_rows": applied["deleted_rows"],
+                "job_id": None, "total": 0, "awaiting_rewrite": awaiting,
+            }
         reset, pending = await blueprint_service.prepare_top_up(db, plan)
 
-        out = {"created": applied["created"], "reset": reset, "deleted_rows": applied["deleted_rows"], "job_id": None, "total": 0}
+        out = {"created": applied["created"], "reset": reset, "deleted_rows": applied["deleted_rows"], "job_id": None, "total": 0, "awaiting_rewrite": 0}
         if not pending:
             return out
         run = await _start_run(db, RunRequest(
@@ -1650,6 +1708,186 @@ async def outline_blueprint(plan_id: str, body: OutlineRequest, db: AsyncSession
     return {"job_id": job.id}
 
 
+@router.get("/plans/{plan_id}/blueprint/rewrite")
+async def rewrite_estimate(plan_id: str, batch_size: int = 5, db: AsyncSession = Depends(get_db)):
+    """What the §3 rewrite would do now, with this batch size: {rows, leaves, calls,
+    budget}. The Rewrite dialog shows it and sends `budget` back as `confirm_budget`."""
+    plan = await _get_plan(db, plan_id)
+    if not 1 <= batch_size <= 10:
+        raise HTTPException(400, "batch_size must be between 1 and 10")
+    alias = _prompt_alias(plan)
+    if not alias:
+        return blueprint_rewrite.estimate([], batch_size)
+    return blueprint_rewrite.estimate(await blueprint_rewrite.select_targets(db, plan_id, alias), batch_size)
+
+
+@router.post("/plans/{plan_id}/blueprint/rewrite")
+async def rewrite_blueprint(plan_id: str, body: RewriteRequest, db: AsyncSession = Depends(get_db)):
+    """The optional LLM pass (M6 §3): rewrite the template prompts of every scenario
+    that has `rewrite` on into prose, one leaf at a time.
+
+    Its own job type, not `comfy_prompts`: it updates rows rather than appending them
+    and reports different numbers. A leaf that fails keeps its template prompts
+    (docs/dev/comfyui/structured-llm.md § The rewrite pass).
+    """
+    from backend.models.openai_provider import OpenAIProvider
+
+    plan = await _get_plan(db, plan_id)
+    alias = _prompt_alias(plan)
+    if not alias:
+        raise HTTPException(400, NO_PROMPT_PIN_MSG)
+    bp = await blueprint_service.load_blueprint(db, plan_id)
+    if bp is None:
+        raise HTTPException(404, "This plan has no blueprint")
+    provider = await db.get(OpenAIProvider, body.provider_id)
+    if not provider:
+        raise HTTPException(404, "Provider not found")
+    if not (body.model_name.strip() or provider.default_model):
+        raise HTTPException(400, "No model given and the provider has no default model")
+
+    async with _plan_lock(plan_id):
+        if await _plan_job_active(db, plan_id, _ROW_JOB_TYPES):
+            raise HTTPException(409, "A run, prompt-generation or rewrite job for this plan is queued or running — wait for it to finish")
+        # The scenarios the user reviewed. The job rewrites only these, so one switched on
+        # while it waits in the queue is not rewritten against a budget sized without it.
+        scenarios = sorted(blueprint_rewrite.rewrite_scenarios(BlueprintSpec.model_validate(bp.spec or {})))
+        est = blueprint_rewrite.estimate(
+            await blueprint_rewrite.select_targets(db, plan_id, alias, set(scenarios)), body.batch_size
+        )
+        if not est["rows"]:
+            raise HTTPException(
+                400, "Nothing to rewrite — turn on 'Rewrite into prose' on a scenario and Apply it first"
+            )
+        if est["budget"] != body.confirm_budget:
+            raise HTTPException(
+                409, f"The rewrite now needs up to {est['budget']} LLM calls, not the {body.confirm_budget} you reviewed — review it again"
+            )
+        config = body.model_dump()
+        # A path param, so model_dump() omits it; the guards and TopBar read it.
+        config["plan_id"] = plan_id
+        config["scenarios"] = scenarios
+        n, m = est["rows"], est["leaves"]
+        job = BackgroundJob(
+            job_type="comfy_rewrite",
+            label=body.label or f"Rewrite: {plan.name} — {n} prompt{'s' if n != 1 else ''} in {m} folder{'s' if m != 1 else ''}",
+            dataset_id=plan.dataset_id,
+            total_items=n,
+            config=config,
+        )
+        db.add(job)
+        await db.commit()
+
+    dataset_id = plan.dataset_id
+    provider_id = body.provider_id
+    requested_model = body.model_name.strip()
+    batch_size = body.batch_size
+    temperature = body.temperature
+    confirmed_budget = body.confirm_budget
+    reviewed = set(scenarios)
+
+    async def _run(job_id: str) -> None:
+        from backend.database import AsyncSessionLocal
+        from backend.ml import prompt_generator
+        from backend.models.openai_provider import OpenAIProvider as Provider
+        from backend.workers.progress import broadcaster
+
+        async with AsyncSessionLocal() as session:
+            # Re-check on dequeue, and raise rather than return: a silent return is
+            # reported as success.
+            plan_row = await session.get(ComfyPlan, plan_id)
+            if not plan_row:
+                raise RuntimeError("The plan was deleted before this job started")
+            alias = _prompt_alias(plan_row)
+            if not alias:
+                raise RuntimeError("The plan's prompt pin was removed before this job started")
+            prov = await session.get(Provider, provider_id)
+            if not prov:
+                raise RuntimeError("The LLM provider was deleted before this job started")
+            model_name = requested_model or prov.default_model
+            if not model_name:
+                raise RuntimeError("The provider no longer has a default model")
+            # The plan's saved "Generate prompts" instructions: read, never written.
+            instructions = ((plan_row.gen_settings or {}).get("instructions") or "").strip()
+            targets = await blueprint_rewrite.select_targets(session, plan_id, alias, reviewed)
+            if not targets:
+                raise RuntimeError("Prompt rewrite failed: no rows wait for a rewrite any more")
+            base_url, api_key = prov.base_url, prov.api_key
+            max_tokens, timeout_s = prov.max_tokens, prov.timeout_s
+
+        # Rows may have gone while the job waited; never spend more than was confirmed.
+        budget = min(confirmed_budget, blueprint_rewrite.estimate(targets, batch_size)["budget"])
+        requested = sum(len(t.rows) for t in targets)
+
+        async def _emit(done: int, message: str) -> None:
+            await broadcaster.emit(job_id, {
+                "type": "progress", "job_id": job_id, "job_type": "comfy_rewrite", "status": "running",
+                "done": done, "total": requested,
+                "percent": round(done / requested * 100, 1) if requested else 100.0,
+                "message": message, "dataset_id": dataset_id, "plan_id": plan_id,
+            })
+
+        # Before the first call, which can take the provider's whole timeout: it is
+        # the first event carrying plan_id, which TopBar's invalidation needs.
+        await _emit(0, f"Rewriting prompts (0/{requested})")
+
+        async def _write(pairs: list[tuple[str, str]]) -> int:
+            async with AsyncSessionLocal() as s:
+                written = await blueprint_rewrite.write_rewrites(s, alias, pairs)
+                await s.commit()
+            return written
+
+        async def _on_batch(r, path: str) -> None:
+            await _emit(r.rewritten, f"Rewrote {r.rewritten}/{requested} prompts ({path})")
+
+        llm = prompt_generator.RewriteSession(
+            base_url=base_url, api_key=api_key, model_name=model_name,
+            system_instructions=instructions, temperature=temperature,
+            max_tokens=max_tokens, timeout_s=timeout_s, max_requests=budget,
+        )
+        result = await blueprint_rewrite.run_pass(
+            targets, session=llm, write=_write, batch_size=batch_size,
+            cancelled=lambda: job_queue.cancel_requested(job_id), on_batch=_on_batch,
+        )
+
+        async with AsyncSessionLocal() as session:
+            job_row = await session.get(BackgroundJob, job_id)
+            if job_row:
+                job_row.result_data = {
+                    "plan_id": plan_id,
+                    "rewritten": result.rewritten,
+                    "requested": result.requested,
+                    "leaves": result.leaves,
+                    "leaves_done": result.leaves_done,
+                    "leaves_failed": result.leaves_failed,
+                    "failed_paths": result.failed_paths[:50],
+                    "calls": result.calls,
+                    "budget": budget,
+                    "mode": result.mode,
+                    "stop_reason": result.stop_reason,
+                    "error": result.error,
+                }
+                # The worker emits total_items as both done and total at the end.
+                job_row.total_items = result.rewritten
+            await session.commit()
+
+        # Commit first, THEN raise: a plain return would let the worker overwrite the
+        # user's cancel with "completed".
+        if result.stop_reason == "cancelled":
+            job_queue.raise_if_cancelled(job_id)
+        if result.rewritten == 0:
+            # PM-004: returning is not proof that anything was rewritten.
+            reasons = {
+                "call_budget": f"the call budget of {budget} ran out before any batch came back",
+                "too_many_failures": f"{result.leaves_failed} folders failed",
+                "done": f"every folder failed ({result.leaves_failed})",
+            }
+            detail = result.error or reasons.get(result.stop_reason) or "no prompts were rewritten"
+            raise RuntimeError(f"Prompt rewrite failed: {detail}")
+
+    await job_queue.enqueue(job, _run)
+    return {"job_id": job.id, "total": est["rows"], "budget": est["budget"]}
+
+
 # ── Run ───────────────────────────────────────────────────────────────────────
 
 async def _run_preflight(db: AsyncSession, plan: ComfyPlan) -> tuple[str, Dataset]:
@@ -1693,6 +1931,9 @@ async def _start_run(db: AsyncSession, body: RunRequest, *, hold_lock: bool = Tr
     async with _plan_lock(body.plan_id) if hold_lock else contextlib.nullcontext():
         if await _plan_job_active(db, body.plan_id, ("comfy_generate",)):
             raise HTTPException(409, "A generation run for this plan is already queued or running")
+        # A run loads its rows now; a rewrite would change their text under it.
+        if await _plan_job_active(db, body.plan_id, ("comfy_rewrite",)):
+            raise HTTPException(409, "A prompt rewrite for this plan is queued or running — wait for it to finish")
 
         if body.row_ids:
             stmt = select(ComfyRow).where(ComfyRow.plan_id == body.plan_id, ComfyRow.id.in_(body.row_ids))

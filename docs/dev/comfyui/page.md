@@ -96,8 +96,33 @@ image's generation metadata on its detail page, and a failed row's error tooltip
       same as `runMutation`. Tracking, invalidation, the completion toast and the
       `isRunning` gate then apply unchanged.
     - `job_id: null` toasts "Every folder is full".
+    - **`awaiting_rewrite > 0` is not a run.** The reply's rows were applied but nothing ran,
+      so it skips `onRunStarted` and shows the `blueprint-awaiting-rewrite` notice, which the
+      next Apply or Top up clears.
+  - **The rewrite** (`docs/dev/comfyui/structured-llm.md` § The rewrite pass).
+    - Each scenario has a *Rewrite into prose (LLM)* checkbox (`BlueprintScenario.rewrite`).
+      The TS field is what keeps the autosave from dropping it.
+    - The totals line adds "N to rewrite · ≤ B LLM calls" from the preview's `rewrite_*`
+      figures.
+    - **The *Rewrite N prompts* button counts rows that exist now**, from
+      `GET …/blueprint/rewrite` at the saved batch size, under
+      `["comfy","blueprint-rewrite",planId,batch]`. It does not use the preview's count,
+      which includes rows Apply would add, so it reads "Apply first" until they exist.
+    - `RewriteModal` follows `OutlineModal`: defaults from the saved settings, read only;
+      its job derived from `jobStore`, seeded with `plan_id` on start. It sends the shown
+      estimate's `budget` as `confirm_budget`, and a 409 refetches the estimate.
+    - **TopBar's `comfy_rewrite` branch** refreshes the rows as each batch lands
+      (`rewriteDoneRef`), as the `comfy_prompts` branch does.
+      - It toasts once per job (`rewriteTerminalRef`), reading `result_data` through
+        `jobsApi.get`, since neither the terminal event nor a reconciled one carries it. It
+        then invalidates rows, prompts, the preview and the estimate.
+      - **A completed run that stopped early, or left prompts behind, gets a warning
+        toast**, not a green one. It names the reason and how many prompts still wait,
+        since Top up will refuse while they do.
+      - The job is in neither image job-type set: it changes rows, never images.
   - **The e2e.** `comfy-run.spec.ts` authors a blueprint by hand, applies it, checks the rows'
-    folders and `leaf_id`s, and runs them.
+    folders and `leaf_id`s, and runs them. A second journey ticks the rewrite, checks the
+    totals line and Top up's notice, and opens `RewriteModal`, all without an LLM.
 - **`WorkflowPinPanel`** — paste textarea + `.json` file loader + *Scan folder…* button
   (opens `WorkflowScanModal`) + *Sync from canvas* button (`canvas-workflow` →
   `SyncCanvasModal`, see `docs/dev/comfyui/sync.md`); validates API-format client-side; warns (non-blocking) when no

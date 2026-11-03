@@ -65,6 +65,8 @@ export interface ComfyRow {
   image_id: string | null;
   image_ids: string[];
   prompt_id: string | null;
+  /** "template" | "rewritten" | "manual"; null on rows that predate the field. */
+  prompt_origin: string | null;
 }
 
 export interface PlanPrompt {
@@ -146,6 +148,8 @@ export interface BlueprintScenario {
   path: string;
   /** Prompt pattern; null/"" joins the combined descriptors. */
   template: string | null;
+  /** Opt in to the LLM rewrite pass for this scenario's template-composed prompts. */
+  rewrite: boolean;
 }
 
 export interface BlueprintSpec {
@@ -201,6 +205,19 @@ export interface BlueprintPreview {
   warnings: string[];
   /** Rows (and their images) whose leaf this spec no longer makes. */
   orphans: { leaves: number; pending: number; running: number; failed: number; completed: number; images: number };
+  /** Rows the rewrite pass would touch once applied, the LLM calls it expects at the
+   *  plan's saved batch size, and its hard call budget. */
+  rewrite_rows: number;
+  rewrite_calls: number;
+  rewrite_call_budget: number;
+}
+
+/** The live rewrite estimate over the rows that exist now. */
+export interface RewriteEstimate {
+  rows: number;
+  leaves: number;
+  calls: number;
+  budget: number;
 }
 
 export const blueprintPath = (planId: string) => `/comfy/plans/${planId}/blueprint`;
@@ -328,7 +345,7 @@ export const comfyApi = {
     confirm_total: number; allow_over_cap?: boolean; delete_orphan_pending?: boolean;
     subfolder: string; set_caption: boolean;
   }) =>
-    client.post<{ created: number; reset: number; deleted_rows: number; job_id: string | null; total: number }>(
+    client.post<{ created: number; reset: number; deleted_rows: number; job_id: string | null; total: number; awaiting_rewrite: number }>(
       `${blueprintPath(planId)}/top-up`, body,
     ).then((r) => r.data),
   /** One LLM call in a `comfy_outline` job: the brief → `SavedBlueprint.draft`, for
@@ -337,6 +354,18 @@ export const comfyApi = {
     provider_id: string; model_name?: string; brief: string; temperature?: number;
   }) =>
     client.post<{ job_id: string }>(`${blueprintPath(planId)}/outline`, body).then((r) => r.data),
+  /** What a rewrite would do to the rows that exist now, at this batch size (1..10). */
+  rewriteEstimate: (planId: string, batchSize: number, signal?: AbortSignal) =>
+    client.get<RewriteEstimate>(`${blueprintPath(planId)}/rewrite`, { params: { batch_size: batchSize }, signal })
+      .then((r) => r.data),
+  /** Start the `comfy_rewrite` job. `confirm_budget` is the reviewed estimate's `budget`;
+   *  a mismatch is a 409. Also 409 while a run, generation or rewrite is live. */
+  rewriteBlueprint: (planId: string, body: {
+    provider_id: string; model_name: string; batch_size: number; temperature: number;
+    confirm_budget: number; label?: string;
+  }) =>
+    client.post<{ job_id: string; total: number; budget: number }>(`${blueprintPath(planId)}/rewrite`, body)
+      .then((r) => r.data),
   /** Clear the draft, after *Use it* (once the spec holding it is saved) or *Discard*. */
   discardBlueprintDraft: (planId: string) =>
     client.delete(`${blueprintPath(planId)}/draft`),

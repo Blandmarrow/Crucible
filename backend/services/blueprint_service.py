@@ -31,6 +31,12 @@ from backend.services.blueprint_expand import (
     expand,
     plan_fill,
 )
+from backend.services.blueprint_rewrite import (
+    ORIGIN_TEMPLATE,
+    call_budget,
+    expected_calls,
+    rewrite_scenarios,
+)
 from backend.utils import chunked
 
 # The preview lists at most this many leaves, and composes samples for the first few.
@@ -89,6 +95,8 @@ class _Entry:
     # For a leaf with no row yet: orphaned blueprint rows already filed in its folder,
     # which Apply re-points at the new leaf.
     adopt_row_ids: list[str] = field(default_factory=list)
+    # Unfinished rows still holding template text: what the §3 pass would rewrite.
+    template_open: int = 0
 
 
 @dataclass
@@ -108,6 +116,7 @@ class _Row:
     status: str
     image_ids: tuple[str, ...]
     subfolder: str
+    origin: str | None
 
 
 async def load_blueprint(db: AsyncSession, plan_id: str) -> ComfyBlueprint | None:
@@ -124,10 +133,13 @@ async def _load_rows(db: AsyncSession, plan: ComfyPlan) -> tuple[list[_Row], set
     """The plan's rows, which of their images still exist, and the plan-wide images
     per completed row."""
     rows = [
-        _Row(rid, leaf_id, status, tuple(image_ids or ()), subfolder or "")
-        for rid, leaf_id, status, image_ids, subfolder in (
+        _Row(rid, leaf_id, status, tuple(image_ids or ()), subfolder or "", origin)
+        for rid, leaf_id, status, image_ids, subfolder, origin in (
             await db.execute(
-                select(ComfyRow.id, ComfyRow.leaf_id, ComfyRow.status, ComfyRow.image_ids, ComfyRow.subfolder)
+                select(
+                    ComfyRow.id, ComfyRow.leaf_id, ComfyRow.status, ComfyRow.image_ids,
+                    ComfyRow.subfolder, ComfyRow.prompt_origin,
+                )
                 .where(ComfyRow.plan_id == plan.id)
             )
         ).all()
@@ -194,7 +206,8 @@ async def _compute(
         s = _tally(leaf_rows, existing)
         yield_ = s.produced / s.completed if s.completed and s.produced else (plan_yield or 1.0)
         to_add = plan_fill(leaf.target, s.kept, s.open, yield_)
-        entries.append(_Entry(leaf, db_leaf, s, yield_, to_add, [r.id for r in adopt]))
+        template_open = sum(1 for r in leaf_rows if r.origin == ORIGIN_TEMPLATE and r.status != "completed")
+        entries.append(_Entry(leaf, db_leaf, s, yield_, to_add, [r.id for r in adopt], template_open))
 
     orphans = {"leaves": 0, "pending": 0, "running": 0, "failed": 0, "completed": 0, "images": 0}
     orphan_rows: list[_Row] = []
@@ -224,6 +237,12 @@ async def preview(
 ) -> dict:
     bp = await load_blueprint(db, plan.id)
     fill = await _compute(db, plan, bp, spec, seed, allow_over_cap)
+    # What the §3 pass would rewrite once this is applied: the rows still holding
+    # template text plus the ones Apply adds, in the scenarios that have it on. The
+    # batch is the plan's saved one, which the Rewrite dialog starts from.
+    on = rewrite_scenarios(spec)
+    rewrite_counts = [e.template_open + e.to_add for e in fill.entries if e.leaf.scenario in on]
+    batch = int((plan.gen_settings or {}).get("batch_size") or 5)
     leaves = []
     for i, e in enumerate(fill.entries[:PREVIEW_LEAF_LIMIT]):
         cursor = e.db_leaf.cursor if e.db_leaf else 0
@@ -253,6 +272,9 @@ async def preview(
         "errors": fill.expansion.errors,
         "warnings": fill.expansion.warnings,
         "orphans": fill.orphans,
+        "rewrite_rows": sum(rewrite_counts),
+        "rewrite_calls": expected_calls(rewrite_counts, batch),
+        "rewrite_call_budget": call_budget(rewrite_counts, batch),
     }
 
 
@@ -333,6 +355,7 @@ async def apply(
                 subfolder=e.leaf.path,
                 leaf_id=db_leaf.id,
                 values={prompt_alias: prompt},
+                prompt_origin=ORIGIN_TEMPLATE,
             ))
             order += 1
         db_leaf.cursor = db_leaf.cursor + e.to_add

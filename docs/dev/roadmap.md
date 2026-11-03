@@ -17,7 +17,7 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-03, after the ComfyUI docs hub)
+## Next session (updated 2026-11-03, after M6 §3)
 
 1. M5's five stages merged on 2026-10-30 as PR #101. Only its cleanup is open, and that waits
    a release. See [server-state-plan/README.md](server-state-plan/README.md) for what was
@@ -49,11 +49,13 @@ restates its stages.
    ComfyUI dev docs now sit behind the hub `docs/dev/comfyui.md`, with eight files in
    `docs/dev/comfyui/` (2026-11-03). §7 (the mock ComfyUI server), §2a (blueprints, see
    `docs/dev/comfyui/structured.md`), §2b (the outline call) and §2c (Top up) have landed there
-   too, so the arc's cut point is reached. The next M6 work is §3, the optional LLM rewrite
-   pass, documented in `docs/dev/comfyui/structured-llm.md`; §4 waits for M8 stages 2 and 3
-   on `main`.
+   too, so the arc's cut point is reached. §3, the optional LLM rewrite pass, landed there
+   on 2026-11-03 (`docs/dev/comfyui/structured-llm.md` § The rewrite pass) and still wants
+   one check by hand against a real LLM: LM Studio with a thinking model, a Stop mid-run,
+   and a hand-edited row left alone. **The next M6 work is §4**, which waits for M8 stages
+   2 and 3 on `main`, so M8 stages 2 → 3 are the critical path now.
    Decisions 7–9 and this M6 checklist exist only on that branch until it
-   merges, so `main`'s next decision takes number 10. Its migrations `e5c1a9d3f7b2` → `b7d2f4a9c1e3` follow
+   merges, so `main`'s next decision takes number 10. Its migrations `e5c1a9d3f7b2` → `b7d2f4a9c1e3` → `d4a8c2e6f1b9` follow
    `main`'s `c2b8e4f6a1d7`; rebase at stage boundaries.
 5. M8's follow-ups 9, 10 and 11 can go any time. Batch move and copy, in item 9, must wait for
    M4 to merge. Items 7, 8, 12 and 13 wait for stages 6 and 3, which replace that code.
@@ -165,7 +167,10 @@ gates are green and it is pushed.
   failed rows, run pending ones, in one press.
 - [x] Split comfy-structured.md before §3 grows it. Done 2026-11-03, re-cut three ways, with
   the ComfyUI family moved behind the hub `docs/dev/comfyui.md`.
-- [ ] §3: the optional LLM rewrite pass. Its docs go in `docs/dev/comfyui/structured-llm.md`.
+- [x] §3: the optional LLM rewrite pass, and the outline's instruction-order fix. Done
+  2026-11-03: the `comfy_rewrite` job, migration `d4a8c2e6f1b9` (`comfy_rows.prompt_origin`),
+  Top up's refusal while rows wait, and `docs/dev/comfyui/structured-llm.md` § The rewrite
+  pass. Verified by hand against a real LLM: not yet.
 - [ ] Rebase onto `main` once M8 stages 2 and 3 have landed there. Needed by §4.
 - [ ] §4: the stepping run (`Run` row, `advance_run()`), its page and the VRAM handoff.
 - [ ] §5: the goal loop, gates and budgets. Needs §4.

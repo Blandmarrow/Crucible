@@ -79,5 +79,6 @@ are filed by folder, not labels, and Top up comes before the unattended loop. Fu
 
 **Decided** (2026-11-03, by the user): a `Run` row is advanced by `advance_run()` each time one
 of its child jobs finishes, instead of a parent job on a second queue that polls; stages call
-service functions, so M8 stages 2 and 3 land first. Full record:
+service functions, so M8 stages 2 and 3 land first (corrected 2026-11-04: they did, and §4
+still builds the score, caption and export start functions itself). Full record:
 [decisions/09-runs-step-forward-on-job-completion.md](decisions/09-runs-step-forward-on-job-completion.md).

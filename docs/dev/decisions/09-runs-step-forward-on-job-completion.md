@@ -25,3 +25,8 @@
 - **How it's verified:** against the mock ComfyUI server (stage 2 of M6), a run is driven
   through every stage, cancelled mid-stage and resumed, and `advance_run()` is made to raise to
   prove the child job's outcome is unchanged.
+- **Correction (2026-11-04):** the decision stands; one sequencing claim in it was wrong.
+  M8 stages 2 and 3 (PR #109) gave the run a shared image-scope helper and moved upscale and
+  LUT into one service loop, but the run's own stages call score, caption and export jobs,
+  which neither stage touched. So §4 builds those start functions itself, next to their first
+  caller, as the user chose on 2026-11-04.

@@ -179,9 +179,13 @@ Departures from the sketch that stood here, all from the review before it merged
 Read `docs/dev/backend-infrastructure.md`, `docs/dev/frontend-jobs.md`,
 `docs/dev/panes-routing.md`, `docs/dev/model-residency.md`. Decision 9 is the ruling.
 
-**Prerequisite:** M8 stages 2 (one helper for a job's image scope) and 3 (one shared loop for
-upscale and LUT) on `main`, and this branch rebased onto them. They move each job's preflight
-and enqueue into service functions the stages can call.
+**Prerequisite, met 2026-11-04:** M8 stages 2 and 3 merged to `main` as PR #109, and this
+branch is rebased onto them. They gave a shared image-scope helper
+(`backend/services/image_scope.py`) and moved upscale and LUT into one service loop
+(`backend/services/image_edit_job.py`). They did **not** give the stages below a way to start
+a job from code: score, caption and export still preflight and enqueue inside their router
+handlers. Pulling each into a function a stage can call is §4's own first step (decision 9's
+2026-11-04 correction). `captioning.py` sits at 63% coverage, so add tests before moving it.
 
 ### The shape
 
@@ -340,5 +344,10 @@ per leaf in the DB; a deleted leaf's rows count toward nothing (see §2c). Also 
   `"image"` for an all-punctuation label.
 - **An LLM asked to enumerate a cross product** (§2a). It returns most of it, and describes the
   same entity differently each time.
+
+- **An empty id list that widens to the whole dataset** (§4). `score_quality`, style
+  similarity, `run_captioning`, `run_pipeline` and the exports test `if body.image_ids:`, so a
+  stage that passes `[]` scores or captions every image in the dataset. A stage with no ids is
+  skipped, never sent `[]` (the cleanup plan's § Found during stages 2 and 3 records it).
 
 Every one of these fails quietly. None produces an exception or a visibly wrong number.

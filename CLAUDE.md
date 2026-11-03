@@ -222,7 +222,7 @@ substantial edit.
 | `docs/dev/environment-setup.md` | Working on `manage.ps1`/`manage.sh`, the bind address or `--lan`, torch wheels, the startup splash, or the setup/update flow — the Node version check, `bind_host.py`/`CRUCIBLE_HOST` and lockfile reset | ~3140 |
 | `docs/dev/comfyui.md` | **Start here for anything ComfyUI** — the `comfy` router, `comfy_service.py` and ComfyClient, plans, pins and prompt rows, the `comfy_generate` run and the fake ComfyUI, `ComfyPage`, LLM prompt generation (`prompt_generator.py`), blueprints (`comfy_leaves`, `blueprint_expand.py`/`blueprint_service.py`, Apply, Top up, the `comfy_outline` draft job, the `comfy_rewrite` prose pass and `prompt_origin`), workflow sync and the bridge extension; its § Where things live table routes from a code path to the file in `docs/dev/comfyui/` that owns it | ~1000 (+ details) |
 | `docs/dev/postmortems.md` | Doing a code review or investigating a bug — the postmortem index: past incidents as one-line rows with LIVE/MITIGATED/STRUCTURAL status, linking `docs/dev/postmortems/` | ~2170 |
-| `docs/dev/roadmap.md` | Deciding what to work on next, landing a task, or picking up a branch mid-way — order and dependencies of open work and the dated "Next session" handoff; tick it in the same session | ~2450 |
+| `docs/dev/roadmap.md` | Deciding what to work on next, landing a task, or picking up a branch mid-way — order and dependencies of open work and the dated "Next session" handoff; tick it in the same session | ~2600 |
 | `docs/dev/decisions.md` | Asking *why* the project does X, or proposing to change direction — the decision log: what was decided, by whom, and what was rejected | ~600 |
 
 ### Code review & bug investigation

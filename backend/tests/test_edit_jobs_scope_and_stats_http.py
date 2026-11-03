@@ -46,6 +46,17 @@ def _spy(calls: list[list[str]]):
     return spy
 
 
+def _spy_router_and_scope(monkeypatch, router, calls: list[list[str]]) -> None:
+    """One call log across `image_scope`, which resolves the request-time scope
+    since M8 stage 2, and `router`, the module whose job loads the rows (for
+    upscale and LUT, `image_edit_job`): the log still reads in call order."""
+    import backend.services.image_scope as image_scope
+
+    spy = _spy(calls)
+    monkeypatch.setattr(router, "chunked", spy)
+    monkeypatch.setattr(image_scope, "chunked", spy)
+
+
 async def _upscale(env, ds_id, image_ids, *, replace):
     r = await env.client.post(f"{API}/upscaling/run", json={
         "dataset_id": ds_id, "image_ids": image_ids, "model_path": MODEL, "replace": replace,
@@ -81,7 +92,7 @@ async def _true_stats(env, ds_id) -> tuple[int, int]:
 
 def test_upscale_chunks_both_id_lookups(tmp_path, monkeypatch):
     async def scenario():
-        import backend.routers.upscaling as upscale_router
+        import backend.services.image_edit_job as image_edit_job
 
         async with api_env(tmp_path) as env:
             _install_fake_upscale(monkeypatch)
@@ -91,7 +102,7 @@ def test_upscale_chunks_both_id_lookups(tmp_path, monkeypatch):
             ids = {a["id"], b["id"]}
 
             calls: list[list[str]] = []
-            monkeypatch.setattr(upscale_router, "chunked", _spy(calls))
+            _spy_router_and_scope(monkeypatch, image_edit_job, calls)
             job = await _upscale(env, ds["id"], [a["id"], b["id"]], replace=True)
             assert job["status"] == "completed", job
             assert job["result_data"]["processed"] == 2
@@ -106,7 +117,7 @@ def test_upscale_chunks_the_whole_dataset_scope(tmp_path, monkeypatch):
     """The scope branch builds its id list from a query, and that list is the
     one a whole-dataset run makes large."""
     async def scenario():
-        import backend.routers.upscaling as upscale_router
+        import backend.services.image_edit_job as image_edit_job
 
         async with api_env(tmp_path) as env:
             _install_fake_upscale(monkeypatch)
@@ -115,7 +126,7 @@ def test_upscale_chunks_the_whole_dataset_scope(tmp_path, monkeypatch):
             b = await upload_image(env, ds["id"], "b.png", png_bytes())
 
             calls: list[list[str]] = []
-            monkeypatch.setattr(upscale_router, "chunked", _spy(calls))
+            _spy_router_and_scope(monkeypatch, image_edit_job, calls)
             r = await env.client.post(f"{API}/upscaling/run", json={
                 "dataset_id": ds["id"], "model_path": MODEL, "replace": True,
             })
@@ -128,7 +139,7 @@ def test_upscale_chunks_the_whole_dataset_scope(tmp_path, monkeypatch):
 
 def test_lut_chunks_both_id_lookups(tmp_path, monkeypatch):
     async def scenario():
-        import backend.routers.lut as lut_router
+        import backend.services.image_edit_job as image_edit_job
 
         async with api_env(tmp_path) as env:
             ds = await env.create_dataset("d")
@@ -138,7 +149,7 @@ def test_lut_chunks_both_id_lookups(tmp_path, monkeypatch):
             ids = {a["id"], b["id"]}
 
             calls: list[list[str]] = []
-            monkeypatch.setattr(lut_router, "chunked", _spy(calls))
+            _spy_router_and_scope(monkeypatch, image_edit_job, calls)
             job = await _lut(env, ds["id"], [a["id"], b["id"]], lut, replace=True)
             assert job["status"] == "completed", job
             assert job["result_data"]["processed"] == 2
@@ -163,7 +174,7 @@ def test_inpaint_chunks_the_request_time_lookup(tmp_path, monkeypatch):
             await _add_detection(env, b["id"])
 
             calls: list[list[str]] = []
-            monkeypatch.setattr(inpaint_router, "chunked", _spy(calls))
+            _spy_router_and_scope(monkeypatch, inpaint_router, calls)
             started = await _run_inpaint(env, ds["id"], [a["id"], b["id"], "no-such-image"])
             job = await wait_for_job(env, started["job_id"], timeout=60)
             assert job["result_data"]["inpainted"] == 2
@@ -192,7 +203,7 @@ def test_detection_crop_chunks_the_request_time_lookup(tmp_path, monkeypatch):
                 await db.commit()
 
             calls: list[list[str]] = []
-            monkeypatch.setattr(detection_router, "chunked", _spy(calls))
+            _spy_router_and_scope(monkeypatch, detection_router, calls)
             # The bbox fetch chunks the same ids, so it is marked in the log:
             # without the fix, the first chunked call came from inside it.
             real_fetch = detection_router._fetch_bboxes_by_image

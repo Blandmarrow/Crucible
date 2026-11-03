@@ -35,7 +35,7 @@ from backend.routers import inpaint as inpaint_router
 from backend.routers import images as images_router
 from backend.routers import lut as lut_router
 from backend.routers import upscaling as upscaling_router
-from backend.services import dataset_service, version_service
+from backend.services import dataset_service, image_edit_job, version_service
 from backend.tests.conftest import API, api_env, png_bytes, run, upload_image, wait_for_job
 
 LABEL_HELPERS = ("copy_labels", "set_labels", "labels_by_image", "live_label_ids")
@@ -90,7 +90,10 @@ def test_every_rebuild_path_carries_labels():
 
 # The same-dataset derivative sites, and how many labelled copies each makes.
 # `crop` counts twice: the synchronous crop-only tail and the nested
-# `_run_crop_upscale` job, which lives inside its source. These are the six sites
+# `_run_crop_upscale` job, which lives inside its source. Upscale and LUT share
+# one loop, `image_edit_job._edit_loop` (M8 stage 3), so it counts once for both;
+# `test_upscale_and_lut_run_the_shared_loop` keeps the two routes on it. These
+# are the six derivative-making sites
 # `test_video_lineage_mirrors._score_carriers` excludes from the *score* guard —
 # a derivative's pixels are not the scored pixels — and the exclusion was prose
 # there with no assertion either way about labels. A label is a fact about the
@@ -98,8 +101,7 @@ def test_every_rebuild_path_carries_labels():
 def _derivative_sites() -> list[tuple[str, object, int]]:
     return [
         ("images.crop", images_router.crop, 2),
-        ("lut.run_lut", lut_router.run_lut, 1),
-        ("upscaling.run_upscale", upscaling_router.run_upscale, 1),
+        ("image_edit_job._edit_loop (upscale, LUT)", image_edit_job._edit_loop, 1),
         ("detection.crop_to_detection", detection_router.crop_to_detection, 1),
         ("inpaint.run_inpaint", inpaint_router.run_inpaint, 1),
     ]
@@ -108,8 +110,8 @@ def _derivative_sites() -> list[tuple[str, object, int]]:
 def test_every_same_dataset_derivative_carries_labels():
     """A crop/upscale/LUT/detection-crop/inpaint copy keeps its parent's labels.
 
-    Walked for the `copy_labels` **call**, not for a kwarg: five of the six sites
-    pass the id map positionally, and `_ctor_kwargs`-style kwarg reading skips a
+    Walked for the `copy_labels` **call**, not for a kwarg: every site passes
+    the id map positionally, and `_ctor_kwargs`-style kwarg reading skips a
     `**spread` anyway, so a spread form would be invisible to it.
     """
     for name, func, expected in _derivative_sites():
@@ -118,6 +120,16 @@ def test_every_same_dataset_derivative_carries_labels():
             f"{name} makes {expected} same-dataset derivative(s) but calls "
             f"copy_labels {len(calls)} time(s) — a derivative must carry its "
             "parent's labels, exactly as it carries copy_provenance"
+        )
+
+
+def test_upscale_and_lut_run_the_shared_loop():
+    """The guard above reads `copy_labels` in the shared loop, so it covers a
+    route only while that route enqueues the loop."""
+    for route in (upscaling_router.run_upscale, lut_router.run_lut):
+        assert "run_image_edit_job" in inspect.getsource(route), (
+            f"{route.__name__} no longer enqueues image_edit_job.run_image_edit_job, "
+            "so test_every_same_dataset_derivative_carries_labels no longer covers it"
         )
 
 

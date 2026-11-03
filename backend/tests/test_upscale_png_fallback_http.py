@@ -169,8 +169,9 @@ def test_upscale_replace_never_clobbers_an_unregistered_file_at_the_fallback_pat
 
 
 def _break_thumbnails(monkeypatch, module):
-    """A deterministically failing `generate_thumbnail`, patched on the *router
-    module attribute* — both routers import the name at module import. A plain
+    """A deterministically failing `generate_thumbnail`, patched on the module
+    that calls it (`image_edit_job` for the upscale job, `routers/images.py` for
+    the crop workers), which imports the name at module import. A plain
     sync `def`, because the call goes through `run_in_executor`. Install it after
     the fixture upload, which cuts a thumbnail through `routers/images.py` too."""
     def boom(_src, _dest):
@@ -194,9 +195,9 @@ def test_upscale_replace_still_serves_the_image_when_the_thumbnail_fails(tmp_pat
                 row = await db.get(Image, img["id"])
                 bmp_path = Path(row.file_path)
 
-            import backend.routers.upscaling as upscale_router
+            import backend.services.image_edit_job as image_edit_job
 
-            _break_thumbnails(monkeypatch, upscale_router)
+            _break_thumbnails(monkeypatch, image_edit_job)
             job = await _run_upscale(env, ds["id"], img["id"], replace=True)
             assert job["status"] == "completed", job
 

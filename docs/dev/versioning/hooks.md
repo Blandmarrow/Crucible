@@ -35,9 +35,8 @@ Existing routers, all fire before the file operation:
 | `backend/routers/images.py` | `resize` endpoint, batch crop `_run`, batch resize `_run` — calls `protect_file_before_overwrite` |
 | `backend/routers/images.py` | `crop` endpoint, replace=True branch — calls `protect_file_before_overwrite` |
 | `backend/services/image_delete.py` | `unlink_image_files`, the files-first half of `images.delete_image`, `images.batch_delete`, `images.bulk_delete_filtered` and `quality.resolve_duplicates` — calls `mark_image_deleted_in_versions` before the unlink |
-| `backend/routers/upscaling.py` | `_run` coroutine, replace=True branch — calls `protect_file_before_overwrite` |
+| `backend/services/image_edit_job.py` | `_edit_loop`, the upscale and LUT job, replace=True branch — calls `protect_file_before_overwrite` |
 | `backend/routers/detection.py` | `crop_to_detection` `_run` coroutine, replace=True branch — calls `protect_file_before_overwrite` |
-| `backend/routers/lut.py` | `_run` coroutine, replace=True branch — calls `protect_file_before_overwrite` |
 | `backend/routers/videos.py` | `_run_reextraction`'s per-frame `_rewrite` — calls `protect_file_before_overwrite` before swapping the full-resolution frame in. Unlike the rows above it verifies the new file re-opens *first*, so a frame that fails is never protected-then-not-overwritten (`docs/dev/video/reextract.md`) |
 | `backend/routers/videos.py` | `_delete_previous_frames` — replace-mode extraction's step that clears a video's previous frames; calls `mark_image_deleted_in_versions` per row before the row delete and the unlink, inside the `busy(dataset_id, "Replacing extracted frames")` block (`docs/dev/video/extract.md`) |
 | `backend/routers/filesystem.py` | `delete_path` (`POST /filesystem/delete`), both branches — calls `mark_image_deleted_in_versions` per `Image` row under the deleted file or folder, each gated by `utils.contained_path` (the row delete below it stays unconditional). This site must fire before the *row* delete as well as before the file operation: the hook loads the image with `db.get`, which after a staged Core delete autoflushes and returns None (PM-014) |

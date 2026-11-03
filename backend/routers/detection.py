@@ -29,10 +29,10 @@ from backend.schemas.detection import (
 )
 from backend.services import version_service
 from backend.services.detection_service import remap_detections_for_crop
+from backend.services.image_scope import flag_exclusions, resolve_scope_ids, scope_query
 from backend.services.image_service import crop_image_to_dest, generate_thumbnail, temp_sibling
 from backend.services.label_service import copy_labels
 from backend.utils import (
-    ALLOWED_FLAG_KEYS,
     OUT_OF_TREE_MSG,
     chunked,
     contained_path,
@@ -109,10 +109,9 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
         # bypass these; subfolder/flag scoping is only for whole-dataset runs.
         if body.subfolder is not None:
             query = query.where(Image.subfolder == normalize_subfolder(body.subfolder))
-        if body.quality_flags:
-            valid_flags = [f for f in body.quality_flags if f in ALLOWED_FLAG_KEYS]
-            if valid_flags:
-                query = query.where(and_(*[Image.quality_flags[f].as_boolean().is_not(True) for f in valid_flags]))
+        exclusions = flag_exclusions(body.quality_flags)
+        if exclusions:
+            query = query.where(and_(*exclusions))
         rows = (await db.execute(query)).all()
 
     if not rows:
@@ -661,16 +660,11 @@ async def bulk_delete_detections(
             return {"deleted": 0, "dry_run": body.dry_run}
         scope_condition = Detection.image_id.in_(body.image_ids)
     else:
-        q = select(Image.id).where(Image.dataset_id == body.dataset_id)
-        if body.subfolder is not None:
-            q = q.where(Image.subfolder == normalize_subfolder(body.subfolder))
-        if body.quality_flags:
-            valid_flags = [f for f in body.quality_flags if f in ALLOWED_FLAG_KEYS]
-            if valid_flags:
-                q = q.where(and_(*[Image.quality_flags[f].as_boolean().is_not(True) for f in valid_flags]))
         # Correlated subquery — never materialize the id list, which on a large
         # dataset can exceed SQLite's bind-parameter ceiling (see utils.chunked).
-        scope_condition = Detection.image_id.in_(q)
+        scope_condition = Detection.image_id.in_(
+            scope_query(body.dataset_id, body.subfolder, body.quality_flags)
+        )
 
     conditions = [scope_condition]
     if body.labels:
@@ -875,24 +869,10 @@ async def _fetch_bboxes_by_image(
 @router.post("/crop")
 async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depends(get_db)):
     # Resolve image list (same triple as batch upscale: ids > dataset+subfolder+flags)
-    if body.image_ids is not None:
-        # Chunked: a select-all-matching list can pass SQLite's bind limit.
-        # Deduplicated first: one IN collapsed a repeated id, separate chunks
-        # would each return the row, and the job would edit it twice.
-        image_ids = []
-        for chunk in chunked(list(dict.fromkeys(body.image_ids))):
-            result = await db.execute(select(Image.id).where(Image.id.in_(chunk)))
-            image_ids.extend(r[0] for r in result.all())
-    else:
-        q = select(Image.id).where(Image.dataset_id == body.dataset_id)
-        if body.subfolder is not None:
-            q = q.where(Image.subfolder == normalize_subfolder(body.subfolder))
-        if body.quality_flags:
-            valid_flags = [f for f in body.quality_flags if f in ALLOWED_FLAG_KEYS]
-            if valid_flags:
-                q = q.where(and_(*[Image.quality_flags[f].as_boolean().is_not(True) for f in valid_flags]))
-        result = await db.execute(q)
-        image_ids = [r[0] for r in result.all()]
+    image_ids = await resolve_scope_ids(
+        db, dataset_id=body.dataset_id, image_ids=body.image_ids,
+        subfolder=body.subfolder, quality_flags=body.quality_flags,
+    )
 
     # Normalize the destination subfolder once, up front, so a bad path 400s
     # immediately instead of failing inside the background job.

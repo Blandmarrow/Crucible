@@ -133,12 +133,12 @@ def test_lut_replace_still_serves_the_image_when_the_thumbnail_fails(tmp_path, m
                 row = await db.get(Image, img["id"])
                 bmp_path = Path(row.file_path)
 
-            from backend.routers import lut as lut_router
+            from backend.services import image_edit_job
 
             def boom(_src, _dest):
                 raise OSError("no space left on device")
 
-            monkeypatch.setattr(lut_router, "generate_thumbnail", boom)
+            monkeypatch.setattr(image_edit_job, "generate_thumbnail", boom)
 
             r = await env.client.post(f"{API}/lut/run", json={
                 "dataset_id": ds["id"], "image_ids": [img["id"]],

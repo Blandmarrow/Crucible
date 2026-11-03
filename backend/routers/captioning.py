@@ -15,6 +15,7 @@ from backend.ml import ollama_captioner
 from backend.ml.model_manager import model_manager
 from backend.models import BackgroundJob, Image
 from backend.models.openai_provider import OpenAIProvider
+from backend.services.image_scope import flag_exclusions
 from backend.utils import ALLOWED_FLAG_KEYS, normalize_subfolder, subsume_tags
 from backend.workers.job_queue import job_queue
 
@@ -322,9 +323,8 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
         query = query.where(Image.caption_text == "")
     if body.min_aesthetic_score is not None:
         query = query.where(Image.aesthetic_score >= body.min_aesthetic_score)
-    if body.exclude_flags:
-        for flag_key in body.exclude_flags:
-            query = query.where(Image.quality_flags[flag_key].as_boolean().is_not(True))
+    for clause in flag_exclusions(body.exclude_flags):
+        query = query.where(clause)
     result = await db.execute(query)
     rows = result.all()
 
@@ -828,9 +828,8 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
         query = query.where(Image.subfolder == normalize_subfolder(body.subfolder))
     if body.min_aesthetic_score is not None:
         query = query.where(Image.aesthetic_score >= body.min_aesthetic_score)
-    if body.exclude_flags:
-        for flag_key in body.exclude_flags:
-            query = query.where(Image.quality_flags[flag_key].as_boolean().is_not(True))
+    for clause in flag_exclusions(body.exclude_flags):
+        query = query.where(clause)
     result = await db.execute(query)
     rows = result.all()
 

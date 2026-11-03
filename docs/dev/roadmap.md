@@ -17,7 +17,7 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-03, after the M7 port)
+## Next session (updated 2026-11-04, after M8 stages 2 and 3)
 
 1. M5's five stages merged on 2026-10-30 as PR #101. Only its cleanup is open, and that waits
    a release. See [server-state-plan/README.md](server-state-plan/README.md) for what was
@@ -40,15 +40,23 @@ restates its stages.
    now [style-embedding-plan/README.md](style-embedding-plan/README.md), and the research
    folder's findings moved into `docs/dev/quality/style-similarity.md`. What is left in M7 is
    below; M6 is still independent and can go any time.
-4. M8's follow-ups 9, 10 and 11 can go any time. Batch move and copy, in item 9, must wait for
-   M4 to merge. Items 7, 8, 12 and 13 wait for stages 6 and 3, which replace that code.
-   M8 stages 5 and 6 now wait only for M4, since M7 has merged.
-5. Three docs seams stay queued in [pending-splits.md](pending-splits.md) with nothing over
+4. **M8 stages 2 and 3 landed on `refactor/m8-stages-2-3`** (2026-11-04): one helper for a
+   job's image scope (`services/image_scope.py`) and one job loop for upscale and LUT
+   (`services/image_edit_job.py`), with no behaviour change beyond a LUT replace rewriting the
+   same width and height. Merge it, then rebase the held M6
+   branch onto `main`: its §4 calls jobs from code and waited for these two stages. What the
+   stages found and left alone is in [cleanup-plan/README.md](cleanup-plan/README.md) § Found
+   during stages 2 and 3, left as they were.
+5. M8's follow-ups 8, 9, 10 and 11 can go any time; stage 3 left inpaint and detection crop
+   out, so item 8 no longer waits for it. Batch move and copy, in item 9, must wait for M4 to
+   merge. Items 7, 12 and 13 wait for stage 6, which replaces that code. M8 stages 5 and 6
+   now wait only for M4, since M7 has merged. Stage 4 can go any time.
+6. Four docs seams stay queued in [pending-splits.md](pending-splits.md) with nothing over
    budget: `README.md`'s § Features deletion (deferred when its budget went to 4,000),
-   `docs/scoring.md`'s residual seam, and `docs/dev/quality/style-similarity.md` at 91% after
-   the M7 port. Each is picked up by the next session that appends to its file. Re-measure first and check both halves land under 60% of budget — five of
+   `docs/scoring.md`'s residual seam, `docs/dev/quality/style-similarity.md` at 91% after
+   the M7 port, and `docs/dev/image-processing-models.md` at 98% after M8 stage 3. Each is picked up by the next session that appends to its file. Re-measure first and check both halves land under 60% of budget — five of
    M3's seven recorded seams had to be re-cut on execution.
-6. A split moves sections, so `§` pointers that named a section in the same file now
+7. A split moves sections, so `§` pointers that named a section in the same file now
    point across files. `check_docs.py` does not check them, so grep `§` in every touched
    file and check each against the destination's headings by hand.
 
@@ -179,12 +187,16 @@ Detail, hazards and what to leave alone:
   B4 (unchecked write path). Landed 2026-11-02 on `fix/m8-stage1-bugs`.
 - [x] Stage 1 follow-ups 1–6 (cleanup plan § Stage 1 follow-ups). Landed 2026-11-02 on
   `fix/m8-stage1-followups`. Items 7 and 8 there are folded into stages 6 and 3.
-- [ ] Stage 1 follow-ups 9 (the rest of the unchunked `IN` class), 10 (batch resize, crop and
-  detection crop's stats on a partway failure) and 11 (two hard-cancel edges in the stats
-  wrapper). No order between them; item 9's batch move and copy need M4 merged. Items 12 and
-  13 are folded into stage 6, beside item 7.
-- [ ] Stage 2: one shared helper for a job's image scope.
-- [ ] Stage 3: a shared job loop for upscale and LUT. Needs stage 2.
+- [ ] Stage 1 follow-ups 8 (a refusal's reason for the other edit jobs), 9 (the rest of the
+  unchunked `IN` class), 10 (batch resize, crop and detection crop's stats on a partway
+  failure) and 11 (two hard-cancel edges in the stats wrapper). No order between them; item
+  9's batch move and copy need M4 merged. Item 8 was folded into stage 3, which left inpaint
+  and detection crop out, so it is open again. Items 12 and 13 are folded into stage 6,
+  beside item 7.
+- [x] Stage 2: one shared helper for a job's image scope. Landed 2026-11-04 on
+  `refactor/m8-stages-2-3`.
+- [x] Stage 3: a shared job loop for upscale and LUT. Needs stage 2. Landed 2026-11-04 on the
+  same branch.
 - [ ] Stage 4: `DatasetsPage` dialogs into components.
 - [ ] Stage 5: `SelectionToolbar` dialogs into forms. Needs M4 merged (M7 has).
 - [ ] Stage 6: the detail page's inline tools onto those forms. Needs M4 merged (M7 has), and B1.

@@ -13,7 +13,8 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models import Image
-from backend.utils import ALLOWED_FLAG_KEYS, normalize_subfolder
+from backend.services.image_scope import flag_exclusions
+from backend.utils import normalize_subfolder
 
 
 def _maybe_clear_ai_artifact(img: Image, caption_text: str | None) -> None:
@@ -92,10 +93,9 @@ async def bulk_edit_captions(
         query = query.where(Image.id.in_(image_ids))
     elif subfolder is not None:
         query = query.where(Image.subfolder == normalize_subfolder(subfolder))
-    if quality_flags:
-        valid_flags = [f for f in quality_flags if f in ALLOWED_FLAG_KEYS]
-        if valid_flags:
-            query = query.where(and_(*[Image.quality_flags[f].as_boolean().is_not(True) for f in valid_flags]))
+    exclusions = flag_exclusions(quality_flags)
+    if exclusions:
+        query = query.where(and_(*exclusions))
 
     result = await db.execute(query)
     images = result.scalars().all()

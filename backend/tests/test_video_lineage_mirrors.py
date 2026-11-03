@@ -246,10 +246,11 @@ def _score_carriers() -> dict[str, dict[str, tuple[str, str] | None]]:
     """Site label → its kwarg/assignment map, for every path that rebuilds an
     `Image`-shaped row field by field.
 
-    An **explicit** list, never every `Image(...)` in the codebase: five of the
-    nine constructor sites (`routers/images.py`'s crop and upscale replacements,
-    `detection.py`, `lut.py`, `upscaling.py`) build *derivatives*, whose pixels
-    are not the scored pixels — they must not carry a score forward.
+    An **explicit** list, never every `Image(...)` in the codebase: the
+    derivative constructor sites (`routers/images.py`'s crop and upscale
+    replacements, `detection.py`, `inpaint.py`, and `services/image_edit_job.py`
+    for upscale and LUT) build *derivatives*, whose pixels are not the scored
+    pixels — they must not carry a score forward.
     """
     from backend.routers import images as images_router
 

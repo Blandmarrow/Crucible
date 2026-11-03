@@ -93,7 +93,7 @@ def _vanish_on_the_job_load(monkeypatch, job_module):
     job's load: to the job, the row was deleted between enqueue and run.
 
     One counter across `image_scope`, which makes the request's lookup, and
-    `job_module`, which loads the rows."""
+    `job_module`, which loads the rows (`image_edit_job` for upscale and LUT)."""
     import backend.services.image_scope as image_scope
 
     calls = 0
@@ -108,13 +108,13 @@ def _vanish_on_the_job_load(monkeypatch, job_module):
 
 def test_an_upscale_whose_row_vanished_counts_it_missing(tmp_path, monkeypatch):
     async def scenario():
-        import backend.routers.upscaling as upscale_router
+        import backend.services.image_edit_job as image_edit_job
 
         async with api_env(tmp_path) as env:
             _install_fake(monkeypatch)
             ds = await env.create_dataset("d")
             img = await upload_image(env, ds["id"], "shot.png", png_bytes())
-            _vanish_on_the_job_load(monkeypatch, upscale_router)
+            _vanish_on_the_job_load(monkeypatch, image_edit_job)
 
             r = await env.client.post(f"{API}/upscaling/run", json={
                 "dataset_id": ds["id"], "image_ids": [img["id"]],
@@ -130,13 +130,13 @@ def test_an_upscale_whose_row_vanished_counts_it_missing(tmp_path, monkeypatch):
 
 def test_a_lut_whose_row_vanished_counts_it_missing(tmp_path, monkeypatch):
     async def scenario():
-        import backend.routers.lut as lut_router
+        import backend.services.image_edit_job as image_edit_job
 
         async with api_env(tmp_path) as env:
             ds = await env.create_dataset("d")
             img = await upload_image(env, ds["id"], "shot.png", png_bytes())
             lut = _identity_cube(tmp_path / "identity.cube")
-            _vanish_on_the_job_load(monkeypatch, lut_router)
+            _vanish_on_the_job_load(monkeypatch, image_edit_job)
 
             r = await env.client.post(f"{API}/lut/run", json={
                 "dataset_id": ds["id"], "image_ids": [img["id"]],

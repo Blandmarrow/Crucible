@@ -137,6 +137,9 @@ test('a hand-written blueprint expands into rows with folders, and they run', as
   const scenario = page.getByTestId('scenario-0')
   await scenario.getByRole('button', { name: '+ Combine an axis' }).click()
   await scenario.getByLabel('Images per folder').fill('2')
+  // A blank path and template show the defaults the server would use.
+  await expect(scenario.getByLabel('Folder path')).toHaveAttribute('placeholder', '{character}')
+  await expect(scenario.getByLabel('Prompt template')).toHaveAttribute('placeholder', '{character}, {camera}')
   await scenario.getByLabel('Folder path').fill('knights/{character}')
   await scenario.getByLabel('Prompt template').fill('{character}, {camera}')
 

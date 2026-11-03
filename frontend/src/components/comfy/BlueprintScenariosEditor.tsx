@@ -1,5 +1,6 @@
 import type { BlueprintCombineItem, BlueprintScenario, BlueprintSpec } from "../../api/comfy";
 import NumberField from "../common/NumberField";
+import { defaultPath, defaultTemplate } from "./blueprintKeys";
 
 const NEW_SCENARIO: BlueprintScenario = { name: "", combine: [], mode: "full", count: 1, path: "", template: "" };
 
@@ -120,16 +121,21 @@ export default function BlueprintScenariosEditor({ spec, onChange }: Props) {
                   onClick={() => patch(i, { combine: [...s.combine, axisNames[0]] })}>+ Combine an axis</button>
               </div>
 
+              {/* Blank uses the default, shown as the placeholder so the user sees what
+                  they get; the server computes the same (blueprint_expand.default_*). */}
               <label style={{ ...smallLabel, flexDirection: "column", alignItems: "stretch" }}>
-                Folder path
+                Folder path <span style={{ fontWeight: 400 }}>(blank: one folder level per axis)</span>
                 <input className="input mono" style={{ height: 30, fontSize: 12 }}
-                  aria-label="Folder path" placeholder="{biome}/{character}"
+                  aria-label="Folder path"
+                  placeholder={defaultPath(s.combine.map(axisOf)) || "{biome}/{character}"}
                   value={s.path} onChange={(e) => patch(i, { path: e.target.value })} />
               </label>
               <label style={{ ...smallLabel, flexDirection: "column", alignItems: "stretch" }}>
-                Prompt template
+                Prompt template <span style={{ fontWeight: 400 }}>(blank: every axis, then every variation)</span>
                 <textarea className="input" style={{ minHeight: 50, fontSize: 12, resize: "vertical" }}
-                  aria-label="Prompt template" placeholder="{character}, standing in {biome}, {camera}"
+                  aria-label="Prompt template"
+                  placeholder={defaultTemplate(s.combine.map(axisOf), Object.keys(spec.variations))
+                    || "{character}, standing in {biome}, {camera}"}
                   value={s.template ?? ""} onChange={(e) => patch(i, { template: e.target.value })} />
               </label>
               <div style={{ fontSize: 11, color: "var(--fg-mute)" }}>

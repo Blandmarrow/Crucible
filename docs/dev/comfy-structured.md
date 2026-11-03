@@ -92,6 +92,10 @@ both the preview and Apply, which is what makes the preview trustworthy.
 - **Paths.** `{axis}` renders the entity label's `slugify_filename` slug, and a multi-take
   axis joins slugs with `_and_` (`iron_knight_and_salt_witch`). Only combined axes may
   appear.
+  - **A blank path is `default_path`: one level per combined axis, in combine order**
+    (`{biome}/{character}`). Users expected the path to follow the axes and had to type it
+    by hand, so blank no longer means an error. `blueprintKeys.defaultPath` mirrors it for
+    the field's placeholder; keep the two in step.
   - **The slug trap:** `slugify_filename` answers `"image"` for a label with no letter or
     digit. As a folder name that is silently wrong, so such a label is an error. The test is
     `[^\W_]`, not `\w`: `"_"` and `"-_-"` pass `\w` and still slug to `"image"`.
@@ -101,8 +105,11 @@ both the preview and Apply, which is what makes the preview trustworthy.
   - `{axis}` → descriptor. Several entities join with ", " and a final " and ", and an
     empty descriptor falls back to the label.
   - `{axis.label}` → label. `{variation}` → one piece.
-  - A missing template joins the combined descriptors. An unknown name, or an axis the
-    scenario does not combine, is an error.
+  - **A blank template is `default_template`: every combined axis, then every
+    variation** (`{biome}, {time}, {angles}`). It once joined only the descriptors, so a
+    variation the user had defined was silently unused, and the blueprint looked broken.
+    `blueprintKeys.defaultTemplate` mirrors it.
+  - An unknown name, or an axis the scenario does not combine, is an error.
 - **The template walk.** The variation sets the template names make a product of P
   distinct prompts, indexed in mixed radix. A leaf's prompt *i* uses index
   `(a·i + b) mod P`, with `a` coprime to P and `a`, `b` drawn from the leaf's sub-seed.

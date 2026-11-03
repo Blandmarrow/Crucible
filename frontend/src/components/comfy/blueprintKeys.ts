@@ -25,6 +25,18 @@ export function renameRefs(spec: BlueprintSpec, kind: "axes" | "variations", fro
     : { ...spec, variations: renameKey(spec.variations, from, to), scenarios };
 }
 
+/** What a blank folder path means: one level per combined axis, in combine order.
+ *  Mirrors `default_path` in backend/services/blueprint_expand.py; keep them in step. */
+export function defaultPath(axes: string[]): string {
+  return axes.map((a) => `{${a}}`).join("/");
+}
+
+/** What a blank template means: every combined axis, then every variation. Mirrors
+ *  `default_template` in backend/services/blueprint_expand.py. */
+export function defaultTemplate(axes: string[], variations: string[]): string {
+  return [...axes, ...variations].map((n) => `{${n}}`).join(", ");
+}
+
 /** An unused `base<N>` key. */
 export function freshName(rec: Record<string, unknown>, base: string): string {
   let n = Object.keys(rec).length + 1;

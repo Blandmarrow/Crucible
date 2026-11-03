@@ -31,8 +31,8 @@ Enter one piece per line.
 | **Combine** | The axes this scenario uses. **Take** 2 or more on an axis makes groups of different entities together (pairs, trios), never the same one twice. |
 | **Mode** | **Full** makes every combination. **Sample K** picks K of them at random, and keeps the same K each time you reopen it. |
 | **Images per folder** | How many images each folder should end up holding. |
-| **Folder path** | Where each combination is filed, e.g. `{biome}/{character}`. Pairs become `iron_knight_and_salt_witch`. |
-| **Prompt template** | E.g. `{character}, standing in {biome}, {camera}, {time}`. Leave it blank to just join the descriptors. |
+| **Folder path** | Where each combination is filed, e.g. `{biome}/{character}`. Leave it blank for one folder level per axis, in the order you combined them. Pairs become `iron_knight_and_salt_witch`. |
+| **Prompt template** | E.g. `{character}, standing in {biome}, {camera}, {time}`. Leave it blank to list every axis, then one piece of every variation. |
 
 In a template, `{axis}` is the entity's descriptor, `{axis.label}` is its label, and
 `{variation}` is one piece from that set. Each folder's prompts walk through the

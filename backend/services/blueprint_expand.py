@@ -89,6 +89,20 @@ def _join_descriptors(ents: tuple[Entity, ...]) -> str:
     return ", ".join(texts[:-1]) + " and " + texts[-1]
 
 
+def default_path(axes: list[str]) -> str:
+    """A blank folder path: one level per combined axis, in combine order
+    (`{biome}/{character}`). frontend/src/components/comfy/blueprintKeys.ts mirrors it
+    for the field's placeholder, so keep the two in step."""
+    return "/".join("{" + a + "}" for a in axes)
+
+
+def default_template(axes: list[str], variations: list[str]) -> str:
+    """A blank template: the combined descriptors, then one piece of every variation.
+    Every variation, because one the user defined and the default then ignored read as
+    a broken blueprint. Mirrored in blueprintKeys.ts, like `default_path`."""
+    return ", ".join("{" + n + "}" for n in [*axes, *variations])
+
+
 def _combine_items(items: list[str | CombineItem]) -> list[tuple[str, int]]:
     return [(i, 1) if isinstance(i, str) else (i.axis, i.take) for i in items]
 
@@ -227,7 +241,7 @@ def _prepare(spec: BlueprintSpec, sc: Scenario, label: str, errors: list[str]) -
             sample_k = int(m.group(1))
 
     # Template: placeholders name a combined axis, `axis.label`, or a variation.
-    template = (sc.template or "").strip() or ", ".join("{" + a + "}" for a in axes_used)
+    template = (sc.template or "").strip() or default_template(axes_used, list(spec.variations))
     var_names: list[str] = []
     for name in _PLACEHOLDER_RE.findall(template):
         base, _, attr = name.partition(".")
@@ -242,11 +256,10 @@ def _prepare(spec: BlueprintSpec, sc: Scenario, label: str, errors: list[str]) -
         else:
             err(f"Scenario '{label}' template names '{{{name}}}', which is not an axis it combines or a variation")
 
-    # Path: literal segments and combined axes only.
-    raw_path = sc.path.strip().strip("/")
-    if not raw_path:
-        err(f"Scenario '{label}' has no folder path")
-    else:
+    # Path: literal segments and combined axes only. Blank means one level per axis;
+    # with no axes combined it stays blank, and "combines no axes" already says why.
+    raw_path = sc.path.strip().strip("/") or default_path(axes_used)
+    if raw_path:
         for seg in raw_path.replace("\\", "/").split("/"):
             if not seg.strip():
                 err(f"Scenario '{label}' path '{sc.path}' has an empty folder name")

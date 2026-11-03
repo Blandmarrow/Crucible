@@ -74,7 +74,20 @@ def test_label_placeholder_and_default_template():
     spec = _spec(scenarios=[_scenario(template="{character.label} at {biome.label}"), ])
     assert compose(expand(spec, 1).leaves[0], 0, 1) == ["Iron Knight at Salt Fen"]
     spec = _spec(scenarios=[_scenario(template=None)])
-    assert compose(expand(spec, 1).leaves[0], 0, 1) == ["a tall knight, a brackish fen"]
+    [prompt] = compose(expand(spec, 1).leaves[0], 0, 1)
+    # The default names every variation, so one defined is never silently unused.
+    head, camera, time = prompt.rsplit(", ", 2)
+    assert head == "a tall knight, a brackish fen"
+    assert camera in ("low angle", "wide shot", "close-up") and time in ("dawn", "dusk")
+
+
+def test_a_blank_path_is_one_folder_level_per_combined_axis():
+    e = expand(_spec(scenarios=[_scenario(combine=["biome", "character"], path="")]), 1)
+    assert e.errors == []
+    assert [l.path for l in e.leaves] == ["salt_fen/iron_knight", "salt_fen/salt_witch", "salt_fen/monk"]
+    # Whitespace and bare slashes are blank too.
+    e = expand(_spec(scenarios=[_scenario(path=" / ")]), 1)
+    assert [l.path for l in e.leaves][:1] == ["iron_knight/salt_fen"]  # combine order
 
 
 def test_sample_is_stable_across_processes():
@@ -171,7 +184,6 @@ def test_repeat_warning_when_count_exceeds_product():
     ({"scenarios": [_scenario(mode="sample:0")]}, "use 'full' or 'sample:K'"),
     ({"scenarios": [_scenario(template="{character}, {lighting}")]}, "'{lighting}'"),
     ({"scenarios": [_scenario(combine=["character"], path="{character}", template="{biome}")]}, "does not combine"),
-    ({"scenarios": [_scenario(path="")]}, "no folder path"),
     ({"scenarios": [_scenario(path="{biome}//{character}")]}, "empty folder name"),
     ({"scenarios": [_scenario(path="../{character}")]}, "may not use '..'"),
     ({"scenarios": [_scenario(path="{biome}/{mood}")]}, "'{mood}'"),

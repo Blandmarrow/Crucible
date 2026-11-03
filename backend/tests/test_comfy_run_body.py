@@ -21,6 +21,8 @@ from backend.tests.fake_comfy import (
     CORRUPT_MARKER,
     FAIL_MARKER,
     FAIL_MESSAGE,
+    PARTIAL_MARKER,
+    PARTIAL_MESSAGE,
     REJECT_MARKER,
     REJECT_MESSAGE,
     FakeComfy,
@@ -221,6 +223,40 @@ def test_a_graph_comfyui_would_refuse_fails_the_row(tmp_path, monkeypatch):
             assert "Prompt has no outputs" in row["error_msg"]
             assert fake.submitted == []
             assert await _images(env, ds["id"]) == []
+
+    run(go())
+
+
+def test_a_partly_accepted_graph_fails_the_row_and_its_prompt_is_removed(tmp_path, monkeypatch):
+    """ComfyUI answers 200 with `node_errors` when only some outputs validate, and
+    queues the rest. The row must fail rather than complete one image short, and
+    the part ComfyUI did queue must be taken back out before the next row."""
+    async def go():
+        async with api_env(tmp_path) as env:
+            # Two polls in flight, so the partial prompt is still running when the
+            # row fails: its removal is an interrupt by id.
+            fake = FakeComfy(canvas_running=False, complete=True, polls_before_done=2)
+            ds, plan_id = await _setup(
+                env, monkeypatch, fake, _workflow(("9", "SaveImage"), ("10", "SaveImage")), ["9", "10"])
+            await _add_row(env, plan_id, f"one output is broken {PARTIAL_MARKER}")
+            await _add_row(env, plan_id, "both outputs work")
+            job = await _run(env, plan_id)
+            assert job["status"] == "completed", job
+
+            partial, done = await _rows(env, plan_id)
+            assert partial["status"] == "failed", partial
+            assert "dropped output(s) that failed validation" in partial["error_msg"]
+            assert f"node 10: {PARTIAL_MESSAGE}" in partial["error_msg"]
+            assert "cleanup" not in partial["error_msg"]  # removed cleanly, so no note
+            assert fake.interrupts == ["OURS-1"]
+            assert fake.violations == []
+            assert fake.ours_outstanding_at_submit == [0, 0]
+
+            assert done["status"] == "completed", done
+            assert len(done["image_ids"]) == 2
+            images = await _images(env, ds["id"])
+            assert sorted(i["id"] for i in images) == sorted(done["image_ids"])
+            assert len([f for f in _files(env, "images") if f.endswith(".png")]) == 2
 
     run(go())
 

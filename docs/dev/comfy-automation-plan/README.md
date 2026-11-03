@@ -381,12 +381,6 @@ or a new page, plus a row in `docs/features.md` and whatever `README.md` needs. 
 
 ## Still open
 
-- What a 200 from `/prompt` with a non-empty `node_errors` should do. ComfyUI then queues only
-  the outputs that passed validation, and `ComfyClient.submit` ignores `node_errors`, so the
-  row completes with fewer images and no error. Fail the row, or complete it with a warning in
-  `error_msg`? Found while building §7; the fake does not model it yet
-  (`docs/dev/comfy-run.md` § Testing the run).
-
 - Whether per-leaf targets are editable individually in the review UI or only per scenario.
   Recommend scenario-level in the UI, leaf-level in the DB.
 - What a deleted leaf's rows count toward (§2c).

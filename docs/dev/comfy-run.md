@@ -94,6 +94,13 @@ Failure/cancel semantics:
   raise `MissingGreenlet`. A hard `CancelledError` (server shutdown; normal cancel is
   cooperative and never reaches here with files written) is a separate branch: unlink, delete
   the tracked `Image` objects, reset the row to `pending`, re-raise.
+- **A partly accepted graph fails the row.** When only some outputs validate, ComfyUI answers
+  `/prompt` with a 200 *and* a non-empty `node_errors`, queues the outputs that passed, and
+  drops the rest. Completing the row would file fewer images than its workflow makes, with no
+  error, and a validation error recurs on every row. So `submit` raises
+  `ComfyPartialRejection`, a `ComfyRowError` carrying the queued `prompt_id`. The run catches
+  it before the 400 branch, so `maybe_queued` stays true and § Removing our prompt takes the
+  queued part back out.
 - **3 consecutive connect errors abort the run** with a job-level error; untouched rows stay
   `pending`. Like cancel, this raises straight out of `_run` — which is why the stats refresh
   lives in the `_run_with_stats` wrapper's `finally` and per row, not after the loop.
@@ -124,7 +131,8 @@ row stack on a prompt still sitting there.
 
 The router runs it only while ComfyUI may still hold the row's prompt — from submit until
 `/history` reports it finished (`maybe_queued and not history_seen`); a 400-rejected or
-never-connected submit queued nothing and skips it. Bounded by `REMOTE_CLEANUP_BUDGET_S`
+never-connected submit queued nothing and skips it, while a partly accepted one did queue
+something and is removed. Bounded by `REMOTE_CLEANUP_BUDGET_S`
 (6 s, just above the client's window), or `REMOTE_CLEANUP_HARD_CANCEL_BUDGET_S` (1.5 s) when
 `current_task().cancelling() > 0` — a hard cancel from `JobQueue.stop()`, which then allows
 only `STOP_UNWIND_SECONDS`; the cooperative path fits inside `STOP_GRACE_SECONDS`
@@ -168,21 +176,20 @@ lets the page show `running`. **A marker in the prompt text picks a failure**, s
 spec chooses one per row with no control endpoint: `[[fake:reject]]` is a 400 with
 `node_errors`, `[[fake:fail]]` is an `execution_error` in history, and `[[fake:corrupt]]`
 serves the last output in *graph* order as junk bytes. With `output_node_ids` in graph order,
-the import then fails after earlier outputs were written. `POST /free` is recorded for the
-VRAM handoff to test against.
+the import then fails after earlier outputs were written. `[[fake:partial]]` is a 200 whose
+`node_errors` names the last output node in graph order, which never runs while the rest is
+queued (a 400 when it is the only output). `POST /free` is recorded for the VRAM handoff to
+test against.
 
 `backend/tests/test_comfy_run_body.py` drives the run body through it: multi-output import
 (one from a ComfyUI subfolder) with generation metadata and provenance, a PreviewImage
-source, an execution error, a rejected and a refused graph, the per-row rollback and per-row
+source, an execution error, a rejected, a refused and a partly accepted graph (the last with
+its queued prompt removed), the per-row rollback and per-row
 folders, plus a real-socket round trip that guards the e2e adapter.
 `test_comfy_queue_cleanup.py` uses it for the cancel paths.
 
 Not modelled: websockets and progress previews, `/upload/image`, `/object_info`, the bridge's
 snapshot route, input types and values (only links are checked), and an interrupted prompt's
-history entry. **Nor is a partial validation failure**, and that one hides a live gap: real
-ComfyUI answers `/prompt` with a 200 *and* a non-empty `node_errors` when some outputs fail
-validation, queues only the valid ones, and `submit` ignores `node_errors` on a 200 — so a row
-whose second output node is invalid completes with one image and no error. Whether `submit`
-should fail or warn is an open question in the M6 plan. The older run tests (`test_provenance_http._FakeComfyClient`,
+history entry. The older run tests (`test_provenance_http._FakeComfyClient`,
 `test_comfy_cancel_stats`, and `test_comfy_subfolder`, which imports the former) still replace
 `ComfyClient` wholesale. Moving them onto `FakeComfy` is an open follow-up.

@@ -31,6 +31,7 @@ from backend.services.comfy_service import (
     MAX_CONSECUTIVE_CONNECT_ERRORS,
     PER_ROW_TIMEOUT_S,
     ComfyClient,
+    ComfyPartialRejection,
     ComfyRowError,
     check_history_error,
     effective_prompt,
@@ -1518,6 +1519,12 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
                     maybe_queued = True
                     try:
                         prompt_id = await client.submit(wf, client_id=job_id)
+                    except ComfyPartialRejection as e:
+                        # Queued, but with outputs dropped: the row fails like a 400,
+                        # yet ComfyUI holds a prompt, so `maybe_queued` stays True and
+                        # the handler below takes it back out by id.
+                        prompt_id = e.prompt_id
+                        raise
                     except (ComfyRowError, httpx.ConnectError, httpx.ConnectTimeout):
                         # Rejected (400) or never connected: nothing was queued, so
                         # there is nothing to clean — and no reason to let a /queue

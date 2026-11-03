@@ -36,14 +36,14 @@ What it models:
   `[[fake:reject]]` → 400 with `node_errors`; `[[fake:fail]]` → a history entry
   with `status_str: "error"`; `[[fake:corrupt]]` → the last output image in
   *graph* order is served as junk bytes, so with outputs listed in that order the
-  import fails after earlier outputs were written.
+  import fails after earlier outputs were written; `[[fake:partial]]` → a 200
+  whose `node_errors` names the last output node in graph order, which is dropped
+  while the rest is queued, as ComfyUI does when only some outputs validate.
 - `POST /free` (recorded in `frees`) and `GET /history?max_items=N`.
 
 What it does not model: websockets, progress previews, `/upload/image`,
 `/object_info`, the ComfyUI-CrucibleBridge snapshot route, input types and
-values (only links are checked), an interrupted prompt's history entry, and a
-partial validation failure — real ComfyUI answers 200 with a non-empty
-`node_errors` when some outputs fail validation and queues only the rest.
+values (only links are checked), and an interrupted prompt's history entry.
 """
 from __future__ import annotations
 
@@ -63,9 +63,11 @@ CANVAS_PROMPT = "CANVAS-1"
 REJECT_MARKER = "[[fake:reject]]"
 FAIL_MARKER = "[[fake:fail]]"
 CORRUPT_MARKER = "[[fake:corrupt]]"
+PARTIAL_MARKER = "[[fake:partial]]"
 
 FAIL_MESSAGE = "Allocation on device failed (fake out-of-memory)"
 REJECT_MESSAGE = "Value not in list"
+PARTIAL_MESSAGE = "Required input is missing"
 
 # The ComfyUI node types that produce images, and the history `type` each writes.
 _OUTPUT_TYPES = {"SaveImage": "output", "PreviewImage": "temp"}
@@ -163,8 +165,12 @@ class FakeComfy:
 
     # ── Execution ────────────────────────────────────────────────────────────
 
-    def _execute(self, pid: str, number: int, graph: dict, extra_data: dict) -> dict:
-        """The history entry ComfyUI would record for `graph`, with its images stored."""
+    def _execute(
+        self, pid: str, number: int, graph: dict, extra_data: dict, skip_outputs: set[str] = frozenset(),
+    ) -> dict:
+        """The history entry ComfyUI would record for `graph`, with its images
+        stored. `skip_outputs` are output nodes that failed validation: ComfyUI
+        keeps the whole graph in the prompt but never runs them."""
         text = json.dumps(graph)
         prompt = [number, pid, graph, extra_data, []]
         # What SaveImage writes: the `prompt` hidden input always, then one chunk
@@ -189,7 +195,7 @@ class FakeComfy:
         refs: list[tuple[str, str, str]] = []
         for node_id, node in graph.items():
             kind = _OUTPUT_TYPES.get(node.get("class_type", "")) if isinstance(node, dict) else None
-            if kind is None:
+            if kind is None or str(node_id) in skip_outputs:
                 continue
             self._image_counter += 1
             n = self._image_counter
@@ -248,13 +254,33 @@ class FakeComfy:
                         {"message": REJECT_MESSAGE, "details": "ckpt_name: 'missing.safetensors' not in []"},
                     ]}},
                 })
+            node_errors: dict[str, dict] = {}
+            if PARTIAL_MARKER in json.dumps(graph):
+                # The last output fails validation. ComfyUI queues the outputs that
+                # passed and answers 200 with the rest in node_errors — or 400 when
+                # nothing passed.
+                outs = [nid for nid, n in graph.items() if isinstance(n, dict) and n.get("class_type") in _OUTPUT_TYPES]
+                dropped = outs[-1]
+                node_errors[dropped] = {
+                    "class_type": graph[dropped]["class_type"], "dependent_outputs": [dropped],
+                    "errors": [{"message": PARTIAL_MESSAGE, "details": "images"}],
+                }
+                if len(outs) == 1:
+                    return httpx.Response(400, json={
+                        "error": {"type": "prompt_outputs_failed_validation",
+                                  "message": "Prompt outputs failed validation"},
+                        "node_errors": node_errors,
+                    })
             cid = body.get("client_id")
             self.ours_outstanding_at_submit.append(len(self.queue_ids(cid)))
             pid = f"OURS-{len(self.submitted) + 1}"
             self.submitted.append(pid)
             number = len(self.submitted)
             if self.complete:
-                entry = self._execute(pid, number, graph, {**(body.get("extra_data") or {}), "client_id": cid})
+                entry = self._execute(
+                    pid, number, graph, {**(body.get("extra_data") or {}), "client_id": cid},
+                    skip_outputs=set(node_errors),
+                )
                 if self.polls_before_done > 0:
                     self.running.append([pid, cid])
                     self._finishing[pid] = [self.polls_before_done, entry]
@@ -266,7 +292,7 @@ class FakeComfy:
                 self.pending.append([pid, cid])
             if self.down_after_submits is not None and len(self.submitted) >= self.down_after_submits:
                 self.unreachable = True
-            return httpx.Response(200, json={"prompt_id": pid, "number": number, "node_errors": {}})
+            return httpx.Response(200, json={"prompt_id": pid, "number": number, "node_errors": node_errors})
 
         if method == "GET" and path.startswith("/history/"):
             pid = path.rsplit("/", 1)[1]

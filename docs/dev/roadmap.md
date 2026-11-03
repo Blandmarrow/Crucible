@@ -31,14 +31,16 @@ restates its stages.
    `main` and re-run the gates; its migrations end at `e7c4a1b9d2f6`. If M7 merges first, M4's
    first migration `c3b8e1d7a52f` re-parents from `f2a6c8e4b1d7` onto M7's `c2b8e4f6a1d7`, and
    M4 resolves the overlap in `SelectionToolbar.tsx`, `queryKeys.ts` and `ImageDetailPage.tsx`.
-3. **The M7 port is on `feat/m7-style-port`** (2026-11-03, pushed, PR open, not merged):
-   layer 7 at 0.30/0.70 is the style default, each run records its blend weights, and the
-   layer picker warns before a run that must fail. Merge it on the user's word. Its plan is
+3. **The M7 port merged on 2026-11-03 as PR #108**: layer 7 at 0.30/0.70 is the style
+   default, each run records its blend weights, and the layer picker warns before a run that
+   must fail. The user had both `style-embedding-measurement` and `feat/m7-style-port`
+   deleted afterwards; the `exp/*` research branches stay, as the records the docs cite. Its plan is
    now [style-embedding-plan/README.md](style-embedding-plan/README.md), and the research
    folder's findings moved into `docs/dev/quality/style-similarity.md`. What is left in M7 is
    below; M6 is still independent and can go any time.
 4. M8's follow-ups 9, 10 and 11 can go any time. Batch move and copy, in item 9, must wait for
    M4 to merge. Items 7, 8, 12 and 13 wait for stages 6 and 3, which replace that code.
+   M8 stages 5 and 6 now wait only for M4, since M7 has merged.
 5. Three docs seams stay queued in [pending-splits.md](pending-splits.md) with nothing over
    budget: `README.md`'s § Features deletion (deferred when its budget went to 4,000),
    `docs/scoring.md`'s residual seam, and `docs/dev/quality/style-similarity.md` at 91% after
@@ -62,8 +64,8 @@ restates its stages.
 
 ## Porting the unmerged branches
 
-Three branches hold work from August that never reached `main`, and none has an open PR. They
-land one at a time. M4 and M7 conflict with each other in six files, and whichever lands second
+Three branches held work from August that never reached `main`. M7's has landed; M4's is
+ported and held; M6's is still to port. They land one at a time. M4 and M7 conflict with each other in six files, and whichever lands second
 resolves them; M7 does not wait for M4 ([decision 5](decisions/05-m7-goes-ahead-without-m4.md)).
 M6 touches neither and is the smallest.
 
@@ -75,9 +77,9 @@ M6 touches neither and is the smallest.
    A plan file gets its own transient folder, registered in `TRANSIENT_DIRS`.
 4. Before merging, check every path added to `main` since the branch was cut. A clean port only
    reconciles lines that clash, and a missed mirror or rebuild path fails silently.
-5. Leave the source branch untouched until its port has merged. M4 is the exception: the user
-   had `feat/scoring-arc` deleted on 2026-11-02 once every commit was verified on the port
-   branch, which is held unmerged.
+5. Leave the source branch untouched until its port has merged, then delete it. M4 is the
+   exception: the user had `feat/scoring-arc` deleted on 2026-11-02 once every commit was
+   verified on the port branch, which is held unmerged.
 
 ## Milestones
 
@@ -156,8 +158,8 @@ Stage 2 there (DINOv3) is not built, by
   and 3D films.
 - [x] Port from `style-embedding-measurement`: every commit except 3b00223, already on `main`,
   and the doc splits 9f6219e and 9156988, because `main` made its own. Ported 2026-11-03 on
-  `feat/m7-style-port`; 1d816ec was plan-file prose only and arrived with the plan folder.
-  **Merge it** once the user approves.
+  `feat/m7-style-port` and merged the same day as PR #108; 1d816ec was plan-file prose only
+  and arrived with the plan folder.
 - [ ] Stage 2b: stop the layer labels asserting things nobody measured
   (`DINO_LAYER_LABELS`). The plan's only defect rather than improvement. Detail:
   [style-embedding-plan/README.md § Stage 2b](style-embedding-plan/README.md#stage-2b--stop-the-layer-labels-asserting-things-nobody-measured).
@@ -182,8 +184,8 @@ Detail, hazards and what to leave alone:
 - [ ] Stage 2: one shared helper for a job's image scope.
 - [ ] Stage 3: a shared job loop for upscale and LUT. Needs stage 2.
 - [ ] Stage 4: `DatasetsPage` dialogs into components.
-- [ ] Stage 5: `SelectionToolbar` dialogs into forms. Needs M4 and M7 merged.
-- [ ] Stage 6: the detail page's inline tools onto those forms. Needs M4 and M7 merged, and B1.
+- [ ] Stage 5: `SelectionToolbar` dialogs into forms. Needs M4 merged (M7 has).
+- [ ] Stage 6: the detail page's inline tools onto those forms. Needs M4 merged (M7 has), and B1.
 - [ ] Stage 7: `StatsPage` into files. Needs M4 merged.
 - [ ] Stage 8: split `images.py` by section. Needs M4 merged and stage 2.
 - [ ] Any time: fix the coverage config, and correct CLAUDE.md § Data flow.

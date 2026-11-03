@@ -94,6 +94,9 @@ def test_unknown_flags_are_dropped_not_refused(tmp_path):
         async with api_env(tmp_path) as env:
             ds = await env.create_dataset("d")
             a = await upload_image(env, ds["id"], "a.png", png_bytes())
+            # Set, so an applied filter would exclude it: a missing key passes
+            # `IS NOT TRUE` either way and could not tell dropped from applied.
+            await _set(env, a["id"], quality_flags={"no_such_flag": True})
 
             assert await _resolve(env, dataset_id=ds["id"], quality_flags=["no_such_flag"]) == [a["id"]]
 

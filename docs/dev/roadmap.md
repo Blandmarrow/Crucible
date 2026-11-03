@@ -42,7 +42,8 @@ restates its stages.
    below; M6 is still independent and can go any time.
 4. **M8 stages 2 and 3 landed on `refactor/m8-stages-2-3`** (2026-11-04): one helper for a
    job's image scope (`services/image_scope.py`) and one job loop for upscale and LUT
-   (`services/image_edit_job.py`), with no behaviour change. Merge it, then rebase the held M6
+   (`services/image_edit_job.py`), with no behaviour change beyond a LUT replace rewriting the
+   same width and height. Merge it, then rebase the held M6
    branch onto `main`: its §4 calls jobs from code and waited for these two stages. What the
    stages found and left alone is in [cleanup-plan/README.md](cleanup-plan/README.md) § Found
    during stages 2 and 3, left as they were.

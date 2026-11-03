@@ -197,6 +197,6 @@ ten. It still counts as `failed`: the user asked for that frame and did not get 
 `normalize_image_format`, which falls back to PNG for `.gif`/`.bmp`/`.tiff`/`.avif` — all in
 `IMAGE_EXTENSIONS` — so a replace-mode grade of one of those writes a different file; the
 row used to keep pointing at the stale original, which was also left on disk.
-`routers/lut.py`'s replace branch now follows the written path, and its collision guard runs
+The LUT job's replace branch (now the shared loop in `services/image_edit_job.py`) follows the written path, and its collision guard runs
 **before** the save rather than after: by the time `apply_lut_sync` returns, an unregistered
 file at the fallback path is already gone. See `docs/dev/image-processing-models.md` § LUT Color Grading.

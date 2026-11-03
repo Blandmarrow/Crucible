@@ -106,11 +106,13 @@ LUT forms or `DatasetsPage.tsx`.
   `services/image_scope.py` holds `resolve_scope_ids`, `scope_query` and `flag_exclusions`,
   indexed in `docs/dev/shared-utilities.md`. Upscale, LUT, inpaint and `crop_to_detection` use
   the resolver; the detection run, detection bulk delete, caption bulk edit and captioning's
-  `exclude_flags` use the parts that match them. There was no behaviour change.
+  `exclude_flags` use the parts that match them. There was no behaviour change: captioning's
+  request models already 422 an unknown flag, so `flag_exclusions` dropping one changes nothing there.
 - **Stage 3 (landed on the same branch): a shared job loop for upscale and LUT.**
   `services/image_edit_job.py`, described in `docs/dev/image-processing-models.md` § Upscaling.
   Inpaint and `crop_to_detection` stayed out: their count keys, commit order and model lease
-  would each need a flag.
+  would each need a flag. One intended change: a LUT replace now writes `width`/`height` from
+  the result, as an upscale does. A grade keeps the size, so the values are the same.
 - **Stage 4: `DatasetsPage` dialogs.** Five independent forms move out, about 40% of the file.
 
 ### Found during stages 2 and 3, left as they were

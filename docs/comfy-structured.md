@@ -90,6 +90,20 @@ already has enough images, or enough rows waiting to run, gets nothing more.
   the preview refreshes, so what you approve is what gets added.
 - **The Blueprint tab is read-only while the plan is running.**
 
+## Top up
+
+**Top up** fills every folder that came up short in one press. It adds the rows each
+folder is missing, puts failed rows back in the queue, and runs everything still waiting.
+It uses the **Base folder** and **Prompt as caption** settings from the **Rows** tab's run
+bar, and the run shows in the progress bar like any other.
+
+The preview shows how many images each folder is **Short**, and in total. A folder is
+short when it holds fewer images than its target, so it is short again after you delete
+some of its images in the gallery, perhaps the ones you didn't like.
+
+Pressing Top up when every folder is full does nothing, so it is safe to press whenever
+you have finished pruning.
+
 ## Changing a blueprint after applying it
 
 A folder is identified by its path. Renaming an entity's label, or changing a folder path,

@@ -13,12 +13,17 @@ interface Props {
   /** The form as it is right now; the preview and Apply follow it after a short pause. */
   value: BlueprintValue;
   hasPromptPin: boolean;
+  /** The run bar's settings, which Top up runs with (read-only here). */
+  subfolder: string;
+  setCaption: boolean;
+  /** Top up queued a run: the page tracks it like one started from the run bar. */
+  onRunStarted: (jobId: string, planId: string) => void;
 }
 
 const cell = { padding: "4px 8px", textAlign: "left" as const, fontSize: 12 };
 const num = { ...cell, textAlign: "right" as const };
 
-export default function BlueprintPreview({ planId, datasetId, value, hasPromptPin }: Props) {
+export default function BlueprintPreview({ planId, datasetId, value, hasPromptPin, subfolder, setCaption, onRunStarted }: Props) {
   const qc = useQueryClient();
   const [allowOverCap, setAllowOverCap] = useState(false);
   const [deleteOrphans, setDeleteOrphans] = useState(false);
@@ -28,12 +33,18 @@ export default function BlueprintPreview({ planId, datasetId, value, hasPromptPi
   const lagging = liveJSON !== debouncedJSON;
 
   const previewKey = ["comfy", "blueprint-preview", planId, debouncedJSON, allowOverCap] as const;
-  const { data: preview, isFetching, isPlaceholderData, isError, error, refetch } = useQuery({
+  const { data: preview, isPlaceholderData, isError, error, refetch } = useQuery({
     queryKey: previewKey,
     queryFn: ({ signal }) =>
       comfyApi.previewBlueprint(planId, { ...(JSON.parse(debouncedJSON) as BlueprintValue), allow_over_cap: allowOverCap }, signal),
     placeholderData: keepPreviousData,
     staleTime: 0,
+    // Kept and short change outside this tab: an image deleted in the gallery (another
+    // pane, say) makes its folder short. Without a refetch the panel would sit on
+    // "0 short" with Top up disabled, hiding the very shortfall Top up exists for. A
+    // stale preview cannot do harm (confirm_total would 409), but it misleads.
+    refetchOnWindowFocus: true,
+    refetchInterval: 20_000,
   });
 
   const applyMutation = useMutation({
@@ -59,6 +70,34 @@ export default function BlueprintPreview({ planId, datasetId, value, hasPromptPi
     },
   });
 
+  const topUpMutation = useMutation({
+    // planId is captured at call time, so a plan switch mid-request cannot retag the run.
+    mutationFn: (vars: { planId: string; body: BlueprintValue; total: number; deleteOrphans: boolean }) =>
+      comfyApi.topUpBlueprint(vars.planId, {
+        ...vars.body, confirm_total: vars.total, allow_over_cap: allowOverCap,
+        delete_orphan_pending: vars.deleteOrphans, subfolder, set_caption: setCaption,
+      }),
+    onSuccess: (data, vars) => {
+      if (data.job_id) {
+        onRunStarted(data.job_id, vars.planId);
+        toast.success(`Top up: added ${data.created} row${data.created !== 1 ? "s" : ""}, reset ${data.reset} failed — running ${data.total} row${data.total !== 1 ? "s" : ""}`);
+      } else {
+        toast.success("Every folder is full");
+      }
+      setDeleteOrphans(false);
+      qc.invalidateQueries({ queryKey: ["comfy", "rows", vars.planId] });
+      qc.invalidateQueries({ queryKey: ["comfy", "plans", datasetId] });
+      qc.invalidateQueries({ queryKey: ["comfy", "prompts", vars.planId] });
+      qc.invalidateQueries({ queryKey: ["comfy", "blueprint-preview", vars.planId] });
+    },
+    onError: (err: unknown) => {
+      toast.error(apiErrorDetail(err, "Failed to top up the blueprint"));
+      if ((err as { response?: { status?: number } })?.response?.status === 409) {
+        qc.invalidateQueries({ queryKey: ["comfy", "blueprint-preview", planId] });
+      }
+    },
+  });
+
   if (isError && !preview) {
     return (
       <div className="panel" style={{ marginBottom: 12 }}>
@@ -73,7 +112,12 @@ export default function BlueprintPreview({ planId, datasetId, value, hasPromptPi
     );
   }
 
-  const stale = lagging || isFetching || isPlaceholderData;
+  // A background refetch of the same spec (the 20 s interval, window focus) is not
+  // stale: counting it would disable both buttons every 20 s and drop a click that
+  // lands mid-refetch. The preview shown still belongs to this spec, and confirm_total
+  // 409s if the rows moved meanwhile. Only a spec the shown preview was not computed
+  // from is stale: one still debouncing, or placeholder data for a new key.
+  const stale = lagging || isPlaceholderData;
   const errors = preview?.errors ?? [];
   const orphans = preview?.orphans;
   const overCapBlocked = !!preview?.over_cap && !allowOverCap;
@@ -82,8 +126,12 @@ export default function BlueprintPreview({ planId, datasetId, value, hasPromptPi
     : errors.length > 0 ? "Fix the errors first"
     : overCapBlocked ? "Over the row cap: allow a larger expansion first"
     : stale ? "Waiting for the preview" : "";
-  const canApply = !!preview && !blockedReason && !applyMutation.isPending;
+  const canApply = !!preview && !blockedReason && !applyMutation.isPending && !topUpMutation.isPending;
   const orphanPending = orphans?.pending ?? 0;
+  const allFull = !!preview && preview.images_short === 0 && preview.rows_to_add === 0
+    && preview.rows_pending + preview.rows_failed === 0;
+  const topUpBlocked = blockedReason || (allFull ? "Every folder is full" : "");
+  const canTopUp = !!preview && !topUpBlocked && !topUpMutation.isPending && !applyMutation.isPending;
 
   return (
     <div className="panel" style={{ marginBottom: 12 }} data-testid="blueprint-preview">
@@ -91,11 +139,26 @@ export default function BlueprintPreview({ planId, datasetId, value, hasPromptPi
         <h3>Preview</h3>
         <span style={{ fontSize: 12, color: "var(--fg-mute)", opacity: stale ? 0.6 : 1 }} data-testid="blueprint-totals">
           {preview
-            ? `${preview.leaf_count} folder${preview.leaf_count !== 1 ? "s" : ""} · ${preview.rows_to_add} row${preview.rows_to_add !== 1 ? "s" : ""} to add`
+            ? `${preview.leaf_count} folder${preview.leaf_count !== 1 ? "s" : ""} · ${preview.rows_to_add} row${preview.rows_to_add !== 1 ? "s" : ""} to add · ${preview.images_short} image${preview.images_short !== 1 ? "s" : ""} short`
+              + (preview.rows_pending + preview.rows_failed > 0 ? ` · ${preview.rows_pending} pending · ${preview.rows_failed} failed` : "")
             : "Working it out…"}
           {stale && preview ? " (updating…)" : ""}
         </span>
         <div style={{ flex: 1 }} />
+        <span style={{ fontSize: 12, color: "var(--fg-mute)" }} data-testid="topup-settings">
+          into Base folder: {subfolder ? <span className="mono">{subfolder}</span> : "(dataset root)"}
+          {setCaption ? ", prompt as caption" : ""}
+        </span>
+        <button
+          className="btn" disabled={!canTopUp} title={topUpBlocked || "Add the missing rows, reset failed ones and run them"}
+          data-testid="blueprint-topup"
+          onClick={() => preview && topUpMutation.mutate({
+            planId, body: JSON.parse(debouncedJSON) as BlueprintValue, total: preview.rows_to_add,
+            deleteOrphans: deleteOrphans && orphanPending > 0,
+          })}
+        >
+          {topUpMutation.isPending ? "Topping up…" : "Top up"}
+        </button>
         <button
           className="btn primary" disabled={!canApply} title={blockedReason || undefined}
           onClick={() => preview && applyMutation.mutate({
@@ -152,6 +215,7 @@ export default function BlueprintPreview({ planId, datasetId, value, hasPromptPi
                   <th style={cell}>Folder</th>
                   <th style={num}>Target</th>
                   <th style={num}>Kept</th>
+                  <th style={num}>Short</th>
                   <th style={num}>Open</th>
                   <th style={num}>To add</th>
                   <th style={cell}>Sample prompts</th>
@@ -163,6 +227,7 @@ export default function BlueprintPreview({ planId, datasetId, value, hasPromptPi
                     <td style={cell} className="mono">{l.path}</td>
                     <td style={num}>{l.target}</td>
                     <td style={num}>{l.kept}</td>
+                    <td style={num}>{l.short}</td>
                     <td style={num}>{l.open}</td>
                     <td style={num}>{l.to_add}</td>
                     <td style={{ ...cell, color: "var(--fg-mute)" }}>

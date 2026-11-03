@@ -17,7 +17,7 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-03, after M6 §2b)
+## Next session (updated 2026-11-03, after M6 §2c)
 
 1. M5's five stages merged on 2026-10-30 as PR #101. Only its cleanup is open, and that waits
    a release. See [server-state-plan/README.md](server-state-plan/README.md) for what was
@@ -48,8 +48,9 @@ restates its stages.
    `comfy-per-row-subfolders` is deleted. **Work on M6 happens on that branch.** The
    `docs/dev/comfyui.md` split is done there: the run body is now `docs/dev/comfy-run.md` and the
    page `docs/dev/comfy-page.md`. §7 (the mock ComfyUI server), §2a (blueprints, see
-   `docs/dev/comfy-structured.md`) and §2b (the outline call) have landed there too. The next
-   M6 work is §2c, Top up.
+   `docs/dev/comfy-structured.md`), §2b (the outline call) and §2c (Top up) have landed there
+   too, so the arc's cut point is reached. The next M6 work is §3, the optional LLM rewrite
+   pass; §4 waits for M8 stages 2 and 3 on `main`.
    Decisions 7–9 and this M6 checklist exist only on that branch until it
    merges, so `main`'s next decision takes number 10. Its migrations `e5c1a9d3f7b2` → `b7d2f4a9c1e3` follow
    `main`'s `c2b8e4f6a1d7`; rebase at stage boundaries.
@@ -58,8 +59,10 @@ restates its stages.
    M8 stages 5 and 6 now wait only for M4, since M7 has merged.
 6. Three docs seams stay queued in [pending-splits.md](pending-splits.md) on `main` with nothing over
    budget: `README.md`'s § Features deletion (deferred when its budget went to 4,000),
-   `docs/scoring.md`'s residual seam, `docs/dev/quality/style-similarity.md` at 91% after
-   the M7 port, and `docs/dev/image-processing-models.md` at 98% after M8 stage 3. Each is picked up by the next session that appends to its file. Re-measure first and check both halves land under 60% of budget — five of
+   `docs/scoring.md`'s residual seam, and `docs/dev/quality/style-similarity.md` at 91% after
+   the M7 port. On this branch a fourth is queued: `docs/dev/comfy-structured.md` (about 3,000
+   words), split before M6 §3 adds its rewrite pass. Each is picked up by the next session that
+   appends to its file. Re-measure first and check both halves land under 60% of budget — five of
    M3's seven recorded seams had to be re-cut on execution.
 7. A split moves sections, so `§` pointers that named a section in the same file now
    point across files. `check_docs.py` does not check them, so grep `§` in every touched
@@ -157,7 +160,8 @@ gates are green and it is pushed.
   `brief`/`draft` columns), the *Blueprint* tab, and `docs/dev/comfy-structured.md`.
 - [x] §2b: the outline call and the review panel, reachable without an LLM. Done 2026-11-03:
   the `comfy_outline` job saves a draft for *Use it* / *Discard*.
-- [ ] §2c: Top up. The plan's cut point if the arc stops early.
+- [x] §2c: Top up. The plan's cut point if the arc stops early. Done 2026-11-03: Apply, reset
+  failed rows, run pending ones, in one press.
 - [ ] §3: the optional LLM rewrite pass.
 - [ ] Rebase onto `main` once M8 stages 2 and 3 have landed there. Needed by §4.
 - [ ] §4: the stepping run (`Run` row, `advance_run()`), its page and the VRAM handoff.

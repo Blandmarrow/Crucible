@@ -7,6 +7,7 @@ into the dataset. See docs/dev/comfyui.md, and docs/dev/comfy-run.md for the
 job.
 """
 import asyncio
+import contextlib
 import copy
 import json
 import logging
@@ -238,6 +239,15 @@ class BlueprintApplyRequest(BlueprintPreviewRequest):
     # review and Apply cannot turn a reviewed 300 rows into 30,000.
     confirm_total: int = Field(ge=0)
     delete_orphan_pending: bool = False
+
+
+class BlueprintTopUpRequest(BlueprintApplyRequest):
+    """Apply, then run what the blueprint's folders still need. The run fields mirror
+    RunRequest's, since Top up queues the same `comfy_generate` run."""
+
+    subfolder: str = Field(default="", max_length=512)
+    set_caption: bool = True
+    label: str | None = Field(default=None, max_length=200)
 
 
 class OutlineRequest(BaseModel):
@@ -1452,6 +1462,57 @@ async def apply_blueprint(plan_id: str, body: BlueprintApplyRequest, db: AsyncSe
             raise HTTPException(409, str(e))
 
 
+@router.post("/plans/{plan_id}/blueprint/top-up")
+async def top_up_blueprint(plan_id: str, body: BlueprintTopUpRequest, db: AsyncSession = Depends(get_db)):
+    """Fill every folder that came up short: Apply, reset the blueprint's failed rows,
+    and run its pending ones.
+
+    Targets are absolute, so pressing it again once the folders are full adds nothing
+    and queues nothing (`job_id: null`). The spec comes from the body, as for Apply, so
+    what runs is what the preview showed (docs/dev/comfy-structured.md § Top up).
+    """
+    plan = await _get_plan(db, plan_id)
+    alias = _prompt_alias(plan)
+    if not alias:
+        raise HTTPException(400, NO_PROMPT_PIN_MSG)
+    # Before anything is written: a missing ComfyUI URL or a `..` base folder must not
+    # leave rows added for a run that is then refused.
+    await _run_preflight(db, plan)
+    normalize_subfolder(body.subfolder)
+    # One lock from the 409 check to the run's commit. Released in between, a second
+    # press queued on the lock would pass the check (no job yet), add nothing, and then
+    # hit the run's 409 — an error toast over a run that did start.
+    async with _plan_lock(plan_id):
+        if await _plan_job_active(db, plan_id, ("comfy_generate", "comfy_prompts")):
+            raise HTTPException(409, "A run or prompt-generation job for this plan is queued or running — wait for it to finish")
+        try:
+            applied = await blueprint_service.apply(
+                db, plan, body.spec, body.seed,
+                prompt_alias=alias,
+                start_order=await _next_sort_order(db, plan_id),
+                confirm_total=body.confirm_total,
+                allow_over_cap=body.allow_over_cap,
+                delete_orphan_pending=body.delete_orphan_pending,
+            )
+        except blueprint_service.BlueprintInvalid as e:
+            raise HTTPException(400, f"The blueprint has errors: {e}")
+        except blueprint_service.OverCap as e:
+            raise HTTPException(400, str(e))
+        except blueprint_service.TotalChanged as e:
+            raise HTTPException(409, str(e))
+        reset, pending = await blueprint_service.prepare_top_up(db, plan)
+
+        out = {"created": applied["created"], "reset": reset, "deleted_rows": applied["deleted_rows"], "job_id": None, "total": 0}
+        if not pending:
+            return out
+        run = await _start_run(db, RunRequest(
+            plan_id=plan_id, row_ids=pending, subfolder=body.subfolder,
+            set_caption=body.set_caption,
+            label=body.label or f"ComfyUI top up: {plan.name} — {len(pending)} row{'s' if len(pending) != 1 else ''}",
+        ), hold_lock=False)
+    return {**out, "job_id": run["job_id"], "total": run["total"]}
+
+
 @router.delete("/plans/{plan_id}/blueprint/draft", status_code=204)
 async def discard_blueprint_draft(plan_id: str, db: AsyncSession = Depends(get_db)):
     """Clear the outline call's draft: after *Use it* (the client has saved it as the
@@ -1591,9 +1652,12 @@ async def outline_blueprint(plan_id: str, body: OutlineRequest, db: AsyncSession
 
 # ── Run ───────────────────────────────────────────────────────────────────────
 
-@router.post("/run")
-async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
-    plan = await _get_plan(db, body.plan_id)
+async def _run_preflight(db: AsyncSession, plan: ComfyPlan) -> tuple[str, Dataset]:
+    """What a run needs before anything is queued: the ComfyUI URL and the dataset.
+
+    Its own function so Top up can check it *before* Apply writes rows, rather than
+    write them and then refuse the run.
+    """
     if not plan.workflow_json:
         raise HTTPException(400, "Plan has no workflow — paste an API-format workflow JSON first")
 
@@ -1605,11 +1669,28 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
     dataset = await db.get(Dataset, plan.dataset_id)
     if not dataset:
         raise HTTPException(404, "Dataset not found")
+    return comfy_url, dataset
+
+
+@router.post("/run")
+async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
+    return await _start_run(db, body)
+
+
+async def _start_run(db: AsyncSession, body: RunRequest, *, hold_lock: bool = True) -> dict:
+    """Pre-flight, 409 guard and enqueue for a `comfy_generate` run: `POST /comfy/run`,
+    and Top up's run of the pending rows.
+
+    Takes the plan lock unless `hold_lock=False`, which a caller already holding it
+    must pass — `asyncio.Lock` is not re-entrant, so taking it again would deadlock.
+    """
+    plan = await _get_plan(db, body.plan_id)
+    comfy_url, dataset = await _run_preflight(db, plan)
 
     # One run at a time per plan. The check and the job's commit hold the plan lock,
     # so a blueprint Apply cannot pass its own guard in between and then delete
     # pending rows this run is about to load.
-    async with _plan_lock(body.plan_id):
+    async with _plan_lock(body.plan_id) if hold_lock else contextlib.nullcontext():
         if await _plan_job_active(db, body.plan_id, ("comfy_generate",)):
             raise HTTPException(409, "A generation run for this plan is already queued or running")
 

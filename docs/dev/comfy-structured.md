@@ -186,6 +186,59 @@ This was the user's ruling on the plan's open question about edit-then-top-up.
 - **No `declare_subfolders`.** Apply writes row folders only. A run declares its whole
   tree once, before its loop (`docs/dev/comfy-run.md`).
 
+## Top up
+
+`POST …/blueprint/top-up` fills every folder that came up short in one press. Its body
+is Apply's (`spec`, `seed`, `confirm_total`, `allow_over_cap`, `delete_orphan_pending`)
+plus the run's `subfolder`, `set_caption` and `label`. It returns `{created, reset,
+deleted_rows, job_id, total}`. In order:
+
+1. **Before anything is written:** the prompt pin 400, the run's pre-flight
+   (`_run_preflight`: workflow present, ComfyUI URL set, dataset exists), and
+   `normalize_subfolder` on the base folder (a `..` is a 400). Otherwise a missing URL or a
+   bad folder would add rows for a run that is then refused.
+2. **Under the plan lock, all the way to the run's commit:** the 409 for a live run or
+   prompt job, then Apply itself, with the same `confirm_total` rule, so what runs is what
+   the preview showed.
+3. **`blueprint_service.prepare_top_up`:** reset the current leaves' failed rows to pending
+   (clearing `error_msg` and `prompt_id`, as `rows/reset` does), then list their pending
+   rows in queue order.
+   - Only rows of current leaves, so Top up never re-runs an orphan or a row typed by hand.
+   - **The leaf ids are queried, never read off `bp.leaves`.** This runs in Apply's
+     session, and with `expire_on_commit=False` an already-loaded collection is not
+     reloaded: it still listed the leaves Apply had just deleted, so an edit followed by
+     Top up ran the orphans instead of the new folders.
+   - The failed rows were already counted as future images by the fill, and resetting
+     them is what keeps that count honest.
+   - **So are rows left `running`.** Under the lock, with no live run, nothing is running
+     them: a hard kill left them. Skipped, a short folder would report "every folder is
+     full".
+4. **`_start_run(…, hold_lock=False)`** queues an ordinary `comfy_generate` run over those
+   explicit row ids. `_start_run` is `POST /comfy/run`'s body, factored out. It normally
+   takes the plan lock itself, and Top up already holds it, which `asyncio.Lock` (not
+   re-entrant) would deadlock on.
+   - The lock is held through the run's commit for a reason. Released in between, a second
+     press queued on it would pass the 409 (no job yet), add nothing, and then hit the
+     run's 409: an error over a run that did start.
+
+**Nothing pending means nothing queued: `job_id: null`.** Because targets are absolute,
+pressing Top up again once every folder is full adds no rows and starts no run.
+
+It does no `declare_subfolders`: the run declares its tree once, before its loop
+(`docs/dev/comfy-run.md`).
+
+The preview carries what Top up needs to show:
+- per leaf, `short` = target − kept (images, not rows)
+- in total, `images_short`, `rows_pending` and `rows_failed`, summed over every leaf rather
+  than the 500 listed
+
+`backend/tests/test_blueprint_top_up_http.py` runs it against `FakeComfy`:
+- the first press fills the folders, and a second does nothing
+- a deleted image is refilled in its own folder only
+- a failed row, or one left `running`, is reset and re-run rather than duplicated
+- after an edit, the new folders run and the orphans do not
+- a missing ComfyUI URL or a `..` base folder writes nothing
+
 ## The outline call
 
 **One LLM call turns a brief into a draft blueprint**: `POST …/blueprint/outline`

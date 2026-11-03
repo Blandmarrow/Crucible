@@ -23,6 +23,10 @@ interface Props {
   hasPromptPin: boolean;
   /** A run is live on this plan: the server refuses Apply, so the form is read-only. */
   running: boolean;
+  /** The run bar's Base folder and Prompt-as-caption toggle, which Top up runs with. */
+  subfolder: string;
+  setCaption: boolean;
+  onRunStarted: (jobId: string, planId: string) => void;
 }
 
 const MAX_SEED = 2 ** 31 - 1;
@@ -49,7 +53,7 @@ export default function BlueprintPanel(props: Props) {
   );
 }
 
-function BlueprintForm({ planId, datasetId, hasPromptPin, running, initial }: Props & { initial: BlueprintValue }) {
+function BlueprintForm({ planId, datasetId, hasPromptPin, running, subfolder, setCaption, onRunStarted, initial }: Props & { initial: BlueprintValue }) {
   const [spec, setSpec] = useState<BlueprintSpec>(initial.spec);
   const [seed, setSeed] = useState(initial.seed);
   const value: BlueprintValue = { spec, seed };
@@ -155,6 +159,7 @@ function BlueprintForm({ planId, datasetId, hasPromptPin, running, initial }: Pr
         <BlueprintPreview
           planId={planId} datasetId={datasetId} value={value}
           hasPromptPin={hasPromptPin && !running}
+          subfolder={subfolder} setCaption={setCaption} onRunStarted={onRunStarted}
         />
       </fieldset>
     </div>

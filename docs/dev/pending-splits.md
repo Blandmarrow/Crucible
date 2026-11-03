@@ -205,3 +205,20 @@ utilities → `docs/dev/shared-utilities.md`.
   PM-009/PM-013 cite § Upscaling and § LUT grading; repoint the ones that mean the job.
   `docs/dev/video/reextract.md` cites § LUT Color Grading for the PNG fallback.
   The intro's sentence naming the shared loop points at "§ Upscaling's last paragraphs".
+
+## docs/dev/comfy-structured.md
+
+- **Moves:** § The outline call, plus §3's LLM rewrite pass when it lands (the M6 plan names
+  this file as its home)
+- **New file:** docs/dev/comfy-structured-llm.md (the LLM side of structured generation)
+- **Why here:** recorded 2026-11-03 at about 3,000 of 3,500 words, after M6 §2c, ahead of §3,
+  which would push it over. Everything else is deterministic: tables, expansion, fill
+  accounting, orphans, Apply and Top up, with no provider in sight. The outline call and the
+  rewrite pass are both LLM calls through `ml/prompt_generator.py`, sharing the
+  `json_schema`-then-plain fallback and the PM-004/PM-005 outcome rules. They read together,
+  next to `docs/dev/comfy-prompts.md`.
+- **Watch for:** `backend/routers/comfy.py`'s `outline_blueprint` docstring cites
+  "docs/dev/comfy-structured.md § The outline call", and so do `docs/dev/comfy-prompts.md`'s
+  intro and `docs/dev/comfy-page.md`'s outline-draft bullet. All three need repointing. The
+  plan folder's §3 section says the rewrite pass goes in comfy-structured.md; update that
+  sentence too.

@@ -14,7 +14,10 @@ ComfyUI. Plans, rows, `ComfyClient` and the router's other endpoints are in
 run regardless of status; otherwise all `pending` rows in `sort_order`. A 409 guards against a
 second pending/running run for the same plan — matched on `job_type` **and**
 `config["plan_id"]`, so a prompt-generation job never blocks a run (see
-`docs/dev/comfy-prompts.md`). Standard job pattern (nested `_run(job_id)`
+`docs/dev/comfy-prompts.md`). The pre-flight is `_run_preflight` and the rest of the route is
+`_start_run`, which a blueprint's Top up calls with explicit row ids
+(`docs/dev/comfy-structured.md` § Top up). The 409 check and the job's commit hold the
+per-plan `_plan_lock`, which blueprint Apply shares. Standard job pattern (nested `_run(job_id)`
 closure, own `AsyncSessionLocal`, auto label `ComfyUI: {plan} — N rows`).
 
 **The run's whole folder tree is declared once, before the row loop.**

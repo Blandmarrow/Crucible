@@ -138,13 +138,12 @@ a draft on the blueprint for *Use it* / *Discard*. Both are documented in
 Grouping rows by leaf in `ComfyRowsTable` was optional and is not built: the Folder column
 already shows each row's leaf path.
 
-### §2c — Top up
+### §2c — Top up (landed)
 
-Per leaf, **shortfall = target − completed images filed under that leaf**, counted from the DB
-(images reached through the leaf's rows' `image_ids`), never from a stored counter. Top up shows
-the shortfall per leaf and in total, adds the missing rows from the same seeded template walk
-(continuing past the prompts already used), and runs only the pending rows. Because targets are
-absolute, pressing it twice does nothing the second time. §5's loop is this, repeated with gates.
+Built on 2026-11-03: `POST …/blueprint/top-up` is Apply, then reset the blueprint's failed
+rows, then run its pending ones through `_start_run`. It is documented in
+`docs/dev/comfy-structured.md` § Top up. §5's loop is this, repeated with gates; §4 calls the
+same service functions (`blueprint_service.apply`, `prepare_top_up`).
 
 Rows whose leaf a blueprint edit deleted were settled with §2a (the user's ruling,
 2026-11-03): they count toward nothing, the preview reports them, and Apply can delete their

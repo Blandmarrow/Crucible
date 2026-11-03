@@ -236,12 +236,18 @@ async def preview(
             "failed": e.stats.failed,
             "yield": round(e.yield_, 2),
             "to_add": e.to_add,
+            # Images the folder still lacks: what Top up reports as short.
+            "short": max(0, e.leaf.target - e.stats.kept),
             "samples": compose(e.leaf, cursor, SAMPLES_PER_LEAF) if i < PREVIEW_SAMPLE_LEAVES else [],
         })
     return {
         "leaves": leaves,
         "leaf_count": len(fill.entries),
         "rows_to_add": fill.rows_to_add,
+        # Over every leaf, not just the listed 500.
+        "images_short": sum(max(0, e.leaf.target - e.stats.kept) for e in fill.entries),
+        "rows_pending": sum(e.stats.pending for e in fill.entries),
+        "rows_failed": sum(e.stats.failed for e in fill.entries),
         "row_cap": fill.row_cap,
         "over_cap": fill.rows_to_add > fill.row_cap,
         "errors": fill.expansion.errors,
@@ -334,3 +340,49 @@ async def apply(
 
     await db.commit()
     return {"created": created, "leaves": len(fill.entries), "deleted_rows": deleted_rows}
+
+
+async def prepare_top_up(db: AsyncSession, plan: ComfyPlan) -> tuple[int, list[str]]:
+    """After an Apply: reset the blueprint's failed rows and list its pending ones.
+
+    Only rows of the blueprint's current leaves, so Top up never re-runs an orphan or a
+    row typed by hand. Failed rows already counted as future images in the fill, so
+    resetting them is what keeps that count honest. So are rows left `running`: the
+    caller holds the plan lock and has checked that no run is live, so nothing is
+    running them — a hard kill left them — and skipping them would report "every
+    folder is full" over a folder that is short. Returns (rows reset, pending row ids
+    in queue order). Commits.
+    """
+    # Queried, never read off `bp.leaves`: this runs in Apply's session, which sets
+    # expire_on_commit=False, so an already-loaded collection is not reloaded and still
+    # lists the leaves Apply just deleted — Top up then ran the orphans, not the new folders.
+    leaf_ids = list(
+        (
+            await db.execute(
+                select(ComfyLeaf.id).join(ComfyBlueprint).where(ComfyBlueprint.plan_id == plan.id)
+            )
+        ).scalars()
+    )
+    if not leaf_ids:
+        return 0, []
+    reset = 0
+    pending: list[tuple[int, str]] = []
+    for chunk in chunked(leaf_ids):
+        rows = (
+            await db.execute(
+                select(ComfyRow).where(
+                    ComfyRow.plan_id == plan.id,
+                    ComfyRow.leaf_id.in_(chunk),
+                    ComfyRow.status.in_(("pending", "failed", "running")),
+                )
+            )
+        ).scalars().all()
+        for r in rows:
+            if r.status != "pending":
+                r.status = "pending"
+                r.error_msg = None
+                r.prompt_id = None
+                reset += 1
+            pending.append((r.sort_order, r.id))
+    await db.commit()
+    return reset, [rid for _, rid in sorted(pending)]

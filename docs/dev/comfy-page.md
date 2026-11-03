@@ -80,6 +80,22 @@ image's generation metadata on its detail page, and a failed row's error tooltip
       on errors, over the cap without the override, and with no prompt pin.
     - A 409 toasts the server's reason and refetches. Success invalidates rows, plans,
       prompts and the preview.
+    - **It also refetches on window focus and every 20 s.** Kept and short change outside
+      the tab: an image deleted in the gallery makes its folder short. Without a refetch the
+      panel sat on "0 short" with Top up disabled. A finished run in `activeRuns`
+      invalidates it too.
+    - **A background refetch is not "stale".** The buttons wait only for a spec still
+      debouncing or placeholder data for a new key, never for `isFetching`. Counting it
+      disabled both buttons every 20 s and dropped clicks; `confirm_total` already 409s if
+      the rows moved meanwhile.
+  - **Top up** sits beside Apply, under the same rules. It is also disabled when nothing
+    is short, to add, pending or failed ("Every folder is full").
+    - It sends Apply's body plus the run bar's **Base folder** and **Prompt as caption**,
+      which live in `ComfyPage` state and are shown read-only beside the button.
+    - **The returned job joins `activeRuns`** through `onRunStarted(jobId, planId)`, the
+      same as `runMutation`. Tracking, invalidation, the completion toast and the
+      `isRunning` gate then apply unchanged.
+    - `job_id: null` toasts "Every folder is full".
   - **The e2e.** `comfy-run.spec.ts` authors a blueprint by hand, applies it, checks the rows'
     folders and `leaf_id`s, and runs them.
 - **`WorkflowPinPanel`** — paste textarea + `.json` file loader + *Scan folder…* button

@@ -124,6 +124,8 @@ export default function ComfyPage() {
       if (["completed", "failed", "cancelled"].includes(progress.status)) {
         qc.invalidateQueries({ queryKey: ["comfy", "rows", planId] });
         qc.invalidateQueries({ queryKey: ["comfy", "plans", datasetId] });
+        // A finished run moves the blueprint's kept / short / pending counts.
+        qc.invalidateQueries({ queryKey: ["comfy", "blueprint-preview", planId] });
         qc.invalidateQueries({ queryKey: ["images", datasetId] });
         qc.invalidateQueries({ queryKey: ["subfolders", datasetId] });
         qc.invalidateQueries({ queryKey: ["datasets"] });
@@ -393,6 +395,9 @@ export default function ComfyPage() {
           datasetId={datasetId}
           hasPromptPin={hasPromptPin}
           running={isRunning}
+          subfolder={subfolder}
+          setCaption={setCaption}
+          onRunStarted={(jobId, pid) => setActiveRuns((prev) => new Map(prev).set(jobId, pid))}
         />
       )}
 

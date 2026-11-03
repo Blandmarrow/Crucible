@@ -178,6 +178,8 @@ export interface BlueprintPreviewLeaf {
   /** Images per completed row. */
   yield: number;
   to_add: number;
+  /** Images the folder still lacks (target − kept): what Top up reports as short. */
+  short: number;
   /** The next prompts this leaf's rows would get; only the first 20 leaves carry them. */
   samples: string[];
 }
@@ -187,6 +189,11 @@ export interface BlueprintPreview {
   leaves: BlueprintPreviewLeaf[];
   leaf_count: number;
   rows_to_add: number;
+  /** Over every leaf (not just the listed 500): images missing, and the current
+   *  leaves' pending and failed rows, which Top up runs (failed ones reset first). */
+  images_short: number;
+  rows_pending: number;
+  rows_failed: number;
   row_cap: number;
   over_cap: boolean;
   /** Any error blocks Apply. */
@@ -314,6 +321,16 @@ export const comfyApi = {
   }) =>
     client.post<{ created: number; leaves: number; deleted_rows: number }>(`${blueprintPath(planId)}/apply`, body)
       .then((r) => r.data),
+  /** Apply, reset the blueprint's failed rows, and run its pending ones as a normal
+   *  `comfy_generate` run. `job_id` is null when every folder is full and nothing is
+   *  pending. Same 400/409s as Apply, plus the run's pre-flight 400s. */
+  topUpBlueprint: (planId: string, body: BlueprintValue & {
+    confirm_total: number; allow_over_cap?: boolean; delete_orphan_pending?: boolean;
+    subfolder: string; set_caption: boolean;
+  }) =>
+    client.post<{ created: number; reset: number; deleted_rows: number; job_id: string | null; total: number }>(
+      `${blueprintPath(planId)}/top-up`, body,
+    ).then((r) => r.data),
   /** One LLM call in a `comfy_outline` job: the brief → `SavedBlueprint.draft`, for
    *  review. Writes no rows and never touches the spec. 409 while one is live. */
   outlineBlueprint: (planId: string, body: {

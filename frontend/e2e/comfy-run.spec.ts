@@ -140,7 +140,7 @@ test('a hand-written blueprint expands into rows with folders, and they run', as
   await scenario.getByLabel('Folder path').fill('knights/{character}')
   await scenario.getByLabel('Prompt template').fill('{character}, {camera}')
 
-  await expect(page.getByTestId('blueprint-totals')).toHaveText('2 folders · 4 rows to add', { timeout: 15_000 })
+  await expect(page.getByTestId('blueprint-totals')).toHaveText('2 folders · 4 rows to add · 4 images short', { timeout: 15_000 })
   const apply = page.getByRole('button', { name: 'Apply', exact: true })
   await expect(apply).toBeEnabled()
   await apply.click()
@@ -162,6 +162,31 @@ test('a hand-written blueprint expands into rows with folders, and they run', as
   await page.getByRole('button', { name: 'Rows', exact: true }).click()
   await page.getByRole('button', { name: 'Run pending (4)' }).click()
   await expect(page.getByTestId('comfy-rows-table').getByText('completed', { exact: true })).toHaveCount(4, { timeout: 30_000 })
+
+  // Top up: everything is full, so it is disabled.
+  await page.getByRole('button', { name: 'Blueprint', exact: true }).click()
+  await expect(page.getByTestId('blueprint-totals')).toContainText('0 images short', { timeout: 15_000 })
+  const topUp = page.getByTestId('blueprint-topup')
+  await expect(topUp).toBeDisabled()
+
+  // Delete one generated image through the API; the folder is short again.
+  const done: LeafRow[] = await (await request.get(rowsUrl)).json()
+  const imageIds = done.flatMap((r) => r.image_ids)
+  expect(imageIds).toHaveLength(4)
+  const del = await request.delete(`/api/v1/images/${imageIds[0]}`)
+  expect(del.status(), await del.text()).toBeLessThan(300)
+  // Reopen the tab: the preview refetches on mount.
+  await page.getByRole('button', { name: 'Rows', exact: true }).click()
+  await page.getByRole('button', { name: 'Blueprint', exact: true }).click()
+  await expect(page.getByTestId('blueprint-totals')).toContainText('1 image short', { timeout: 15_000 })
+  await expect(topUp).toBeEnabled()
+  await topUp.click()
+
+  await expect
+    .poll(async () => ((await (await request.get(rowsUrl)).json()) as LeafRow[]).map((r) => r.status), { timeout: 30_000 })
+    .toEqual(['completed', 'completed', 'completed', 'completed', 'completed'])
+  const images = await (await request.get('/api/v1/images/', { params: { dataset_id: ds.id } })).json()
+  expect(images).toHaveLength(4)
 })
 
 test('the Blueprint tab opens the draft-from-a-description dialog', async ({ page, request }) => {

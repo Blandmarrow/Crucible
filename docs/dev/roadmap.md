@@ -17,7 +17,7 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-04, after M8 stages 2 and 3)
+## Next session (updated 2026-11-03, after the M6 port)
 
 1. M5's five stages merged on 2026-10-30 as PR #101. Only its cleanup is open, and that waits
    a release. See [server-state-plan/README.md](server-state-plan/README.md) for what was
@@ -31,6 +31,7 @@ restates its stages.
    `main` and re-run the gates; its migrations end at `e7c4a1b9d2f6`. If M7 merges first, M4's
    first migration `c3b8e1d7a52f` re-parents from `f2a6c8e4b1d7` onto M7's `c2b8e4f6a1d7`, and
    M4 resolves the overlap in `SelectionToolbar.tsx`, `queryKeys.ts` and `ImageDetailPage.tsx`.
+   If M6 merges before M4, M4 re-parents onto M6's last migration instead.
 3. **The M7 port merged on 2026-11-03 as PR #108**: layer 7 at 0.30/0.70 is the style
    default, each run records its blend weights, and the layer picker warns before a run that
    must fail. The user had both `style-embedding-measurement` and `feat/m7-style-port`
@@ -39,19 +40,20 @@ restates its stages.
    cite. Its plan is
    now [style-embedding-plan/README.md](style-embedding-plan/README.md), and the research
    folder's findings moved into `docs/dev/quality/style-similarity.md`. What is left in M7 is
-   below; M6 is still independent and can go any time.
-4. **M8 stages 2 and 3 landed on `refactor/m8-stages-2-3`** (2026-11-04): one helper for a
-   job's image scope (`services/image_scope.py`) and one job loop for upscale and LUT
-   (`services/image_edit_job.py`), with no behaviour change beyond a LUT replace rewriting the
-   same width and height. Merge it, then rebase the held M6
-   branch onto `main`: its §4 calls jobs from code and waited for these two stages. What the
-   stages found and left alone is in [cleanup-plan/README.md](cleanup-plan/README.md) § Found
-   during stages 2 and 3, left as they were.
-5. M8's follow-ups 8, 9, 10 and 11 can go any time; stage 3 left inpaint and detection crop
-   out, so item 8 no longer waits for it. Batch move and copy, in item 9, must wait for M4 to
-   merge. Items 7, 12 and 13 wait for stage 6, which replaces that code. M8 stages 5 and 6
-   now wait only for M4, since M7 has merged. Stage 4 can go any time.
-6. Four docs seams stay queued in [pending-splits.md](pending-splits.md) with nothing over
+   below.
+4. **M6 is ported and its build has started, held on `feat/m6-comfy-automation`**
+   ([decision 7](decisions/07-m6-built-whole-on-one-branch.md)): per-row folders are 8dee5de
+   there, the plan is rewritten in
+   [comfy-automation-plan/README.md](comfy-automation-plan/README.md) by decisions 8 and 9, and
+   `comfy-per-row-subfolders` is deleted. **Work on M6 happens on that branch**, and the next
+   M6 session starts by splitting `docs/dev/comfyui.md` (4,440 words) along its two seams in
+   `pending-splits.md`. Decisions 7–9 and this M6 checklist exist only on that branch until it
+   merges, so `main`'s next decision takes number 10. Its migration `e5c1a9d3f7b2` follows
+   `main`'s `c2b8e4f6a1d7`; rebase at stage boundaries.
+5. M8's follow-ups 9, 10 and 11 can go any time. Batch move and copy, in item 9, must wait for
+   M4 to merge. Items 7, 8, 12 and 13 wait for stages 6 and 3, which replace that code.
+   M8 stages 5 and 6 now wait only for M4, since M7 has merged.
+6. Three docs seams stay queued in [pending-splits.md](pending-splits.md) on `main` with nothing over
    budget: `README.md`'s § Features deletion (deferred when its budget went to 4,000),
    `docs/scoring.md`'s residual seam, `docs/dev/quality/style-similarity.md` at 91% after
    the M7 port, and `docs/dev/image-processing-models.md` at 98% after M8 stage 3. Each is picked up by the next session that appends to its file. Re-measure first and check both halves land under 60% of budget — five of
@@ -74,10 +76,13 @@ restates its stages.
 
 ## Porting the unmerged branches
 
-Three branches held work from August that never reached `main`. M7's has landed; M4's is
-ported and held; M6's is still to port. They land one at a time. M4 and M7 conflict with each other in six files, and whichever lands second
-resolves them; M7 does not wait for M4 ([decision 5](decisions/05-m7-goes-ahead-without-m4.md)).
-M6 touches neither and is the smallest.
+Three branches held work from August that never reached `main`. M7's has landed. M4's and
+M6's are both ported and held on their own branches: M4 until the user chooses to ship it, M6
+until its whole build is done ([decision 7](decisions/07-m6-built-whole-on-one-branch.md)). M4
+and M7 conflicted in six files, and M4, landing second, resolves them; M7 did not wait for M4
+([decision 5](decisions/05-m7-goes-ahead-without-m4.md)). M6 shares no files with M4, but both
+add migrations, so **whichever of the two merges second re-parents its first migration** onto
+the other's head.
 
 1. Cut each port's branch from the latest `main`, and merge it before starting the next. All
    three add migrations from old revisions, so each re-parents onto the head the last one left.
@@ -87,9 +92,10 @@ M6 touches neither and is the smallest.
    A plan file gets its own transient folder, registered in `TRANSIENT_DIRS`.
 4. Before merging, check every path added to `main` since the branch was cut. A clean port only
    reconciles lines that clash, and a missed mirror or rebuild path fails silently.
-5. Leave the source branch untouched until its port has merged, then delete it. M4 is the
-   exception: the user had `feat/scoring-arc` deleted on 2026-11-02 once every commit was
-   verified on the port branch, which is held unmerged.
+5. Leave the source branch untouched until its port has merged, then delete it. M4 and M6 are
+   the exceptions: the user had `feat/scoring-arc` deleted on 2026-11-02 and
+   `comfy-per-row-subfolders` on 2026-11-03, once every commit was verified on the port
+   branch, which is held unmerged.
 
 ## Milestones
 
@@ -128,11 +134,31 @@ to date. Open rulings go in the decision log as they are made.
 
 ### M6 — ComfyUI per-row folders and automation
 
-Gate: per-row folders merged with their docs, then the remaining stages expanded here in their
-plan's order.
+Gate: the whole build below, done on `feat/m6-comfy-automation` and merged once
+([decision 7](decisions/07-m6-built-whole-on-one-branch.md)). Plan:
+[comfy-automation-plan/README.md](comfy-automation-plan/README.md), revised by
+[decision 8](decisions/08-templates-first-filed-by-folder.md) and
+[decision 9](decisions/09-runs-step-forward-on-job-completion.md). Tick each stage when its
+gates are green and it is pushed.
 
-- [ ] Port per-row output folders from `comfy-per-row-subfolders`: c2d6a6d. Its plan comes with
-  it (docs/dev/roadmap/comfy-automation.md on that branch).
+- [x] Port per-row output folders from `comfy-per-row-subfolders`: c2d6a6d. Ported 2026-11-03 as
+  8dee5de, with the migration re-parented onto `c2b8e4f6a1d7` and the plan moved into its own
+  folder and rewritten. The old branch is deleted.
+- [ ] Split `docs/dev/comfyui.md` along its two recorded seams. The first action of the next
+  M6 session, since every later stage appends to it.
+- [ ] §7: the mock ComfyUI server. Extend the pytest `FakeComfy`, and serve it on a real port
+  for Playwright. Every later stage tests against it.
+- [ ] §2a: blueprints, leaves, the pure expansion service and its guard rails, and prompts
+  composed from templates.
+- [ ] §2b: the outline call and the review panel, reachable without an LLM.
+- [ ] §2c: Top up. The plan's cut point if the arc stops early.
+- [ ] §3: the optional LLM rewrite pass.
+- [ ] Rebase onto `main` once M8 stages 2 and 3 have landed there. Needed by §4.
+- [ ] §4: the stepping run (`Run` row, `advance_run()`), its page and the VRAM handoff.
+- [ ] §5: the goal loop, gates and budgets. Needs §4.
+- [ ] §6: the dry run and the recipe library. Needs §4.
+- [ ] Merge: rebase onto `main`, re-parent the first migration onto M4's head if M4 merged
+  first, run every gate, open the PR.
 
 ### M7 — Style embedding
 

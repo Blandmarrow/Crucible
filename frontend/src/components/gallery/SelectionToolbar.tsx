@@ -178,7 +178,9 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
   const embeddingTypeInitialized = useRef(false);
   useEffect(() => {
     if (!embeddingTypeInitialized.current) { embeddingTypeInitialized.current = true; return; }
-    if (embeddingType === "clip") setDinoLayer("all");
+    // As on QualityPage: CLIP hides the layer picker, so switching back to a
+    // DINOv2 mode should show the measured default, not "all".
+    if (embeddingType === "clip") setDinoLayer(DEFAULT_DINO_LAYER);
   }, [embeddingType]);
 
   useEffect(() => {

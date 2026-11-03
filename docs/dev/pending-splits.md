@@ -170,3 +170,19 @@ utilities → `docs/dev/shared-utilities.md`.
   it is the index doc for the same material, so anything § Features says that the topic docs
   do not is a fact to move *there* rather than lose. A handful of Features bullets name
   things with no topic doc at all (verify each against the Docs table before cutting).
+
+## docs/dev/quality/style-similarity.md
+
+- **Moves:** § Other models were measured and not adopted — its three `###` parts (DINOv3;
+  Kaloscope, CSD and PE-Core; How to test the next candidate), about 950 words
+- **New file:** docs/dev/quality/style-models.md, with a row in `docs/dev/quality.md`'s
+  routing table rather than in CLAUDE.md's Map (the Quality family is hubbed)
+- **Why here:** recorded at 3,198 words (91% of budget) by the M7 port, which folded in the
+  deleted `style-model-research/` folder. That section is about *which model*, not about how
+  the shipped modes work: it is research history plus a test protocol, and it grows every
+  time a candidate is tried, where the rest of the file changes only when the code does.
+  Moving it leaves the producing half near 2,250 words, under the 60% target.
+- **Watch for:** decision 6 and `docs/dev/roadmap.md` § M7 cite § Other models were
+  measured and not adopted and § Kaloscope, CSD and PE-Core by name, and § Which layer, and
+  why it moved twice points at "the later model runs (below)" — that pointer becomes
+  cross-file. `docs/dev/style-embedding-plan/README.md` Stage 2 cites § DINOv3.

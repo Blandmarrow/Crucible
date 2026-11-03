@@ -183,7 +183,7 @@ TRANSIENT_DIRS: set[str] = {
     "docs/dev/gpt-review",
     "docs/dev/rating-plan",
     "docs/dev/server-state-plan",
-    "docs/dev/style-model-research",
+    "docs/dev/style-embedding-plan",
 }
 
 # Inline-code tokens that look like paths but are illustrative, not files.

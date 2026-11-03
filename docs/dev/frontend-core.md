@@ -33,7 +33,7 @@ This file covers the shared frontend conventions that are not tied to one page: 
 
 Ollama and OpenAI-compat have no entry, so the style picker is hidden for them. `modelType()` checks `model === "florence2_promptgen"` explicitly before the general `startsWith("florence2")` fallback to avoid misclassification. JoyCaption uses `model.startsWith("joycaption")` after the florence2 checks.
 
-`frontend/src/constants/dinoLabels.ts` — `DINO_LAYER_LABELS: Record<string, string>` mapping layer number (1–12) to a human-readable description. Shared by `ImageDetailPage` and any future UI that shows per-layer DINOv2 scores.
+`frontend/src/constants/dinoLabels.ts` — `DINO_LAYER_LABELS: Record<string, string>` mapping layer number (1–12) to a human-readable description. Shared by both layer pickers (`QualityPage`, `SelectionToolbar`) and `ImageDetailPage`'s `DinoLayerBreakdown`. Layer 12 reads "Last block, pre-layernorm" so it cannot be confused with the pickers' separate *Final embedding* option. The other eleven names were never measured; replacing them is Stage 2b in `docs/dev/style-embedding-plan/README.md`.
 
 `frontend/src/constants/flags.ts` — `FLAG_OPTIONS: readonly [{key, label}]` mapping each quality flag key to its display label. `FlagKey` is the derived union type. Shared by `ExportPage`, `CaptioningPage`, `BulkEditForm`, and `BulkEditPage` — every exclude/skip-flag surface renders this list, so adding a flag here adds it everywhere; do not redeclare locally. The backend counterpart is `ALLOWED_FLAG_KEYS` in `backend/utils.py`, which must be kept in sync by hand.
 

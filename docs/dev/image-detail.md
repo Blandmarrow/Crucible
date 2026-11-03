@@ -56,8 +56,9 @@ What matters at this page's level:
   meter preference should not hide it. Same query key, so the two share one cache entry.
 - **`DinoLayerBreakdown`** (local to `ImageDetailPage.tsx`) renders `dino_layer_scores` on a
   **fixed 0–1 axis**. It used to normalise each bar to the largest score within the image,
-  which made one bar read 100% however poor the match; the layers-1–9 de-emphasis and the
-  layer-12 `stored` marker landed in the same change.
+  which made one bar read 100% however poor the match. No layer is dimmed, and the `stored`
+  marker follows the run's recorded `dino_layer` (none when the run is unrecorded) — see
+  `docs/dev/quality/style-match.md` § `DinoLayerBreakdown` — the axis it used to lie about.
 
 ## AI generation metadata
 

@@ -16,7 +16,7 @@ entry point: the tables below route from a code path to whichever file in
 | [scores-stale.md](quality/scores-stale.md) | The `scores_stale` bit: `record_in_place`, the clear predicate, the surfaces |
 | [duplicate-detection.md](quality/duplicate-detection.md) | `find_duplicates_sync`, and the duplicate flag as a relationship kept true by `duplicate_service.py` |
 | [duplicate-resolution.md](quality/duplicate-resolution.md) | The duplicates read path, same-source groups, the panel's bulk bar and `resolve_duplicates` |
-| [style-similarity.md](quality/style-similarity.md) | The `embedding_type` modes, what each is measurably worth, all-layers scoring |
+| [style-similarity.md](quality/style-similarity.md) | The `embedding_type` modes, what each is measurably worth, why the default is layer 7, the models measured and not adopted, embedding coverage, the layer picker, all-layers scoring |
 | [style-match.md](quality/style-match.md) | `StyleSimilarityRun`, the distribution endpoint, the percentile contract, the meters |
 
 ## Where things live
@@ -28,7 +28,7 @@ not a see-also, and says which part of the code it owns.
 
 | Editing… | Read |
 |---|---|
-| `backend/routers/quality.py` | `docs/dev/quality/scoring.md` for `POST /quality/score`, the job and the model endpoints; + `docs/dev/quality/duplicate-detection.md` for `_flag_duplicates`; + `docs/dev/quality/duplicate-resolution.md` for `GET /quality/duplicates/{dataset_id}` and the resolve; + `docs/dev/quality/style-similarity.md` for `POST /quality/style-similarity` and `embed-references`; + `docs/dev/quality/style-match.md` for the GET and `_record_style_run`; + `docs/dev/quality/aesthetic-model.md` for `aesthetic-coverage` and `only_mismatched` |
+| `backend/routers/quality.py` | `docs/dev/quality/scoring.md` for `POST /quality/score`, the job and the model endpoints; + `docs/dev/quality/duplicate-detection.md` for `_flag_duplicates`; + `docs/dev/quality/duplicate-resolution.md` for `GET /quality/duplicates/{dataset_id}` and the resolve; + `docs/dev/quality/style-similarity.md` for `POST /quality/style-similarity`, `embed-references` and `embedding-coverage`; + `docs/dev/quality/style-match.md` for the GET and `_record_style_run`; + `docs/dev/quality/aesthetic-model.md` for `aesthetic-coverage` and `only_mismatched` |
 | `backend/ml/technical_scorer.py` | `docs/dev/quality/scoring.md`; + `docs/dev/quality/duplicate-detection.md` for `find_duplicates_sync` |
 | `backend/ml/aesthetic_scorer.py`, `backend/ml/aesthetic_v2_5_scorer.py` | `docs/dev/quality/aesthetic-model.md` for the shared batch loop and the marker; + `docs/dev/quality/scoring.md` for the columns and the failure contract |
 | `backend/ml/dino_scorer.py`, `backend/ml/nsfw_scorer.py` | `docs/dev/quality/scoring.md` |
@@ -39,6 +39,7 @@ not a see-also, and says which part of the code it owns.
 | `backend/services/threshold_service.py` | `docs/dev/quality/scoring.md` § Flag thresholds; + `docs/dev/settings.md` for the settings surface |
 | `backend/utils.py` (`record_in_place`) | `docs/dev/quality/scores-stale.md` |
 | `backend/scripts/style_gate.py` | `docs/dev/quality/style-similarity.md` § What the modes are actually worth |
+| `backend/scripts/style_crossed_probe.py`, `backend/scripts/dino_embed_offline.py` | `docs/dev/quality/style-similarity.md` § Which layer, and why it moved twice; + § How to test the next candidate |
 
 ### Frontend
 
@@ -46,7 +47,7 @@ not a see-also, and says which part of the code it owns.
 |---|---|
 | `frontend/src/pages/QualityPage.tsx` | `docs/dev/quality/scoring.md` § Frontend coverage for the scoring panel; + `docs/dev/quality/aesthetic-model.md` for the picker; + `docs/dev/quality/duplicate-resolution.md` for the duplicates panel; + `docs/dev/quality/style-similarity.md` for the style picker |
 | `frontend/src/constants/aestheticModels.ts` | `docs/dev/quality/aesthetic-model.md` |
-| `frontend/src/constants/styleModes.ts` | `docs/dev/quality/style-match.md` § The shared mode copy |
+| `frontend/src/constants/styleModes.ts` | `docs/dev/quality/style-match.md` § The shared mode copy; + `docs/dev/quality/style-similarity.md` for `DEFAULT_DINO_LAYER`, `normalizeDinoLayer` and `describeEmbeddingGap` |
 | `frontend/src/utils/percentile.ts` | `docs/dev/quality/style-match.md` § The client-side percentile contract |
 | `frontend/src/components/image/StyleMatchPanel.tsx` | `docs/dev/quality/style-match.md` § The rendered surfaces |
 | `frontend/src/components/gallery/ImageCard.tsx` (its style meter) | `docs/dev/quality/style-match.md` § The rendered surfaces |

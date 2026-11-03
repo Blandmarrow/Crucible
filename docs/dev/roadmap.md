@@ -17,7 +17,7 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-03, after the media run)
+## Next session (updated 2026-11-03, after the M7 port)
 
 1. M5's five stages merged on 2026-10-30 as PR #101. Only its cleanup is open, and that waits
    a release. See [server-state-plan/README.md](server-state-plan/README.md) for what was
@@ -28,24 +28,21 @@ restates its stages.
    branch waits. On that branch only, for now: decision 4 (rating keys and old snapshots), the
    rebuilt `rating-plan/README.md` and the M4 roadmap ticks. Its source, `feat/scoring-arc`,
    is deleted; all four of its commits are on the port branch. Before merging, rebase onto
-   `main` and re-run the gates; its migrations end at `e7c4a1b9d2f6`.
-3. **Pick up here: port M7 with the layer-7 default**
-   ([decision 6](decisions/06-layer-7-default-and-no-new-style-model.md)). The style research
-   is done. The other-media run (2026-11-03, branch `exp/style-media`, pushed, not merged)
-   found no candidate general: Kaloscope, CSD and PE-Core are all "neutral outside drawn art",
-   and the layer-7 baseline beat `main` on photographs, paintings and 3D films too. Summary:
-   [style-model-research/README.md § Second run](style-model-research/README.md#second-run-2026-11-03-no-model-is-general).
-   The port is the last M7 checkbox below; it does not wait for M4
-   ([decision 5](decisions/05-m7-goes-ahead-without-m4.md)). When it lands, the research
-   folder's durable findings move to `docs/dev/quality/style-similarity.md`, as its intro
-   says. The CLIP QuickGELU fix stays a separate item. M6 is still independent and can go
-   any time.
+   `main` and re-run the gates; its migrations end at `e7c4a1b9d2f6`. If M7 merges first, M4's
+   first migration `c3b8e1d7a52f` re-parents from `f2a6c8e4b1d7` onto M7's `c2b8e4f6a1d7`, and
+   M4 resolves the overlap in `SelectionToolbar.tsx`, `queryKeys.ts` and `ImageDetailPage.tsx`.
+3. **The M7 port is on `feat/m7-style-port`** (2026-11-03, pushed, PR open, not merged):
+   layer 7 at 0.30/0.70 is the style default, each run records its blend weights, and the
+   layer picker warns before a run that must fail. Merge it on the user's word. Its plan is
+   now [style-embedding-plan/README.md](style-embedding-plan/README.md), and the research
+   folder's findings moved into `docs/dev/quality/style-similarity.md`. What is left in M7 is
+   below; M6 is still independent and can go any time.
 4. M8's follow-ups 9, 10 and 11 can go any time. Batch move and copy, in item 9, must wait for
    M4 to merge. Items 7, 8, 12 and 13 wait for stages 6 and 3, which replace that code.
-5. Two docs seams stay queued in [pending-splits.md](pending-splits.md) with nothing over
-   budget: `README.md`'s § Features deletion (deferred when its budget went to 4,000) and
-   `docs/scoring.md`'s residual seam. Either is picked up by the next session that appends
-   to its file. Re-measure first and check both halves land under 60% of budget — five of
+5. Three docs seams stay queued in [pending-splits.md](pending-splits.md) with nothing over
+   budget: `README.md`'s § Features deletion (deferred when its budget went to 4,000),
+   `docs/scoring.md`'s residual seam, and `docs/dev/quality/style-similarity.md` at 91% after
+   the M7 port. Each is picked up by the next session that appends to its file. Re-measure first and check both halves land under 60% of budget — five of
    M3's seven recorded seams had to be re-cut on execution.
 6. A split moves sections, so `§` pointers that named a section in the same file now
    point across files. `check_docs.py` does not check them, so grep `§` in every touched
@@ -128,7 +125,9 @@ plan's order.
 ### M7 — Style embedding
 
 Gate: the layer and blend change merged with its docs, then the remaining stages expanded here
-in their plan's order. Does not wait for M4 ([decision 5](decisions/05-m7-goes-ahead-without-m4.md)).
+in their plan's order. Plan: [style-embedding-plan/README.md](style-embedding-plan/README.md).
+Stage 2 there (DINOv3) is not built, by
+[decision 6](decisions/06-layer-7-default-and-no-new-style-model.md). Does not wait for M4 ([decision 5](decisions/05-m7-goes-ahead-without-m4.md)).
 
 - [x] Test DINOv3 offline before building it in (2026-11-02, `exp/dinov3-test`, no app code).
   Two pre-registered runs. On two anime styles (`test2`) three of four DINOv3 settings beat
@@ -139,11 +138,11 @@ in their plan's order. Does not wait for M4 ([decision 5](decisions/05-m7-goes-a
   seven-illustrator run in that branch's docs/dev/roadmap/style-embedding.md.
 - [x] Research and test other models for style similarity (2026-11-03, `exp/style-models`, no
   app code). Kaloscope 3.0 and CSD passed a pre-registered test on a new anime set and on
-  `test3`; PE-Core tied. Summary: [style-model-research/README.md](style-model-research/README.md).
+  `test3`; PE-Core tied. Summary: `docs/dev/quality/style-similarity.md` § Kaloscope, CSD and
+  PE-Core.
 - [x] Test the three models on photographs, 3D art and digital paintings (2026-11-03,
   `exp/style-media`, no app code). No candidate is general; Kaloscope's verdict is fragile.
-  Summary:
-  [style-model-research/README.md § Second run](style-model-research/README.md#second-run-2026-11-03-no-model-is-general).
+  Summary: the same section.
 - [x] Decide whether to adopt Kaloscope (or CSD) as a style mode: not for now
   ([decision 6](decisions/06-layer-7-default-and-no-new-style-model.md)). Reopening it needs
   a superseding entry, then an adoption plan: licence, its own embedding column and
@@ -155,8 +154,15 @@ in their plan's order. Does not wait for M4 ([decision 5](decisions/05-m7-goes-a
   ([decision 6](decisions/06-layer-7-default-and-no-new-style-model.md)). It beat `main` on
   all five sets of the two pre-registered runs: anime, illustrators, photographs, paintings
   and 3D films.
-- [ ] Port from `style-embedding-measurement`: every commit except 3b00223, already on `main`,
-  and the doc splits 9f6219e and 9156988, because `main` made its own.
+- [x] Port from `style-embedding-measurement`: every commit except 3b00223, already on `main`,
+  and the doc splits 9f6219e and 9156988, because `main` made its own. Ported 2026-11-03 on
+  `feat/m7-style-port`; 1d816ec was plan-file prose only and arrived with the plan folder.
+  **Merge it** once the user approves.
+- [ ] Stage 2b: stop the layer labels asserting things nobody measured
+  (`DINO_LAYER_LABELS`). The plan's only defect rather than improvement. Detail:
+  [style-embedding-plan/README.md § Stage 2b](style-embedding-plan/README.md#stage-2b--stop-the-layer-labels-asserting-things-nobody-measured).
+- [ ] Stage 3: dense features for prompt-free subject masks. Untested; separate from style
+  scoring.
 
 ### M8 — Structural cleanup
 

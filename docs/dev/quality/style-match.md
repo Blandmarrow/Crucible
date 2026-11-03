@@ -12,9 +12,29 @@ strong DINOv2 one, or meaningless on a layer-3 run where every image lands in 0.
 
 **`StyleSimilarityRun` (`backend/models/style_run.py`) is the missing descriptor.** One row
 per dataset, `dataset_id` unique, overwritten by every successful run — it describes the
-values *currently* in the column, not a history. It holds the mode, the layer, up to
-`REFERENCE_IDS_STORED_MAX = 64` reference ids, the true reference counts, the scored/skipped
-counts and `scoped_image_count`.
+values *currently* in the column, not a history. It holds the mode, the layer, the blend
+weights, up to `REFERENCE_IDS_STORED_MAX = 64` reference ids, the true reference counts, the
+scored/skipped counts and `scoped_image_count`.
+
+**Every recorded field comes from the run's `result` dict, not from `body`.** Each of the
+six success returns carries `dino_layer` / `clip_weight` / `dino_weight` alongside `updated`
+and `skipped`, and `_record_style_run` reads them from there — the `aesthetic_marker`
+pattern in `score_quality`, and for the same reason: the recorded value and the computation
+become one decision rather than two reads that can drift. It is not cosmetic here.
+`dino_layer` means **"the layer whose value is in `style_similarity_score`"**, and an
+`*_all_layers` request carries no layer at all while its stored headline comes from
+`DEFAULT_DINO_LAYER`; reading `body.dino_layer` would record `null` for a run that did pick
+a layer.
+
+**`clip_weight`/`dino_weight` (migration `c2b8e4f6a1d7`) are nullable, and NULL carries two
+meanings** — "predates the columns" and "this mode does not blend". Safe rather than sloppy
+because `embedding_type` sits in the same row and disambiguates: NULL on a `clip` row is the
+only correct value, NULL on a `combined` row is a pre-migration run. No backfill, for the
+same reason as the table itself — a `combined` row already present *was* scored at
+0.38/0.62, but writing that in claims a record where there is only an inference. The
+migration deliberately lands **one commit before** the retune, so no run exists whose
+weights are unrecorded and a bisect cannot land between the two. `StyleMatchPanel` shows the
+weights after the mode when they are set.
 
 Three decisions worth not re-deriving:
 
@@ -23,7 +43,9 @@ Three decisions worth not re-deriving:
   whole Stats aggregation on every style run; `DatasetOut` is also hand-built field by field
   in `list_datasets`, the trap `CLAUDE.md` names for `video_count`. The `VersionImageState`
   mirroring rule does **not** reach it: that guard derives its universe from
-  `Image.__table__.columns`, and this is a new table describing dataset-level state.
+  `Image.__table__.columns`, and this is a new table describing dataset-level state — which
+  also holds for a column added to it later, so the weights needed no mirror and no
+  `NOT_MIRRORED` entry.
 - **No backfill, and none is possible.** An already-scored dataset could have used any of
   five modes against any reference set, and neither is recoverable from the column. Existing
   datasets get no row and the UI says *"the run details were not recorded"*.
@@ -150,13 +172,20 @@ pixels).
 ### `DinoLayerBreakdown` — the axis it used to lie about
 
 `ImageDetailPage`'s per-layer bar chart normalised each bar to `maxScore` *within the image*,
-so one bar always read 100% however poor the match — and since layers 1–8 compress every
-image into 0.90–0.99, it rendered twelve near-full bars for a picture matching nothing. It
-now uses a **fixed 0–1 axis** (`clamp(score) * 100`) with stated `0` / `1.0` end labels,
-de-emphasises layers 1–9 (0.45 opacity, `--fg-mute` fill) with a caption explaining the
-compression, keeps `--accent` for layers 10–12, and marks layer 12 `stored` — it is the one
-written to `style_similarity_score`. Layers 1–9 are dimmed, never hidden: the numbers are
-stored data and this is the only place to see them.
+so one bar always read 100% however poor the match — and since the low layers compress every
+image into a narrow band, it rendered twelve near-full bars for a picture matching nothing.
+It uses a **fixed 0–1 axis** (`clamp(score) * 100`) with stated `0` / `1.0` end labels.
+
+**No layer is dimmed, and that is a correction.** An earlier version greyed out everything
+below layer 10 on the strength of the 0.90–0.99 compression; the wider sweep found the
+middle of the stack separates *best*, so the panel would have been arguing against the
+layer the app now scores on. Range is not separability
+(`docs/dev/quality/style-similarity.md` § What the modes are actually worth).
+
+The `stored` badge takes a **`storedLayer` prop** from `run.dino_layer` rather than
+hardcoding `12`. Falling back to `DEFAULT_DINO_LAYER` when the descriptor is missing would
+lie about an old row whose headline genuinely was layer 12; null renders no badge at all,
+matching `StyleMatchPanel`'s "the run details were not recorded" pattern.
 
 ### Invalidation
 

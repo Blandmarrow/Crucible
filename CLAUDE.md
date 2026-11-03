@@ -179,7 +179,7 @@ substantial edit.
 | `docs/dev/image-processing-models.md` | Working on upscaling, `spandrel` model scanning, LUT color grading, or the LaMa inpainter — the upscale job and its PNG fallback, the `.cube`/`.3dl` parsers and the LUT axis-ordering invariant, the hash-pinned TorchScript weight download | ~3250 |
 | `docs/dev/detection.md` | Working on the `/detection` router, masks, or `DetectionsPanel` — the endpoints and request validation, per-model overwrite scoping and its `inference_ok` gate | ~2550 |
 | `docs/dev/detection-inference.md` | Working on SAM2/SAM3/Florence-2/NudeNet inference or the SAM 3 checkpoint — mask refine and merge geometry, triton and deferred work | ~1340 |
-| `docs/dev/quality.md` | **Start here for anything on the Quality page** — scorers and quality flags, thresholds, the aesthetic model picker, `scores_stale` and in-place pixel rewrites, duplicate detection and resolution, style similarity and the style-match meter; its § Where things live table routes from a code path to the file in `docs/dev/quality/` that owns it | ~500 (+ details) |
+| `docs/dev/quality.md` | **Start here for anything on the Quality page** — scorers and quality flags, thresholds, the aesthetic model picker, `scores_stale` and in-place pixel rewrites, duplicate detection and resolution, style similarity and the style-match meter; its § Where things live table routes from a code path to the file in `docs/dev/quality/` that owns it | ~600 (+ details) |
 | `docs/dev/gallery.md` | **Start here for anything on `GalleryPage`** — selection, select-all-matching-filters and pagination, the subfolder sidebar, its context menu and expand/collapse, subfolder rename/move, a gallery filter or sort, drag & drop, reading the drop target and manual ordering, the `gallery-state-*` blob, persisting a gallery filter and debounced filter inputs (PM-012), the detail view's arrows (`gallery-nav-*`, `injectNavId`/`paneGo`, `serverPageContext`, the live refresh and live total); its § Where things live table routes from a code path to the file in `docs/dev/gallery/` that owns it | ~600 (+ details) |
 | `docs/dev/image-detail.md` | Working on `ImageDetailPage`, the crop tool, the style-match block or generation-metadata display — caption panel and its image-keyed draft, `StyleMatchPanel` and `DinoLayerBreakdown` | ~2035 |
 | `docs/dev/image-files.md` | Working on image upload/move/copy/rename or an image delete — upload toasts, the per-directory occupied-stem set, the files-first delete order | ~1700 |
@@ -211,7 +211,7 @@ substantial edit.
 | `docs/dev/frontend-core.md` | Working on global frontend state, a shared constants module, or the JS error console — `uploadStore` | ~3255 |
 | `docs/dev/frontend-jobs.md` | Adding a job-triggering UI or changing what a finished job invalidates — job-completion cache invalidation (single-job and id-list patterns), the stale-thumbnail warning and the terminal-emit ordering rule | ~3215 |
 | `docs/dev/panes-routing.md` | Working on panes, adding a routed page, or lazy page loading — sidebar layout and `usePaneNavigate` | ~1435 |
-| `docs/dev/persistence.md` | Adding a storage key or persisting page configuration | ~2600 |
+| `docs/dev/persistence.md` | Adding a storage key or persisting page configuration | ~2750 |
 | `docs/dev/app-stored-data.md` | Working on the `/app-data` routes, a form whose saved state lives on the server, or the one-time browser import — `ServerStateGate`, `writeToServer`, the conflict dialog, NULL meaning never saved | ~900 |
 | `docs/dev/styling.md` | Working on Tailwind/CSS, the brand mark, a modal dialog, the right-click menu, or an anchored popover/dropdown — `useModalBehavior` and `ModalShell`, `ContextMenu`, `usePopover`, `LabelPicker` | ~2770 |
 | `docs/dev/backend-infrastructure.md` | Working on `main.py`'s lifespan, the job queue, SSE, job cancellation or a CI workflow — `JobQueue.stop()`'s bounded grace-then-cancel shutdown, the broadcaster's never-dropped terminal events, the Windows CI job | ~2000 |
@@ -223,7 +223,7 @@ substantial edit.
 | `docs/dev/comfy-prompts.md` | Generating prompts with an LLM or working on `prompt_generator.py` — `parse_prompts` filtering, `GeneratePromptsModal` re-attach | ~1880 |
 | `docs/dev/comfyui-sync.md` | Working on workflow sync or the bridge extension — "Sync from canvas", `GET /comfy/canvas-workflow` and ComfyUI API constraints | ~710 |
 | `docs/dev/postmortems.md` | Doing a code review or investigating a bug — the postmortem index: past incidents as one-line rows with LIVE/MITIGATED/STRUCTURAL status, linking `docs/dev/postmortems/` | ~2170 |
-| `docs/dev/roadmap.md` | Deciding what to work on next, landing a task, or picking up a branch mid-way — order and dependencies of open work and the dated "Next session" handoff; tick it in the same session | ~1750 |
+| `docs/dev/roadmap.md` | Deciding what to work on next, landing a task, or picking up a branch mid-way — order and dependencies of open work and the dated "Next session" handoff; tick it in the same session | ~1850 |
 | `docs/dev/decisions.md` | Asking *why* the project does X, or proposing to change direction — the decision log: what was decided, by whom, and what was rejected | ~400 |
 
 ### Code review & bug investigation

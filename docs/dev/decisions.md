@@ -53,3 +53,10 @@ per-browser preferences stay in the browser. Full record:
 unmerged branches may never land; whichever of the two lands second resolves their six shared
 files. Number 4 is held by the unmerged M4 branch. Full record:
 [decisions/05-m7-goes-ahead-without-m4.md](decisions/05-m7-goes-ahead-without-m4.md).
+
+## 6. Layer-7 default, and no new style model
+
+**Decided** (2026-11-03, by the user): M7 ports the DINOv2 layer-7 style default next, and
+none of Kaloscope, CSD or PE-Core is adopted for now, since none beat it across media. Full
+record:
+[decisions/06-layer-7-default-and-no-new-style-model.md](decisions/06-layer-7-default-and-no-new-style-model.md).

@@ -33,42 +33,30 @@ docs/dev/roadmap/style-model-runs/README.md on branch `exp/style-models` (pushed
 merged), with the pre-registration, the raw tables, the leakage checks and an Opus review
 folded in. The candidate list below is the plan as first written.
 
-## Next: other media (owner's request, 2026-11-03)
+## Second run (2026-11-03): no model is general
 
-Both sets so far are drawn illustration, and a style there means one artist. The owner asked
-for the same three models to be tested on **photographs, 3D art and digital paintings**. A
-metadata-only feasibility pass ran on 2026-11-03, with no images downloaded. Three choices
-are open for the owner before any set is built:
+The owner asked for the same three models on **photographs, 3D art and digital paintings**,
+and left the open choices to the run. Three pre-registered sets: five FSA photographers from
+Commons in greyscale (`test6`), eight Danbooru digital painters (`test7`, all known to
+Kaloscope, so its score there is an upper bound) and frames from ten Blender open films
+(`test8`). Delano, Vachon and Wolcott dropped under the colour and border rules, and Hine, the
+reserve, was not fetched.
 
-- **Photographs: feasible, from Wikimedia Commons.** The public-domain FSA photographers shot
-  similar Depression-era subjects on similar black-and-white film, so the photographer's eye
-  is what differs. Files per photographer, crawled two subcategories deep with
-  `fetch_commons.py`: Delano 2,155, Lange 1,908, Wolcott 589, Rothstein 436, Vachon 407,
-  Shahn 135, Evans 107, Mydans 97, and Hine 9,305 (documentary, not FSA). The category
-  "Photographs by Russell Lee" holds 1 file, so Lee needs another root. Commons counts only
-  through subcategories, and loc.gov answers automated requests with 403. **Open:** these are
-  all 1930s monochrome. Modern colour photography needs an API source, such as Flickr with a
-  key from the owner.
-- **Digital painting: feasible only with a caveat, from Danbooru.** The test4 rules are an
-  artist unseen by Kaloscope, `1girl` + `solo`, rating general and 1024 px. Under them, no
-  `painterly` or `realistic` artist has more than 12 usable posts. Keeping `solo` but
-  dropping `1girl`, eight artists Kaloscope **was** trained on have 27–94: `yuming_li`,
-  `chan8016`, `nyte_tyde`, `fuyumurasaki`, `kuto_(kuroto)`, `koriarredondo`, `usagimarumei`
-  and `maomi_jita`. From `realistic`: `tenjin_hidetaka`, `vlfdus_0`, `bm94199`, `hatsburg`
-  and `pluvium_grandis`. (`alex_ross` paints traditionally.) Only `john_tedrick` (31) and
-  `hua_bucheng` (25) are unseen. **Open:** whether to build it with seen artists. Kaloscope's
-  score would then be an upper bound only, while CSD, PE-Core and the baseline still get a
-  fair test.
-- **3D: not feasible from Danbooru.** One artist (`serebii_(artist)`, 52, known to
-  Kaloscope) has 25 usable posts under any rule. The best unseen one has 14. **Open:**
-  - **Blender Studio's CC-BY open movies**: Sintel, Spring, Sprite Fright, Charge, Coffee
-    Run and others. Frames would be cut with the app's own video extraction. Here a style
-    means a production's look; the downloads are a few GB; characters recur within a film.
-  - Or skip 3D.
+- **No candidate is general.** Under the pre-registered rules all three are "neutral outside
+  drawn art": none hurts on a medium, and none helps on two.
+- **Kaloscope** helps only on the paintings it was trained on (+0.091), ties films and photos.
+  Its verdict is **fragile**: without Shahn, whose 35 mm frames split by aspect, its photo call
+  becomes "hurts".
+- **CSD** is slightly positive on every medium (+0.006 to +0.021) and never clears the bar.
+  No sensitivity run moves it.
+- **PE-Core** helps on films at the bar (+0.031), a gain not separated from content matching.
+- **The layer-7 baseline** beats the app on `main` on all three (+0.020, +0.080, +0.045).
+- The photo set has five styles, and both Kaloscope and PE-Core flip without one photographer.
 
-Each set then follows the protocol below. The harness on `exp/style-models` takes any
-`raw/<name>/` folder: `screen.py`, `finalize.py`, `style_embed_offline.py` and `rules.py`.
-`fetch_booru.py` already takes an artist list; photos and films need a fetcher of their own.
+The record is docs/dev/roadmap/style-media-runs/README.md on branch `exp/style-media`
+(pushed, not merged), with the pre-registration and its seven amendments, the raw tables and
+an Opus review folded in. On this evidence the owner chose the layer-7 default and no new
+model ([decision 6](../decisions/06-layer-7-default-and-no-new-style-model.md)).
 
 ## Candidates to check
 

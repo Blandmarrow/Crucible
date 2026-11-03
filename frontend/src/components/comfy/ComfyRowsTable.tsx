@@ -143,7 +143,10 @@ function FolderCell({ row, disabled, onCommit }: {
       disabled={disabled}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={() => {
-        if (draft !== null && draft !== value) onCommit(draft);
+        // Trimmed like SetRowFolderModal: the server folds slashes but keeps spaces,
+        // so "knight " would otherwise file beside "knight" as a second folder.
+        const next = draft?.trim();
+        if (next !== undefined && next !== value) onCommit(next);
         setDraft(null);
       }}
       onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
@@ -340,7 +343,10 @@ export default function ComfyRowsTable({ plan, rows, selected, onToggle, onToggl
                   />
                   <FolderCell
                     row={row}
-                    disabled={rowBusy}
+                    // Locked for the whole run, not just the busy row: the run filed its
+                    // folders from the rows it loaded at start, so a mid-run edit would
+                    // show a folder the image never went to (Set folder is locked too).
+                    disabled={runningJob}
                     onCommit={(raw) => updateMutation.mutate({ rowId: row.id, patch: { subfolder: raw } })}
                   />
                   {columns.map((p) => (

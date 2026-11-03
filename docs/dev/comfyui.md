@@ -336,7 +336,12 @@ covered request-level by `backend/tests/test_comfy_cancel_stats.py`.
   Enter blurs, `placeholder="(root)"`) but is an `<input>`, never a `<textarea>` — see the e2e
   note above. It does **not** route through `commitCell`, which builds a `values` dict: the
   shared `updateMutation` takes a generic patch object, so `commitCell` passes `{ values }` and
-  the folder cell passes `{ subfolder }`. A folder must never enter `values`. The
+  the folder cell passes `{ subfolder }`. A folder must never enter `values`. It commits the
+  **trimmed** draft, as the modal does — the server folds slashes but keeps spaces, so
+  `knight ` would be a second folder. **Every Folder cell is locked while the plan runs**, not
+  only the busy row's, unlike the parameter cells: the run files each row from the rows it
+  loaded at start (they reload only after a failed row), so a mid-run edit to a later row
+  would show a folder its image never went to, and a finished row keeps it. The
   `columns.length === 0` early return still hides the whole table for a plan with no per-row
   pins, folder column included — accepted, since such a plan cannot run anyway.
 - **`SetRowFolderModal`** (Rows toolbar *Set folder (n)*, needs a selection, disabled while

@@ -1416,9 +1416,9 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
             # Declared once, before the loop, for two reasons. `declare_subfolders`
             # **commits**, and inside the row loop that would durably commit a
             # half-written row and break the per-row atomicity the `except` handler's
-            # rollback depends on — here the session holds only reads, so the commit is
-            # a no-op on an empty unit of work (and `expire_on_commit=False` leaves
-            # `ds`/`run_rows` usable). It is also the better behaviour: the whole folder
+            # rollback depends on — here the session holds only reads, so the commit
+            # writes nothing but `declared_subfolders` (and `expire_on_commit=False`
+            # leaves `ds`/`run_rows` usable). It is also the better behaviour: the whole folder
             # tree appears in the sidebar as the run starts rather than filling in row
             # by row. A cancelled run leaves declared-but-empty folders, which
             # `list_subfolders` already supports and the user can delete.
@@ -1503,8 +1503,10 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
                 # combined path would silently rename every future file for a user who
                 # only ever sets a run-level base folder. Guarded explicitly rather than
                 # `slugify_filename(x) or stem_slug` — `slugify_filename` ends in
-                # `or "image"` and can never return something falsy.
-                own_leaf = (row.subfolder or "").rsplit("/", 1)[-1]
+                # `or "image"` and can never return something falsy. Taken from the
+                # normalized path, so a stored `a/..`, `a/b/` or `a\b` names the file
+                # after the same folder the image is filed in.
+                own_leaf = join_subfolder(row.subfolder or "").rsplit("/", 1)[-1]
                 row_stem = slugify_filename(own_leaf) if own_leaf else stem_slug
                 try:
                     wf = patch_workflow(workflow, pinned, row.values or {}, i)

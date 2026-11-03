@@ -356,3 +356,35 @@ def test_run_tolerates_a_dot_dot_subfolder_written_directly(tmp_path, monkeypatc
             assert [i["subfolder"] for i in images] == ["evil"], images
 
     run(scenario())
+
+
+def test_filename_stem_follows_the_normalized_folder(tmp_path, monkeypatch):
+    """A directly written `a/b/` or `a/b/..` names the file after the folder it lands in.
+
+    The stem used to come from the raw string, so a trailing slash fell back to the
+    plan slug and a trailing `..` slugified to `image`, while the image was filed
+    under the normalized path.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            import backend.routers.comfy as comfy_router
+            from backend.models.comfy import ComfyRow
+
+            monkeypatch.setattr(comfy_router, "ComfyClient", _FakeComfyClient)
+            ds, plan_id = await _plan(env)
+            first = await _add_row(env, plan_id)
+            second = await _add_row(env, plan_id)
+
+            async with env.Session() as s:
+                (await s.get(ComfyRow, first["id"])).subfolder = "fen/knight/"
+                (await s.get(ComfyRow, second["id"])).subfolder = "fen/knight/../squire"
+                await s.commit()
+
+            assert (await _run_plan(env, plan_id))["status"] == "completed"
+
+            images = (await env.client.get(f"{API}/images/", params={"dataset_id": ds["id"]})).json()
+            by_folder = {i["subfolder"]: i["filename"] for i in images}
+            assert by_folder["fen/knight"].startswith("knight"), images
+            assert by_folder["fen/knight/squire"].startswith("squire"), images
+
+    run(scenario())

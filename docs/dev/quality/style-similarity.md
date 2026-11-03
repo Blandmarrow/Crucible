@@ -148,9 +148,9 @@ it, had no coverage of any kind. `dino_scorer` re-exports both names for existin
 
 ### DINOv3
 
-Tested offline on 2026-11-02, on branch `exp/dinov3-test`, in two pre-registered runs, with no
-app code changed. The full write-up and raw tables are in that branch's
-docs/dev/roadmap/style-embedding.md and its `dinov3-runs/` folder.
+Tested offline on 2026-11-02, in two pre-registered runs, with no app code changed. The full
+write-up and raw tables are on branch `exp/style-media`, in docs/dev/roadmap/style-embedding.md
+and the `dinov3-runs/` folder beside it.
 - **Two anime styles.** DINOv3 (ViT-B/16 and ViT-L/16, 224 and 512 px) beat DINOv2 at the
   same relative depth. But part of that lead was a file confound: one style was all JPEG,
   the other all PNG.
@@ -188,10 +188,9 @@ PE-Core L14-336. IntroStyle and Gram matrices were dropped at the desk stage.
 On this evidence the owner chose the layer-7 default and no new model
 ([decision 6](../decisions/06-layer-7-default-and-no-new-style-model.md)). Reopening it needs
 a superseding entry, then an adoption plan: licence, its own embedding column and
-discriminator, residency. The records are on branches `exp/style-models`
-(docs/dev/roadmap/style-model-runs/README.md) and `exp/style-media`
-(docs/dev/roadmap/style-media-runs/README.md), pushed and not merged, with the
-pre-registrations, raw tables and an Opus review each.
+discriminator, residency. The records are on branch `exp/style-media` (pushed, never merged),
+in docs/dev/roadmap/style-model-runs/README.md and docs/dev/roadmap/style-media-runs/README.md,
+with the pre-registrations, raw tables and an Opus review each.
 
 **A side finding: the app builds CLIP with plain GELU**, while its weights expect QuickGELU. A
 correct build scored about +0.015 higher on both drawn-art sets. Fixing it changes every
@@ -218,7 +217,7 @@ What the runs taught, so the next one is not re-learned:
 
 The harness on `main` is `dino_embed_offline.py`, `style_gate.py` and
 `style_crossed_probe.py` in `backend/scripts/`. The sweep driver and the Wikimedia Commons
-test-set builders (`backend/scripts/style_research/`) stay on `exp/dinov3-test`, whose
+test-set builders (`backend/scripts/style_research/`) stay on `exp/style-media`, whose
 `MANIFEST.json` lists each `test3` image's Commons page and licence so the set can be rebuilt.
 A new candidate needs an extractor that writes the same `.npz` shape (`ids`, `filenames`,
 `cls`, and optionally `layers`), after which the sweep compares it unchanged.

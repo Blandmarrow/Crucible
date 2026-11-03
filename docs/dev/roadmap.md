@@ -34,7 +34,9 @@ restates its stages.
 3. **The M7 port merged on 2026-11-03 as PR #108**: layer 7 at 0.30/0.70 is the style
    default, each run records its blend weights, and the layer picker warns before a run that
    must fail. The user had both `style-embedding-measurement` and `feat/m7-style-port`
-   deleted afterwards; the `exp/*` research branches stay, as the records the docs cite. Its plan is
+   deleted afterwards, and `exp/dinov3-test` and `exp/style-models` too: all three research
+   runs live on `exp/style-media`, which contains the other two and is the record the docs
+   cite. Its plan is
    now [style-embedding-plan/README.md](style-embedding-plan/README.md), and the research
    folder's findings moved into `docs/dev/quality/style-similarity.md`. What is left in M7 is
    below; M6 is still independent and can go any time.
@@ -131,14 +133,14 @@ in their plan's order. Plan: [style-embedding-plan/README.md](style-embedding-pl
 Stage 2 there (DINOv3) is not built, by
 [decision 6](decisions/06-layer-7-default-and-no-new-style-model.md). Does not wait for M4 ([decision 5](decisions/05-m7-goes-ahead-without-m4.md)).
 
-- [x] Test DINOv3 offline before building it in (2026-11-02, `exp/dinov3-test`, no app code).
+- [x] Test DINOv3 offline before building it in (2026-11-02, no app code).
   Two pre-registered runs. On two anime styles (`test2`) three of four DINOv3 settings beat
   DINOv2 layer 7, partly on a file-format confound. On seven public-domain illustrators
   (`test3`, identical files) all four tied it, and every `test2` hypothesis failed. **Verdict:
   do not build DINOv3 on this evidence.** Reading DINOv2 at layer 7 instead of its final
   embedding beat `main` on both sets, by +0.085 to +0.223. Detail: § The DINOv3 run and § The
-  seven-illustrator run in that branch's docs/dev/roadmap/style-embedding.md.
-- [x] Research and test other models for style similarity (2026-11-03, `exp/style-models`, no
+  seven-illustrator run in docs/dev/roadmap/style-embedding.md on `exp/style-media`.
+- [x] Research and test other models for style similarity (2026-11-03, no
   app code). Kaloscope 3.0 and CSD passed a pre-registered test on a new anime set and on
   `test3`; PE-Core tied. Summary: `docs/dev/quality/style-similarity.md` § Kaloscope, CSD and
   PE-Core.

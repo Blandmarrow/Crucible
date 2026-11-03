@@ -88,16 +88,22 @@ def test_a_clean_run_records_no_failure(tmp_path):
 # Follow-up 4: a one-image run that did nothing has to say which skip it was.
 # The detail page used to blame a name collision for every processed-0 run.
 
-def _vanish_on_the_job_load():
+def _vanish_on_the_job_load(monkeypatch, job_module):
     """`chunked` that answers the request's lookup and finds nothing at the
-    job's load: to the job, the row was deleted between enqueue and run."""
+    job's load: to the job, the row was deleted between enqueue and run.
+
+    One counter across `image_scope`, which makes the request's lookup, and
+    `job_module`, which loads the rows."""
+    import backend.services.image_scope as image_scope
+
     calls = 0
 
     def chunked(seq, size=10_000):
         nonlocal calls
         calls += 1
         return [list(seq)] if calls == 1 else []
-    return chunked
+    monkeypatch.setattr(image_scope, "chunked", chunked)
+    monkeypatch.setattr(job_module, "chunked", chunked)
 
 
 def test_an_upscale_whose_row_vanished_counts_it_missing(tmp_path, monkeypatch):
@@ -108,7 +114,7 @@ def test_an_upscale_whose_row_vanished_counts_it_missing(tmp_path, monkeypatch):
             _install_fake(monkeypatch)
             ds = await env.create_dataset("d")
             img = await upload_image(env, ds["id"], "shot.png", png_bytes())
-            monkeypatch.setattr(upscale_router, "chunked", _vanish_on_the_job_load())
+            _vanish_on_the_job_load(monkeypatch, upscale_router)
 
             r = await env.client.post(f"{API}/upscaling/run", json={
                 "dataset_id": ds["id"], "image_ids": [img["id"]],
@@ -130,7 +136,7 @@ def test_a_lut_whose_row_vanished_counts_it_missing(tmp_path, monkeypatch):
             ds = await env.create_dataset("d")
             img = await upload_image(env, ds["id"], "shot.png", png_bytes())
             lut = _identity_cube(tmp_path / "identity.cube")
-            monkeypatch.setattr(lut_router, "chunked", _vanish_on_the_job_load())
+            _vanish_on_the_job_load(monkeypatch, lut_router)
 
             r = await env.client.post(f"{API}/lut/run", json={
                 "dataset_id": ds["id"], "image_ids": [img["id"]],

@@ -3,7 +3,7 @@ import logging
 from pathlib import Path
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import and_, select
+from sqlalchemy import select
 from sqlalchemy.orm import undefer
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,10 +15,11 @@ from backend.models import BackgroundJob, Image
 from backend.ml.upscaler import scan_upscale_models, upscale_image_sync
 from backend.schemas.upscale import UpscaleModelInfo, UpscaleRunRequest
 from backend.services.dataset_service import refresh_stats, refresh_stats_after_abort
+from backend.services.image_scope import resolve_scope_ids
 from backend.services.image_service import generate_thumbnail
 from backend.services.label_service import copy_labels
 from backend.services import version_service
-from backend.utils import ALLOWED_FLAG_KEYS, OUT_OF_TREE_MSG, chunked, contained_path, normalize_image_format, normalize_subfolder, record_in_place, slugify_filename, unique_filename_with_thumb, thumbnail_path_for
+from backend.utils import OUT_OF_TREE_MSG, chunked, contained_path, normalize_image_format, record_in_place, slugify_filename, unique_filename_with_thumb, thumbnail_path_for
 from backend.workers.job_queue import job_queue
 
 logger = logging.getLogger(__name__)
@@ -32,25 +33,10 @@ async def list_upscale_models():
 
 @router.post("/run")
 async def run_upscale(body: UpscaleRunRequest, db: AsyncSession = Depends(get_db)):
-    # Resolve image list
-    if body.image_ids is not None:
-        # Chunked: a select-all-matching list can pass SQLite's bind limit.
-        # Deduplicated first: one IN collapsed a repeated id, separate chunks
-        # would each return the row, and the job would edit it twice.
-        image_ids = []
-        for chunk in chunked(list(dict.fromkeys(body.image_ids))):
-            result = await db.execute(select(Image.id).where(Image.id.in_(chunk)))
-            image_ids.extend(r[0] for r in result.all())
-    else:
-        q = select(Image.id).where(Image.dataset_id == body.dataset_id)
-        if body.subfolder is not None:
-            q = q.where(Image.subfolder == normalize_subfolder(body.subfolder))
-        if body.quality_flags:
-            valid_flags = [f for f in body.quality_flags if f in ALLOWED_FLAG_KEYS]
-            if valid_flags:
-                q = q.where(and_(*[Image.quality_flags[f].as_boolean().is_not(True) for f in valid_flags]))
-        result = await db.execute(q)
-        image_ids = [r[0] for r in result.all()]
+    image_ids = await resolve_scope_ids(
+        db, dataset_id=body.dataset_id, image_ids=body.image_ids,
+        subfolder=body.subfolder, quality_flags=body.quality_flags,
+    )
 
     total = len(image_ids)
     from pathlib import Path as _Path

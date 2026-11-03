@@ -11,6 +11,7 @@ import copy
 import json
 import logging
 import math
+import random
 import time
 from collections.abc import Iterable
 from datetime import datetime
@@ -18,7 +19,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import delete as sa_delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -237,6 +238,20 @@ class BlueprintApplyRequest(BlueprintPreviewRequest):
     # review and Apply cannot turn a reviewed 300 rows into 30,000.
     confirm_total: int = Field(ge=0)
     delete_orphan_pending: bool = False
+
+
+class OutlineRequest(BaseModel):
+    """Body of the outline job: one LLM call turning a brief into a draft blueprint.
+
+    Bounded like GeneratePromptsJobRequest, because `model_dump()` lands in the job's
+    `config`, which JobOut returns verbatim — the provider's api_key never may.
+    """
+
+    provider_id: str = Field(max_length=36)
+    model_name: str = Field(default="", max_length=500)  # empty → provider default_model
+    brief: str = Field(min_length=1, max_length=20000)
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    label: str | None = Field(default=None, max_length=200)
 
 
 def _plan_out(plan: ComfyPlan) -> dict:
@@ -1371,6 +1386,12 @@ async def reset_rows(plan_id: str, body: RowResetRequest, db: AsyncSession = Dep
 # docs/dev/comfy-structured.md. Expansion is inline, never a job: it is pure CPU plus
 # one bulk insert under the row cap.
 
+# Pydantic's names for the branches of `Scenario.combine`'s union, which appear in an
+# error's location. Listed exactly: a pattern ("starts uppercase") would also drop a
+# user's invalid key such as an axis named "Character", the very thing to report.
+_UNION_BRANCH_TAGS = {"str", "constrained-str", "CombineItem"}
+
+
 def _blueprint_out(bp) -> dict | None:
     if bp is None:
         return None
@@ -1429,6 +1450,143 @@ async def apply_blueprint(plan_id: str, body: BlueprintApplyRequest, db: AsyncSe
             raise HTTPException(400, str(e))
         except blueprint_service.TotalChanged as e:
             raise HTTPException(409, str(e))
+
+
+@router.delete("/plans/{plan_id}/blueprint/draft", status_code=204)
+async def discard_blueprint_draft(plan_id: str, db: AsyncSession = Depends(get_db)):
+    """Clear the outline call's draft: after *Use it* (the client has saved it as the
+    spec) or *Discard*. Idempotent."""
+    await _get_plan(db, plan_id)
+    async with _plan_lock(plan_id):
+        bp = await blueprint_service.load_blueprint(db, plan_id)
+        if bp is not None and bp.draft is not None:
+            bp.draft = None
+            await db.commit()
+
+
+@router.post("/plans/{plan_id}/blueprint/outline")
+async def outline_blueprint(plan_id: str, body: OutlineRequest, db: AsyncSession = Depends(get_db)):
+    """One LLM call: a brief → a draft blueprint, saved on `blueprint.draft` for review.
+
+    Its own job type, since it writes no rows: it never conflicts with a run or a
+    prompt job, and the user reviews the draft before anything expands. The brief
+    goes in the user message and is never written into the plan's saved
+    instructions, which the user owns (docs/dev/comfy-structured.md § The outline call).
+    """
+    from backend.models.openai_provider import OpenAIProvider
+
+    plan = await _get_plan(db, plan_id)
+    provider = await db.get(OpenAIProvider, body.provider_id)
+    if not provider:
+        raise HTTPException(404, "Provider not found")
+    if not (body.model_name.strip() or provider.default_model):
+        raise HTTPException(400, "No model given and the provider has no default model")
+
+    async with _plan_lock(plan_id):
+        if await _plan_job_active(db, plan_id, ("comfy_outline",)):
+            raise HTTPException(409, "A blueprint draft for this plan is already being written")
+        config = body.model_dump()
+        # A path param, so model_dump() omits it; the guard above and TopBar read it.
+        config["plan_id"] = plan_id
+        job = BackgroundJob(
+            job_type="comfy_outline",
+            label=body.label or f"Blueprint draft: {plan.name}",
+            dataset_id=plan.dataset_id,
+            total_items=1,
+            config=config,
+        )
+        db.add(job)
+        # The brief is kept now, not on success, so a failed draft never costs the
+        # user a long brief they would have to retype.
+        bp = await blueprint_service.load_blueprint(db, plan_id)
+        if bp is None:
+            bp = await blueprint_service.save_spec(db, plan, BlueprintSpec(), random.randrange(2**31))
+        bp.brief = body.brief
+        await db.commit()
+
+    dataset_id = plan.dataset_id
+    provider_id = body.provider_id
+    requested_model = body.model_name.strip()
+    brief = body.brief
+    temperature = body.temperature
+
+    async def _run(job_id: str) -> None:
+        from backend.database import AsyncSessionLocal
+        from backend.ml.prompt_generator import generate_outline
+        from backend.models.openai_provider import OpenAIProvider as Provider
+        from backend.workers.progress import broadcaster
+
+        async with AsyncSessionLocal() as session:
+            # Re-check on dequeue, and raise rather than return: a silent return
+            # is reported as success.
+            plan_row = await session.get(ComfyPlan, plan_id)
+            if not plan_row:
+                raise RuntimeError("The plan was deleted before this job started")
+            prov = await session.get(Provider, provider_id)
+            if not prov:
+                raise RuntimeError("The LLM provider was deleted before this job started")
+            model_name = requested_model or prov.default_model
+            if not model_name:
+                raise RuntimeError("The provider no longer has a default model")
+            instructions = ((plan_row.gen_settings or {}).get("instructions") or "").strip()
+            base_url, api_key = prov.base_url, prov.api_key
+            max_tokens, timeout_s = prov.max_tokens, prov.timeout_s
+
+        # Emitted before the call, which can take the provider's whole timeout: it is
+        # the first event carrying plan_id, which TopBar's invalidation needs.
+        await broadcaster.emit(job_id, {
+            "type": "progress", "job_id": job_id, "job_type": "comfy_outline", "status": "running",
+            "done": 0, "total": 1, "percent": 0.0, "message": "Drafting a blueprint…",
+            "dataset_id": dataset_id, "plan_id": plan_id,
+        })
+        try:
+            raw = await generate_outline(
+                base_url=base_url, api_key=api_key, model_name=model_name, brief=brief,
+                system_instructions=instructions, temperature=temperature,
+                max_tokens=max_tokens, timeout_s=timeout_s,
+            )
+        except Exception as e:
+            raise RuntimeError(f"Blueprint draft failed: {e}") from e
+        # Cancellation is polled after the call, the one slow step. A Stop pressed
+        # during it must not save a draft and report "draft ready".
+        job_queue.raise_if_cancelled(job_id)
+        # Structural validation only: a draft with semantic errors (an unknown
+        # placeholder, a duplicate folder) is still saved, and the review panel
+        # shows its errors. One the schema cannot hold has nothing to review.
+        try:
+            spec = BlueprintSpec.model_validate(raw)
+        except ValidationError as e:
+            # A union field reports one error per branch; the deepest is the one that
+            # names the real problem (`take`, not "should be a string"), and its branch
+            # tags (`CombineItem`, `constrained-str`) mean nothing to a user.
+            worst = max(e.errors(), key=lambda err: len(err["loc"]))
+            where = ".".join(str(p) for p in worst["loc"] if p not in _UNION_BRANCH_TAGS)
+            raise RuntimeError(f"Blueprint draft failed: the model's draft is malformed at {where}: {worst['msg']}") from e
+
+        async with AsyncSessionLocal() as session:
+            plan_row = await session.get(ComfyPlan, plan_id)
+            if not plan_row:
+                raise RuntimeError("The plan was deleted while the draft was being written")
+            async with _plan_lock(plan_id):
+                bp = await blueprint_service.load_blueprint(session, plan_id)
+                if bp is None:
+                    # The spec stays empty: the draft waits for review like any other.
+                    bp = await blueprint_service.save_spec(
+                        session, plan_row, BlueprintSpec(), random.randrange(2**31)
+                    )
+                bp.draft = spec.model_dump()
+                bp.brief = brief
+                job_row = await session.get(BackgroundJob, job_id)
+                if job_row is not None:
+                    job_row.result_data = {
+                        "plan_id": plan_id,
+                        "axes": len(spec.axes),
+                        "scenarios": len(spec.scenarios),
+                    }
+                await session.commit()
+
+    await job_queue.enqueue(job, _run)
+    return {"job_id": job.id}
 
 
 # ── Run ───────────────────────────────────────────────────────────────────────

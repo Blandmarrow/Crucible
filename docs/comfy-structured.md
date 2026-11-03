@@ -44,6 +44,26 @@ Names of axes and variations use letters, digits and `_`, like `main_character`.
 
 Everything saves as you type.
 
+## Drafting a blueprint from a description
+
+**✨ Draft from a description…** asks an LLM to write the blueprint for you. Describe the
+dataset in a sentence or two, for example *"a medieval set: six characters, each in four
+biomes, alone and in pairs, ten images each"*. Then pick a provider from Settings → LLM
+Providers → [details](settings.md), and click **Draft**.
+
+The model invents the characters, their descriptors, the variation pieces and the
+scenarios. It never lists the combinations itself; Crucible does that. It follows the
+**Instructions** saved in the plan's **Generate prompts** settings when writing the
+templates (tags or prose, say), and it never changes them.
+
+- **It runs in the background**, like *Generate until N*. You can close the window or
+  leave the page, and a message tells you when the draft is ready.
+- **Nothing changes until you choose.** The draft appears above the editors with **Use
+  it** and **Discard**. *Use it* replaces your current blueprint, asking first if you have
+  one, and then you review it in the preview like any other: edit names, cut a scenario,
+  fix whatever the preview marks as an error. *Discard* throws it away.
+- The draft never adds rows. Only **Apply** does.
+
 ## Preview and Apply
 
 The **Preview** updates as you edit. It shows:

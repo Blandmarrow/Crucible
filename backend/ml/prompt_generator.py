@@ -97,6 +97,18 @@ def _split_lines(text: str) -> ParsedPrompts:
     return ParsedPrompts(prompts, filtered)
 
 
+def _strip_reasoning(raw: str) -> str:
+    """The answer without inline <think> blocks or a wrapping markdown fence."""
+    text = re.sub(r"<think(?:ing)?>.*?</think(?:ing)?>", "", raw, flags=re.DOTALL)
+    # Unclosed <think> = the model got truncated mid-reasoning; the answer never
+    # arrived. Drop everything from the tag on rather than parsing reasoning as output.
+    text = re.sub(r"<think(?:ing)?>.*", "", text, flags=re.DOTALL).strip()
+    fence = re.match(r"^```(?:json)?\s*(.*?)\s*```$", text, re.DOTALL)
+    if fence:
+        text = fence.group(1).strip()
+    return text
+
+
 def parse_prompts(raw: str) -> ParsedPrompts:
     """Parse LLM output into prompts + a dropped-line count.
 
@@ -106,13 +118,7 @@ def parse_prompts(raw: str) -> ParsedPrompts:
     markdown fences or surrounding prose — falling back to line splitting with
     list-marker and commentary stripping.
     """
-    text = re.sub(r"<think(?:ing)?>.*?</think(?:ing)?>", "", raw, flags=re.DOTALL)
-    # Unclosed <think> = the model got truncated mid-reasoning; the answer never
-    # arrived. Drop everything from the tag on rather than parsing reasoning as prompts.
-    text = re.sub(r"<think(?:ing)?>.*", "", text, flags=re.DOTALL).strip()
-    fence = re.match(r"^```(?:json)?\s*(.*?)\s*```$", text, re.DOTALL)
-    if fence:
-        text = fence.group(1).strip()
+    text = _strip_reasoning(raw)
     candidate = text
     if not candidate.startswith(("[", "{")):
         m = re.search(r"[\[{].*[\]}]", candidate, re.DOTALL)
@@ -226,3 +232,209 @@ async def generate_prompts(
         model_name, len(parsed.prompts), parsed.filtered,
     )
     return parsed
+
+
+# ── Blueprint outline (M6 §2b, docs/dev/comfy-structured.md) ──────────────────
+
+_OUTLINE_SYSTEM = (
+    "You design structured image datasets. From the user's brief, return ONE JSON object "
+    "(no markdown, no commentary) describing:\n"
+    "- axes: the kinds of entity the brief varies over (e.g. character, biome). Each axis has a "
+    "name (lowercase letters, digits, _) and entities. Each entity has an id (short, lowercase, "
+    "unique on its axis), a label (a short display name, which becomes a folder name) and a "
+    "descriptor: a concrete visual description that will be pasted VERBATIM into every prompt "
+    "that names it, so it must identify the entity on its own and stay consistent.\n"
+    "- variations: sets of interchangeable prompt pieces that vary the shots without changing "
+    "who or where (e.g. camera: low angle, wide shot; time: dawn, dusk). Each has a name "
+    "(lowercase letters, digits, _) and pieces.\n"
+    "- scenarios: how to combine axes. Each has a name; combine (a list of items, each "
+    '{"axis": name, "take": N} where take 1 means one entity at a time and take 2 means pairs '
+    "of distinct entities together); mode (\"full\" for every combination, or \"sample:K\" for K "
+    "of them); count (images per folder); path (folder pattern using {axis} placeholders, e.g. "
+    '"{biome}/{character}"); and template (the prompt pattern, using {axis} for descriptors, '
+    "{axis.label} for labels and {variation} for one piece).\n"
+    "Invent the entities; never enumerate the combinations yourself. Use only the placeholders "
+    "of axes a scenario combines and of variations you defined."
+)
+
+# Axes and variations as *lists* of named entries: a dict with free-form keys is awkward
+# to constrain with a strict JSON schema. parse_outline turns them into the spec's dicts.
+_OUTLINE_SCHEMA = {
+    "name": "blueprint_outline",
+    "schema": {
+        "type": "object",
+        "properties": {
+            "axes": {"type": "array", "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "entities": {"type": "array", "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"}, "label": {"type": "string"},
+                            "descriptor": {"type": "string"},
+                        },
+                        "required": ["id", "label", "descriptor"],
+                        "additionalProperties": False,
+                    }},
+                },
+                "required": ["name", "entities"],
+                "additionalProperties": False,
+            }},
+            "variations": {"type": "array", "items": {
+                "type": "object",
+                "properties": {"name": {"type": "string"}, "pieces": {"type": "array", "items": {"type": "string"}}},
+                "required": ["name", "pieces"],
+                "additionalProperties": False,
+            }},
+            "scenarios": {"type": "array", "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "combine": {"type": "array", "items": {
+                        "type": "object",
+                        "properties": {"axis": {"type": "string"}, "take": {"type": "integer"}},
+                        "required": ["axis", "take"],
+                        "additionalProperties": False,
+                    }},
+                    "mode": {"type": "string"},
+                    "count": {"type": "integer"},
+                    "path": {"type": "string"},
+                    "template": {"type": "string"},
+                },
+                "required": ["name", "combine", "mode", "count", "path", "template"],
+                "additionalProperties": False,
+            }},
+        },
+        "required": ["axes", "variations", "scenarios"],
+        "additionalProperties": False,
+    },
+}
+
+
+def _named_entries(value, inner: str) -> dict | None:
+    """`[{name, <inner>}]` → `{name: <inner>}`; a dict passes through, null is empty.
+
+    Two entries with one name are merged rather than the second replacing the first:
+    a model that splits an axis in two would otherwise lose half its entities from a
+    draft reported as a success.
+    """
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, list):
+        return None
+    out: dict[str, list] = {}
+    for item in value:
+        if isinstance(item, dict) and isinstance(item.get("name"), str):
+            entries = item.get(inner) or []
+            out.setdefault(item["name"].strip(), []).extend(entries if isinstance(entries, list) else [entries])
+    return out
+
+
+def _outline_from(parsed) -> dict | None:
+    if isinstance(parsed, dict) and isinstance(parsed.get("blueprint"), dict):
+        parsed = parsed["blueprint"]
+    if not isinstance(parsed, dict) or not ({"axes", "scenarios"} & parsed.keys()):
+        return None
+    axes = _named_entries(parsed.get("axes"), "entities")
+    variations = _named_entries(parsed.get("variations"), "pieces")
+    scenarios = parsed.get("scenarios") or []
+    if axes is None or variations is None or not isinstance(scenarios, list):
+        return None
+    # An outline with nothing in it is no draft. Counting it as one would report
+    # "draft ready" and let *Use it* replace the user's spec with an empty one (PM-004).
+    if not axes and not scenarios:
+        return None
+    return {"axes": axes, "variations": variations, "scenarios": scenarios}
+
+
+def parse_outline(raw: str) -> dict | None:
+    """An outline response as a BlueprintSpec-shaped dict, or None when it holds none.
+
+    Accepts the list form the schema asks for and the spec's own dict form, a
+    `{"blueprint": {...}}` wrapper, <think> blocks, fences and surrounding prose.
+    Structural validation is the caller's (`BlueprintSpec.model_validate`).
+
+    Prose is scanned with `raw_decode` at each "{" rather than cut from the first
+    "{" to the last "}": prose in this domain is full of `{axis}` placeholders, and
+    "a set for {character} in {biome}: {...}" would make that slice invalid JSON.
+    """
+    text = _strip_reasoning(raw)
+    decoder = json.JSONDecoder()
+    for start in [i for i, ch in enumerate(text) if ch == "{"]:
+        try:
+            parsed, _ = decoder.raw_decode(text, start)
+        except ValueError:
+            continue
+        outline = _outline_from(parsed)
+        if outline is not None:
+            return outline
+    return None
+
+
+async def generate_outline(
+    base_url: str,
+    api_key: str,
+    model_name: str,
+    brief: str,
+    system_instructions: str = "",
+    temperature: float = 0.7,
+    max_tokens: int = 2048,
+    timeout_s: float = 300.0,
+) -> dict:
+    """One outline call: a brief → a draft blueprint dict. Raises when none comes back.
+
+    The brief goes in the **user** message with the instruction to keep descriptors
+    usable verbatim. `system_instructions` are the plan's standing rules for how
+    prompts are written; they shape the templates and are never written to here.
+    Same structured-then-plain fallback as `generate_prompts`, for the same reason.
+    """
+    from openai import AsyncOpenAI
+
+    system = _OUTLINE_SYSTEM
+    if system_instructions.strip():
+        system = (
+            f"{system}\n\nThe prompts the templates produce must follow these standing "
+            f"instructions:\n{system_instructions.strip()}"
+        )
+    user = (
+        f"Brief: {brief.strip()}\n\n"
+        "Write each descriptor so it can be pasted verbatim into any prompt that names it."
+    )
+
+    client = AsyncOpenAI(base_url=base_url, api_key=api_key or "none", timeout=timeout_s, max_retries=0)
+    kwargs = dict(
+        model=model_name,
+        max_tokens=max(max_tokens, 8192),
+        temperature=temperature,
+        messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+    )
+
+    def _extract(resp) -> tuple[dict | None, str | None]:
+        choice = resp.choices[0] if resp.choices else None
+        raw = (choice.message.content or "") if choice else ""
+        return parse_outline(raw), (choice.finish_reason if choice else None)
+
+    outline: dict | None = None
+    finish_reason: str | None = None
+    try:
+        resp = await client.chat.completions.create(
+            **kwargs, response_format={"type": "json_schema", "json_schema": _OUTLINE_SCHEMA}
+        )
+        outline, finish_reason = _extract(resp)
+    except Exception as e:
+        logger.info("prompt_generator: outline json_schema attempt failed (%s) — falling back to plain", e)
+    if outline is None:
+        resp = await client.chat.completions.create(**kwargs)
+        outline, finish_reason = _extract(resp)
+
+    if outline is None:
+        if finish_reason == "length":
+            raise RuntimeError(
+                "the model ran out of tokens before finishing (thinking model?) — "
+                "raise the provider's max tokens in Settings → LLM Providers"
+            )
+        raise RuntimeError("the model did not return a blueprint as JSON")
+    return outline

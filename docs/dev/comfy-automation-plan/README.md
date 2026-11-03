@@ -128,25 +128,15 @@ Two departures from the sketch that stood here:
 
 §3's rewrite pass is still the slow part, and it still reuses `comfy_prompts`.
 
-### §2b — The outline call and the review panel
+### §2b — The outline call and the review panel (landed)
 
-**One LLM call turns a brief into a draft blueprint**: axes, descriptors, variation pieces and
-scenarios. It is short and creates no rows, so it is its own job type. **Descriptors and the
-brief go in the user message**, prefixed with an instruction to use them verbatim — never in the
-plan's saved instructions, which the user owns and which now live server-side in the plan's
-`gen_settings` (M5, `ComfyGenSettings.instructions`).
+Built on 2026-11-03. The review panel arrived with §2a, and it is reachable without an LLM,
+which is how the e2e journey reaches it. The outline call is the `comfy_outline` job; it saves
+a draft on the blueprint for *Use it* / *Discard*. Both are documented in
+`docs/dev/comfy-structured.md` § The outline call and `docs/dev/comfy-page.md`.
 
-The draft is **returned for review and edit before any rows are written**. The review panel shows
-axes as editable entity lists, variations as editable piece lists, scenarios as editable rows, and
-a debounced live expansion preview with sample prompts per leaf.
-
-**The review panel must be reachable without ever having run an outline call.** There is no LLM
-provider in CI, so a Playwright spec has to reach it by hand-authoring a blueprint. That is also
-better product behaviour — a blank blueprint is a legitimate starting point.
-
-`ComfyRowsTable`'s grid template is built once and shared by the header and every body row, so
-the Folder column was one insertion point. Grouping rows by leaf is the larger change, since the
-virtualizer counts rows flat; it is optional for §2b.
+Grouping rows by leaf in `ComfyRowsTable` was optional and is not built: the Folder column
+already shows each row's leaf path.
 
 ### §2c — Top up
 

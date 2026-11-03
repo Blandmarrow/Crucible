@@ -29,6 +29,7 @@ const DATASET_MODIFYING_JOB_TYPES = new Set(["duplicate", "import"]);
 // so the image/dataset invalidations would all be pointless. It gets its own
 // branch below because its whole point is surviving the modal that started it.
 const PROMPT_JOB_TYPE = "comfy_prompts";
+const OUTLINE_JOB_TYPE = "comfy_outline";
 // The eight jobs that re-cut an image thumbnail as a best-effort post-commit
 // epilogue. Each reports a `thumbnails_stale` count; the branch below is the one
 // place that turns it into something the user sees. It lives here rather than in
@@ -121,6 +122,7 @@ export default function TopBar() {
   const captionDoneRef = useRef<Map<string, number>>(new Map());
   const promptDoneRef = useRef<Map<string, number>>(new Map());
   const promptTerminalRef = useRef<Set<string>>(new Set());
+  const outlineTerminalRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     jobs.forEach((progress, jobId) => {
       // Prompt-generation jobs (ComfyUI "generate until N"): rows land per batch,
@@ -159,6 +161,24 @@ export default function TopBar() {
             toast.error(progress.message || "Prompt generation failed");
           } else {
             toast(`Prompt generation stopped — ${done} prompt${done !== 1 ? "s" : ""} kept`);
+          }
+        }
+      }
+      // Blueprint outline (ComfyUI "Draft from a description"): the job saves a draft on
+      // the blueprint, so the Blueprint tab's banner needs a refetch and the user a toast.
+      if (progress.job_type === OUTLINE_JOB_TYPE) {
+        if (TERMINAL_JOB_STATUSES.has(progress.status) && !progress.optimistic && !outlineTerminalRef.current.has(jobId)) {
+          outlineTerminalRef.current.add(jobId);
+          if (progress.plan_id) {
+            qc.invalidateQueries({ queryKey: ["comfy", "blueprint", progress.plan_id] });
+            qc.invalidateQueries({ queryKey: ["comfy", "blueprint-draft", progress.plan_id] });
+          }
+          if (progress.status === "completed") {
+            toast.success("Blueprint draft ready — review it on the Blueprint tab");
+          } else if (progress.status === "failed") {
+            toast.error(progress.message || "Blueprint draft failed");
+          } else {
+            toast("Blueprint draft stopped");
           }
         }
       }

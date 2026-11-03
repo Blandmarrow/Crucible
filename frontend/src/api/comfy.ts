@@ -301,6 +301,10 @@ export const comfyApi = {
       }
       return r.data.value;
     }),
+  /** A save the caller awaits. The form's autosave goes through `writeToServer` instead,
+   *  which never rejects; use this where a failed save must stop what comes next. */
+  putBlueprint: (planId: string, value: BlueprintValue) =>
+    client.put<{ value: SavedBlueprint }>(blueprintPath(planId), value).then((r) => r.data.value),
   /** What Apply would do with this (possibly unsaved) spec. */
   previewBlueprint: (planId: string, body: BlueprintValue & { allow_over_cap?: boolean }, signal?: AbortSignal) =>
     client.post<BlueprintPreview>(`${blueprintPath(planId)}/preview`, body, { signal }).then((r) => r.data),
@@ -310,4 +314,13 @@ export const comfyApi = {
   }) =>
     client.post<{ created: number; leaves: number; deleted_rows: number }>(`${blueprintPath(planId)}/apply`, body)
       .then((r) => r.data),
+  /** One LLM call in a `comfy_outline` job: the brief → `SavedBlueprint.draft`, for
+   *  review. Writes no rows and never touches the spec. 409 while one is live. */
+  outlineBlueprint: (planId: string, body: {
+    provider_id: string; model_name?: string; brief: string; temperature?: number;
+  }) =>
+    client.post<{ job_id: string }>(`${blueprintPath(planId)}/outline`, body).then((r) => r.data),
+  /** Clear the draft, after *Use it* (once the spec holding it is saved) or *Discard*. */
+  discardBlueprintDraft: (planId: string) =>
+    client.delete(`${blueprintPath(planId)}/draft`),
 };

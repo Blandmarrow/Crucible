@@ -163,3 +163,16 @@ test('a hand-written blueprint expands into rows with folders, and they run', as
   await page.getByRole('button', { name: 'Run pending (4)' }).click()
   await expect(page.getByTestId('comfy-rows-table').getByText('completed', { exact: true })).toHaveCount(4, { timeout: 30_000 })
 })
+
+test('the Blueprint tab opens the draft-from-a-description dialog', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-comfy-outline-${Date.now()}`)
+  await createPlanViaApi(request, ds.id, 'outline plan')
+
+  await page.goto(`/datasets/${ds.id}/comfy`)
+  await page.getByRole('button', { name: 'Blueprint', exact: true }).click()
+  await page.getByTestId('outline-open').click()
+  // No LLM is called: the dialog shows the provider picker, or says none is configured.
+  await expect(page.getByTestId('outline-modal')).toBeVisible()
+  await expect(page.getByTestId('outline-modal').getByText(/Provider|No LLM providers/).first()).toBeVisible()
+  await expect(page.getByTestId('blueprint-draft-banner')).toHaveCount(0)
+})

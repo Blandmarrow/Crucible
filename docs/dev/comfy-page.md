@@ -49,6 +49,28 @@ image's generation metadata on its detail page, and a failed row's error tooltip
     fields clamp to the schema's bounds (take ≤ 4, count ≤ 10,000), because past them both
     the save and the preview 422.
   - **Read-only while the plan runs.** A disabled `<fieldset>`, since Apply would 409 anyway.
+  - **The outline draft.** *✨ Draft from a description…* opens `OutlineModal`, which queues
+    the `comfy_outline` job (`docs/dev/comfy-structured.md` § The outline call).
+    - Like `GeneratePromptsModal`, it derives its job from `jobStore` and adds no
+      `useJobSSE`. Its provider and model default to the plan's saved "Generate prompts"
+      settings, read only.
+    - **On start it seeds `jobStore` with the job's `plan_id`.** The queue's pending event
+      carries none, so a job queued behind a long run was invisible to the plan scan
+      until `_run` began. A reopened modal then offered *Draft* again, only to get a 409.
+    - TopBar's `comfy_outline` branch toasts the outcome once per job (`outlineTerminalRef`)
+      and invalidates the draft.
+    - **The draft has its own query, `["comfy","blueprint-draft",planId]`.** The gate
+      latches its first value and never refetches into the form, so it cannot show a draft
+      that lands while the tab is open.
+  - **The draft banner's *Use it* clears the draft only after the spec holding it is
+    saved.** In order:
+    1. Await `serverWritesSettled`, so no older autosave can land on top.
+    2. Save the draft with an awaited `comfyApi.putBlueprint`.
+    3. Set the form to the draft.
+    4. `DELETE …/draft`.
+    - Not `writeToServer`: it drops a 4xx write, and `serverWritesSettled` then resolves,
+      which would clear a draft whose save never landed.
+    - A non-empty spec asks before it is replaced. *Discard* just deletes the draft.
   - **`BlueprintPreview`** is a `useQuery` on
     `["comfy","blueprint-preview",planId,debouncedJSON,allowOverCap]` (350 ms via
     `hooks/useDebouncedValue.ts`, `keepPreviousData`).

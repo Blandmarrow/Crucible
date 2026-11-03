@@ -34,7 +34,16 @@ same reason as the table itself — a `combined` row already present *was* score
 0.38/0.62, but writing that in claims a record where there is only an inference. The
 migration deliberately lands **one commit before** the retune, so no run exists whose
 weights are unrecorded and a bisect cannot land between the two. `StyleMatchPanel` shows the
-weights after the mode when they are set.
+weights after the mode when they are set, and nothing when they are NULL; QualityPage's
+"Last scored with…" line names the mode and layer but not the weights.
+
+**The descriptor does not travel with the scores.** A snapshot restore puts back
+`style_similarity_score` values without their run, and a cross-dataset copy or move carries
+them into a dataset whose descriptor names a different run. Either way the row can describe a
+configuration some of the column's values were not scored with. `isPartialScopeRun` catches
+it only when the scored count grows past the run's; a restore that leaves the count equal
+passes unflagged. This predates the blend weights, but the layer-7 change makes it bite: a
+pre-port snapshot holds 0.38/0.62 final-embedding scores.
 
 Three decisions worth not re-deriving:
 
@@ -183,7 +192,9 @@ layer the app now scores on. Range is not separability
 (`docs/dev/quality/style-similarity.md` § What the modes are actually worth).
 
 The `stored` badge takes a **`storedLayer` prop** from `run.dino_layer` rather than
-hardcoding `12`. Falling back to `DEFAULT_DINO_LAYER` when the descriptor is missing would
+hardcoding `12`, and only when `run.embedding_type` is an `*_all_layers` mode: those are the
+only runs that write `dino_layer_scores`, so after a single-layer run the bars are an older
+run's and no bar is the stored score. Falling back to `DEFAULT_DINO_LAYER` when the descriptor is missing would
 lie about an old row whose headline genuinely was layer 12; null renders no badge at all,
 matching `StyleMatchPanel`'s "the run details were not recorded" pattern.
 
@@ -205,6 +216,6 @@ to know about the extra line.
 was duplicated between `QualityPage` and `SelectionToolbar` and had already drifted. Both
 now `.map()` over it. `styleModeLabel` also maps `dino_all_layers` / `combined_all_layers`,
 which a descriptor can carry but the picker cannot select, and renders an unknown value
-verbatim. The corrected copy states the gate's measurements rather than what the modes sound
-like — the old wording ("CLIP for general images; DINOv2 for object-shape similarity")
-implied DINOv2 was the upgrade.
+verbatim. The copy says what each mode attends to and quotes no measurement — the module doc
+states that as a rule, because two earlier wordings each rested on one measurement and had to
+be taken back.

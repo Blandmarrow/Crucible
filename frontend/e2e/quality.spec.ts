@@ -84,8 +84,8 @@ test('style similarity defaults to layer 7 and refuses to run without embeddings
   await page.getByRole('button', { name: 'Expand style similarity' }).click()
   expect((await coverage).status()).toBe(200)
 
-  // The layer select only renders for dino/combined, so pick a mode first —
-  // which also exercises the mode -> layer effect.
+  // The layer select only renders for dino/combined, so pick a mode first. This
+  // proves the initial default; the reset-on-CLIP effect is not exercised here.
   await page.getByRole('button', { name: 'CLIP + DINOv2', exact: true }).click()
 
   // Layer 7, not "Layer 12"/final. The final embedding is a separate option

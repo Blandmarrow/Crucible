@@ -33,7 +33,7 @@ layer — it must, since a picker cannot read Python — and
 nothing at runtime couples them and a drift's only symptom is a number quietly disagreeing
 with itself.
 
-Local reference files can be embedded on-the-fly via `POST /quality/embed-references` (multipart upload → returns base64 CLIP embeddings). External refs are CLIP-only; `"combined"`, `"dino"`, and `"dino_all_layers"` / `"combined_all_layers"` modes require dataset images as references. No job queue — all similarity computation is CPU-only numpy and runs synchronously in the request. `StyleSimilarityRequest` accepts an optional `image_ids: list[str] | None` field; when set, only those images are scored (candidate queries in all embedding-type branches are filtered accordingly). `QualityPage` omits `image_ids` (scores the whole dataset); `SelectionToolbar` passes the current selection.
+Local reference files can be embedded on-the-fly via `POST /quality/embed-references` (multipart upload → returns base64 CLIP embeddings). External refs are CLIP-only; `"combined"`, `"dino"`, and `"dino_all_layers"` / `"combined_all_layers"` modes require dataset images as references. Both pickers enforce that by forcing `clip` whenever local files are present; the API does not — a `dino` request with `reference_embeddings` and `dino_layer: null` scores CLIP vectors as if they were DINOv2 ones, and with a numbered layer `slice_layer_embedding` raises an uncaught `ValueError` (a 500). No job queue — all similarity computation is CPU-only numpy and runs synchronously in the request. `StyleSimilarityRequest` accepts an optional `image_ids: list[str] | None` field; when set, only those images are scored (candidate queries in all embedding-type branches are filtered accordingly). `QualityPage` omits `image_ids` (scores the whole dataset); `SelectionToolbar` passes the current selection.
 
 **Getting the reference ids out of the picker.** `StyleReferencePicker`'s selection is React state on `QualityPage` (`selectedRefIds`) and the ids are never rendered, so nothing outside the page can consume the chosen set. The Action row's secondary **Copy reference IDs** button writes `Array.from(selectedRefIds).join(",")` to the clipboard (via `utils/clipboard.ts::copyText`) for that reason — it exists to feed offline harnesses such as `backend/scripts/style_gate.py`, and covers dataset references only, since dragged-in local files are embedded on the fly and have no `Image.id`.
 
@@ -228,13 +228,15 @@ A new candidate needs an extractor that writes the same `.npz` shape (`ids`, `fi
 Style similarity is the one workflow whose prerequisite is *another run*, and every branch
 answers 400 when the column it reads is empty — so until this existed the only way to find
 out was to press the button. One query, four counts (`clip_embedding`, `dino_embedding`,
-`dino_layer_embeddings`, total) within the Score page's own `subfolder` scope. `func.count`
+`dino_layer_embeddings`, total), with an optional `subfolder`. `QualityPage` asks
+**without** one, although its other panels follow the page's subfolder scope: the style run
+scores the whole dataset, so a subfolder count would disable a run that can succeed, or stay
+quiet about images it will skip. `func.count`
 over a `deferred=True` LargeBinary is a column expression evaluated in SQLite, so counting
 the 18 KB per-layer blobs loads none of them.
 
 A dedicated endpoint for the same reason as its neighbour `aesthetic_coverage`, whose
-docstring carries the argument: it needs the page's subfolder scope and a refetch on every
-finished scoring job, and pulling the whole `get_dataset_stats` aggregation onto the Score
+docstring carries the argument: it needs a refetch on every finished scoring job, and pulling the whole `get_dataset_stats` aggregation onto the Score
 page for four counts is the expensive way round. Deliberately **not** a field on
 `GET /style-similarity/{id}` — that one is on the gallery render path via `ImageCard`, and
 this is a Score-page question.
@@ -245,7 +247,8 @@ the rows carrying both rather than the exact figure: exact where it has to be (`
 iff the intersection is empty, which is the case that disables *Score similarity*, a
 guaranteed 400) and approximate only in the advisory partial warning. A partial gap warns
 and does not block — a scoped run over the covered images is legitimate, and the response
-already reports `skipped`. `"embedding-coverage"` is in `DATASET_CONTENT_SCOPE`
+already reports `skipped`. `SelectionToolbar` does no coverage check, so a selection with no
+embeddings still gets the 400. `"embedding-coverage"` is in `DATASET_CONTENT_SCOPE`
 (`constants/queryKeys.ts`), or the warning outlives the very run that fixes it.
 
 ## The layer picker has three values, not two

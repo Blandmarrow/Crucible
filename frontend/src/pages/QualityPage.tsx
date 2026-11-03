@@ -427,10 +427,12 @@ export default function QualityPage() {
   });
   // Which embeddings the current mode needs, and how many images have them.
   // `enabled`-gated on the collapsed section: a user who never opens Style
-  // similarity never fires it. Same subfolder scope as the aesthetic one above.
+  // similarity never fires it. Dataset-wide, not the page's subfolder scope:
+  // `similarityMutation` scores the whole dataset, so a subfolder count would
+  // disable a run that can succeed, or stay quiet about images it will skip.
   const { data: embeddingCoverage } = useQuery({
-    queryKey: ["embedding-coverage", datasetId, activeSubfolder ?? null],
-    queryFn: () => qualityApi.embeddingCoverage(datasetId!, activeSubfolder),
+    queryKey: ["embedding-coverage", datasetId, null],
+    queryFn: () => qualityApi.embeddingCoverage(datasetId!),
     enabled: !!datasetId && showStyleSection,
   });
   const styleGap = describeEmbeddingGap(embeddingCoverage, embeddingType, dinoLayer);
@@ -1040,8 +1042,8 @@ export default function QualityPage() {
                   style={{ fontSize: 12, color: "var(--warn)", margin: 0, lineHeight: 1.5 }}
                 >
                   {styleGap.covered === 0
-                    ? `No image in this scope has ${styleGap.needs}. Run scoring above with the matching boxes ticked first — this mode has nothing to compare.`
-                    : `Only ${styleGap.covered} of ${styleGap.total} images in this scope have ${styleGap.needs}. The rest will be skipped.`}
+                    ? `No image in this dataset has ${styleGap.needs}. Run scoring above with the matching boxes ticked first — this mode has nothing to compare.`
+                    : `Only ${styleGap.covered} of ${styleGap.total} images in this dataset have ${styleGap.needs}. The rest will be skipped.`}
                 </p>
               </div>
             )}
@@ -1062,7 +1064,7 @@ export default function QualityPage() {
                   }
                   title={
                     styleGap?.covered === 0 && externalRefFiles.length === 0
-                      ? `No image in this scope has ${styleGap.needs}, so this run would fail. Score them first.`
+                      ? `No image in this dataset has ${styleGap.needs}, so this run would fail. Score them first.`
                       : undefined
                   }
                 >

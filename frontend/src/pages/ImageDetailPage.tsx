@@ -2253,7 +2253,11 @@ export default function ImageDetailPage() {
           {image.dino_layer_scores && Object.keys(image.dino_layer_scores).length > 0 ? (
             <DinoLayerBreakdown
               scores={image.dino_layer_scores}
-              storedLayer={styleDistribution?.run?.dino_layer ?? null}
+              // Only an all-layers run writes `dino_layer_scores`; after a single-layer
+              // run the bars are an older run's, so no bar is the stored score.
+              storedLayer={styleDistribution?.run?.embedding_type?.endsWith("_all_layers")
+                ? styleDistribution.run.dino_layer ?? null
+                : null}
             />
           ) : image.has_dino_layer_embeddings ? (
             <p className="text-[11px] text-fg opacity-50 mt-1">

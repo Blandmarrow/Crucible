@@ -22,8 +22,8 @@ is safe rather than sloppy because `embedding_type` sits in the same row and
 disambiguates them: a NULL weight on a `combined` row is a pre-columns run, and a
 NULL weight on a `clip` row is the only correct value. No backfill: a `combined`
 row already in the table was scored at 0.38/0.62, but writing that in would claim
-a record where there is only an inference, and the UI's "not recorded" wording
-already covers the case.
+a record where there is only an inference. The UI shows no weights for such a
+row rather than guessing them.
 """
 from collections.abc import Sequence
 

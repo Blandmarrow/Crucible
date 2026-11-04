@@ -352,11 +352,7 @@ function ActiveRun({ run, datasetId }: { run: Run; datasetId: string }) {
       </div>
       <div style={{ padding: "8px 22px 16px" }}>
         <StageList run={run} />
-        {progress && progress.status === "running" && (
-          <div style={{ marginTop: 10, fontSize: 12, color: "var(--fg-mute)" }}>
-            {progress.message ?? "Working…"}{progress.total ? ` — ${progress.done} / ${progress.total}` : ""}
-          </div>
-        )}
+        {progress && progress.status === "running" && <ChildProgress done={progress.done} total={progress.total} message={progress.message} />}
       </div>
       {confirmCancel && (
         <ConfirmDialog
@@ -368,6 +364,30 @@ function ActiveRun({ run, datasetId }: { run: Run; datasetId: string }) {
           onCancel={() => setConfirmCancel(false)}
         />
       )}
+    </div>
+  );
+}
+
+/** The current stage's progress: one count and a bar. A job's own message (such as
+ *  "Generating 3/84") names the item it is *on*, one ahead of the finished count, so
+ *  showing both read as two numbers that disagree. The message is used only when the
+ *  job reports no total (an export counts nothing until it is done). */
+function ChildProgress({ done, total, message }: { done: number; total: number; message?: string }) {
+  if (!total) {
+    return <div style={{ marginTop: 12, fontSize: 12.5, color: "var(--fg-mute)" }}>{message ?? "Working…"}</div>;
+  }
+  const pct = Math.min(100, Math.max(0, (done / total) * 100));
+  return (
+    <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 6, maxWidth: 420 }}>
+      <span style={{ fontSize: 12.5, color: "var(--fg)" }}>
+        {done.toLocaleString()} of {total.toLocaleString()} done
+      </span>
+      <div
+        role="progressbar" aria-valuemin={0} aria-valuemax={total} aria-valuenow={done}
+        style={{ height: 6, borderRadius: 3, background: "var(--surface-2)", overflow: "hidden" }}
+      >
+        <div style={{ width: `${pct}%`, height: "100%", background: "var(--accent)", transition: "width .3s" }} />
+      </div>
     </div>
   );
 }

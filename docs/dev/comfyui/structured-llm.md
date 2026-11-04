@@ -45,6 +45,12 @@ write descriptors that can be pasted verbatim. The plan's saved "Generate prompt
 instructions (`gen_settings.instructions`) are passed as standing rules for the templates.
 They are **read, never written**: the user owns them.
 
+**The system message asks for labels as written names** ("Sir Alric", not `knight_alric`).
+With only "a short display name" to go on, Qwen3 copied each entity's id into its label
+(2026-11-04). A label is shown in the editors, read into prompts by `{axis.label}`, and
+slugged into the folder name by `blueprint_expand._slug`, so the id-shaped one was worse in
+the first two places and gained nothing in the third.
+
 **Standing instructions go before the format mandate, in every call.** One helper,
 `_with_standing`, builds the system message for prompts, the outline and the rewrite:
 the user's instructions first, the mandate last, so the mandate wins on conflict. The

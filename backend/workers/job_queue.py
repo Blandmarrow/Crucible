@@ -289,6 +289,10 @@ class JobQueue:
                     "status": "cancelled",
                     "message": "Cancelled before starting.",
                 })
+                # This path never reaches `_finish`, so the hook is called here too:
+                # a run's child cancelled before it started would otherwise leave
+                # its run `running` with nothing in flight.
+                await self._after_terminal(job)
                 return
             if self._stopping:
                 await self._finish(job, "failed", INTERRUPTED_MSG)
@@ -396,6 +400,28 @@ class JobQueue:
             event["message"] = error
         # Through the module attribute every time: tests monkeypatch `emit`.
         await broadcaster.emit(job.id, event)
+        await self._after_terminal(job)
+
+    async def _after_terminal(self, job: BackgroundJob) -> None:
+        """Step the automated run that started this job, if one did (M6 §4).
+
+        Runs after the job's terminal status is committed and emitted, so nothing it
+        does can change the job's outcome or delay its event: an exception is logged
+        and swallowed (PM-013's rule for work after a commit). `CancelledError` is
+        not caught, so a forced stop still propagates. Skipped while the queue is
+        stopping — the run is left `running`, and the next startup's
+        `reconcile_interrupted_runs` sets it `paused`. `job.config` is the one the
+        start function built, which is where `run_id` was written.
+        """
+        run_id = (job.config or {}).get("run_id")
+        if not run_id or self._stopping:
+            return
+        try:
+            from backend.services import run_service
+
+            await run_service.advance_run(run_id, job.id)
+        except Exception:
+            logger.exception("Could not step run %s after job %s ended", run_id, job.id)
 
 
 job_queue = JobQueue()

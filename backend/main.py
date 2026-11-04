@@ -55,7 +55,7 @@ from backend.utils import FileInUseError
 from backend.services.secrets_service import sync_env
 
 sync_env(None)
-from backend.routers import app_data, booru, captions, captioning, comfy, datasets, detection, export, filesystem, images, inpaint, jobs, labels, lut, models, providers, quality, settings as settings_router, system, tag_consolidation, upscaling, versioning, videos
+from backend.routers import app_data, booru, captions, captioning, comfy, datasets, detection, export, filesystem, images, inpaint, jobs, labels, lut, models, providers, quality, runs, settings as settings_router, system, tag_consolidation, upscaling, versioning, videos
 from backend.workers.job_queue import job_queue, mark_interrupted_jobs, sweep_old_jobs
 
 
@@ -68,6 +68,10 @@ async def lifespan(app: FastAPI):
     await init_db()
     await _seed_secret_env()
     await mark_interrupted_jobs()
+    # Right after: a run the shutdown left `running` is set `paused`, its child
+    # having just been failed above, for an explicit resume
+    # (docs/dev/comfyui/automation.md).
+    await _reconcile_interrupted_runs()
     await _sweep_old_jobs()
     await _sweep_orphan_dataset_folders()
     await job_queue.start()
@@ -107,6 +111,16 @@ async def _startup_db_maintenance() -> None:
         logging.getLogger(__name__).exception("Startup database maintenance failed")
     finally:
         _background_tasks.discard(asyncio.current_task())
+
+
+async def _reconcile_interrupted_runs() -> None:
+    """Pause every automated run a shutdown cut off. Never fatal to startup."""
+    from backend.services.run_service import reconcile_interrupted_runs
+
+    try:
+        await reconcile_interrupted_runs()
+    except Exception:
+        logging.getLogger(__name__).exception("Run reconciliation failed")
 
 
 async def _sweep_old_jobs() -> None:
@@ -222,6 +236,7 @@ app.include_router(labels.router, prefix=PREFIX)
 app.include_router(versioning.router, prefix=PREFIX)
 app.include_router(tag_consolidation.router, prefix=PREFIX)
 app.include_router(comfy.router, prefix=PREFIX)
+app.include_router(runs.router, prefix=PREFIX)
 app.include_router(app_data.router, prefix=PREFIX)
 
 _RESTART_SENTINEL = Path(__file__).parent.parent / ".restart"

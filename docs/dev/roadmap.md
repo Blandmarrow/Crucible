@@ -58,9 +58,11 @@ restates its stages.
    - M8 stages 2 and 3 merged to `main` on 2026-11-04 as PR #109, and this branch was
      rebased onto it the same day.
    - **§4, the stepping run, landed on 2026-11-04** (`docs/dev/comfyui/automation.md`, the
-     Runs page), with every automated gate green. It is not yet checked by hand against a
-     real ComfyUI: a full run with score and caption, that `/free` really unloads, Pause, a
-     restart mid-run and a `TopBar` cancel.
+     Runs page), with every automated gate green. The user ran it by hand the same day
+     against a real ComfyUI and LM Studio: full runs through every stage worked, `/free`
+     really freed ComfyUI's VRAM, and the scorers unloaded after scoring (measured with
+     the Windows per-process GPU counters). Still unchecked by hand: Pause, a restart
+     mid-run and a `TopBar` cancel.
    - **The next M6 work is §5**, the goal loop and the gate, which the user moved out of §4.
    - Decisions 7–9 and this M6 checklist exist only on that branch until it merges, so
      `main`'s next decision takes number 10. Its migrations `e5c1a9d3f7b2` →
@@ -193,7 +195,8 @@ gates are green and it is pushed.
   2026-11-04: start functions lifted out of the score, caption and export routes and Top
   up, migration `f3b9d1a7c5e2` (`runs`), `run_service.py`, the worker's `_after_terminal`
   hook, the Runs page and `docs/runs.md`. The user moved the gate to §5 and the snapshot
-  stage to §6 that day. Not yet checked by hand against a real ComfyUI.
+  stage to §6 that day. Full runs checked by hand against a real ComfyUI and LM Studio the
+  same day; Pause, a restart mid-run and a `TopBar` cancel are not.
 - [ ] §5: the goal loop, the gate and budgets. Needs §4.
 - [ ] §6: the dry run, the snapshot stage and the recipe library. Needs §4.
 - [ ] Merge: rebase onto `main`, re-parent the first migration onto M4's head if M4 merged

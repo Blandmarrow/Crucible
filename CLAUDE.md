@@ -187,7 +187,8 @@ substantial edit.
 | `docs/dev/image-detail.md` | Working on `ImageDetailPage`, the crop tool, the style-match block or generation-metadata display — caption panel and its image-keyed draft, `StyleMatchPanel` and `DinoLayerBreakdown` | ~2035 |
 | `docs/dev/image-files.md` | Working on image upload/move/copy/rename or an image delete — upload toasts, the per-directory occupied-stem set, the files-first delete order | ~1700 |
 | `docs/dev/image-import.md` | Working on folder import, rescan/sync, caption import or a stem-keyed derived artifact (thumbnail, poster) — `disk_exclude`, `occupied_thumb_stems`' two terms, the rescan dedupe, the import/rescan toasts | ~1950 |
-| `docs/dev/provenance.md` | Anything touching license, attribution, `source_meta`, or license filters — ingest capture precedence, cross-dataset materialization | ~3425 |
+| `docs/dev/provenance.md` | Anything touching how an image's license, attribution or `source_meta` gets its value — ingest capture precedence, cross-dataset materialization, ComfyUI synthetic stamping | ~1500 |
+| `docs/dev/provenance-api.md` | Working on a provenance endpoint, license filters or the provenance edit UI — the `""` rule, `licenses-in-use`, `useCustomLicenses` | ~2000 |
 | `docs/dev/captioning.md` | Working on a caption job, `CaptioningPage`'s progress panel, or a caption sidecar write — delimiter modes, refusal stripping, rename-on-caption, `failure_summary` and `result_data` | ~2500 |
 | `docs/dev/caption-model-picker.md` | Working on a captioning model picker or the registry's `kind`/`description` — the silent no-op, why `modelType` is the wrong gate | ~900 |
 | `docs/dev/llm-providers.md` | Working on the `/providers` router, an OpenAI-compatible provider, `openai_compat_captioner.py`, the Settings LLM Providers tab or `ModelPicker` — `from_orm_row`'s hand-kept field list, `finish_reason` logging, `max_retries=0` | ~900 |

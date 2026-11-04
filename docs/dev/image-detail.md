@@ -38,7 +38,7 @@ The **AI Generate** collapsible (`showAi` state, gated `enabled: showAi`) uses t
 
 ## Source & license provenance
 
-Images and datasets carry `source_name` / `source_url` / `license` / `attribution`, with NULL on the image meaning *inherit the dataset default*. The gallery reads the **effective** license (`ImageListItem.license`) for its badge and offers `license_filter` / `license_missing`; `ImageDetailPage` renders `components/image/ProvenancePanel.tsx`, and the selection toolbar's bulk action uses `components/gallery/SetProvenanceModal.tsx`. Ingest capture (import/rescan/upload), the derived-image rule, cross-dataset materialization and the full API surface are in `docs/dev/provenance.md`.
+Images and datasets carry `source_name` / `source_url` / `license` / `attribution`, with NULL on the image meaning *inherit the dataset default*. The gallery reads the **effective** license (`ImageListItem.license`) for its badge and offers `license_filter` / `license_missing`; `ImageDetailPage` renders `components/image/ProvenancePanel.tsx`, and the selection toolbar's bulk action uses `components/gallery/SetProvenanceModal.tsx`. Ingest capture (import/rescan/upload), the derived-image rule, cross-dataset materialization are in `docs/dev/provenance.md`; the full API surface and the edit UI are in `docs/dev/provenance-api.md`.
 
 ## Style match & the DINOv2 layer breakdown
 

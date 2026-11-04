@@ -8,6 +8,7 @@ export const RUN_STAGES = [
   "handoff_to_local",
   "score",
   "caption",
+  "free_caption_model",
   "export",
 ] as const;
 export type RunStageKey = (typeof RUN_STAGES)[number];
@@ -19,6 +20,7 @@ export const RUN_STAGE_LABELS: Record<RunStageKey, string> = {
   handoff_to_local: "Free ComfyUI's VRAM",
   score: "Score",
   caption: "Caption",
+  free_caption_model: "Unload the caption model",
   export: "Export",
 };
 

@@ -13,10 +13,12 @@ STAGE_ORDER: tuple[str, ...] = (
     "handoff_to_local",
     "score",
     "caption",
+    "free_caption_model",
     "export",
 )
 StageKey = Literal[
-    "prompts", "handoff_to_comfy", "generate", "handoff_to_local", "score", "caption", "export"
+    "prompts", "handoff_to_comfy", "generate", "handoff_to_local", "score", "caption",
+    "free_caption_model", "export",
 ]
 STAGE_LABELS: dict[str, str] = {
     "prompts": "Fill the blueprint",
@@ -25,6 +27,7 @@ STAGE_LABELS: dict[str, str] = {
     "handoff_to_local": "Free ComfyUI's VRAM",
     "score": "Score",
     "caption": "Caption",
+    "free_caption_model": "Unload the caption model",
     "export": "Export",
 }
 

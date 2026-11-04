@@ -100,6 +100,7 @@ check. The order is always run lock, then dataset or plan lock, never the revers
 | `handoff_to_local` | A `run_handoff` job: `ComfyClient.free()` (`POST /free`), best effort. Any error is a note. It is built through `backend.routers.comfy.ComfyClient`, the name the tests patch onto the fake. |
 | `score` | `start_score_job` over the run's images, technical scoring always on (it flags duplicates through `_flag_duplicates`, dataset-wide) and aesthetic optional. |
 | `caption` | `start_caption_job` over the run's images. `CaptionSettings` is named field for field after `CaptionJobRequest` and passed through whole (`_caption_body`), so the request's own validators judge it, and a field the request gains later only needs adding to the settings. `overwrite` is on by default: `comfy_generate` with `set_caption` has already written each prompt as the caption, so `False` would find nothing. |
+| `free_caption_model` | A `run_handoff` job (direction `after_caption`): `_free_caption_model` unloads whatever captioned, best effort. Skipped with a note when the recipe has no caption stage, and the page only sends it when Caption is on. See below. |
 | `export` | `start_export_job` with `image_ids=None`: the whole dataset through the form's filters. `ExportSettings` is named after the export requests, with `exclude_flags` a list joined for them (`_export_body`); duplicates are left out by default. Loss masks, the license and label filters and the subfolder limit are not in it yet. |
 
 **A stage with nothing in scope is skipped, never started with `[]`.** Score, caption and
@@ -120,9 +121,23 @@ rewrite. Run it on the ComfyUI page, then resume." Top up refuses them for the s
 (`docs/dev/comfyui/structured.md` § Top up). An unattended run cannot review which scenarios
 to rewrite, so it does not start the rewrite job itself.
 
-The VRAM handoff does nothing for an LLM. LM Studio has no unload over its OpenAI-compatible
-API, and §4's stages make no LLM call of their own. A caption model on an LLM provider is
-the user's to give a TTL.
+**Unloading the caption model** (`free_caption_model`, `_free_caption_model`). The
+OpenAI-compatible API has no unload, so each kind of model is freed its own way, and
+every failure is a note:
+- **An LM Studio provider** goes through LM Studio's native REST API (0.4 and later),
+  which sits beside the provider's `/v1` base URL: `GET /api/v1/models` lists each model's
+  `loaded_instances`, and `POST /api/v1/models/unload` takes one's `instance_id`. Every
+  instance whose model key is the caption model's name, or whose id is that name or that
+  name plus `:N`, is unloaded. A server without that API answers 404, which the note names.
+- **A remote provider** (`schemas/openai_provider._is_remote`) is left alone: its models
+  are not on this GPU.
+- **Ollama** gets a `/api/generate` with `keep_alive: 0`, its documented unload-now.
+- **A local captioner** (Florence-2, JoyCaption, PaliGemma, WD14) goes through `evict_all`,
+  as `handoff_to_comfy` does.
+
+All LLM-server calls go through `run_service._LLM_TRANSPORT`, which the tests set to an
+`httpx.MockTransport`. The two VRAM handoffs before it still do nothing for an LLM: §4's
+stages make no LLM call before captioning.
 
 ## Starting, and the checks it runs first
 

@@ -197,7 +197,10 @@ Departures from the sketch that stood here:
 - **Every stage that does work is a job**, the VRAM handoff included (`run_handoff`), so
   `advance_run` itself only records and enqueues, and nothing slow runs inside the hook.
 - **The hook also runs on the cancelled-while-queued path**, which skips `_finish`.
-- **The handoff does not unload an LLM.** §4 makes no LLM call; a provider's TTL covers it.
+- **An LLM is unloaded after captioning, by a stage of its own** (`free_caption_model`, the
+  user's request after the first hand runs, 2026-11-04). LM Studio's OpenAI-compatible API has
+  no unload, but its native REST API (0.4 and later) does. The handoffs before generating
+  still leave an LLM alone.
 - **Export takes no id list**: it exports the dataset through its filters, duplicates left
   out by default, which keeps it clear of the `[]` trap below.
 

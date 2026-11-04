@@ -25,6 +25,7 @@ import logging
 from datetime import datetime
 from typing import Any
 
+import httpx
 from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy import select
@@ -272,6 +273,10 @@ async def _begin_stage(db: AsyncSession, run: Run, idx: int, key: str) -> _Outco
         return await _stage_prompts(db, run, plan)
     if key in ("handoff_to_comfy", "handoff_to_local"):
         return await _stage_handoff(db, run, plan, key, tag)
+    if key == "free_caption_model":
+        if recipe.caption is None:
+            return _Outcome("skip", note="No caption stage to unload after")
+        return await _stage_handoff(db, run, plan, key, tag, caption_model=recipe.caption.model)
     if key == "generate":
         return await _stage_generate(db, run, plan, recipe, tag)
     if key in ("score", "caption"):
@@ -325,10 +330,12 @@ async def _stage_prompts(db: AsyncSession, run: Run, plan: ComfyPlan) -> _Outcom
     )
 
 
-async def _stage_handoff(db: AsyncSession, run: Run, plan: ComfyPlan | None, key: str, tag: str) -> _Outcome:
+async def _stage_handoff(
+    db: AsyncSession, run: Run, plan: ComfyPlan | None, key: str, tag: str, *, caption_model: str | None = None,
+) -> _Outcome:
     from backend.routers import comfy as comfy_router
 
-    direction = "to_comfy" if key == "handoff_to_comfy" else "to_local"
+    direction = {"handoff_to_comfy": "to_comfy", "handoff_to_local": "to_local"}.get(key, "after_caption")
     comfy_url = None
     if direction == "to_local":
         assert plan is not None
@@ -344,7 +351,10 @@ async def _stage_handoff(db: AsyncSession, run: Run, plan: ComfyPlan | None, key
     await db.commit()
 
     async def _run(job_id: str) -> None:
-        note = await _handoff(direction, comfy_url)
+        if direction == "after_caption":
+            note = await _free_caption_model(caption_model or "")
+        else:
+            note = await _handoff(direction, comfy_url)
         from backend.database import AsyncSessionLocal
 
         async with AsyncSessionLocal() as session:
@@ -387,6 +397,95 @@ async def _handoff(direction: str, comfy_url: str | None) -> str:
     except Exception as e:
         logger.warning("ComfyUI /free failed during a run's handoff: %s", e)
         return f"ComfyUI did not free its models ({type(e).__name__}); continuing"
+
+
+# The transport every LLM-server call here goes through; tests set a MockTransport.
+_LLM_TRANSPORT: httpx.AsyncBaseTransport | None = None
+
+
+async def _free_caption_model(model: str) -> str:
+    """After the caption stage: unload the model that captioned. Best effort — any
+    failure is a note, never a failed run.
+
+    - An OpenAI-compatible provider on this machine: LM Studio's native API (0.4 and
+      later), `GET /api/v1/models` for the loaded instances, then
+      `POST /api/v1/models/unload` with each one's `instance_id`. A provider without
+      that API answers 404, and the note says so. A remote provider is left alone:
+      its models are not on this GPU.
+    - Ollama: a request with `keep_alive: 0`, its own way to unload now.
+    - A local captioner (Florence-2, JoyCaption, PaliGemma, WD14): `evict_all`.
+    """
+    if model.startswith("openai_compat:"):
+        parts = model.split(":", 2)
+        provider_id = parts[1] if len(parts) > 1 else ""
+        name = parts[2] if len(parts) > 2 else ""
+        from backend.database import AsyncSessionLocal
+        from backend.models.openai_provider import OpenAIProvider
+        from backend.schemas.openai_provider import _is_remote
+
+        async with AsyncSessionLocal() as db:
+            provider = await db.get(OpenAIProvider, provider_id)
+        if provider is None:
+            return "The caption provider was deleted; nothing to unload"
+        if _is_remote(provider.base_url):
+            return f"{provider.name} is a remote provider; its models are not on this GPU"
+        return await _unload_lmstudio(provider.base_url, provider.api_key, name or provider.default_model)
+    if model.startswith("ollama:"):
+        from backend.config import settings
+
+        name = model.removeprefix("ollama:")
+        try:
+            async with httpx.AsyncClient(timeout=10.0, transport=_LLM_TRANSPORT) as client:
+                resp = await client.post(
+                    f"{settings.ollama_base_url}/api/generate", json={"model": name, "keep_alive": 0}
+                )
+                resp.raise_for_status()
+            return f"Unloaded {name} from Ollama"
+        except Exception as e:
+            logger.warning("Ollama unload after a run's caption stage failed: %s", e)
+            return f"Ollama did not unload {name} ({type(e).__name__}); continuing"
+    from backend.ml.model_manager import model_manager
+
+    resident = [m["id"] for m in model_manager.list_models() if m.get("loaded")]
+    try:
+        await model_manager.evict_all()
+    except Exception as e:
+        logger.info("evict_all after a run's caption stage: %s", e)
+    freed = [m for m in resident if m not in model_manager.leased_ids()]
+    return f"Unloaded {len(freed)} local model{'s' if len(freed) != 1 else ''}"
+
+
+async def _unload_lmstudio(base_url: str, api_key: str, name: str) -> str:
+    """Unload every loaded instance of `name` through LM Studio's native REST API."""
+    root = base_url.rstrip("/")
+    if root.endswith("/v1"):
+        root = root[: -len("/v1")]
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    try:
+        async with httpx.AsyncClient(timeout=10.0, transport=_LLM_TRANSPORT) as client:
+            resp = await client.get(f"{root}/api/v1/models", headers=headers)
+            if resp.status_code == 404:
+                return "This provider has no unload API (LM Studio 0.4 or later has one); the model stays loaded"
+            resp.raise_for_status()
+            # An instance's id is the model's key, or the key plus ":N" for a second copy.
+            ids = [
+                inst["id"]
+                for m in resp.json().get("models", [])
+                for inst in (m.get("loaded_instances") or [])
+                if inst.get("id") and (
+                    m.get("key") == name or inst["id"] == name or inst["id"].startswith(f"{name}:")
+                )
+            ]
+            if not ids:
+                return f"{name} was not loaded in LM Studio"
+            for instance_id in ids:
+                (await client.post(
+                    f"{root}/api/v1/models/unload", json={"instance_id": instance_id}, headers=headers
+                )).raise_for_status()
+        return f"Unloaded {name} from LM Studio"
+    except Exception as e:
+        logger.warning("LM Studio unload after a run's caption stage failed: %s", e)
+        return f"Could not unload {name} ({type(e).__name__}); continuing"
 
 
 async def _stage_generate(db: AsyncSession, run: Run, plan: ComfyPlan, recipe: RunRecipe, tag: str) -> _Outcome:

@@ -243,6 +243,79 @@ def test_caption_and_export_settings_reach_their_jobs(tmp_path, monkeypatch):
     run(go())
 
 
+def _fake_llm_server(models: list | None, calls: list):
+    """LM Studio's native API (or, with `models=None`, a server without it), and
+    Ollama's generate. Every request is recorded as (method, path, json body)."""
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json as _json
+        body = _json.loads(request.content) if request.content else None
+        calls.append((request.method, request.url.path, body))
+        if request.url.path == "/api/v1/models" and request.method == "GET":
+            return httpx.Response(404) if models is None else httpx.Response(200, json={"models": models})
+        if request.url.path == "/api/v1/models/unload":
+            return httpx.Response(200, json={"instance_id": body["instance_id"]})
+        if request.url.path == "/api/generate":
+            return httpx.Response(200, json={"done": True})
+        return httpx.Response(404)
+
+    return httpx.MockTransport(handler)
+
+
+def test_the_caption_model_is_unloaded_from_lm_studio_after_captioning(tmp_path, monkeypatch):
+    async def go():
+        async with api_env(tmp_path) as env:
+            fake, ds, plan_id = await _plan(env, monkeypatch)
+            await _add_row(env, plan_id, "a knight")
+            model = await _caption_model(env, monkeypatch)
+            calls: list = []
+            monkeypatch.setattr(run_service, "_LLM_TRANSPORT", _fake_llm_server([
+                {"key": "qwen-vl", "loaded_instances": [{"id": "qwen-vl"}, {"id": "qwen-vl:2"}]},
+                {"key": "other", "loaded_instances": [{"id": "other"}]},
+            ], calls))
+            code, body = await _start(env, ds["id"], plan_id, ["generate", "caption", "free_caption_model"],
+                                      caption={"model": model})
+            assert code == 200, body
+            done = await wait_for_run(env, body["id"])
+            assert done["status"] == "completed", done
+            assert done["stages"][2]["summary"] == "Unloaded qwen-vl from LM Studio"
+            # The provider's base URL ends in /v1; the native API sits beside it.
+            assert ("GET", "/api/v1/models", None) in calls
+            unloaded = [b["instance_id"] for m, p, b in calls if p == "/api/v1/models/unload"]
+            assert unloaded == ["qwen-vl", "qwen-vl:2"]
+
+            # Without a caption stage there is nothing to unload after.
+            code, body = await _start(env, ds["id"], plan_id, ["generate", "free_caption_model"])
+            assert code == 200, body
+            again = await wait_for_run(env, body["id"])
+            assert _statuses(again)["free_caption_model"] == "skipped"
+    run(go())
+
+
+def test_a_provider_without_the_unload_api_is_a_note_not_a_failure(tmp_path, monkeypatch):
+    async def go():
+        async with api_env(tmp_path) as env:
+            fake, ds, plan_id = await _plan(env, monkeypatch)
+            await _add_row(env, plan_id, "a knight")
+            model = await _caption_model(env, monkeypatch)
+            monkeypatch.setattr(run_service, "_LLM_TRANSPORT", _fake_llm_server(None, []))
+            code, body = await _start(env, ds["id"], plan_id, ["generate", "caption", "free_caption_model"],
+                                      caption={"model": model})
+            done = await wait_for_run(env, body["id"])
+            assert done["status"] == "completed", done
+            assert "no unload API" in done["stages"][2]["summary"]
+    run(go())
+
+
+def test_an_ollama_caption_model_is_unloaded_with_keep_alive_zero(monkeypatch):
+    calls: list = []
+    monkeypatch.setattr(run_service, "_LLM_TRANSPORT", _fake_llm_server([], calls))
+    note = asyncio.run(run_service._free_caption_model("ollama:llava:13b"))
+    assert note == "Unloaded llava:13b from Ollama"
+    assert calls == [("POST", "/api/generate", {"model": "llava:13b", "keep_alive": 0})]
+
+
 # 3 ───────────────────────────────────────────────────────────────────────────
 
 def test_advance_run_raising_leaves_the_child_job_and_the_worker_alone(tmp_path, monkeypatch):

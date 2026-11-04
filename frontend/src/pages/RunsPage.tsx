@@ -61,7 +61,10 @@ export default function RunsPage() {
 
 // ── Start form ───────────────────────────────────────────────────────────────
 
-const DEFAULT_STAGES: RunStageKey[] = ["prompts", "handoff_to_comfy", "generate", "handoff_to_local", "score"];
+const DEFAULT_STAGES: RunStageKey[] = ["prompts", "handoff_to_comfy", "generate", "handoff_to_local", "score", "free_caption_model"];
+
+/** A stage that only means something after another: sent only when that one is on too. */
+const NEEDS_STAGE: Partial<Record<RunStageKey, RunStageKey>> = { free_caption_model: "caption" };
 
 function StartRunForm({ datasetId, onStarted }: { datasetId: string; onStarted: () => void }) {
   const [planId, setPlanId] = useState<string | null>(null);
@@ -109,7 +112,7 @@ function StartRunForm({ datasetId, onStarted }: { datasetId: string; onStarted: 
   const start = useMutation({
     mutationFn: () => {
       const recipe: RunRecipe = {
-        stages: RUN_STAGES.filter((s) => stages.has(s)),
+        stages: RUN_STAGES.filter((s) => stages.has(s) && (!NEEDS_STAGE[s] || stages.has(NEEDS_STAGE[s]!))),
         generate: { subfolder: subfolder.trim(), set_caption: true },
         score: { run_aesthetic: runAesthetic, aesthetic_model: aestheticModel },
         caption: stages.has("caption") ? toCaptionSettings(caption) : null,
@@ -151,12 +154,17 @@ function StartRunForm({ datasetId, onStarted }: { datasetId: string; onStarted: 
         <div className="form-row">
           <div className="lbl-col"><h4>Stages</h4><p>They always run in this order. Switch off any you do not want.</p></div>
           <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
-            {RUN_STAGES.map((k) => (
-              <label key={k} className="row-flex" style={{ gap: 8 }}>
-                <input type="checkbox" className="checkbox" checked={stages.has(k)} onChange={() => toggle(k)} />
-                <span style={{ fontSize: 12.5 }}>{RUN_STAGE_LABELS[k]}</span>
-              </label>
-            ))}
+            {RUN_STAGES.map((k) => {
+              const after = NEEDS_STAGE[k];
+              const off = !!after && !stages.has(after);
+              return (
+                <label key={k} className="row-flex" style={{ gap: 8, paddingLeft: after ? 22 : 0, opacity: off ? 0.5 : 1 }}
+                  title={off ? `Only runs with ${RUN_STAGE_LABELS[after!]}` : undefined}>
+                  <input type="checkbox" className="checkbox" checked={stages.has(k)} disabled={off} onChange={() => toggle(k)} />
+                  <span style={{ fontSize: 12.5 }}>{RUN_STAGE_LABELS[k]}</span>
+                </label>
+              );
+            })}
           </div>
         </div>
 

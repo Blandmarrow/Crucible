@@ -21,13 +21,14 @@ They always run in this order. Switch off any you do not want.
 | **Free ComfyUI's VRAM** | Asks ComfyUI to unload its models, so Crucible's scorers and captioners have the GPU. If your ComfyUI cannot do that, the run notes it and carries on. |
 | **Score** | Scores the images this run made. Technical scores always run, because they are what finds duplicates. The aesthetic score is optional. |
 | **Caption** | Captions the images this run made, with the settings below. **Caption images that already have a caption** is on by default, because a ComfyUI run already saves each prompt as the image's caption. |
+| **Unload the caption model** | Frees the GPU from the model that captioned: an LM Studio model, an Ollama model, or one of Crucible's own captioners. On by default, and it only runs with Caption. LM Studio needs version 0.4 or later for this; with an older one the run notes that the model stays loaded and carries on. |
 | **Export** | Exports the whole dataset to the folder you choose, with the settings below. Duplicates and watermarked images are left out by default. |
 
 A stage with nothing to do is **skipped**, not run on everything. If a run made no new
 images, scoring and captioning are skipped, and no other image in the dataset is touched.
 
-Crucible does not unload a language model. If you caption with LM Studio, give the model a
-time-to-live in LM Studio so it frees the GPU on its own.
+A language model is unloaded only after captioning, by the stage above. If one is already
+loaded in LM Studio when the run starts, it stays loaded through generating and scoring.
 
 ## Caption and export settings
 

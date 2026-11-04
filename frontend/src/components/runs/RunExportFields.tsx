@@ -8,7 +8,8 @@ import {
   EXPORT_FILTERS_DEFAULTS, EXPORT_WORKFLOW_DEFAULTS, FORMAT_LABELS,
   type CaptionFmt, type Format,
 } from "../../constants/exportWorkflow";
-import type { ExportForm } from "./runForms";
+import NumberField from "../common/NumberField";
+import { clampExportResize, customResizeValue, EXPORT_RESIZE_MAX, EXPORT_RESIZE_MIN, type ExportForm } from "./runForms";
 import { datasetScopedKey, loadPersisted } from "../../utils/persistentState";
 
 /** The export stage's settings on the Runs page. Loss masks, license and label filters
@@ -149,13 +150,15 @@ export default function RunExportFields({ value, onChange, datasetId }: {
               <button key={r} className={`btn sm${!value.customResize && value.resizeTo === r ? " primary" : ""}`}
                 onClick={() => onChange({ ...value, resizeTo: r, customResize: false })}>{r}</button>
             ))}
-            <button className={`btn sm${value.customResize ? " primary" : ""}`} onClick={() => set("customResize", true)}>Custom</button>
+            <button className={`btn sm${value.customResize ? " primary" : ""}`} onClick={() => onChange({ ...value, customResize: true, customResizeVal: value.customResizeVal || "1024" })}>Custom</button>
             <button className={`btn sm${!value.customResize && value.resizeTo === null ? " primary" : ""}`}
               onClick={() => onChange({ ...value, resizeTo: null, customResize: false })}>No resize</button>
           </div>
           {value.customResize && (
-            <input className="input" type="number" min={64} max={8192} placeholder="e.g. 1536" style={{ width: 110 }}
-              value={value.customResizeVal} onChange={(e) => set("customResizeVal", e.target.value)} />
+            <NumberField className="input" min={EXPORT_RESIZE_MIN} max={EXPORT_RESIZE_MAX} aria-label="Custom resize"
+              placeholder="e.g. 1536" style={{ width: 110 }}
+              value={customResizeValue(value)} clamp={clampExportResize}
+              onCommit={(n) => set("customResizeVal", String(n))} />
           )}
         </div>
       </div>

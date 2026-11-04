@@ -160,13 +160,16 @@ function StartRunForm({ datasetId, saved, onStarted, loadRequest, onLoaded }: {
   // A plan id from a loaded recipe or another dataset is not trusted: the start would
   // 400 "belongs to another dataset" with nothing on screen saying why.
   const effectivePlanId = (planId && plans.some((p) => p.id === planId) ? planId : plans[0]?.id) ?? null;
-  const { data: blueprint } = useQuery({
+  const { data: blueprint, isSuccess: bpOk, isError: bpErr } = useQuery({
     queryKey: ["comfy", "blueprint", effectivePlanId],
     queryFn: () => comfyApi.getBlueprint(effectivePlanId!),
     enabled: !!effectivePlanId,
   });
   const captionModel = captionModelId(caption);
-  const { data: providers = [] } = useQuery({ queryKey: ["providers"], queryFn: providersApi.list });
+  const { data: providers = [], isSuccess: provOk, isError: provErr } = useQuery({ queryKey: ["providers"], queryFn: providersApi.list });
+  // A recipe is checked against the providers and the blueprint, so it waits for both to
+  // settle. A failed query counts as settled: waiting forever would wedge Load.
+  const recipeReady = (provOk || provErr) && (!effectivePlanId || bpOk || bpErr);
   const rewriteScenarios = (blueprint?.spec.scenarios ?? []).filter((sc) => sc.rewrite).map((sc) => sc.name);
   // Ticks for another plan's scenarios (the plan picker changed) are not sent.
   const tickedScenarios = rewrite.scenarios.filter((sc) => rewriteScenarios.includes(sc));
@@ -194,10 +197,10 @@ function StartRunForm({ datasetId, saved, onStarted, loadRequest, onLoaded }: {
   const applyRef = useRef(applyRecipe);
   useEffect(() => { applyRef.current = applyRecipe; });
   useEffect(() => {
-    if (!loadRequest) return;
+    if (!loadRequest || !recipeReady) return;
     applyRef.current(loadRequest.recipe, loadRequest.label);
     onLoaded();
-  }, [loadRequest, onLoaded]);
+  }, [loadRequest, onLoaded, recipeReady]);
 
   const toggle = (k: RunStageKey) =>
     setForm((f) => ({ ...f, stages: f.stages.includes(k) ? f.stages.filter((s) => s !== k) : [...f.stages, k] }));
@@ -249,6 +252,7 @@ function StartRunForm({ datasetId, saved, onStarted, loadRequest, onLoaded }: {
       <div style={{ padding: "4px 22px" }}>
         <RecipeBar
           buildRecipe={() => formToRecipe(form, { rewriteProviderId, tickedScenarios, paidCap })}
+          ready={recipeReady}
           onLoad={(r) => applyRecipe(r.recipe, `the recipe "${r.name}"`)}
         />
         <div className="form-row">
@@ -394,7 +398,8 @@ function ActiveRun({ run, datasetId }: { run: Run; datasetId: string }) {
         {(!running || run.pause_requested) && !cancelling && (
           <button className="btn sm primary" disabled={act.isPending} onClick={() => act.mutate("resume")}>Resume</button>
         )}
-        <button className="btn sm ghost" style={{ color: "var(--bad)" }} disabled={act.isPending || cancelling} onClick={() => setConfirmCancel(true)}>Cancel</button>
+        <button className="btn sm ghost" style={{ color: "var(--bad)" }} disabled={act.isPending} title={cancelling ? "Cancel again: if the snapshot has finished, this ends the run now" : undefined}
+          onClick={() => setConfirmCancel(true)}>Cancel</button>
       </div>
       <div style={{ padding: "8px 22px 16px" }}>
         <StageList run={run} />
@@ -403,7 +408,9 @@ function ActiveRun({ run, datasetId }: { run: Run; datasetId: string }) {
       {confirmCancel && (
         <ConfirmDialog
           title="Cancel this run?"
-          message={run.stages.some((s) => s.key === "snapshot" && s.status === "running")
+          message={cancelling
+            ? "Cancel again? If the snapshot has already finished, this ends the run now."
+            : run.stages.some((s) => s.key === "snapshot" && s.status === "running")
             ? "The snapshot cannot stop partway, so the run stops once it is recorded. No later stage starts."
             : "The job it is running now is cancelled, and no later stage starts. Images already made stay."}
           confirmLabel="Cancel run"

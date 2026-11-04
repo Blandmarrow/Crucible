@@ -43,3 +43,22 @@ export function freshName(rec: Record<string, unknown>, base: string): string {
   while (`${base}${n}` in rec) n++;
   return `${base}${n}`;
 }
+
+/** Length limits the server enforces on a blueprint (backend/schemas/comfy_blueprint.py).
+ *  Past them a save 422s and the autosave stops, so the inputs stop typing at them. */
+export const BLUEPRINT_LIMITS = {
+  name: 40,
+  scenarioName: 100,
+  path: 400,
+  template: 4000,
+  label: 200,
+  descriptor: 2000,
+  piece: 300,
+  // List sizes, from the same schema: past any of them the save 422s too.
+  axes: 8,
+  entitiesPerAxis: 200,
+  variations: 12,
+  piecesPerVariation: 100,
+  scenarios: 50,
+  combineItems: 6,
+} as const;

@@ -289,7 +289,7 @@ export function recipeToForm(recipe: RunRecipe, keep: Pick<RunFormState, "planId
   return {
     form: {
       ...keep,
-      stages: [...recipe.stages],
+      stages: RUN_STAGES.filter((s) => recipe.stages.includes(s)),
       subfolder: recipe.generate?.subfolder ?? "",
       runAesthetic: recipe.score?.run_aesthetic ?? true,
       aestheticModel: recipe.score?.aesthetic_model ?? "laion",

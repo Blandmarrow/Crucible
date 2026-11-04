@@ -267,6 +267,7 @@ export default function TopBar() {
       ) {
         processedJobsRef.current.add(jobId);
         captionDoneRef.current.delete(jobId);
+        rewriteDoneRef.current.delete(jobId);
         // A stale thumbnail is the one outcome of these four jobs that leaves no
         // trace in the UI: the image is correct and committed, but the gallery
         // keeps drawing the old tile. Read after the `processedJobsRef` add, so
@@ -369,6 +370,10 @@ export default function TopBar() {
         ) {
           qc.invalidateQueries({ queryKey: ["image"] });
           invalidateDetectionQueries(qc, progress.dataset_id);
+        }
+        // The gate moves rejected images into `rejects/`, a subfolder that may be new.
+        if (progress.job_type === "run_gate" && progress.dataset_id) {
+          qc.invalidateQueries({ queryKey: ["subfolders", progress.dataset_id] });
         }
         // video_extract writes three things the generic image invalidations above
         // do not cover: a subfolder (all three modes can create one), the Video

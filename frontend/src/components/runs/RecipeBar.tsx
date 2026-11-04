@@ -20,9 +20,12 @@ function status(err: unknown): number | undefined {
  * name; what it names that this machine lacks (a provider, an export folder) comes
  * back as notes from `onLoad`, which the page shows.
  */
-export default function RecipeBar({ buildRecipe, onLoad }: {
+export default function RecipeBar({ buildRecipe, onLoad, ready = true }: {
   buildRecipe: () => RunRecipe;
   onLoad: (recipe: SavedRecipe) => void;
+  /** False while the providers and blueprint a recipe is checked against are loading:
+   *  Load and Import then wait, so a recipe's provider is not cleared as "not set up". */
+  ready?: boolean;
 }) {
   const qc = useQueryClient();
   const { data: recipes = [] } = useQuery({ queryKey: RECIPES_KEY, queryFn: recipesApi.list });
@@ -116,7 +119,7 @@ export default function RecipeBar({ buildRecipe, onLoad }: {
                 <option value="">{recipes.length ? "Choose a saved recipe…" : "No saved recipes yet"}</option>
                 {recipes.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
               </select>
-              <button className="btn sm" disabled={!selected || busy} onClick={() => selected && onLoad(selected)}>Load</button>
+              <button className="btn sm" disabled={!selected || busy || !ready} onClick={() => selected && onLoad(selected)}>Load</button>
               <button className="btn sm ghost" disabled={!selected || busy} onClick={() => selected && setRenaming(selected.name)}>Rename</button>
               <button className="btn sm ghost" disabled={!selected || exportIt.isPending} onClick={() => selected && exportIt.mutate(selected)}>Export</button>
               <button className="btn sm ghost" style={{ color: selected ? "var(--bad)" : undefined }} disabled={!selected || busy}
@@ -131,7 +134,7 @@ export default function RecipeBar({ buildRecipe, onLoad }: {
           <button className="btn sm" disabled={!saveName.trim() || busy} onClick={() => save.mutate({ name: saveName, replace: false })}>
             Save as recipe
           </button>
-          <button className="btn sm ghost" disabled={busy} onClick={() => fileRef.current?.click()}>Import…</button>
+          <button className="btn sm ghost" disabled={busy || !ready} onClick={() => fileRef.current?.click()}>Import…</button>
           <input ref={fileRef} type="file" accept=".json,application/json" style={{ display: "none" }} data-testid="recipe-import-input"
             onChange={(e) => {
               const f = e.target.files?.[0];

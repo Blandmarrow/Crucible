@@ -264,6 +264,42 @@ test('a waiting draft can be reviewed, with its expansion, before Use it', async
   expect(after.draft).toBeNull()
 })
 
+test('Use it on a draft shows the draft pieces for a variation the spec already has', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-comfy-draft-pieces-${Date.now()}`)
+  const plan = await createPlanViaApi(request, ds.id, 'draft pieces plan')
+  const put = await request.put(`/api/v1/comfy/plans/${plan.id}/blueprint`, {
+    data: { spec: { axes: {}, variations: { shot: ['old angle'] }, scenarios: [] }, seed: 7 },
+  })
+  expect(put.status(), await put.text()).toBe(200)
+  const draft = { axes: {}, variations: { shot: ['low angle', 'wide shot'] }, scenarios: [] }
+  let discarded = false
+  await page.route(`**/api/v1/comfy/plans/${plan.id}/blueprint/draft`, async (route) => {
+    if (route.request().method() === 'DELETE') discarded = true
+    await route.continue()
+  })
+  await page.route(`**/api/v1/comfy/plans/${plan.id}/blueprint`, async (route) => {
+    if (route.request().method() !== 'GET' || discarded) return route.continue()
+    const response = await route.fetch()
+    const value = (await response.json()).value
+    await route.fulfill({ response, json: { value: { ...value, draft } } })
+  })
+
+  await page.goto(`/datasets/${ds.id}/comfy`)
+  await page.getByRole('button', { name: 'Blueprint', exact: true }).click()
+  await expect(page.getByLabel('shot pieces')).toHaveValue('old angle')
+  await page.getByTestId('blueprint-draft-review').click()
+  await page.getByTestId('draft-review-use').click()
+  await expect(page.getByTestId('blueprint-draft-banner')).toHaveCount(0)
+  // The textarea follows the new spec instead of keeping the old text.
+  await expect(page.getByLabel('shot pieces')).toHaveValue('low angle\nwide shot')
+  // The next keystroke must not save the old pieces over the draft.
+  await page.getByLabel('shot pieces').press('End')
+  await page.getByLabel('shot pieces').type('!')
+  await expect
+    .poll(async () => (await (await request.get(`/api/v1/comfy/plans/${plan.id}/blueprint`)).json()).value.spec.variations.shot)
+    .toEqual(['low angle', 'wide shot!'])
+})
+
 test('a scenario can opt in to the LLM rewrite: Top up waits for it, and the dialog shows the estimate', async ({ page, request }) => {
   const ds = await createDatasetViaApi(request, `e2e-comfy-rewrite-${Date.now()}`)
   const plan = await createPlanViaApi(request, ds.id, 'rewrite plan')

@@ -1,6 +1,6 @@
 import type { BlueprintCombineItem, BlueprintScenario, BlueprintSpec } from "../../api/comfy";
 import NumberField from "../common/NumberField";
-import { defaultPath, defaultTemplate } from "./blueprintKeys";
+import { BLUEPRINT_LIMITS, defaultPath, defaultTemplate, freshName } from "./blueprintKeys";
 
 const NEW_SCENARIO: BlueprintScenario = { name: "", combine: [], mode: "full", count: 1, path: "", template: "", rewrite: false };
 
@@ -41,8 +41,9 @@ export default function BlueprintScenariosEditor({ spec, onChange }: Props) {
       <div className="panel-h">
         <h3>Scenarios</h3>
         <div style={{ flex: 1 }} />
-        <button className="btn ghost sm"
-          onClick={() => onChange([...scenarios, { ...NEW_SCENARIO, name: `scenario${scenarios.length + 1}` }])}>
+        <button className="btn ghost sm" disabled={scenarios.length >= BLUEPRINT_LIMITS.scenarios}
+          title={scenarios.length >= BLUEPRINT_LIMITS.scenarios ? `A blueprint holds at most ${BLUEPRINT_LIMITS.scenarios} scenarios` : undefined}
+          onClick={() => onChange([...scenarios, { ...NEW_SCENARIO, name: freshName(Object.fromEntries(scenarios.map((x) => [x.name, true])), "scenario") }])}>
           + Add scenario
         </button>
       </div>
@@ -60,7 +61,7 @@ export default function BlueprintScenariosEditor({ spec, onChange }: Props) {
               style={{ border: "1px solid var(--border)", borderRadius: 6, padding: 10, display: "flex", flexDirection: "column", gap: 8 }}>
               <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                 <input className="input" style={{ width: 180, height: 30, fontSize: 12 }}
-                  aria-label="Scenario name" placeholder="Scenario name"
+                  aria-label="Scenario name" maxLength={BLUEPRINT_LIMITS.scenarioName} placeholder="Scenario name"
                   value={s.name} onChange={(e) => patch(i, { name: e.target.value })} />
                 <label style={smallLabel}>
                   Mode
@@ -116,8 +117,9 @@ export default function BlueprintScenariosEditor({ spec, onChange }: Props) {
                     </div>
                   );
                 })}
-                <button className="btn ghost sm" disabled={axisNames.length === 0}
-                  title={axisNames.length === 0 ? "Add an axis first" : undefined}
+                <button className="btn ghost sm" disabled={axisNames.length === 0 || s.combine.length >= BLUEPRINT_LIMITS.combineItems}
+                  title={axisNames.length === 0 ? "Add an axis first"
+                    : s.combine.length >= BLUEPRINT_LIMITS.combineItems ? `A scenario combines at most ${BLUEPRINT_LIMITS.combineItems} axes` : undefined}
                   onClick={() => patch(i, { combine: [...s.combine, axisNames[0]] })}>+ Combine an axis</button>
               </div>
 
@@ -126,14 +128,14 @@ export default function BlueprintScenariosEditor({ spec, onChange }: Props) {
               <label style={{ ...smallLabel, flexDirection: "column", alignItems: "stretch" }}>
                 Folder path <span style={{ fontWeight: 400 }}>(blank: one folder level per axis)</span>
                 <input className="input mono" style={{ height: 30, fontSize: 12 }}
-                  aria-label="Folder path"
+                  aria-label="Folder path" maxLength={BLUEPRINT_LIMITS.path}
                   placeholder={defaultPath(s.combine.map(axisOf)) || "{biome}/{character}"}
                   value={s.path} onChange={(e) => patch(i, { path: e.target.value })} />
               </label>
               <label style={{ ...smallLabel, flexDirection: "column", alignItems: "stretch" }}>
                 Prompt template <span style={{ fontWeight: 400 }}>(blank: every axis, then every variation)</span>
                 <textarea className="input" style={{ minHeight: 50, fontSize: 12, resize: "vertical" }}
-                  aria-label="Prompt template"
+                  aria-label="Prompt template" maxLength={BLUEPRINT_LIMITS.template}
                   placeholder={defaultTemplate(s.combine.map(axisOf), Object.keys(spec.variations))
                     || "{character}, standing in {biome}, {camera}"}
                   value={s.template ?? ""} onChange={(e) => patch(i, { template: e.target.value })} />

@@ -136,8 +136,23 @@ export const EXPORT_FORM_DEFAULTS: ExportForm = {
   styleSimMin: F.styleSimMin,
 };
 
+/** The server's bounds on `resize_to` (RunExportSettings): outside them the start 422s. */
+export const EXPORT_RESIZE_MIN = 1;
+export const EXPORT_RESIZE_MAX = 16384;
+export const clampExportResize = (n: number) => Math.min(EXPORT_RESIZE_MAX, Math.max(EXPORT_RESIZE_MIN, Math.round(n)));
+
+/** The custom resize the field shows and the run sends: one parse for both, so the
+ *  box never reads a value the start would not use. A blank, non-numeric or
+ *  out-of-range stored value (a recipe or the Export page's form can carry one) reads
+ *  as the 1024 default, never as a 422 or a dropped resize. */
+export const DEFAULT_CUSTOM_RESIZE = 1024;
+export function customResizeValue(f: ExportForm): number {
+  const n = parseInt(f.customResizeVal, 10);
+  return Number.isFinite(n) && n >= EXPORT_RESIZE_MIN && n <= EXPORT_RESIZE_MAX ? n : DEFAULT_CUSTOM_RESIZE;
+}
+
 export function exportResizeTo(f: ExportForm): number | null {
-  return f.customResize ? (parseInt(f.customResizeVal, 10) || null) : f.resizeTo;
+  return f.customResize ? customResizeValue(f) : f.resizeTo;
 }
 
 export function toExportSettings(f: ExportForm): RunExportSettings {

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { BLUEPRINT_LIMITS } from "./blueprintKeys";
 
 /** A name input that holds its text while you type and commits on blur or Enter,
     so renaming a key never rebuilds the record on every keystroke. A rejected name
@@ -22,7 +23,7 @@ export default function BlueprintNameField({
   return (
     <input
       className="input mono" style={{ width: 180, height: 30, fontSize: 12 }}
-      aria-label={label} placeholder={placeholder}
+      aria-label={label} maxLength={BLUEPRINT_LIMITS.name} placeholder={placeholder}
       value={draft ?? value}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}

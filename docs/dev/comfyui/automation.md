@@ -171,8 +171,9 @@ is **not keyed** by dataset id in `PageRenderer`. The form re-seeds through a
 `prevDatasetId` effect, as `ComfyPage` does.
 
 - With no live run it shows the start form: the plan, the stage switches, the base folder,
-  the aesthetic model, a caption model from `captionModelOptions` (a provider takes a
-  model name), and the export kind, folder and fields. Start is disabled with the first
+  the aesthetic model, a caption model from `captionModelOptions` (a provider's model comes
+  from the same `ModelPicker` `CaptioningPage` uses, which asks the provider for its
+  models), and the export kind, folder and fields. Start is disabled with the first
   reason (`blockers`) until the form is complete. The start answers 200 even for a run
   whose first stage could not start, so the toast reads the returned status: a `failed`
   run shows its error, not "Run started".

@@ -12,6 +12,7 @@ import { runsApi, isLiveRun, RUN_STAGES, RUN_STAGE_LABELS } from "../api/runs";
 import type { Run, RunRecipe, RunStageKey, StageStatus } from "../api/runs";
 import { captionBackend, captionModelOptions } from "../constants/captionModels";
 import DirPickerModal from "../components/common/DirPickerModal";
+import ModelPicker from "../components/providers/ModelPicker";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import { apiErrorDetail } from "../utils/apiError";
 
@@ -114,6 +115,7 @@ function StartRunForm({ datasetId, onStarted }: { datasetId: string; onStarted: 
     return [...out.entries()];
   }, [modelOptions]);
   const isProvider = captionBase.startsWith("openai_compat:");
+  const selectedProvider = isProvider ? providers.find((p) => captionBase === `openai_compat:${p.id}`) : undefined;
   const captionModel = isProvider && providerModel.trim() ? `${captionBase}:${providerModel.trim()}` : captionBase;
 
   const toggle = (k: RunStageKey) =>
@@ -231,8 +233,16 @@ function StartRunForm({ datasetId, onStarted }: { datasetId: string; onStarted: 
                   </optgroup>
                 ))}
               </select>
-              {isProvider && (
-                <input className="input" placeholder="Model name" value={providerModel} onChange={(e) => setProviderModel(e.target.value)} />
+              {isProvider && selectedProvider && (
+                // The same picker CaptioningPage uses: it asks the provider for its models.
+                <ModelPicker
+                  key={selectedProvider.id}
+                  value={providerModel}
+                  onChange={setProviderModel}
+                  providerId={selectedProvider.id}
+                  baseUrl={selectedProvider.base_url}
+                  placeholder={`Model name (default: ${selectedProvider.default_model || "none"})`}
+                />
               )}
               <label className="row-flex" style={{ gap: 8 }}>
                 <input type="checkbox" className="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} />

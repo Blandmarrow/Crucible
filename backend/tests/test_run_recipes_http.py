@@ -173,3 +173,52 @@ def test_delete_and_a_missing_recipe(tmp_path):
             assert (await env.client.get(f"{API}/run-recipes/{rid}/export")).status_code == 404
             assert (await env.client.patch(f"{API}/run-recipes/{rid}", json={"name": "x"})).status_code == 404
     run(go())
+
+
+def test_ambiguous_provider_names_are_blanked_with_a_note(tmp_path):
+    from backend.models.openai_provider import OpenAIProvider
+
+    async def go():
+        async with api_env(tmp_path) as env:
+            async with env.Session() as db:
+                for n in ("Local", "local"):
+                    db.add(OpenAIProvider(name=n, base_url="http://127.0.0.1:1234/v1"))
+                await db.commit()
+            doc = {
+                "format": "crucible.run-recipe", "version": 1, "name": "Amb",
+                "recipe": {**RECIPE, "caption": {"model": "openai_compat::qwen", "style": "detailed"}},
+                "providers": {"caption": "LOCAL", "rewrite": None},
+            }
+            r = await env.client.post(f"{API}/run-recipes/import", json=doc)
+            assert r.status_code == 200, r.text
+            out = r.json()
+            assert out["recipe"]["recipe"]["caption"]["model"] == ""
+            assert any("ambiguous" in n for n in out["notes"]), out["notes"]
+    run(go())
+
+
+def test_a_boolean_version_is_refused(tmp_path):
+    async def go():
+        async with api_env(tmp_path) as env:
+            doc = {"format": "crucible.run-recipe", "version": True, "name": "B", "recipe": RECIPE}
+            r = await env.client.post(f"{API}/run-recipes/import", json=doc)
+            assert r.status_code == 400, r.text
+    run(go())
+
+
+def test_a_lost_unique_race_answers_409(tmp_path, monkeypatch):
+    """Two saves of one name both pass the lookup; the unique index refuses the second."""
+    from backend.services import run_recipe_service as svc
+
+    async def go():
+        async with api_env(tmp_path) as env:
+            assert (await _save(env, "Race", RECIPE)).status_code == 200
+
+            async def blind(db, key):  # the lookup misses, as it does in a lost race
+                return None
+            monkeypatch.setattr(svc, "_by_key", blind)
+            r = await _save(env, "race", RECIPE)
+            assert r.status_code == 409, r.text
+            monkeypatch.undo()
+            assert len(await _stored(env)) == 1
+    run(go())

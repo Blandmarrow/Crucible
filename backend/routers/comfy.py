@@ -46,6 +46,7 @@ from backend.services.comfy_service import (
 )
 from backend.services.threshold_service import get_thresholds
 from backend.utils import (
+    chunked,
     REGEX_TIMEOUT_SECONDS,
     compile_user_regex,
     join_subfolder,
@@ -1061,8 +1062,11 @@ async def set_rows_subfolder(
     subfolder = normalize_subfolder(body.subfolder)
     stmt = select(ComfyRow).where(ComfyRow.plan_id == plan_id)
     if body.row_ids is not None:
-        stmt = stmt.where(ComfyRow.id.in_(body.row_ids))
-    rows = (await db.execute(stmt)).scalars().all()
+        rows = []
+        for chunk in chunked(list(dict.fromkeys(body.row_ids))):
+            rows.extend((await db.execute(stmt.where(ComfyRow.id.in_(chunk)))).scalars().all())
+    else:
+        rows = (await db.execute(stmt)).scalars().all()
     updated = 0
     for r in rows:
         if (r.subfolder or "") == subfolder:
@@ -1503,11 +1507,13 @@ async def _refuse_live_run(db: AsyncSession, plan_id: str) -> None:
 @router.post("/plans/{plan_id}/blueprint/apply")
 async def apply_blueprint(plan_id: str, body: BlueprintApplyRequest, db: AsyncSession = Depends(get_db)):
     plan = await _get_plan(db, plan_id)
-    await _refuse_live_run(db, plan_id)
     alias = _prompt_alias(plan)
     if not alias:
         raise HTTPException(400, NO_PROMPT_PIN_MSG)
     async with _plan_lock(plan_id):
+        # Inside the lock: a run starting between a check outside it and the lock
+        # would otherwise find rows added under it.
+        await _refuse_live_run(db, plan_id)
         # A run loaded its rows at start and must not lose pending ones to the orphan
         # delete; a prompt job seeds its dedupe set once. Neither may overlap an Apply.
         if await _plan_job_active(db, plan_id, _ROW_JOB_TYPES):
@@ -1582,7 +1588,6 @@ async def top_up_blueprint(plan_id: str, body: BlueprintTopUpRequest, db: AsyncS
     what runs is what the preview showed (docs/dev/comfyui/structured.md § Top up).
     """
     plan = await _get_plan(db, plan_id)
-    await _refuse_live_run(db, plan_id)
     alias = _prompt_alias(plan)
     if not alias:
         raise HTTPException(400, NO_PROMPT_PIN_MSG)
@@ -1594,6 +1599,7 @@ async def top_up_blueprint(plan_id: str, body: BlueprintTopUpRequest, db: AsyncS
     # press queued on the lock would pass the check (no job yet), add nothing, and then
     # hit the run's 409 — an error toast over a run that did start.
     async with _plan_lock(plan_id):
+        await _refuse_live_run(db, plan_id)
         if await _plan_job_active(db, plan_id, _ROW_JOB_TYPES):
             raise HTTPException(409, "A run, prompt-generation or rewrite job for this plan is queued or running — wait for it to finish")
         out = await fill_blueprint(
@@ -1607,11 +1613,19 @@ async def top_up_blueprint(plan_id: str, body: BlueprintTopUpRequest, db: AsyncS
         out.update({"job_id": None, "total": 0})
         if not pending:
             return out
-        run = await _start_run(db, RunRequest(
-            plan_id=plan_id, row_ids=pending, subfolder=body.subfolder,
-            set_caption=body.set_caption,
-            label=body.label or f"ComfyUI top up: {plan.name} — {len(pending)} row{'s' if len(pending) != 1 else ''}",
-        ), hold_lock=False)
+        try:
+            run = await _start_run(db, RunRequest(
+                plan_id=plan_id, row_ids=pending, subfolder=body.subfolder,
+                set_caption=body.set_caption,
+                label=body.label or f"ComfyUI top up: {plan.name} — {len(pending)} row{'s' if len(pending) != 1 else ''}",
+            ), hold_lock=False)
+        except HTTPException as e:
+            # The fill is committed: say so, or the error reads as "nothing happened".
+            raise HTTPException(
+                e.status_code,
+                f"Applied: {out['created']} row{'s' if out['created'] != 1 else ''} added, "
+                f"{out['reset']} reset. Could not start the run: {e.detail}",
+            ) from e
     return {**out, "job_id": run["job_id"], "total": run["total"]}
 
 

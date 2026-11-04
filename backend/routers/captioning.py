@@ -16,7 +16,7 @@ from backend.ml.model_manager import model_manager
 from backend.models import BackgroundJob, Image
 from backend.models.openai_provider import OpenAIProvider
 from backend.services.image_scope import flag_exclusions
-from backend.utils import ALLOWED_FLAG_KEYS, normalize_subfolder, subsume_tags
+from backend.utils import ALLOWED_FLAG_KEYS, chunked, normalize_subfolder, subsume_tags
 from backend.workers.job_queue import job_queue, run_job_config, run_job_label
 
 router = APIRouter(prefix="/captioning", tags=["captioning"])
@@ -332,9 +332,8 @@ async def start_caption_job(
         select(Image.id, Image.file_path, Image.filename, Image.subfolder, Image.caption_text)
         .where(Image.dataset_id == body.dataset_id)
     )
-    if body.image_ids:
-        query = query.where(Image.id.in_(body.image_ids))
-    elif body.subfolder is not None:
+    # With `image_ids`, the id filter is applied per chunk below.
+    if not body.image_ids and body.subfolder is not None:
         query = query.where(Image.subfolder == normalize_subfolder(body.subfolder))
     if not body.overwrite and body.delimiter_mode == "overwrite":
         query = query.where(Image.caption_text == "")
@@ -342,8 +341,13 @@ async def start_caption_job(
         query = query.where(Image.aesthetic_score >= body.min_aesthetic_score)
     for clause in flag_exclusions(body.exclude_flags):
         query = query.where(clause)
-    result = await db.execute(query)
-    rows = result.all()
+    if body.image_ids:
+        # A run can pass up to 100k ids, past SQLite's bind-parameter limit.
+        rows = []
+        for chunk in chunked(list(dict.fromkeys(body.image_ids))):
+            rows.extend((await db.execute(query.where(Image.id.in_(chunk)))).all())
+    else:
+        rows = (await db.execute(query)).all()
 
     if not rows:
         return {"job_id": None, "message": "No images to caption"}

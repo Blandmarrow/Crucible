@@ -179,9 +179,8 @@ async def start_score_job(
     an empty list — the automated run skips the stage instead.
     """
     query = select(Image).where(Image.dataset_id == body.dataset_id)
-    if body.image_ids:
-        query = query.where(Image.id.in_(body.image_ids))
-    elif body.subfolder is not None:
+    # With `image_ids`, the id filter is applied per chunk below.
+    if not body.image_ids and body.subfolder is not None:
         query = query.where(Image.subfolder == normalize_subfolder(body.subfolder))
     if body.only_mismatched:
         # `score non-NULL <=> marker non-NULL` (migration a5e1b7c3d9f0), so the
@@ -191,8 +190,13 @@ async def start_score_job(
             Image.aesthetic_score.isnot(None),
             Image.aesthetic_model.isnot(body.aesthetic_model),
         )
-    result = await db.execute(query)
-    images = result.scalars().all()
+    if body.image_ids:
+        # A run can pass up to 100k ids, past SQLite's bind-parameter limit.
+        images = []
+        for chunk in chunked(list(dict.fromkeys(body.image_ids))):
+            images.extend((await db.execute(query.where(Image.id.in_(chunk)))).scalars().all())
+    else:
+        images = (await db.execute(query)).scalars().all()
 
     if not images:
         return {"job_id": None, "message": "No images found"}

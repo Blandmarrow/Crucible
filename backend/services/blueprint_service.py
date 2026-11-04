@@ -88,10 +88,11 @@ class _Stats:
     # Images completed rows produced (row.image_ids is never pruned, so its length is
     # what the row made, whatever has been deleted since).
     produced: int = 0
-    image_ids: list[str] = field(default_factory=list)
+    # Kept images of COMPLETED rows only: the fill's `kept`, and the numerator of the
+    # leaf's yield. A completed row that a values edit reset to pending keeps its
+    # image links for reference, but it is open now, so counting its images too
+    # would count the row twice (as kept and as open).
     kept: int = 0
-    # Kept images that completed rows produced: the numerator of the leaf's yield.
-    kept_completed: int = 0
 
     @property
     def open(self) -> int:
@@ -187,9 +188,7 @@ def _tally(rows: list[_Row], existing: set[str]) -> _Stats:
             setattr(s, r.status, getattr(s, r.status) + 1)
         if r.status == "completed":
             s.produced += len(r.image_ids)
-        s.image_ids.extend(r.image_ids)
-    s.kept = len({i for i in s.image_ids if i in existing})
-    s.kept_completed = len({
+    s.kept = len({
         i for r in rows if r.status == "completed" for i in r.image_ids if i in existing
     })
     return s
@@ -199,7 +198,7 @@ def _yield(s: _Stats, plan_yield: float | None) -> float:
     """Kept images per completed row, floored. A leaf with nothing completed yet, or
     whose completed rows made no image at all, takes the plan-wide figure, then 1."""
     if s.completed and s.produced:
-        return max(YIELD_FLOOR, s.kept_completed / s.completed)
+        return max(YIELD_FLOOR, s.kept / s.completed)
     return plan_yield or 1.0
 
 

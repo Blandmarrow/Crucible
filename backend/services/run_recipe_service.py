@@ -19,6 +19,7 @@ from typing import Any
 from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.openai_provider import OpenAIProvider
@@ -69,9 +70,19 @@ async def save(db: AsyncSession, name: str, draft: RunRecipeDraft, *, replace: b
     else:
         row.name = name
         row.recipe = recipe
-    await db.commit()
+    await _commit_unique(db, name)
     await db.refresh(row)
     return row
+
+
+async def _commit_unique(db: AsyncSession, name: str) -> None:
+    """Commit, turning a lost race on the unique `name_key` (two saves of one name
+    both passed the lookup) into the same 409 the lookup gives."""
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(409, f'A recipe named "{name}" already exists')
 
 
 async def rename(db: AsyncSession, recipe_id: str, name: str) -> SavedRunRecipe:
@@ -83,7 +94,7 @@ async def rename(db: AsyncSession, recipe_id: str, name: str) -> SavedRunRecipe:
         raise HTTPException(409, f'A recipe named "{other.name}" already exists')
     row.name = name
     row.name_key = name_key(name)
-    await db.commit()
+    await _commit_unique(db, name)
     await db.refresh(row)
     return row
 
@@ -120,12 +131,17 @@ async def to_document(db: AsyncSession, row: SavedRunRecipe) -> dict:
     }
 
 
-async def _provider_by_name(db: AsyncSession, name: Any) -> OpenAIProvider | None:
+async def _provider_by_name(db: AsyncSession, name: Any) -> tuple[OpenAIProvider | None, bool]:
+    """`(provider, ambiguous)`. Two providers whose names differ only in case both
+    match; picking one could send a run to the wrong server, so none is picked."""
     if not isinstance(name, str) or not name.strip():
-        return None
-    return (await db.execute(
+        return None, False
+    found = (await db.execute(
         select(OpenAIProvider).where(func.lower(OpenAIProvider.name) == name.strip().lower())
-    )).scalars().first()
+    )).scalars().all()
+    if len(found) > 1:
+        return None, True
+    return (found[0] if found else None), False
 
 
 async def from_document(db: AsyncSession, doc: Any) -> tuple[str, RunRecipeDraft, list[str]]:
@@ -138,7 +154,7 @@ async def from_document(db: AsyncSession, doc: Any) -> tuple[str, RunRecipeDraft
     if not isinstance(doc, dict) or doc.get("format") != DOCUMENT_FORMAT:
         raise HTTPException(400, "That file is not a Crucible run recipe")
     version = doc.get("version")
-    if not isinstance(version, int) or version > DOCUMENT_VERSION or version < 1:
+    if not isinstance(version, int) or isinstance(version, bool) or version > DOCUMENT_VERSION or version < 1:
         raise HTTPException(400, f"That recipe is version {version}; this Crucible reads version {DOCUMENT_VERSION}")
     recipe = doc.get("recipe")
     if not isinstance(recipe, dict):
@@ -159,19 +175,24 @@ async def from_document(db: AsyncSession, doc: Any) -> tuple[str, RunRecipeDraft
     caption = recipe.get("caption")
     if isinstance(caption, dict) and str(caption.get("model", "")).startswith(_COMPAT):
         model_name = str(caption["model"]).split(":", 2)[2] if str(caption["model"]).count(":") >= 2 else ""
-        provider = await _provider_by_name(db, providers.get("caption"))
+        provider, ambiguous = await _provider_by_name(db, providers.get("caption"))
         if provider is not None:
             caption["model"] = f"{_COMPAT}{provider.id}:{model_name}" if model_name else f"{_COMPAT}{provider.id}"
         else:
             caption["model"] = ""
             if "caption" in stages:
-                notes.append(f'No LLM provider here is named "{providers.get("caption") or "?"}": choose a caption model.')
+                if ambiguous:
+                    notes.append(f'More than one LLM provider here is named "{providers.get("caption")}" (ambiguous): choose a caption model.')
+                else:
+                    notes.append(f'No LLM provider here is named "{providers.get("caption") or "?"}": choose a caption model.')
 
     rewrite = recipe.get("rewrite")
     if isinstance(rewrite, dict):
-        provider = await _provider_by_name(db, providers.get("rewrite"))
+        provider, ambiguous = await _provider_by_name(db, providers.get("rewrite"))
         rewrite["provider_id"] = provider.id if provider is not None else ""
-        if provider is None and "rewrite" in stages:
+        if provider is None and "rewrite" in stages and ambiguous:
+            notes.append(f'More than one LLM provider here is named "{providers.get("rewrite")}" (ambiguous): choose one under Rewrite.')
+        elif provider is None and "rewrite" in stages:
             notes.append(f'No LLM provider here is named "{providers.get("rewrite") or "?"}": choose one under Rewrite.')
 
     try:

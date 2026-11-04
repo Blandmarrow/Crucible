@@ -185,3 +185,75 @@ def test_a_row_left_running_by_a_hard_kill_is_reset_and_run(tmp_path, monkeypatc
             assert all(r["status"] == "completed" for r in rows)
             assert len(await _images(env, ds["id"])) == 4
     run(go())
+
+
+def test_an_edited_completed_row_is_not_counted_twice(tmp_path, monkeypatch):
+    """A values edit resets a completed row to pending but keeps its image links for
+    reference. Only completed rows count as kept, so the row is open, not also kept."""
+    async def go():
+        async with api_env(tmp_path) as env:
+            fake = FakeComfy(canvas_running=False, complete=True)
+            _, plan_id = await _setup(env, monkeypatch, fake, _workflow(("9", "SaveImage")), ["9"])
+            await _top_up(env, plan_id, 4)
+
+            rows = (await env.client.get(f"{API}/comfy/plans/{plan_id}/rows")).json()
+            edited = rows[0]
+            r = await env.client.patch(f"{API}/comfy/rows/{edited['id']}", json={"values": edited["values"]})
+            assert r.status_code == 200, r.text
+            assert r.json()["status"] == "pending"
+
+            pv = await _preview(env, plan_id)
+            assert pv["rows_to_add"] == 0
+            leaf = next(l for l in pv["leaves"] if l["open"] == 1)
+            assert (leaf["kept"], leaf["open"], leaf["to_add"]) == (1, 1, 0)
+    run(go())
+
+
+def test_top_up_says_apply_landed_when_the_run_cannot_start(tmp_path, monkeypatch):
+    import backend.routers.comfy as comfy_router
+    from fastapi import HTTPException
+
+    async def go():
+        async with api_env(tmp_path) as env:
+            fake = FakeComfy(canvas_running=False, complete=True)
+            _, plan_id = await _setup(env, monkeypatch, fake, _workflow(("9", "SaveImage")), ["9"])
+
+            async def refuse(*a, **k):
+                raise HTTPException(409, "ComfyUI is busy")
+            monkeypatch.setattr(comfy_router, "_start_run", refuse)
+            r = await env.client.post(f"{API}/comfy/plans/{plan_id}/blueprint/top-up", json={
+                "spec": SPEC, "seed": 3, "confirm_total": 4, "subfolder": "gen",
+            })
+            assert r.status_code == 409, r.text
+            assert r.json()["detail"] == "Applied: 4 rows added, 0 reset. Could not start the run: ComfyUI is busy"
+            assert len((await env.client.get(f"{API}/comfy/plans/{plan_id}/rows")).json()) == 4
+    run(go())
+
+
+def test_set_subfolder_chunks_its_id_list(tmp_path, monkeypatch):
+    import backend.routers.comfy as comfy_router
+    from backend.utils import chunked
+
+    sizes = []
+
+    def small(seq, size=2):
+        out = list(chunked(seq, 2))
+        sizes.append([len(c) for c in out])
+        return out
+
+    monkeypatch.setattr(comfy_router, "chunked", small)
+
+    async def go():
+        async with api_env(tmp_path) as env:
+            fake = FakeComfy(canvas_running=False, complete=True)
+            _, plan_id = await _setup(env, monkeypatch, fake, _workflow(("9", "SaveImage")), ["9"])
+            await _top_up(env, plan_id, 4)
+            rows = (await env.client.get(f"{API}/comfy/plans/{plan_id}/rows")).json()
+            ids = [r["id"] for r in rows]
+            r = await env.client.post(f"{API}/comfy/plans/{plan_id}/rows/set-subfolder",
+                                      json={"subfolder": "moved", "row_ids": ids[:3] + ids[:1]})
+            assert r.status_code == 200, r.text
+            assert r.json() == {"updated": 3}
+            # Three distinct ids in chunks of 2: the set-subfolder call made two queries.
+            assert [2, 1] in sizes
+    run(go())

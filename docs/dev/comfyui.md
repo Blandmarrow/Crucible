@@ -4,7 +4,8 @@
 template plus pinned params) holds a queue of prompt **rows**, a run sends each row to
 ComfyUI and imports what comes back into the dataset, an LLM can write the prompts, and a
 **blueprint** expands one described dataset into foldered rows, and an automated **run**
-steps from filling a blueprint through generating, scoring, captioning and exporting. This file is the family's
+steps from filling a blueprint through generating, scoring, captioning and exporting,
+pass after pass until every folder is full. This file is the family's
 entry point: the tables below route from a code path to whichever file in
 `docs/dev/comfyui/` owns it. LLM providers themselves are `docs/dev/llm-providers.md`; the
 user-facing guides are `docs/comfyui.md`, `docs/comfy-structured.md` and `docs/runs.md`. M6's remaining
@@ -22,6 +23,7 @@ stages are in `docs/dev/comfy-automation-plan/README.md`.
 | [structured-expansion.md](comfyui/structured-expansion.md) | `BlueprintSpec` and the pure `blueprint_expand.py`: combinations, budgets, sampling and sha256 seeds, folder paths, templates and the template walk |
 | [structured-llm.md](comfyui/structured-llm.md) | The LLM calls of structured generation: the outline call (`comfy_outline`, `generate_outline`, `parse_outline`), the order of standing instructions in every call, and the optional rewrite pass (`comfy_rewrite`, `RewriteSession`, `blueprint_rewrite.py`) |
 | [automation.md](comfyui/automation.md) | Automated runs: the `Run` row, `advance_run` and the worker's post-terminal hook, the stages and their skip-on-empty rule, cancel, pause, resume and restart, the VRAM handoff, the Runs page |
+| [run-loop.md](comfyui/run-loop.md) | The goal loop (M6 §5): the body and the tail, `pass_no` and `next_pass`, abandoning a folder, the gate (`run_gate.py`, `rejects/`, `gate_rejected`), the rewrite stage, the budgets and the paid-call cap, the seed check, the Runs page's Repeat, Gate and Rewrite sections |
 | [sync.md](comfyui/sync.md) | Workflow sync: "Sync from canvas", `GET /comfy/canvas-workflow`, the bridge extension and ComfyUI's API constraints |
 
 ## Where things live
@@ -46,7 +48,9 @@ not a see-also, and says which part of the code it owns.
 | `backend/services/blueprint_expand.py` | `docs/dev/comfyui/structured-expansion.md` § Expansion; + `docs/dev/comfyui/structured.md` § Fill accounting for `plan_fill`'s rules |
 | `backend/services/blueprint_service.py` | `docs/dev/comfyui/structured.md` § Fill accounting and § Orphans |
 | `backend/services/blueprint_rewrite.py` | `docs/dev/comfyui/structured-llm.md` § The rewrite pass |
-| `backend/models/run.py`, `backend/schemas/run.py`, `backend/services/run_service.py`, `backend/routers/runs.py` | `docs/dev/comfyui/automation.md`; outside this family: `docs/dev/backend-infrastructure.md` § After a job ends: the run hook for `_after_terminal` |
+| `backend/models/run.py`, `backend/schemas/run.py`, `backend/services/run_service.py`, `backend/routers/runs.py` | `docs/dev/comfyui/automation.md`; + `docs/dev/comfyui/run-loop.md` for `LoopSettings`, `GateSettings`, `RewriteSettings`, `BODY_STAGES`, `next_pass`, `_spent`/`_budget_stop`, `check_seeds` and `RunOut.outcome`/`leaves`; outside this family: `docs/dev/backend-infrastructure.md` § After a job ends: the run hook for `_after_terminal` |
+| `backend/services/run_gate.py` | `docs/dev/comfyui/run-loop.md` § The gate |
+| `backend/routers/comfy.py` (`start_rewrite_job`, `_refuse_live_run`) | `docs/dev/comfyui/run-loop.md` § The rewrite stage and § Manual Apply and Top up during a run |
 | `extras/ComfyUI-CrucibleBridge/__init__.py`, `extras/ComfyUI-CrucibleBridge/js/crucible_bridge.js` | `docs/dev/comfyui/sync.md` § `extras/ComfyUI-CrucibleBridge/` |
 | `backend/utils.py` (`join_subfolder`, `normalize_subfolder`) | outside this family: `docs/dev/shared-utilities.md`; the ComfyUI-specific rule is `docs/dev/comfyui/queue.md` § Gotchas |
 
@@ -64,7 +68,8 @@ not a see-also, and says which part of the code it owns.
 | `frontend/src/components/comfy/BlueprintPanel.tsx`, `BlueprintPreview.tsx`, `BlueprintAxesEditor.tsx`, `BlueprintVariationsEditor.tsx`, `BlueprintScenariosEditor.tsx`, `BlueprintNameField.tsx`, `blueprintKeys.ts` | `docs/dev/comfyui/page.md` § Frontend (the Blueprint tab); + `docs/dev/comfyui/structured.md` § Endpoints and Apply's guard rails for what Apply and Top up send and the server guards behind the buttons; + `docs/dev/comfyui/structured-expansion.md` § Expansion for the `defaultPath`/`defaultTemplate` mirrors |
 | `frontend/src/components/comfy/OutlineModal.tsx`, `DraftReview.tsx` | `docs/dev/comfyui/structured-llm.md` § The outline call for the job; + `docs/dev/comfyui/page.md` § Frontend for the modal, the draft review, the draft query and *Use it* |
 | `frontend/src/components/comfy/RewriteModal.tsx` | `docs/dev/comfyui/page.md` § Frontend for the modal and the estimate query; + `docs/dev/comfyui/structured-llm.md` § The rewrite pass for the job and `confirm_budget` |
-| `frontend/src/pages/RunsPage.tsx`, `frontend/src/api/runs.ts`, `frontend/src/components/runs/RunCaptionFields.tsx`, `RunExportFields.tsx`, `runForms.ts` | `docs/dev/comfyui/automation.md` § The Runs page |
+| `frontend/src/pages/RunsPage.tsx`, `frontend/src/api/runs.ts`, `frontend/src/components/runs/RunCaptionFields.tsx`, `RunExportFields.tsx`, `runForms.ts` | `docs/dev/comfyui/automation.md` § The Runs page; + `docs/dev/comfyui/run-loop.md` § The Runs page for the pass headings and `LoopOutcome` |
+| `frontend/src/components/runs/RunLoopFields.tsx`, `runLoopForms.ts` | `docs/dev/comfyui/run-loop.md` § The Runs page |
 | `frontend/src/components/layout/TopBar.tsx` (the `comfy_prompts`, `comfy_outline` and `comfy_rewrite` branches, and `comfy_generate` in `LIVE_IMAGE_JOB_TYPES`) | `docs/dev/comfyui/prompts.md` § Frontend for the `comfy_prompts` branch; + `docs/dev/comfyui/page.md` § Frontend for the `comfy_generate` live refresh and the `comfy_outline` and `comfy_rewrite` branches; outside this family: `docs/dev/frontend-jobs.md` |
 
 ### Tests

@@ -74,7 +74,7 @@ export const EXPORT_FILTERS_DEFAULTS: ExportFilters = {
   filterAesthetic: false,
   aestheticMin: 5.0,
   filterCaptioned: true,
-  excludeFlags: ["has_watermark"],
+  excludeFlags: ["has_watermark", "gate_rejected"],
   filterStyleSim: false,
   styleSimMin: 0.5,
   subfolderFilterActive: false,

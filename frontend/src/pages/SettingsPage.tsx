@@ -337,6 +337,14 @@ export default function SettingsPage() {
     onError: () => toast.error("Failed to delete provider"),
   });
 
+  function providerUrlIsRemote(url: string): boolean {
+    try {
+      return !["localhost", "127.0.0.1", "[::1]", "::1"].includes(new URL(url).hostname.toLowerCase());
+    } catch {
+      return true;
+    }
+  }
+
   function openAddProvider() {
     setProviderForm({ name: "", base_url: "http://localhost:1234/v1", api_key: "", default_model: "", max_image_px: 1024, max_tokens: 2048, timeout_s: 300 });
     setEditingProviderId(null);
@@ -344,7 +352,7 @@ export default function SettingsPage() {
   }
 
   function openEditProvider(p: ProviderOut) {
-    setProviderForm({ name: p.name, base_url: p.base_url, api_key: "", default_model: p.default_model, max_image_px: p.max_image_px, max_tokens: p.max_tokens, timeout_s: p.timeout_s });
+    setProviderForm({ name: p.name, base_url: p.base_url, api_key: "", default_model: p.default_model, max_image_px: p.max_image_px, max_tokens: p.max_tokens, timeout_s: p.timeout_s, billed: p.billed ?? undefined });
     setEditingProviderId(p.id);
     setShowProviderForm(true);
   }
@@ -360,6 +368,7 @@ export default function SettingsPage() {
         max_image_px: providerForm.max_image_px,
         max_tokens: providerForm.max_tokens,
         timeout_s: providerForm.timeout_s,
+        ...(providerForm.billed !== undefined ? { billed: providerForm.billed } : {}),
       }});
     } else {
       createProviderMutation.mutate(providerForm);
@@ -691,6 +700,7 @@ export default function SettingsPage() {
                     <option value="is_uniform">Near-uniform</option>
                     <option value="has_watermark">Watermarked</option>
                     <option value="is_duplicate">Duplicate</option>
+                    <option value="gate_rejected">Rejected by a run's gate</option>
                   </select>
                 </div>
               </div>
@@ -1206,6 +1216,17 @@ export default function SettingsPage() {
                       />
                       <span className="mono" style={{ fontSize: 12, color: "var(--fg-mute)" }}>s</span>
                     </div>
+                  </div>
+                  {/* Untouched (billed undefined) follows the URL, as the server does for NULL. */}
+                  <div className="form-row" style={{ gap: 8 }}>
+                    <label style={{ fontSize: 12.5, display: "flex", alignItems: "center", gap: 6 }}>
+                      <input
+                        type="checkbox"
+                        checked={providerForm.billed ?? providerUrlIsRemote(providerForm.base_url)}
+                        onChange={(e) => setProviderForm((f) => ({ ...f, billed: e.target.checked }))}
+                      />
+                      Billed — counts toward an automated run's paid-call cap
+                    </label>
                   </div>
                   <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
                     <button className="btn primary sm" onClick={handleSaveProvider} disabled={createProviderMutation.isPending || updateProviderMutation.isPending}>

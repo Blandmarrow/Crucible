@@ -11,7 +11,23 @@ from backend.services import run_service
 router = APIRouter(prefix="/runs", tags=["runs"])
 
 
+# The most folders a run's response lists; `leaf_count` says how many there are.
+LEAF_LIST_LIMIT = 200
+
+
+def _leaves(run: Run) -> list[dict]:
+    order = {"abandoned": 0, "open": 1, "met": 2}
+    rows = [
+        {"path": v.get("path", ""), "target": v.get("target", 0), "kept": (v.get("kept") or [0])[-1],
+         "state": v.get("state", "open"), "reason": v.get("reason")}
+        for v in ((run.context or {}).get("leaves") or {}).values()
+    ]
+    rows.sort(key=lambda r: (order.get(r["state"], 1), r["path"]))
+    return rows
+
+
 def _out(run: Run) -> RunOut:
+    leaves = _leaves(run)
     return RunOut(
         id=run.id,
         dataset_id=run.dataset_id,
@@ -24,6 +40,10 @@ def _out(run: Run) -> RunOut:
         current_job_id=run.current_job_id,
         error_msg=run.error_msg,
         row_count=len((run.context or {}).get("row_ids") or []),
+        outcome=(run.context or {}).get("loop"),
+        leaves=leaves[:LEAF_LIST_LIMIT],
+        leaf_count=len(leaves),
+        met_count=sum(1 for l in leaves if l["state"] == "met"),
         created_at=run.created_at,
         started_at=run.started_at,
         finished_at=run.finished_at,

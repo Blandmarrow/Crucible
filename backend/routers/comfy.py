@@ -1484,9 +1484,26 @@ async def preview_blueprint(plan_id: str, body: BlueprintPreviewRequest, db: Asy
     return await blueprint_service.preview(db, plan, body.spec, body.seed, allow_over_cap=body.allow_over_cap)
 
 
+async def _refuse_live_run(db: AsyncSession, plan_id: str) -> None:
+    """409 while an automated run on this plan is running or paused (M6 §5).
+
+    A manual Apply or Top up between its passes would add rows the run then counts as
+    its own, or file them outside its budget. A rewrite stays allowed: a run paused on
+    rows waiting for one sends the user here to run it.
+    """
+    from backend.models import Run
+
+    live = (await db.execute(
+        select(Run.id).where(Run.plan_id == plan_id, Run.status.in_(("running", "paused"))).limit(1)
+    )).first()
+    if live is not None:
+        raise HTTPException(409, "An automated run on this plan is running or paused — finish or cancel it on the Runs page first")
+
+
 @router.post("/plans/{plan_id}/blueprint/apply")
 async def apply_blueprint(plan_id: str, body: BlueprintApplyRequest, db: AsyncSession = Depends(get_db)):
     plan = await _get_plan(db, plan_id)
+    await _refuse_live_run(db, plan_id)
     alias = _prompt_alias(plan)
     if not alias:
         raise HTTPException(400, NO_PROMPT_PIN_MSG)
@@ -1515,6 +1532,8 @@ async def apply_blueprint(plan_id: str, body: BlueprintApplyRequest, db: AsyncSe
 async def fill_blueprint(
     db: AsyncSession, plan: ComfyPlan, spec: BlueprintSpec, seed: int, *,
     prompt_alias: str, confirm_total: int | None, allow_over_cap: bool, delete_orphan_pending: bool,
+    exclude_leaf_ids: frozenset[str] = frozenset(),
+    run_rewrites: frozenset[str] = frozenset(),
 ) -> dict:
     """Top up's fill, without its run: Apply, then reset the blueprint's failed rows and
     list its pending ones. Top up and an automated run's `prompts` stage both call it.
@@ -1524,6 +1543,10 @@ async def fill_blueprint(
     template text, so when there are any it stops after Apply: nothing is reset and
     `pending` is empty. Returns `{created, reset, deleted_rows, awaiting_rewrite,
     pending}`, raising the HTTPExceptions Apply's errors always mapped to.
+
+    An automated run passes the scenarios it rewrites itself as `run_rewrites`, so
+    their rows do not stop the fill, and the leaves it abandoned as
+    `exclude_leaf_ids`, which get no rows and are not listed (M6 §5).
     """
     try:
         applied = await blueprint_service.apply(
@@ -1533,6 +1556,7 @@ async def fill_blueprint(
             confirm_total=confirm_total,
             allow_over_cap=allow_over_cap,
             delete_orphan_pending=delete_orphan_pending,
+            exclude_leaf_ids=exclude_leaf_ids,
         )
     except blueprint_service.BlueprintInvalid as e:
         raise HTTPException(400, f"The blueprint has errors: {e}")
@@ -1541,10 +1565,10 @@ async def fill_blueprint(
     except blueprint_service.TotalChanged as e:
         raise HTTPException(409, str(e))
     out = {"created": applied["created"], "reset": 0, "deleted_rows": applied["deleted_rows"], "awaiting_rewrite": 0, "pending": []}
-    awaiting = await blueprint_rewrite.count_awaiting(db, plan.id, prompt_alias)
+    awaiting = await blueprint_rewrite.count_awaiting(db, plan.id, prompt_alias, skip_scenarios=run_rewrites)
     if awaiting:
         return {**out, "awaiting_rewrite": awaiting}
-    reset, pending = await blueprint_service.prepare_top_up(db, plan)
+    reset, pending = await blueprint_service.prepare_top_up(db, plan, exclude_leaf_ids=exclude_leaf_ids)
     return {**out, "reset": reset, "pending": pending}
 
 
@@ -1558,6 +1582,7 @@ async def top_up_blueprint(plan_id: str, body: BlueprintTopUpRequest, db: AsyncS
     what runs is what the preview showed (docs/dev/comfyui/structured.md § Top up).
     """
     plan = await _get_plan(db, plan_id)
+    await _refuse_live_run(db, plan_id)
     alias = _prompt_alias(plan)
     if not alias:
         raise HTTPException(400, NO_PROMPT_PIN_MSG)
@@ -1770,38 +1795,86 @@ async def rewrite_blueprint(plan_id: str, body: RewriteRequest, db: AsyncSession
         # The scenarios the user reviewed. The job rewrites only these, so one switched on
         # while it waits in the queue is not rewritten against a budget sized without it.
         scenarios = sorted(blueprint_rewrite.rewrite_scenarios(BlueprintSpec.model_validate(bp.spec or {})))
-        est = blueprint_rewrite.estimate(
-            await blueprint_rewrite.select_targets(db, plan_id, alias, set(scenarios)), body.batch_size
+        res = await start_rewrite_job(
+            db, plan,
+            provider_id=body.provider_id, model_name=body.model_name, batch_size=body.batch_size,
+            temperature=body.temperature, scenarios=scenarios, confirm_budget=body.confirm_budget,
+            label=body.label,
         )
-        if not est["rows"]:
-            raise HTTPException(
-                400, "Nothing to rewrite — turn on 'Rewrite into prose' on a scenario and Apply it first"
-            )
-        if est["budget"] != body.confirm_budget:
-            raise HTTPException(
-                409, f"The rewrite now needs up to {est['budget']} LLM calls, not the {body.confirm_budget} you reviewed — review it again"
-            )
-        config = body.model_dump()
-        # A path param, so model_dump() omits it; the guards and TopBar read it.
-        config["plan_id"] = plan_id
-        config["scenarios"] = scenarios
-        n, m = est["rows"], est["leaves"]
-        job = BackgroundJob(
-            job_type="comfy_rewrite",
-            label=body.label or f"Rewrite: {plan.name} — {n} prompt{'s' if n != 1 else ''} in {m} folder{'s' if m != 1 else ''}",
-            dataset_id=plan.dataset_id,
-            total_items=n,
-            config=config,
+    if res["job_id"] is None:
+        raise HTTPException(
+            400, "Nothing to rewrite — turn on 'Rewrite into prose' on a scenario and Apply it first"
         )
-        db.add(job)
-        await db.commit()
+    return res
+
+
+async def start_rewrite_job(
+    db: AsyncSession, plan: ComfyPlan, *,
+    provider_id: str, model_name: str, batch_size: int, temperature: float, scenarios: list[str],
+    confirm_budget: int | None = None, label: str | None = None,
+    row_ids: list[str] | None = None, max_requests: int | None = None,
+    run_id: str | None = None, run_stage: str | None = None, label_prefix: str = "",
+    sit_out_failures: bool = False,
+) -> dict:
+    """Queue a `comfy_rewrite` job over `scenarios` (and only `row_ids`, when given).
+
+    The route and an automated run's `rewrite` stage both call it. The caller holds the
+    plan lock and has checked that no `_ROW_JOB_TYPES` job is live; the route has also
+    checked the provider and the blueprint. Returns `{job_id, total, budget}`, with
+    `job_id: None` when nothing is left to rewrite. A `confirm_budget` that no longer
+    matches is a 409, as the route always answered; a run passes none, and caps the
+    calls with `max_requests` instead (its paid-call cap).
+
+    With `sit_out_failures` (a looping run), a pass in which every leaf failed
+    completes rather than raising: those leaves sit out the pass and the next pass
+    retries them (M6 §5). A provider or write error, or a cancel, still fails the job.
+    A run that does not loop has no next pass, so PM-004's rule holds for it: nothing
+    rewritten is a failure.
+
+    The calls made so far are written to the job row after every batch, so a job
+    killed mid-pass still records what it spent (the run's paid-call cap reads it).
+    """
+    alias = _prompt_alias(plan)
+    if not alias:
+        raise HTTPException(400, NO_PROMPT_PIN_MSG)
+    plan_id = plan.id
+    only = set(row_ids) if row_ids is not None else None
+    est = blueprint_rewrite.estimate(
+        await blueprint_rewrite.select_targets(db, plan_id, alias, set(scenarios), row_ids=only), batch_size
+    )
+    if not est["rows"]:
+        return {"job_id": None, "total": 0, "budget": 0}
+    if confirm_budget is not None and est["budget"] != confirm_budget:
+        raise HTTPException(
+            409, f"The rewrite now needs up to {est['budget']} LLM calls, not the {confirm_budget} you reviewed — review it again"
+        )
+    confirmed_budget = est["budget"] if confirm_budget is None else confirm_budget
+    if max_requests is not None:
+        confirmed_budget = min(confirmed_budget, max_requests)
+    config = {
+        "provider_id": provider_id, "model_name": model_name, "batch_size": batch_size,
+        "temperature": temperature, "confirm_budget": confirm_budget, "label": label,
+        # The guards and TopBar read plan_id.
+        "plan_id": plan_id, "scenarios": list(scenarios),
+    }
+    if row_ids is not None:
+        config["row_ids"] = list(row_ids)
+    n, m = est["rows"], est["leaves"]
+    job = BackgroundJob(
+        job_type="comfy_rewrite",
+        label=run_job_label(
+            label_prefix,
+            label or f"Rewrite: {plan.name} — {n} prompt{'s' if n != 1 else ''} in {m} folder{'s' if m != 1 else ''}",
+        ),
+        dataset_id=plan.dataset_id,
+        total_items=n,
+        config=run_job_config(config, run_id, run_stage),
+    )
+    db.add(job)
+    await db.commit()
 
     dataset_id = plan.dataset_id
-    provider_id = body.provider_id
-    requested_model = body.model_name.strip()
-    batch_size = body.batch_size
-    temperature = body.temperature
-    confirmed_budget = body.confirm_budget
+    requested_model = model_name.strip()
     reviewed = set(scenarios)
 
     async def _run(job_id: str) -> None:
@@ -1827,7 +1900,7 @@ async def rewrite_blueprint(plan_id: str, body: RewriteRequest, db: AsyncSession
                 raise RuntimeError("The provider no longer has a default model")
             # The plan's saved "Generate prompts" instructions: read, never written.
             instructions = ((plan_row.gen_settings or {}).get("instructions") or "").strip()
-            targets = await blueprint_rewrite.select_targets(session, plan_id, alias, reviewed)
+            targets = await blueprint_rewrite.select_targets(session, plan_id, alias, reviewed, row_ids=only)
             if not targets:
                 raise RuntimeError("Prompt rewrite failed: no rows wait for a rewrite any more")
             base_url, api_key = prov.base_url, prov.api_key
@@ -1857,6 +1930,12 @@ async def rewrite_blueprint(plan_id: str, body: RewriteRequest, db: AsyncSession
 
         async def _on_batch(r, path: str) -> None:
             await _emit(r.rewritten, f"Rewrote {r.rewritten}/{requested} prompts ({path})")
+            # What has been spent so far, in case the job dies before its final write.
+            async with AsyncSessionLocal() as s:
+                job_row = await s.get(BackgroundJob, job_id)
+                if job_row is not None:
+                    job_row.result_data = {**(job_row.result_data or {}), "calls": llm.requests}
+                    await s.commit()
 
         llm = prompt_generator.RewriteSession(
             base_url=base_url, api_key=api_key, model_name=model_name,
@@ -1893,6 +1972,10 @@ async def rewrite_blueprint(plan_id: str, body: RewriteRequest, db: AsyncSession
         # user's cancel with "completed".
         if result.stop_reason == "cancelled":
             job_queue.raise_if_cancelled(job_id)
+        if sit_out_failures and result.stop_reason not in ("provider_error", "write_error"):
+            # Inside a run, folders that failed sit out the pass; the run reads the
+            # result and goes on, and its next pass retries them.
+            return
         if result.rewritten == 0:
             # PM-004: returning is not proof that anything was rewritten.
             reasons = {

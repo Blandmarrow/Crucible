@@ -68,9 +68,12 @@ def test_top_up_fills_only_what_is_short_and_a_second_press_does_nothing(tmp_pat
             pv = await _preview(env, plan_id)
             short = {l["path"]: l["short"] for l in pv["leaves"]}
             assert short == {"knights/iron_knight": 0, "knights/salt_witch": 1}
-            out = await _top_up(env, plan_id, 1)
-            assert (out["created"], out["total"]) == (1, 1)
-            assert len(await _images(env, ds["id"])) == 4
+            # Yield is kept images per completed row (M6 §5): 1 of 2 rows is 0.5, so
+            # the one missing image takes two rows.
+            assert pv["rows_to_add"] == 2
+            out = await _top_up(env, plan_id, 2)
+            assert (out["created"], out["total"]) == (2, 2)
+            assert len(await _images(env, ds["id"])) == 5
             assert fake.violations == []
     run(go())
 

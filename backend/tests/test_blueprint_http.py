@@ -220,11 +220,14 @@ def test_fill_counts_images_that_still_exist_and_open_rows(tmp_path):
             pv = await _preview(env, plan_id, spec)
             assert pv["leaves"][0]["kept"] == 2 and pv["rows_to_add"] == 0
 
-            # Deleting an image in the gallery makes the leaf short again.
+            # Deleting an image in the gallery makes the leaf short again. Yield is kept
+            # images per completed row (M6 §5), so 1 kept of 2 rows is 0.5, and the one
+            # missing image takes two rows.
             r = await env.client.delete(f"{API}/images/{b['id']}")
             assert r.status_code == 204, r.text
             pv = await _preview(env, plan_id, spec)
-            assert pv["leaves"][0]["kept"] == 1 and pv["rows_to_add"] == 1
+            assert pv["leaves"][0]["kept"] == 1 and pv["leaves"][0]["yield"] == 0.5
+            assert pv["rows_to_add"] == 2
 
             # A workflow that makes 2 images per row needs half the rows, and a
             # pending row counts as one row's worth of images.

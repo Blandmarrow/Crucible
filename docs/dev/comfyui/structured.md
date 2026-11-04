@@ -49,21 +49,39 @@ pasted verbatim into every prompt that names them.
 on each call**, never kept in a counter: dedupe and gallery deletes remove images, and a
 stored count would quietly go wrong.
 
-- **A target counts images.** `kept` is the number of a leaf's rows' `image_ids` that still
-  exist as `Image` rows in the plan's dataset. That check runs through `utils.chunked`,
-  because of the bind limit.
+- **A target counts kept images.** `kept` is the number of a leaf's rows' `image_ids` that
+  still exist as `Image` rows in the plan's dataset **and carry none of `NOT_KEPT_FLAGS`**
+  (`is_duplicate`, `gate_rejected`). The flag test is `image_scope.flag_exclusions`, which
+  silently drops a key missing from `ALLOWED_FLAG_KEYS`, so both keys must stay
+  allowlisted. The lookup runs through `utils.chunked`, because of the bind limit.
   - `row.image_ids` is written only by the run and never pruned, so its length is what a
     row produced, whatever has been deleted since.
-  - Deleting an image in the gallery makes its leaf short again. That is the intent.
+  - Deleting an image in the gallery makes its leaf short again. So does a duplicate scan
+    flagging it, or an automated run's gate rejecting it. That is the intent.
+  - A duplicate group's root carries no flag, so each group keeps one image.
 - **Open rows count as future images.** Pending, running and failed rows are each worth
-  `yield` images. `yield` is the leaf's images per completed row, falling back to the
-  plan-wide mean, then to 1.
+  `yield` images. `yield` is the leaf's **kept** images per completed row, floored at
+  `YIELD_FLOOR` (0.25), falling back to the plan-wide figure, then to 1.
+  - The floor is applied before `plan_fill`, which would turn a yield of 0 into 1: the
+    fewest rows exactly when nothing passes. With it, a fill asks for at most 4× the
+    shortfall.
+  - A leaf whose completed rows made no image at all takes the fallback, not the floor.
+  - The plan-wide figure counts blueprint rows only. A hand-typed row's images are never
+    looked up, so they would read as not kept.
+  - So a fill over-generates by each leaf's pass rate. Target 2, two completed rows, one
+    image deleted: yield 0.5, and the one missing image takes two rows.
 - **The shortfall formula.** `plan_fill(target, kept, open, yield)` =
   `ceil(max(0, target − kept − open·yield) / yield)`.
   - Because targets are absolute, a second Apply adds nothing.
   - Neither does pressing it before a run, since the new rows are open.
-- These rules are the user's (2026-11-03): targets count images, rows needed are the
-  shortfall divided by yield, and pending, failed and running rows count.
+- **`exclude_leaf_ids`** (on `apply`, `prepare_top_up` and `fill_blueprint`) gives leaves
+  an automated run abandoned no rows, and leaves their pending rows unlisted.
+  `leaf_progress` reads each current leaf's kept count with no expansion, for the loop's
+  `next_pass` (`docs/dev/comfyui/run-loop.md`).
+- These rules are the user's. On 2026-11-03: targets count images, rows needed are the
+  shortfall divided by yield, and pending, failed and running rows count. On 2026-11-04
+  (M6 §5): duplicates and gate rejects do not count, everywhere — Preview and the manual
+  Top up as well as a run — and yield counts kept images.
 
 ## Orphans
 

@@ -112,7 +112,9 @@ def _descriptors(spec: BlueprintSpec, entity_ids: dict) -> list[str]:
 
 
 async def select_targets(
-    db: AsyncSession, plan_id: str, prompt_alias: str, scenarios: set[str] | None = None,
+    db: AsyncSession, plan_id: str, prompt_alias: str, scenarios: set[str] | None = None, *,
+    skip_scenarios: set[str] | frozenset[str] = frozenset(),
+    row_ids: set[str] | None = None,
 ) -> list[LeafTarget]:
     """Every row the pass would rewrite now, grouped by leaf in leaf order.
 
@@ -122,6 +124,11 @@ async def select_targets(
     The leaves are queried rather than read off `bp.leaves`, for the reason
     `prepare_top_up` gives. A leaf matches by its stored scenario name, so a scenario
     renamed since the last Apply has no targets until it is applied again.
+
+    `skip_scenarios` leaves scenarios out (an automated run rewrites those itself, so
+    their rows do not count as waiting), and `row_ids` narrows to exactly those rows
+    (a run rewrites only the rows its pass will generate, so it never pays for a row
+    it then leaves out).
     """
     bp = (
         await db.execute(select(ComfyBlueprint).where(ComfyBlueprint.plan_id == plan_id))
@@ -132,6 +139,7 @@ async def select_targets(
     on = rewrite_scenarios(spec)
     if scenarios is not None:
         on &= scenarios
+    on -= set(skip_scenarios)
     if not on:
         return []
     leaves = (
@@ -153,6 +161,8 @@ async def select_targets(
                 )
             )
         ).all():
+            if row_ids is not None and rid not in row_ids:
+                continue
             text = (values or {}).get(prompt_alias)
             if isinstance(text, str) and text.strip():
                 by_leaf.setdefault(leaf_id, []).append((order, rid, text))
@@ -165,8 +175,12 @@ async def select_targets(
     ]
 
 
-async def count_awaiting(db: AsyncSession, plan_id: str, prompt_alias: str) -> int:
-    return sum(len(t.rows) for t in await select_targets(db, plan_id, prompt_alias))
+async def count_awaiting(
+    db: AsyncSession, plan_id: str, prompt_alias: str, *,
+    skip_scenarios: set[str] | frozenset[str] = frozenset(),
+) -> int:
+    targets = await select_targets(db, plan_id, prompt_alias, skip_scenarios=skip_scenarios)
+    return sum(len(t.rows) for t in targets)
 
 
 async def write_rewrites(db: AsyncSession, prompt_alias: str, pairs: list[tuple[str, str]]) -> int:

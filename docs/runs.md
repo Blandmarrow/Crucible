@@ -3,7 +3,9 @@
 A run takes a ComfyUI plan all the way to a training-ready export in one press. It fills
 every folder of the plan's blueprint that is short, generates the images, scores them,
 captions them and exports the dataset, one stage after another, while you do something
-else.
+else. It can also repeat: generate, check each image against a quality bar, and go round
+again until every folder holds enough images that pass (see
+[Repeating until every folder is full](#repeating-until-every-folder-is-full)).
 
 Open it from **Runs** in a dataset's sidebar. A run works on a plan you have already set
 up on the ComfyUI page, with a workflow, a pinned prompt (★) and either queued rows or a
@@ -16,13 +18,16 @@ They always run in this order. Switch off any you do not want.
 | Stage | What it does |
 |---|---|
 | **Fill the blueprint** | The same as **Top up** on the Blueprint tab: adds the rows each short folder needs, and puts failed rows back in the queue. With no blueprint it is skipped, and the run generates the plan's pending rows instead. |
+| **Rewrite prompts** | Off by default. Rewrites the new template prompts into prose with a language model before generating, for the scenarios you tick (see below). |
+| **Unload the rewrite model** | Frees the GPU from the model that rewrote, so ComfyUI has it. Only runs with Rewrite. |
 | **Free VRAM for ComfyUI** | Unloads Crucible's own models (captioners, scorers), so ComfyUI has the GPU. |
 | **Generate** | Runs this run's rows through ComfyUI, filing each image in its row's folder, under the base folder if you set one. |
 | **Free ComfyUI's VRAM** | Asks ComfyUI to unload its models, so Crucible's scorers and captioners have the GPU. If your ComfyUI cannot do that, the run notes it and carries on. |
 | **Score** | Scores the images this run made. Technical scores always run, because they are what finds duplicates. The aesthetic score is optional. |
+| **Gate** | Off by default, and only with Score. Checks each new image against the bar you set and moves the ones that fail to a `rejects` folder (see below). |
 | **Caption** | Captions the images this run made, with the settings below. **Caption images that already have a caption** is on by default, because a ComfyUI run already saves each prompt as the image's caption. |
 | **Unload the caption model** | Frees the GPU from the model that captioned: an LM Studio model, an Ollama model, or one of Crucible's own captioners. On by default, and it only runs with Caption. LM Studio needs version 0.4 or later for this; with an older one the run notes that the model stays loaded and carries on. |
-| **Export** | Exports the whole dataset to the folder you choose, with the settings below. Duplicates and watermarked images are left out by default. |
+| **Export** | Exports the whole dataset to the folder you choose, with the settings below. Duplicates, watermarked images and images a gate rejected are left out by default. |
 
 A stage with nothing to do is **skipped**, not run on everything. If a run made no new
 images, scoring and captioning are skipped, and no other image in the dataset is touched.
@@ -49,6 +54,81 @@ changing those pages later does not change a run in progress.
 Loss masks, the license and label filters, and limiting the export to some subfolders are
 only on the Export page for now.
 
+## Repeating until every folder is full
+
+Tick **Repeat until every folder is full** to make the run go round in passes. Each pass
+fills the blueprint, rewrites (if on), generates, scores and gates. When a pass ends, the
+run counts each folder again. If a folder is still short, it starts another pass that
+makes just what is missing. Captioning, unloading the caption model and the export run
+once, after the last pass.
+
+Only images that count fill a folder. An image flagged as a **duplicate**, or **rejected
+by the gate**, does not count, so the next pass makes another. The ComfyUI page's preview
+and its **Top up** button count the same way. Because some images fail, a pass makes a
+few more than the folder is short, based on how many passed last time.
+
+A repeating run needs:
+- **Fill the blueprint** and **Generate** on, and a blueprint on the plan.
+- **A random seed.** If the workflow has a `seed` or `noise_seed` input, pin it on the
+  ComfyUI page with **Random**. Otherwise every pass would make the same pictures again,
+  and they would all be rejected as duplicates. The run refuses to start and names the
+  node.
+
+### The caps
+
+Every repeating run has hard limits, so it cannot run forever:
+
+| Cap | What it limits |
+|---|---|
+| **Most passes** | How many times the run goes round. |
+| **Most images** | How many images the run may make in all, rejects included. A pass that would go over makes fewer rows, shared out across the folders. A workflow that saves several images per prompt can go over on the first pass. |
+| **Most minutes of work** | Time spent working. Time paused, or Crucible being shut down, does not count. It is checked before each costly stage, so a long generate stage can run a little over. |
+| **Most paid LLM calls** | Shown only when a **billed** provider rewrites or captions. It counts rewrite requests and captioned images. When captioning is billed, it must be at least **Most images**, so there are always calls left to caption every image. |
+
+A provider is **billed** when you tick that box for it in Settings → LLM Providers. Left
+alone, a provider on another machine counts as billed and one on this machine does not.
+Ollama and Crucible's own captioners are never billed.
+
+When a cap runs out, the run stops making new images, still frees ComfyUI's VRAM, runs
+captioning and the export, and says which cap stopped it. If the paid-call cap cannot
+cover every image, the run captions as many as it can and says how many it left out.
+
+### Giving up on a folder
+
+If a folder gains no images that count in two passes in a row, the run gives up on it and
+fills the others. This catches a folder whose prompts never make a picture that passes.
+A folder that simply got no rows in a pass, because the image cap was shared out, is not
+given up on. The finished run lists each folder still short, and why.
+
+## The gate
+
+The gate decides which images count. Choose what it rejects:
+- **Blurry, noisy, near-uniform or duplicate** images. These four are ticked by default.
+- **Watermarked** or **NSFW** images. Ticking these makes the score stage run those
+  checks too.
+- **An aesthetic score below** a number, when the aesthetic score is on.
+
+An image whose pixels changed after it was scored always fails.
+
+A rejected image is **moved, not deleted**. It goes to `rejects/` under the run's base
+folder, keeping its folder's path: `knights/iron_knight` becomes
+`rejects/knights/iron_knight`. It is also flagged **Rejected by a run's gate**, which is
+what keeps it out of its folder's count, the captions and the export. You can filter the
+gallery by that flag. Moving an image back by hand does not clear the flag.
+
+## Rewriting inside a run
+
+If some of the blueprint's scenarios have **Rewrite into prose** on, switch on **Rewrite
+prompts** and tick the scenarios the run may rewrite. Ticking them is your review, the
+same as in the Rewrite dialog. Pick the provider and model. Each pass rewrites only the
+rows it is about to generate.
+
+If a folder's rewrite fails, that folder sits out the pass: its rows wait as template
+prompts and are never generated as they are. In a repeating run the next pass tries again,
+and a folder that keeps failing is given up on like any other. A run that does not repeat
+fails if the rewrite changed nothing, so you can fix the provider and resume. A scenario with rewrite on that you did not
+tick still pauses the run, as before.
+
 ## Following a run
 
 While a run is going, the page shows each stage with its status (pending, running, done,
@@ -62,7 +142,9 @@ name in front of its label.
 - **Cancel** stops the current stage's job, and no later stage starts. Images already made
   stay in the dataset.
 
-A dataset can have one run going or paused at a time.
+A dataset can have one run going or paused at a time. While a run on a plan is going or
+paused, that plan's **Apply** and **Top up** buttons are refused, so nothing adds rows
+between its passes. A repeating run shows its stages grouped by pass.
 
 ## When a run stops on its own
 
@@ -79,5 +161,5 @@ A dataset can have one run going or paused at a time.
 ## Limits for now
 
 - The form is not remembered between visits. Saved run recipes are planned.
-- A run makes one pass. Repeating until every folder holds enough images that pass a
-  quality bar is planned too.
+- A run that stopped at a cap cannot have the cap raised. Start a new run: it picks up
+  where the folders stand, and makes only what is still missing.

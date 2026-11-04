@@ -1500,6 +1500,7 @@ export default function ImageDetailPage() {
   const isUniform = image.quality_flags?.is_uniform as boolean | undefined;
   const hasWatermark = image.quality_flags?.has_watermark as boolean | undefined;
   const isNsfw = image.quality_flags?.is_nsfw as boolean | undefined;
+  const gateRejected = image.quality_flags?.gate_rejected as boolean | undefined;
   // Scoped to the job's own image: on a neighbour the panel is idle.
   const aiJobHere = !!aiJob && aiJob.imageId === imageId;
   const aiRunning = aiJobHere && aiJobProgress?.status === "running";
@@ -2268,9 +2269,10 @@ export default function ImageDetailPage() {
           {/* Quality flags. `scores_stale` is not one of them — it qualifies all
               of them, so it renders here and must be in the row's condition too,
               or an image whose only marker is the stale bit shows nothing. */}
-          {(isDuplicate === true || isBlurry === true || isUniform === true || hasWatermark === true || isNsfw === true || image?.scores_stale === true) && (
+          {(isDuplicate === true || isBlurry === true || isUniform === true || hasWatermark === true || isNsfw === true || gateRejected === true || image?.scores_stale === true) && (
             <div className="flex gap-2 flex-wrap mt-2">
               {isNsfw === true && <span className="badge-red flex items-center gap-1"><EyeOff size={10} />NSFW</span>}
+              {gateRejected === true && <span className="badge-red flex items-center gap-1" title="A run's quality gate rejected this image"><AlertTriangle size={10} />Rejected by gate</span>}
               {isBlurry === true && <span className="badge-yellow flex items-center gap-1"><AlertTriangle size={10} />Blurry</span>}
               {isDuplicate === true && <span className="badge-yellow flex items-center gap-1"><Copy size={10} />Duplicate</span>}
               {isUniform === true && <span className="badge-orange flex items-center gap-1"><AlertTriangle size={10} />Near-uniform</span>}

@@ -204,32 +204,32 @@ Departures from the sketch that stood here:
 - **Export takes no id list**: it exports the dataset through its filters, duplicates left
   out by default, which keeps it clear of the `[]` trap below.
 
-## 5. Goal loop, gates, budgets
+## 5. Goal loop, gates, budgets (landed)
 
-The loop: compute each leaf's shortfall (§2c) → top up → generate → score (which flags
-duplicates) → gate → recompute → repeat. Each iteration is a pass through §4's stages; the
-loop is `advance_run()` returning to the `prompts` stage rather than finishing. §4's
-`stage_tag` already carries the stage's index, so a job from an earlier pass of the same
-stage key reads as stale. `context.row_ids` then needs to hold row ids per iteration, not
-one flat list.
+Built on 2026-11-04. Everything durable — the body and the tail, `next_pass` and the
+abandon rule, the gate and `rejects/`, the rewrite stage, the budgets and the paid-call
+cap, the seed check, the Runs page's sections — is in `docs/dev/comfyui/run-loop.md`. The
+kept rule and the kept-based yield are in `docs/dev/comfyui/structured.md` § Fill
+accounting; the per-provider `billed` setting is in `docs/dev/llm-providers.md`.
 
-- **Hard caps are required fields, not options**: max iterations, max images, max LLM calls, max
-  wall-clock. Each iteration burns GPU time, and a stop condition can fail to converge.
-- **Check the budget before each expensive stage, never after.** Checking after is how a run
-  overspends by a whole generate stage.
-- **Recompute "kept" from the DB every iteration; never accumulate it.** A resolve-mode dedupe
-  deletes rows and `scores_stale` can invalidate a score.
-- **Abandon a leaf that gains nothing across two consecutive iterations.**
-- The gate is a pure predicate over `Image` columns, reusing the quality router's flag-key
-  vocabulary. It **moves** failures to `rejects/`. A new stage key `gate`, between `score` and
-  `caption` in `STAGE_ORDER`, run as a small job of its own like `run_handoff`. The only
-  move-to-subfolder code today is `images.py`'s `batch_move_subfolder` handler, so lift a
-  start function out of it as §4 did for score and caption, called with
-  `rename_on_move=False` (a pure `Image.subfolder` update) and never with an empty id list,
-  which it 404s.
-- **Forbid in-place pixel ops in a recipe for this phase.** `utils.record_in_place` marks scores
-  stale, and a gate reading those scores would judge deleted pixels. If they are ever allowed, the
-  gate must treat a stale score as not-kept.
+The user settled five points that day: the rewrite pass is an optional stage inside the
+loop; the LLM-call cap applies to paid providers only, through a per-provider "billed"
+setting defaulted from `_is_remote`; the kept rule holds everywhere, Preview and the
+manual Top up included; rejects go in one tree, `<base>/rejects/<leaf path>`; and §4's
+three open hand checks are run before the loop is.
+
+Departures from the sketch that stood here, most from an Opus review of the design:
+- **The tag stays `"<index>:<key>"`.** A pass's entries are inserted before the tail, so a
+  started stage never changes index, and the pass number in the tag was not needed.
+- **Budgets are recomputed from the run's child jobs**, not stage entries: resume and the
+  restart reconcile wipe a failed stage's numbers.
+- **The image clamp sits in `prompts`**, not `generate`, so the rewrite is never paid for a
+  row the clamp then drops; the rewrite also gets `max_requests` from the cap.
+- **A rewrite inside a run completes when folders fail**, even every folder; only a
+  provider or write error, or a cancel, fails it.
+- **The seed check reads the workflow**, not just the pins: an unpinned seed repeats too.
+- **`style_sim_min` is not a gate setting**: the score stage never writes that score.
+- **Apply and Top up 409 while a run on the plan is live.**
 
 ## 6. Dry run and the recipe library
 
@@ -266,8 +266,9 @@ family sits behind the hub `docs/dev/comfyui.md`, so each new file goes in
   `docs/dev/comfyui/structured-llm.md` (the outline call, and §3's rewrite pass since
   2026-11-03). §1's two columns stay documented beside the row model;
   cross-reference them rather than moving them.
-- `docs/dev/comfyui/automation.md`, written with §4 (2026-11-04). §5's goal loop, gate and
-  budgets, and §6's dry run and recipes, extend it.
+- `docs/dev/comfyui/automation.md`, written with §4 (2026-11-04), and
+  `docs/dev/comfyui/run-loop.md`, written with §5 (2026-11-04). §6's dry run and recipes
+  extend whichever of the two fits.
 
 `docs/dev/backend-infrastructure.md` § After a job ends: the run hook, written with §4. User docs are owed in the same change as each feature — `docs/comfyui.md`
 or a new page, plus a row in `docs/features.md` and whatever `README.md` needs. Run
@@ -277,6 +278,8 @@ or a new page, plus a row in `docs/features.md` and whatever `README.md` needs. 
 
 - Whether an entity filter (built on `comfy_leaves`, scoped to a blueprint) is wanted in the
   gallery. Not built until someone misses it (decision 8).
+- Whether a run stopped by a cap can have the cap raised and be resumed. The recipe is
+  stored on the row, and nothing edits it after the start today.
 
 Settled 2026-11-03 by the user: per-leaf targets are edited per scenario in the UI and stored
 per leaf in the DB; a deleted leaf's rows count toward nothing (see §2c). Also settled that day:

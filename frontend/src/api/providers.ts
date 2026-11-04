@@ -10,6 +10,10 @@ export interface ProviderOut {
   max_tokens: number;
   timeout_s: number;
   is_remote: boolean;
+  /** The explicit setting; null = follow the URL. */
+  billed: boolean | null;
+  /** The effective value: billed, else is_remote. */
+  is_billed: boolean;
   created_at: string;
 }
 
@@ -21,6 +25,7 @@ export interface ProviderCreate {
   max_image_px?: number;
   max_tokens?: number;
   timeout_s?: number;
+  billed?: boolean;
 }
 
 export interface ProviderUpdate {
@@ -31,6 +36,7 @@ export interface ProviderUpdate {
   max_image_px?: number;
   max_tokens?: number;
   timeout_s?: number;
+  billed?: boolean;
 }
 
 export const providersApi = {

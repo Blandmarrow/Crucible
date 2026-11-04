@@ -5,8 +5,9 @@ import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
 import { useJobSSE } from "../hooks/useSSE";
 import { useJobStore } from "../store/jobStore";
 import { comfyApi } from "../api/comfy";
+import { providersApi } from "../api/providers";
 import { runsApi, isLiveRun, RUN_STAGES, RUN_STAGE_LABELS } from "../api/runs";
-import type { Run, RunRecipe, RunStageKey, StageStatus } from "../api/runs";
+import type { Run, RunRecipe, RunStage, RunStageKey, StageStatus } from "../api/runs";
 import { captionBackend } from "../constants/captionModels";
 import RunCaptionFields from "../components/runs/RunCaptionFields";
 import RunExportFields from "../components/runs/RunExportFields";
@@ -14,6 +15,11 @@ import {
   CAPTION_FORM_DEFAULTS, EXPORT_FORM_DEFAULTS, captionModelId, toCaptionSettings, toExportSettings,
   type CaptionForm, type ExportForm,
 } from "../components/runs/runForms";
+import { RunGateFields, RunLoopFields, RunRewriteFields } from "../components/runs/RunLoopFields";
+import {
+  GATE_FORM_DEFAULTS, LOOP_FORM_DEFAULTS, REWRITE_FORM_DEFAULTS,
+  toGateSettings, toLoopSettings, toRewriteSettings, type GateForm, type LoopForm, type RewriteForm,
+} from "../components/runs/runLoopForms";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import { apiErrorDetail } from "../utils/apiError";
 
@@ -64,7 +70,14 @@ export default function RunsPage() {
 const DEFAULT_STAGES: RunStageKey[] = ["prompts", "handoff_to_comfy", "generate", "handoff_to_local", "score", "free_caption_model"];
 
 /** A stage that only means something after another: sent only when that one is on too. */
-const NEEDS_STAGE: Partial<Record<RunStageKey, RunStageKey>> = { free_caption_model: "caption" };
+const NEEDS_STAGE: Partial<Record<RunStageKey, RunStageKey>> = {
+  free_caption_model: "caption", free_rewrite_model: "rewrite", gate: "score", rewrite: "prompts",
+};
+
+/** The provider id inside an `openai_compat:<id>:<model>` caption model, else null. */
+function compatProviderId(model: string | null): string | null {
+  return model?.startsWith("openai_compat:") ? model.split(":")[1] ?? null : null;
+}
 
 function StartRunForm({ datasetId, onStarted }: { datasetId: string; onStarted: () => void }) {
   const [planId, setPlanId] = useState<string | null>(null);
@@ -75,6 +88,9 @@ function StartRunForm({ datasetId, onStarted }: { datasetId: string; onStarted: 
   const [aestheticModel, setAestheticModel] = useState<"laion" | "v2_5">("laion");
   const [caption, setCaption] = useState<CaptionForm>(CAPTION_FORM_DEFAULTS);
   const [exportForm, setExportForm] = useState<ExportForm>(EXPORT_FORM_DEFAULTS);
+  const [loop, setLoop] = useState<LoopForm>(LOOP_FORM_DEFAULTS);
+  const [gate, setGate] = useState<GateForm>(GATE_FORM_DEFAULTS);
+  const [rewrite, setRewrite] = useState<RewriteForm>(REWRITE_FORM_DEFAULTS);
 
   const prevDatasetId = useRef(datasetId);
   useEffect(() => {
@@ -82,6 +98,7 @@ function StartRunForm({ datasetId, onStarted }: { datasetId: string; onStarted: 
     prevDatasetId.current = datasetId;
     setPlanId(null);
     setSubfolder("");
+    setRewrite(REWRITE_FORM_DEFAULTS);
   }, [datasetId]);
 
   const { data: plans = [] } = useQuery({
@@ -95,6 +112,15 @@ function StartRunForm({ datasetId, onStarted }: { datasetId: string; onStarted: 
     enabled: !!effectivePlanId,
   });
   const captionModel = captionModelId(caption);
+  const { data: providers = [] } = useQuery({ queryKey: ["providers"], queryFn: providersApi.list });
+  const rewriteScenarios = (blueprint?.spec.scenarios ?? []).filter((sc) => sc.rewrite).map((sc) => sc.name);
+  // Ticks for another plan's scenarios (the plan picker changed) are not sent.
+  const tickedScenarios = rewrite.scenarios.filter((sc) => rewriteScenarios.includes(sc));
+  const rewriteProviderId = rewrite.providerId || providers[0]?.id || "";
+  const rewriteOn = stages.has("rewrite") && stages.has("prompts");
+  const billed = (id: string | null) => !!id && !!providers.find((p) => p.id === id)?.is_billed;
+  // The paid-call cap applies only when a billed provider rewrites or captions.
+  const paidCap = (rewriteOn && billed(rewriteProviderId)) || (stages.has("caption") && billed(compatProviderId(captionModel)));
 
   const toggle = (k: RunStageKey) =>
     setStages((prev) => {
@@ -108,6 +134,13 @@ function StartRunForm({ datasetId, onStarted }: { datasetId: string; onStarted: 
   if (stages.size === 0) blockers.push("Switch on at least one stage.");
   if (stages.has("caption") && (!captionModel || captionBackend(captionModel) === null)) blockers.push("Choose a caption model.");
   if (stages.has("export") && !exportForm.outputDir.trim()) blockers.push("Choose an export folder.");
+  if (loop.on && !(stages.has("prompts") && stages.has("generate"))) blockers.push("Repeating needs Fill the blueprint and Generate.");
+  if (loop.on && !blueprint) blockers.push("Repeating needs a blueprint on the plan.");
+  if (stages.has("gate") && stages.has("score") && gate.flags.length === 0 && !(gate.aestheticOn && runAesthetic)) {
+    blockers.push("Give the gate something to test.");
+  }
+  if (rewriteOn && !rewriteProviderId) blockers.push("Add an LLM provider in Settings for the rewrite.");
+  if (rewriteOn && tickedScenarios.length === 0) blockers.push("Tick the scenarios the rewrite may change.");
 
   const start = useMutation({
     mutationFn: () => {
@@ -117,6 +150,9 @@ function StartRunForm({ datasetId, onStarted }: { datasetId: string; onStarted: 
         score: { run_aesthetic: runAesthetic, aesthetic_model: aestheticModel },
         caption: stages.has("caption") ? toCaptionSettings(caption) : null,
         export: stages.has("export") ? toExportSettings(exportForm) : null,
+        gate: stages.has("gate") && stages.has("score") ? toGateSettings(gate, runAesthetic) : null,
+        rewrite: rewriteOn ? toRewriteSettings({ ...rewrite, scenarios: tickedScenarios }, rewriteProviderId) : null,
+        loop: toLoopSettings(loop, paidCap),
       };
       return runsApi.start({ dataset_id: datasetId, plan_id: effectivePlanId!, name: name.trim(), recipe });
     },
@@ -190,6 +226,15 @@ function StartRunForm({ datasetId, onStarted }: { datasetId: string; onStarted: 
             </div>
           </div>
         )}
+
+        {stages.has("gate") && stages.has("score") && <RunGateFields value={gate} onChange={setGate} runAesthetic={runAesthetic} />}
+
+        {rewriteOn && (
+          <RunRewriteFields value={{ ...rewrite, providerId: rewriteProviderId }} onChange={setRewrite}
+            providers={providers} scenarios={rewriteScenarios} />
+        )}
+
+        <RunLoopFields value={loop} onChange={setLoop} paidCap={paidCap} />
 
         {stages.has("caption") && <RunCaptionFields value={caption} onChange={setCaption} />}
 
@@ -304,17 +349,60 @@ function ChildProgress({ done, total, message }: { done: number; total: number; 
   );
 }
 
+/** A heading before each pass of a looping run, and before the stages after the last. */
+function passHeading(stages: RunStage[], i: number, loops: boolean): string | null {
+  if (!loops) return null;
+  const here = stages[i].pass_no ?? null;
+  const before = i > 0 ? stages[i - 1].pass_no ?? null : undefined;
+  if (here === before) return null;
+  return here === null ? "After the last pass" : `Pass ${here}`;
+}
+
 function StageList({ run }: { run: Run }) {
+  const loops = !!run.recipe.loop;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      {run.stages.map((s, i) => (
-        <div key={`${i}:${s.key}`} className="row-flex" style={{ gap: 10, alignItems: "baseline" }}>
-          <span style={{ width: 70, fontSize: 11, textTransform: "uppercase", letterSpacing: ".04em", color: STAGE_COLOURS[s.status] }}>{s.status}</span>
-          <span style={{ fontSize: 12.5, minWidth: 160 }}>{RUN_STAGE_LABELS[s.key] ?? s.key}</span>
-          <span style={{ fontSize: 12, color: "var(--fg-mute)" }}>{[s.summary, s.note].filter(Boolean).join(" · ")}</span>
+      {run.stages.map((s, i) => {
+        const heading = passHeading(run.stages, i, loops);
+        return (
+          <div key={`${i}:${s.key}`} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {heading && <div style={{ fontSize: 11, fontWeight: 600, color: "var(--fg-dim)", marginTop: i > 0 ? 6 : 0 }}>{heading}</div>}
+            <div className="row-flex" style={{ gap: 10, alignItems: "baseline" }}>
+              <span style={{ width: 70, fontSize: 11, textTransform: "uppercase", letterSpacing: ".04em", color: STAGE_COLOURS[s.status] }}>{s.status}</span>
+              <span style={{ fontSize: 12.5, minWidth: 160 }}>{RUN_STAGE_LABELS[s.key] ?? s.key}</span>
+              <span style={{ fontSize: 12, color: "var(--fg-mute)" }}>{[s.summary, s.note].filter(Boolean).join(" · ")}</span>
+            </div>
+          </div>
+        );
+      })}
+      {run.error_msg && <div style={{ fontSize: 12, color: "var(--bad)", marginTop: 4 }}>{run.error_msg}</div>}
+      {loops && <LoopOutcome run={run} />}
+    </div>
+  );
+}
+
+/** How a looping run ended, and the folders still short: met, or why it stopped. */
+function LoopOutcome({ run }: { run: Run }) {
+  const short = run.leaves.filter((l) => l.state !== "met");
+  const met = run.met_count;
+  if (!run.outcome && short.length === 0) return null;
+  return (
+    <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+      {run.outcome && (
+        <div style={{ fontSize: 12.5, color: run.outcome.outcome === "met" ? "var(--good)" : "var(--warn)" }}>
+          {run.outcome.outcome === "met"
+            ? `Every folder is full (${run.leaf_count}).`
+            : `${met} of ${run.leaf_count} folders full. Stopped: ${run.outcome.reason ?? "some folders are short"}.`}
+        </div>
+      )}
+      {short.slice(0, 20).map((l) => (
+        <div key={l.path} style={{ fontSize: 12, color: "var(--fg-mute)", paddingLeft: 12 }}>
+          {l.path}: {l.kept} of {l.target}{l.state === "abandoned" ? ` — given up (${l.reason ?? "no gain"})` : ""}
         </div>
       ))}
-      {run.error_msg && <div style={{ fontSize: 12, color: "var(--bad)", marginTop: 4 }}>{run.error_msg}</div>}
+      {run.leaf_count - met > 20 && (
+        <div style={{ fontSize: 12, color: "var(--fg-mute)", paddingLeft: 12 }}>…and {run.leaf_count - met - 20} more</div>
+      )}
     </div>
   );
 }

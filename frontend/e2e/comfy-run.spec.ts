@@ -185,11 +185,13 @@ test('a hand-written blueprint expands into rows with folders, and they run', as
   await expect(topUp).toBeEnabled()
   await topUp.click()
 
+  // Yield is kept images per completed row (M6 §5): that folder kept 1 of 2 rows,
+  // so its one missing image takes two new rows.
   await expect
     .poll(async () => ((await (await request.get(rowsUrl)).json()) as LeafRow[]).map((r) => r.status), { timeout: 30_000 })
-    .toEqual(['completed', 'completed', 'completed', 'completed', 'completed'])
+    .toEqual(['completed', 'completed', 'completed', 'completed', 'completed', 'completed'])
   const images = await (await request.get('/api/v1/images/', { params: { dataset_id: ds.id } })).json()
-  expect(images).toHaveLength(4)
+  expect(images).toHaveLength(5)
 })
 
 test('the Blueprint tab opens the draft-from-a-description dialog', async ({ page, request }) => {

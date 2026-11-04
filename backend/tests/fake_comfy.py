@@ -39,6 +39,9 @@ What it models:
   import fails after earlier outputs were written; `[[fake:partial]]` → a 200
   whose `node_errors` names the last output node in graph order, which is dropped
   while the rest is queued, as ComfyUI does when only some outputs validate.
+- `varied=True` (opt-in) draws each image from the graph's seed instead of a global
+  counter, so scoring and duplicate detection see distinct, sharp images; see
+  `varied_image` and `graph_seed`. The default stays flat solid colours.
 - `POST /free` (recorded in `frees`) and `GET /history?max_items=N`.
 
 What it does not model: websockets, progress previews, `/upload/image`,
@@ -64,6 +67,7 @@ REJECT_MARKER = "[[fake:reject]]"
 FAIL_MARKER = "[[fake:fail]]"
 CORRUPT_MARKER = "[[fake:corrupt]]"
 PARTIAL_MARKER = "[[fake:partial]]"
+BLURRY_MARKER = "[[fake:blurry]]"  # varied mode only: the image fails the blur gate
 
 FAIL_MESSAGE = "Allocation on device failed (fake out-of-memory)"
 REJECT_MESSAGE = "Value not in list"
@@ -104,9 +108,50 @@ def _validation_error(graph: dict) -> dict | None:
     return None
 
 
-def make_png(color=(10, 120, 200), size=(32, 32), **text) -> bytes:
+def graph_seed(graph: dict) -> int | None:
+    """The seed a varied image is drawn from: the first integer input named
+    `seed` or `noise_seed`, scanning nodes in graph order and each node's inputs
+    in order. Booleans and links do not count. None when the graph has none."""
+    for node in graph.values():
+        if not isinstance(node, dict):
+            continue
+        for name, value in (node.get("inputs") or {}).items():
+            if name in ("seed", "noise_seed") and isinstance(value, int) and not isinstance(value, bool):
+                return value
+    return None
+
+
+def varied_image(seed: int, size: int = 128, blurry: bool = False):
+    """A deterministic RGB Pillow image for `seed`, built to pass Crucible's
+    default technical gates (blur >= 100, noise <= 15, uniformity >= 12) and to
+    differ from other seeds by far more than the default pHash duplicate
+    threshold (8 bits of 64). numpy + Pillow only.
+
+    Recipe: a coarse random colour grid (6x6) upsampled bicubically gives smooth
+    random low-frequency content, which is what pHash sees; then 9 to 12 hard-edged
+    random rectangles give the Laplacian variance. Random pixel noise is avoided
+    on purpose, since noise_score is an upper bound. `blurry=True` skips the
+    rectangles, leaving a smooth field whose Laplacian variance is near zero."""
+    import numpy as np
+    from PIL import Image as PilImage
+
+    rng = np.random.default_rng(abs(int(seed)))
+    grid = rng.integers(0, 256, size=(6, 6, 3), dtype=np.uint8)
+    img = PilImage.fromarray(grid, "RGB").resize((size, size), PilImage.BICUBIC)
+    if blurry:
+        return img
+    px = np.array(img)
+    for _ in range(int(rng.integers(9, 13))):
+        w, h = (int(rng.integers(size // 8, size // 2)) for _ in range(2))
+        x, y = int(rng.integers(0, size - w)), int(rng.integers(0, size - h))
+        px[y:y + h, x:x + w] = rng.integers(0, 256, size=3, dtype=np.uint8)
+    return PilImage.fromarray(px, "RGB")
+
+
+def make_png(color=(10, 120, 200), size=(32, 32), image=None, **text) -> bytes:
     """A real PNG carrying `text` as tEXt chunks. Own copy of conftest's
-    `png_bytes`, because this module must not import conftest."""
+    `png_bytes`, because this module must not import conftest. `image`, a Pillow
+    image, replaces the solid `color` fill."""
     from PIL import Image as PilImage
     from PIL import PngImagePlugin
 
@@ -114,7 +159,7 @@ def make_png(color=(10, 120, 200), size=(32, 32), **text) -> bytes:
     for k, v in text.items():
         info.add_text(k, v)
     buf = io.BytesIO()
-    PilImage.new("RGB", size, color).save(buf, "PNG", pnginfo=info)
+    (image if image is not None else PilImage.new("RGB", size, color)).save(buf, "PNG", pnginfo=info)
     return buf.getvalue()
 
 
@@ -132,8 +177,13 @@ class FakeComfy:
         complete: bool = False,
         down_after_submits: int | None = None,
         polls_before_done: int = 0,
+        varied: bool = False,
+        varied_size: int = 128,
     ):
         self.complete = complete
+        # Opt-in: draw each image from the graph's seed (see `varied_image`).
+        self.varied = varied
+        self.varied_size = varied_size
         # Goes unreachable for every request once this many prompts were accepted.
         self.down_after_submits = down_after_submits
         self.polls_before_done = polls_before_done
@@ -205,8 +255,13 @@ class FakeComfy:
                 filename = f"{stem}_{n:05d}_.png"
             else:
                 subfolder, filename = "", f"ComfyUI_temp_fake_{n:05d}_.png"
-            color = ((n * 53) % 256, (n * 97) % 256, (n * 151) % 256)
-            self.images[(filename, subfolder, kind)] = make_png(color, **chunks)
+            if self.varied:
+                seed = graph_seed(graph)
+                art = varied_image(n if seed is None else seed, self.varied_size, BLURRY_MARKER in text)
+                self.images[(filename, subfolder, kind)] = make_png(image=art, **chunks)
+            else:
+                color = ((n * 53) % 256, (n * 97) % 256, (n * 151) % 256)
+                self.images[(filename, subfolder, kind)] = make_png(color, **chunks)
             refs.append((filename, subfolder, kind))
             outputs[str(node_id)] = {"images": [{"filename": filename, "subfolder": subfolder, "type": kind}]}
         if CORRUPT_MARKER in text and refs:

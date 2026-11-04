@@ -23,7 +23,7 @@ export const PERSIST_DEBOUNCE_MS = 350;
 // Gallery default filters (applied when no session state exists for a dataset)
 export const GALLERY_DEFAULT_SORT_KEY    = "gallery-default-sort";    // number (index into SORT_OPTIONS)
 export const GALLERY_DEFAULT_CAPTION_KEY = "gallery-default-caption"; // "all" | "captioned" | "uncaptioned"
-export const GALLERY_DEFAULT_QUALITY_KEY = "gallery-default-quality"; // "" | "is_blurry" | "is_noisy" | "is_uniform" | "has_watermark" | "is_duplicate"
+export const GALLERY_DEFAULT_QUALITY_KEY = "gallery-default-quality"; // "" | "is_blurry" | "is_noisy" | "is_uniform" | "has_watermark" | "is_duplicate" | "gate_rejected"
 export const GALLERY_LICENSE_BADGE_KEY   = "gallery-license-badge";   // "true" | "false" (off by default)
 export const GALLERY_STYLE_METER_KEY     = "gallery-style-meter";     // "true" | "false" (ON by default — read with !== "false")
 export const LABEL_HOTKEYS_KEY           = "label-hotkeys-enabled";   // "true" | "false" (ON by default — read with !== "false")

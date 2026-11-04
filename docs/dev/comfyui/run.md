@@ -184,6 +184,17 @@ the import then fails after earlier outputs were written. `[[fake:partial]]` is 
 queued (a 400 when it is the only output). `POST /free` is recorded for the VRAM handoff to
 test against.
 
+**`FakeComfy(varied=True)` makes images a scorer can tell apart.** By default every image is a flat 
+32x32 colour, so it is blurry, uniform and a pHash duplicate of every other. With `varied=True` the 
+seed is the first integer input named `seed` or `noise_seed` on any node of the submitted graph 
+(`graph_seed`); with none, the global image counter stands in. `varied_image(seed, size)` draws 
+a smooth random 6x6 colour grid plus 9 to 12 hard-edged rectangles at `varied_size` (default 
+128): the same seed gives the same pixels, and different seeds pass the default blur, noise and 
+uniformity gates and sit at least 12 pHash bits apart (600 seeds checked), outside the 
+duplicate threshold of 8. Pure noise would fail the noise upper bound, so there is none. 
+`[[fake:blurry]]` in the prompt drops the rectangles so the image fails the blur gate. 
+`test_fake_comfy_varied.py` pins this; the cv2 half is `needs_cv2`.
+
 `backend/tests/test_comfy_run_body.py` drives the run body through it: multi-output import
 (one from a ComfyUI subfolder) with generation metadata and provenance, a PreviewImage
 source, an execution error, a rejected, a refused and a partly accepted graph (the last with

@@ -105,14 +105,20 @@ bar, and the run shows in the progress bar like any other.
 
 The preview shows how many images each folder is **Short**, and in total. A folder is
 short when it holds fewer images than its target, so it is short again after you delete
-some of its images in the gallery, perhaps the ones you didn't like.
+some of its images in the gallery, perhaps the ones you didn't like. An image flagged as a
+duplicate, or rejected by an automated run's gate, does not count either.
+
+When some of a folder's images stopped counting, Top up makes a few more rows than the
+folder is short, based on how many of its images counted so far. A folder that kept one
+of its two images asks for two rows to replace the missing one.
 
 Pressing Top up when every folder is full does nothing, so it is safe to press whenever
 you have finished pruning.
 
 To go on from Top up to scoring, captioning and exporting without pressing each one, start
-a run from the **Runs** page. Its first stage is this same Top up. See
-[Automated Runs](runs.md).
+a run from the **Runs** page. Its first stage is this same Top up, and it can repeat until
+every folder is full. While a run on the plan is going or paused, Apply and Top up are
+refused. See [Automated Runs](runs.md).
 
 If a scenario has **Rewrite into prose** ticked and some of its rows have not been
 rewritten yet, Top up adds the missing rows and then stops. It tells you how many rows

@@ -4,8 +4,9 @@ An automated run (M6 §4) takes one press from a ComfyUI plan to a scored, capti
 exported dataset: it fills the plan's blueprint, frees the GPU, generates, frees it the
 other way, scores, captions and exports. This file covers the `Run` row, how it is stepped,
 each stage, cancel, pause, resume and restart, and the Runs page. The ruling is
-[decision 9](../decisions/09-runs-step-forward-on-job-completion.md); the stages still to
-come (the gate and goal loop, the recipe library) are in
+[decision 9](../decisions/09-runs-step-forward-on-job-completion.md). The goal loop that
+repeats a run's body, the gate and the budgets (M6 §5) are `docs/dev/comfyui/run-loop.md`;
+the stage still to come (the recipe library) is in
 `docs/dev/comfy-automation-plan/README.md`. The user guide is `docs/runs.md`.
 
 ## The shape: a row stepped forward, never a waiting job
@@ -24,7 +25,8 @@ another job on it. A run therefore **is not a job**. It is a `Run` row
 - `context`: `{"row_ids": [...]}`, the plan rows this run generates. These are **row ids,
   not image ids**. The run's images are a query over those rows' `image_ids`
   (`run_service.run_image_ids`). A JSON list of thousands of uuids would ride on every
-  poll of the run.
+  poll of the run. Since §5 it also holds the rows of each pass (`passes`), the loop's
+  per-folder counts (`leaves`) and its ending (`loop`): `docs/dev/comfyui/run-loop.md`.
 - `status` (`running`, `paused`, `completed`, `failed`, `cancelled`), `pause_requested`,
   `current_job_id` and `error_msg`. `current_job_id` has no FK, because finished job rows
   are swept after 30 days.

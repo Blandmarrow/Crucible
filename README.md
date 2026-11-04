@@ -47,7 +47,7 @@ Every step from raw images to a training-ready export, in order:
 - **Generate** images into a dataset by queueing prompts against your own ComfyUI workflow — pin the parameters you want to vary, build a queue of prompts (write them by hand, import them, or generate them with an LLM), give each row its own destination folder so one run builds a whole folder structure, and every output is imported automatically with metadata and optional captions → [details](docs/comfyui.md)
 - **Reuse prompts** from a global prompt library shared across every dataset and plan → [details](docs/comfyui.md)
 - **Describe a dataset once** — axes of characters, places or anything else, variation pieces like camera angle, and scenarios that combine them alone or in pairs — and a blueprint expands it into a foldered ComfyUI queue, writing every prompt from a template so each character reads the same everywhere → [details](docs/comfy-structured.md)
-- **Run a plan end to end** in one press — fill the blueprint's short folders, generate, score, caption and export, stage by stage, with pause, resume and cancel → [details](docs/runs.md)
+- **Run a plan end to end** in one press — fill the blueprint's short folders, generate, score, caption and export, stage by stage, with pause, resume and cancel; optionally repeat, rejecting images that fail a quality gate, until every folder is full, within hard caps → [details](docs/runs.md)
 
 ### Captioning
 - **Caption** images in batch using local ML models (Florence-2, PaliGemma-2, JoyCaption, WD14, Ollama) or any OpenAI-compatible API — or drag a `.txt` file onto an image to set its caption → [details](docs/captioning.md)

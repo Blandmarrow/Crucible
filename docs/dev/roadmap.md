@@ -17,7 +17,7 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-04, after M6 §4)
+## Next session (updated 2026-11-04, after M6 §5 was built)
 
 1. M5's five stages merged on 2026-10-30 as PR #101. Only its cleanup is open, and that waits
    a release. See [server-state-plan/README.md](server-state-plan/README.md) for what was
@@ -46,7 +46,7 @@ restates its stages.
    there, the plan is rewritten in
    [comfy-automation-plan/README.md](comfy-automation-plan/README.md) by decisions 8 and 9, and
    `comfy-per-row-subfolders` is deleted. **Work on M6 happens on that branch.**
-   - The ComfyUI dev docs sit behind the hub `docs/dev/comfyui.md`, with nine files in
+   - The ComfyUI dev docs sit behind the hub `docs/dev/comfyui.md`, with ten files in
      `docs/dev/comfyui/`.
    - §7 (the mock ComfyUI server), §2a (blueprints, see `docs/dev/comfyui/structured.md`),
      §2b (the outline call) and §2c (Top up) have landed there, so the arc's cut point is
@@ -63,10 +63,19 @@ restates its stages.
      really freed ComfyUI's VRAM, and the scorers unloaded after scoring (measured with
      the Windows per-process GPU counters). Still unchecked by hand: Pause, a restart
      mid-run and a `TopBar` cancel.
-   - **The next M6 work is §5**, the goal loop and the gate, which the user moved out of §4.
+   - **§5, the goal loop, the gate and budgets, landed on 2026-11-04**
+     (`docs/dev/comfyui/run-loop.md`, migration `c8e4a6b2d0f7` for the provider's
+     `billed`), with every automated gate green and an Opus review's twelve findings
+     fixed. Still unchecked by hand, against a real ComfyUI and LM Studio: a two-pass
+     loop to target, and a run stopped by a cap. §4's three hand checks above come
+     first, by the user's choice.
+   - **After §5, the next M6 work is §6**, the dry run, the snapshot stage and the recipe
+     library. Before the merge, the user also wants the ComfyUI page reworked so prompts
+     are easier to categorize and the prompt library easier to use; its scope is not set.
    - Decisions 7–9 and this M6 checklist exist only on that branch until it merges, so
      `main`'s next decision takes number 10. Its migrations `e5c1a9d3f7b2` →
-     `b7d2f4a9c1e3` → `d4a8c2e6f1b9` → `f3b9d1a7c5e2` follow `main`'s `c2b8e4f6a1d7`;
+     `b7d2f4a9c1e3` → `d4a8c2e6f1b9` → `f3b9d1a7c5e2` → `c8e4a6b2d0f7` follow `main`'s
+     `c2b8e4f6a1d7`;
      rebase at stage boundaries.
 5. M8's follow-ups 8, 9, 10 and 11 can go any time; stage 3 left inpaint and detection crop
    out, so item 8 no longer waits for it. Batch move and copy, in item 9, must wait for M4 to
@@ -197,8 +206,15 @@ gates are green and it is pushed.
   hook, the Runs page and `docs/runs.md`. The user moved the gate to §5 and the snapshot
   stage to §6 that day. Full runs checked by hand against a real ComfyUI and LM Studio the
   same day; Pause, a restart mid-run and a `TopBar` cancel are not.
-- [ ] §5: the goal loop, the gate and budgets. Needs §4.
+- [x] §5: the goal loop, the gate and budgets. Done 2026-11-04: the body/tail split and
+  `next_pass`, the gate (`run_gate.py`, `rejects/`, `gate_rejected`), the rewrite stage,
+  the caps and the paid-call cap, the per-provider `billed` setting (migration
+  `c8e4a6b2d0f7`), the kept rule applied everywhere, and `docs/dev/comfyui/run-loop.md`.
+  A two-pass loop and a capped run are not yet checked by hand.
 - [ ] §6: the dry run, the snapshot stage and the recipe library. Needs §4.
+- [ ] Rework the ComfyUI page's UI and some of its behaviour, so prompts are easier to
+  categorize and the prompt library is easier to use (the user's call, 2026-11-04: this
+  lands before the merge). Scope not yet set; plan it with the user first.
 - [ ] Merge: rebase onto `main`, re-parent the first migration onto M4's head if M4 merged
   first, run every gate, open the PR. The ComfyUI docs moved behind a hub on this branch, so
   any doc `main` has added since that names an old path (comfy-prompts.md, comfyui-sync.md, or

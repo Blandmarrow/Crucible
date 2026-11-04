@@ -37,12 +37,23 @@ from backend.services.blueprint_rewrite import (
     expected_calls,
     rewrite_scenarios,
 )
+from backend.services.image_scope import flag_exclusions
 from backend.utils import chunked
 
 # The preview lists at most this many leaves, and composes samples for the first few.
 PREVIEW_LEAF_LIMIT = 500
 PREVIEW_SAMPLE_LEAVES = 20
 OPEN_STATUSES = ("pending", "running", "failed")
+# An image counts toward its leaf's target only while it carries none of these flags:
+# a duplicate adds nothing, and an automated run's gate rejected the other (M6 §5;
+# the user ruled on 2026-11-04 that this holds everywhere, not only inside a run).
+# Both must be in `ALLOWED_FLAG_KEYS`, or `flag_exclusions` silently drops one.
+NOT_KEPT_FLAGS = ("is_duplicate", "gate_rejected")
+# The lowest yield a fill plans with. Yield is kept images per completed row, so a
+# leaf whose images all failed would otherwise plan with 0, which `plan_fill` turns
+# into 1.0: the fewest rows exactly when nothing passes. The floor caps what a fill
+# asks for at 4x the shortfall.
+YIELD_FLOOR = 0.25
 
 
 class BlueprintError(Exception):
@@ -79,6 +90,8 @@ class _Stats:
     produced: int = 0
     image_ids: list[str] = field(default_factory=list)
     kept: int = 0
+    # Kept images that completed rows produced: the numerator of the leaf's yield.
+    kept_completed: int = 0
 
     @property
     def open(self) -> int:
@@ -130,8 +143,13 @@ async def load_blueprint(db: AsyncSession, plan_id: str) -> ComfyBlueprint | Non
 
 
 async def _load_rows(db: AsyncSession, plan: ComfyPlan) -> tuple[list[_Row], set[str], float | None]:
-    """The plan's rows, which of their images still exist, and the plan-wide images
-    per completed row."""
+    """The plan's rows, which of their images are kept, and the plan-wide kept images
+    per completed row.
+
+    Kept means the image still exists in the plan's dataset and carries none of
+    `NOT_KEPT_FLAGS`. Only blueprint rows (those with a leaf) are looked up, so the
+    plan-wide yield is over those rows alone: a hand-typed row's images are never
+    looked up and would otherwise read as not kept."""
     rows = [
         _Row(rid, leaf_id, status, tuple(image_ids or ()), subfolder or "", origin)
         for rid, leaf_id, status, image_ids, subfolder, origin in (
@@ -149,12 +167,16 @@ async def _load_rows(db: AsyncSession, plan: ComfyPlan) -> tuple[list[_Row], set
     for chunk in chunked(wanted):
         existing.update(
             (await db.execute(
-                select(Image.id).where(Image.id.in_(chunk), Image.dataset_id == plan.dataset_id)
+                select(Image.id).where(
+                    Image.id.in_(chunk), Image.dataset_id == plan.dataset_id,
+                    *flag_exclusions(NOT_KEPT_FLAGS),
+                )
             )).scalars()
         )
-    done = [r for r in rows if r.status == "completed"]
+    done = [r for r in rows if r.leaf_id and r.status == "completed"]
     produced = sum(len(r.image_ids) for r in done)
-    plan_yield = produced / len(done) if done and produced else None
+    kept_done = len({i for r in done for i in r.image_ids if i in existing})
+    plan_yield = max(YIELD_FLOOR, kept_done / len(done)) if done and produced else None
     return rows, existing, plan_yield
 
 
@@ -167,12 +189,23 @@ def _tally(rows: list[_Row], existing: set[str]) -> _Stats:
             s.produced += len(r.image_ids)
         s.image_ids.extend(r.image_ids)
     s.kept = len({i for i in s.image_ids if i in existing})
+    s.kept_completed = len({
+        i for r in rows if r.status == "completed" for i in r.image_ids if i in existing
+    })
     return s
+
+
+def _yield(s: _Stats, plan_yield: float | None) -> float:
+    """Kept images per completed row, floored. A leaf with nothing completed yet, or
+    whose completed rows made no image at all, takes the plan-wide figure, then 1."""
+    if s.completed and s.produced:
+        return max(YIELD_FLOOR, s.kept_completed / s.completed)
+    return plan_yield or 1.0
 
 
 async def _compute(
     db: AsyncSession, plan: ComfyPlan, bp: ComfyBlueprint | None, spec: BlueprintSpec, seed: int,
-    allow_over_cap: bool,
+    allow_over_cap: bool, exclude_leaf_ids: frozenset[str] = frozenset(),
 ) -> _Fill:
     # Off the event loop: expansion is bounded, but still pure CPU on every preview.
     expansion = await asyncio.get_running_loop().run_in_executor(None, expand, spec, seed)
@@ -204,8 +237,10 @@ async def _compute(
             leaf_rows = adopt = unkept.get(leaf.path, [])
             adopted.update(r.id for r in adopt)
         s = _tally(leaf_rows, existing)
-        yield_ = s.produced / s.completed if s.completed and s.produced else (plan_yield or 1.0)
-        to_add = plan_fill(leaf.target, s.kept, s.open, yield_)
+        yield_ = _yield(s, plan_yield)
+        # A leaf an automated run abandoned gets nothing more from that run's fills.
+        abandoned = db_leaf is not None and db_leaf.id in exclude_leaf_ids
+        to_add = 0 if abandoned else plan_fill(leaf.target, s.kept, s.open, yield_)
         template_open = sum(1 for r in leaf_rows if r.origin == ORIGIN_TEMPLATE and r.status != "completed")
         entries.append(_Entry(leaf, db_leaf, s, yield_, to_add, [r.id for r in adopt], template_open))
 
@@ -297,17 +332,18 @@ def _write_spec(
 async def apply(
     db: AsyncSession, plan: ComfyPlan, spec: BlueprintSpec, seed: int, *,
     prompt_alias: str, start_order: int, confirm_total: int | None, allow_over_cap: bool,
-    delete_orphan_pending: bool,
+    delete_orphan_pending: bool, exclude_leaf_ids: frozenset[str] = frozenset(),
 ) -> dict:
     """Save the spec, reconcile the leaves, and add each leaf's missing rows. Commits once.
 
     Raises BlueprintInvalid, OverCap or TotalChanged before writing anything.
     `confirm_total` is the row count the user saw in the preview; `None` skips that
     check, for an automated run, which has no preview and holds the plan lock from
-    this count to the write, so the count cannot move under it.
+    this count to the write, so the count cannot move under it. `exclude_leaf_ids`
+    are leaves an automated run has abandoned: they get no new rows.
     """
     bp = await load_blueprint(db, plan.id)
-    fill = await _compute(db, plan, bp, spec, seed, allow_over_cap)
+    fill = await _compute(db, plan, bp, spec, seed, allow_over_cap, exclude_leaf_ids)
     if fill.expansion.errors:
         raise BlueprintInvalid(fill.expansion.errors)
     if fill.rows_to_add > fill.row_cap:
@@ -368,7 +404,9 @@ async def apply(
     return {"created": created, "leaves": len(fill.entries), "deleted_rows": deleted_rows}
 
 
-async def prepare_top_up(db: AsyncSession, plan: ComfyPlan) -> tuple[int, list[str]]:
+async def prepare_top_up(
+    db: AsyncSession, plan: ComfyPlan, *, exclude_leaf_ids: frozenset[str] = frozenset(),
+) -> tuple[int, list[str]]:
     """After an Apply: reset the blueprint's failed rows and list its pending ones.
 
     Only rows of the blueprint's current leaves, so Top up never re-runs an orphan or a
@@ -377,7 +415,8 @@ async def prepare_top_up(db: AsyncSession, plan: ComfyPlan) -> tuple[int, list[s
     caller holds the plan lock and has checked that no run is live, so nothing is
     running them — a hard kill left them — and skipping them would report "every
     folder is full" over a folder that is short. Returns (rows reset, pending row ids
-    in queue order). Commits.
+    in queue order). Rows of `exclude_leaf_ids` (leaves a run abandoned) are left as
+    they are and not listed. Commits.
     """
     # Queried, never read off `bp.leaves`: this runs in Apply's session, which sets
     # expire_on_commit=False, so an already-loaded collection is not reloaded and still
@@ -389,6 +428,7 @@ async def prepare_top_up(db: AsyncSession, plan: ComfyPlan) -> tuple[int, list[s
             )
         ).scalars()
     )
+    leaf_ids = [i for i in leaf_ids if i not in exclude_leaf_ids]
     if not leaf_ids:
         return 0, []
     reset = 0
@@ -412,3 +452,31 @@ async def prepare_top_up(db: AsyncSession, plan: ComfyPlan) -> tuple[int, list[s
             pending.append((r.sort_order, r.id))
     await db.commit()
     return reset, [rid for _, rid in sorted(pending)]
+
+
+async def leaf_progress(db: AsyncSession, plan: ComfyPlan) -> dict[str, dict]:
+    """Each current leaf's target and kept count, read from the DB with no expansion.
+
+    For an automated run's `next_pass` stage, which must not run the expansion inside
+    the worker's hook. Kept follows the fill's own rule (`_load_rows`), so the loop and
+    Top up can never disagree about whether a folder is full. Returns
+    `{leaf_id: {"path", "target", "kept", "open"}}` in leaf order.
+    """
+    leaves = (
+        await db.execute(
+            select(ComfyLeaf.id, ComfyLeaf.path, ComfyLeaf.target)
+            .join(ComfyBlueprint)
+            .where(ComfyBlueprint.plan_id == plan.id)
+            .order_by(ComfyLeaf.sort_order)
+        )
+    ).all()
+    rows, existing, _plan_yield = await _load_rows(db, plan)
+    by_leaf: dict[str, list[_Row]] = {}
+    for r in rows:
+        if r.leaf_id:
+            by_leaf.setdefault(r.leaf_id, []).append(r)
+    out: dict[str, dict] = {}
+    for leaf_id, path, target in leaves:
+        s = _tally(by_leaf.get(leaf_id, []), existing)
+        out[leaf_id] = {"path": path, "target": target, "kept": s.kept, "open": s.open}
+    return out

@@ -1686,6 +1686,7 @@ async def get_dataset_stats(db: AsyncSession, dataset_id: str, subfolder: str | 
             _flag_sum("is_duplicate").label("duplicate"),
             _flag_sum("is_nsfw").label("nsfw"),
             _flag_sum("has_ai_artifacts").label("ai_artifacts"),
+            _flag_sum("gate_rejected").label("gate_rejected"),
         ).where(*_base_where)
     )).one()
     flag_counts = {
@@ -1696,6 +1697,7 @@ async def get_dataset_stats(db: AsyncSession, dataset_id: str, subfolder: str | 
         "duplicate": flag_row.duplicate,
         "nsfw": flag_row.nsfw,
         "ai_artifacts": flag_row.ai_artifacts,
+        "gate_rejected": flag_row.gate_rejected,
     }
 
     # Embedding coverage — separate count query to avoid loading blobs (async, done before

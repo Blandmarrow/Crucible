@@ -167,13 +167,16 @@ def test_a_blueprint_run_goes_through_every_stage(tmp_path, monkeypatch):
             assert all(c.label.startswith('Run "r1" · ') for c in children)
             assert all(c.config["run_id"] == body["id"] for c in children)
 
-            # A second run: the folders are full, so nothing is generated and the
-            # image stages skip rather than widening to the dataset.
+            # A second run: a duplicate does not count toward its folder (M6 §5), so both
+            # folders (2 images each) are short again. The folder holding the group's
+            # root kept 1 of 2 (yield 0.5): 2 rows for its missing image. The other kept
+            # nothing, so it plans at the 0.25 yield floor: 8 rows for two images.
             code, body2 = await _start(env, ds["id"], plan_id, ["prompts", "generate", "score"])
             assert code == 200, body2
             again = await wait_for_run(env, body2["id"])
-            assert _statuses(again) == {"prompts": "done", "generate": "skipped", "score": "skipped"}
-            assert len(await _jobs(env, "quality_score")) == 1
+            assert _statuses(again) == {"prompts": "done", "generate": "done", "score": "done"}
+            assert again["stages"][0]["summary"] == "10 rows added, 0 reset, 10 to generate"
+            assert len(await _jobs(env, "quality_score")) == 2
     run(go())
 
 

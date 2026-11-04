@@ -23,7 +23,8 @@ import { Columns2, RefreshCw } from "lucide-react";
 const RESTART_SLOW_MS = 25_000;
 
 const LIVE_IMAGE_JOB_TYPES = new Set(["caption", "caption_pipeline", "comfy_generate", "video_extract", "video_reextract"]);
-const IMAGE_MODIFYING_JOB_TYPES = new Set(["batch_upscale", "batch_lut", "crop_upscale", "crop_to_detection", "batch_inpaint", "quality_score", "caption", "caption_pipeline", "comfy_generate", "video_extract", "video_reextract"]);
+// `run_gate`: an automated run's gate flags images and moves them to `rejects/`.
+const IMAGE_MODIFYING_JOB_TYPES = new Set(["batch_upscale", "batch_lut", "crop_upscale", "crop_to_detection", "batch_inpaint", "quality_score", "caption", "caption_pipeline", "comfy_generate", "video_extract", "video_reextract", "run_gate"]);
 const DATASET_MODIFYING_JOB_TYPES = new Set(["duplicate", "import"]);
 // Deliberately in neither set above: comfy_prompts writes queue rows, not images,
 // so the image/dataset invalidations would all be pointless. It gets its own

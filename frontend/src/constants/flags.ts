@@ -6,6 +6,7 @@ export const FLAG_OPTIONS = [
   { key: "is_duplicate",     label: "Duplicate" },
   { key: "is_nsfw",          label: "NSFW" },
   { key: "has_ai_artifacts", label: "AI artifacts" },
+  { key: "gate_rejected",    label: "Rejected by a run's gate" },
 ] as const;
 
 export type FlagKey = (typeof FLAG_OPTIONS)[number]["key"];

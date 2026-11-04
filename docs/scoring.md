@@ -111,6 +111,8 @@ All six thresholds are configurable in Settings — changes take effect on the n
 
 A seventh quality flag, `has_ai_artifacts`, is not set by scoring and has no threshold. It is set automatically by the **captioning** pipeline when a generated caption contains thinking-blocks or hedging language (see [Captioning](captioning.md#the-ai-artifacts-flag)), and appears alongside the scoring flags in dataset flag counts and filters.
 
+An eighth quality flag, `gate_rejected`, is set by an automated run's quality gate on images that fail its bar (the reasons are kept beside it). It is excluded from exports by default and appears in the gallery filter and the dataset flag counts.
+
 The watermark score flags *that* an image has a watermark, not where it is — to locate the region, see [Locating watermarks](detection.md#locating-watermarks).
 
 ## Stale scores

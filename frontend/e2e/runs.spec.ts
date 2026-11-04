@@ -79,3 +79,46 @@ test('a run fills the blueprint, generates and exports in one press', async ({ p
   expect(fs.readdirSync(path.join(outDir, 'images')).filter((f) => f.endsWith('.png'))).toHaveLength(2)
   fs.rmSync(outDir, { recursive: true, force: true })
 })
+
+// The goal loop (M6 §5) from the form: with Score and the gate off nothing is
+// rejected, so the first pass fills every folder and the run says so. The gate's
+// own logic is the backend's to test (test_run_loop.py), which can score images.
+test('a repeating run stops after the pass that fills every folder', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-loop-${Date.now()}`)
+  const workflow = { ...WORKFLOW, '3': { class_type: 'KSampler', inputs: { seed: 1, steps: 4 } } }
+  let r = await request.post('/api/v1/comfy/plans', {
+    data: {
+      dataset_id: ds.id, name: 'loop plan', workflow_json: workflow,
+      pinned_params: [
+        { node_id: '6', input: 'text', alias: 'prompt', is_prompt: true },
+        // A repeating run refuses a seed that is not random.
+        { node_id: '3', input: 'seed', alias: 'seed', is_prompt: false, per_row: false, value: null, int_mode: 'random' },
+      ],
+      output_node_ids: ['9'],
+    },
+  })
+  expect(r.status(), await r.text()).toBe(200)
+  const plan = await r.json()
+  r = await request.put(`/api/v1/comfy/plans/${plan.id}/blueprint`, { data: { spec: SPEC, seed: 3 } })
+  expect(r.status(), await r.text()).toBe(200)
+
+  await page.goto(`/datasets/${ds.id}/runs`)
+  await expect(page.getByText('This plan has a blueprint', { exact: false })).toBeVisible()
+  await page.getByRole('checkbox', { name: 'Score', exact: true }).uncheck()
+  await page.getByRole('checkbox', { name: 'Repeat until every folder is full' }).check()
+  await expect(page.getByLabel('Most passes')).toHaveValue('5')
+  await page.getByPlaceholder('Run name (optional)').fill('e2e loop')
+  await page.getByRole('button', { name: 'Start run' }).click()
+
+  const history = page.locator('.panel', { hasText: 'Past runs' })
+  await expect(history.getByText('completed', { exact: true })).toBeVisible({ timeout: 60_000 })
+  await history.getByRole('button', { name: '▸' }).click()
+  await expect(history.getByText('Pass 1', { exact: true })).toBeVisible()
+  await expect(history.getByText('Every folder is full (2).')).toBeVisible()
+
+  const runs = await (await request.get('/api/v1/runs/', { params: { dataset_id: ds.id } })).json()
+  expect(runs[0].outcome).toEqual({ outcome: 'met', reason: null })
+  expect(runs[0].stages.map((s: { key: string }) => s.key)).toEqual(
+    ['prompts', 'handoff_to_comfy', 'generate', 'handoff_to_local', 'next_pass'],
+  )
+})

@@ -93,6 +93,7 @@ export default function ImageCard({ image, onShowGenMeta, onSelect, isDraggable,
   const isUniform = image.quality_flags?.is_uniform as boolean | undefined;
   const isNsfw = image.quality_flags?.is_nsfw as boolean | undefined;
   const hasAiArtifacts = image.quality_flags?.has_ai_artifacts as boolean | undefined;
+  const gateRejected = image.quality_flags?.gate_rejected as boolean | undefined;
   // Off by default (Settings → Gallery): most datasets are single-source, where
   // a badge on every card is noise. `license` here is already the effective value;
   // an empty one renders the muted "No license" badge, which is the whole point of
@@ -178,11 +179,16 @@ export default function ImageCard({ image, onShowGenMeta, onSelect, isDraggable,
             beside them because it qualifies every one of them, and it must be in
             this condition or a card whose only marker is the stale bit renders
             an empty cluster. */}
-        {(isDuplicate || isBlurry || hasWatermark || isUniform || isNsfw || hasAiArtifacts || image.scores_stale) && (
+        {(isDuplicate || isBlurry || hasWatermark || isUniform || isNsfw || hasAiArtifacts || gateRejected || image.scores_stale) && (
           <div style={{ position: "absolute", top: 8, right: 8, zIndex: 3, display: "flex", gap: 4 }}>
             {isNsfw && (
               <span title="NSFW" style={{ width: 18, height: 18, borderRadius: 4, background: "rgba(7,9,11,.7)", backdropFilter: "blur(4px)", display: "grid", placeContent: "center", border: "1px solid var(--line-2)", color: "var(--bad)" }}>
                 <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M2 2l12 12M6.5 6.5A3.5 3.5 0 0 0 4.5 9.5M9.5 9.5A3.5 3.5 0 0 0 11.5 6.5M3 4C1.5 5.5 1 7 1 8s.5 2.5 2 4M13 4c1.5 1.5 2 3 2 4s-.5 2.5-2 4"/></svg>
+              </span>
+            )}
+            {gateRejected && (
+              <span title="Rejected by a run's gate" style={{ width: 18, height: 18, borderRadius: 4, background: "rgba(7,9,11,.7)", backdropFilter: "blur(4px)", display: "grid", placeContent: "center", border: "1px solid var(--line-2)", color: "var(--bad)" }}>
+                <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><circle cx="8" cy="8" r="5.5"/><path d="M4.5 11.5l7-7"/></svg>
               </span>
             )}
             {hasAiArtifacts && (

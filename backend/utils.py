@@ -97,7 +97,7 @@ def count_caption_tokens(text: str | None) -> int:
 
 # The canonical set of valid quality flag names. Import this wherever flag names
 # must be validated or used in a SQL filter; never redefine the set locally.
-ALLOWED_FLAG_KEYS = frozenset({"is_blurry", "is_noisy", "is_uniform", "has_watermark", "is_duplicate", "is_nsfw", "has_ai_artifacts"})
+ALLOWED_FLAG_KEYS = frozenset({"is_blurry", "is_noisy", "is_uniform", "has_watermark", "is_duplicate", "is_nsfw", "has_ai_artifacts", "gate_rejected"})
 
 
 def sanitize_abs_path(path: str) -> Path:

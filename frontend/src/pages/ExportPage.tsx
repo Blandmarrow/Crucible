@@ -233,7 +233,7 @@ export default function ExportPage() {
   const [debouncedFilters, setDebouncedFilters] = useState<ExportPreviewFilters>({
     aesthetic_min: null,
     captioned_only: filterCaptioned,
-    exclude_flags: "has_watermark",
+    exclude_flags: "has_watermark,gate_rejected",
     style_sim_min: null,
     subfolders: null,
     export_masks: false,

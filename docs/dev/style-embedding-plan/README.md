@@ -256,7 +256,7 @@ complaint about the final embedding was that it *drifts toward subject and frami
 fix would be doubling down on the failure mode.
 
 **The label is not evidence.** `frontend/src/constants/dinoLabels.ts` arrived in `16ca82f`
-("Bug & efficiency fixes") with no citation, and `docs/dev/frontend-core.md` describes it
+("Bug & efficiency fixes") with no citation, and `docs/dev/frontend-constants.md` describes it
 only as "a human-readable description". All twelve strings are a gloss on the generic
 low-level→semantic depth intuition. Nothing in either campaign measured a layer and
 concluded "composition". See the trap below — the label should not survive in that form.
@@ -544,8 +544,8 @@ Two options, in order of preference:
    individual layer represents.
 
 Whichever, the labels must stop implying a per-layer semantics the evidence does not carry.
-Touchpoints: `frontend/src/constants/dinoLabels.ts`, its line in
-`docs/dev/frontend-core.md`, and `frontend/e2e/quality.spec.ts` if a label is asserted on.
+Touchpoints: `frontend/src/constants/dinoLabels.ts`, its section in
+`docs/dev/frontend-constants.md`, and `frontend/e2e/quality.spec.ts` if a label is asserted on.
 
 ### Stage 3 — dense features
 

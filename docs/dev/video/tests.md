@@ -2,7 +2,7 @@
 
 The arc-wide index of which module pins which behaviour, and the rules that keep the suite
 runnable both with and without OpenCV. It spans the subject matter of every other video doc —
-`docs/dev/video.md` (model, storage, ingest), `docs/dev/video/endpoints.md`,
+`docs/dev/video/storage.md` (model, storage, ingest), `docs/dev/video/endpoints.md`,
 `docs/dev/video/decode.md`, `docs/dev/video/shots.md`, `docs/dev/video/heuristics.md`,
 `docs/dev/video/extract.md`, `docs/dev/video/reextract-endpoints.md` and
 `docs/dev/video/reextract.md` — which is why it is an index of its own rather than a section

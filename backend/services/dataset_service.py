@@ -2034,7 +2034,7 @@ async def duplicate_dataset(
             # `create_all` on its own engine and so never gets the
             # `PRAGMA foreign_keys=ON` that backend/database.py installs on the
             # app engine (the same blind spot as the delete cascade — see
-            # docs/dev/video.md § What is free, and what is not).
+            # docs/dev/video/storage.md § What is free, and what is not).
             await db.flush()
 
         # Items actually processed, which is what the last emit reported — so a

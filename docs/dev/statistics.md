@@ -46,7 +46,7 @@ percentile in a filtered pane as in an unfiltered one.
 
 **`DatasetStats` subfolder invariant**: When subfolder is not None, all out-of-row-scan queries in `get_dataset_stats()` must include `.where(Image.subfolder == subfolder)`: (a) embedding count, (b) score coverage (`func.count` per score column), (c) quality flag counts (`json_extract` + `SUM(CASE …)` per flag key). `total_size_mb` derives from the filtered `file_sizes_mb` list; `ds.total_size_bytes` only used for the all-images case.
 
-**Scope: images only.** `DatasetStats` carries no video field and `get_dataset_stats` scans `images` alone, so a dataset holding 40 videos shows nothing about them anywhere on this page — the counts, every histogram, and `total_size_mb` (which falls back to `ds.total_size_bytes`, itself images-only by design) all describe the dataset's images. `Dataset.video_count`/`video_size_bytes` are separate columns, surfaced on the dataset card rather than here; see `docs/dev/video.md` § Stats.
+**Scope: images only.** `DatasetStats` carries no video field and `get_dataset_stats` scans `images` alone, so a dataset holding 40 videos shows nothing about them anywhere on this page — the counts, every histogram, and `total_size_mb` (which falls back to `ds.total_size_bytes`, itself images-only by design) all describe the dataset's images. `Dataset.video_count`/`video_size_bytes` are separate columns, surfaced on the dataset card rather than here; see `docs/dev/video/storage.md` § Stats.
 
 **`DatasetStats` schema** (`backend/schemas/dataset.py`; all computed in one row-scan in `dataset_service.get_dataset_stats()`):
 

@@ -4,7 +4,7 @@ The two endpoints that turn a video into shot-segmented `Image` rows, and the ba
 behind one of them: `routers/videos.py` exposes `POST /videos/{id}/probe` and
 `POST /videos/extract`. The pipeline they drive — sampling, shot detection, rendering — is
 `services/video_extract.py` and is documented in `docs/dev/video/shots.md`. The `Video` model,
-the storage layout and the poster-stem rules stay in `docs/dev/video.md`; the rest of the
+the storage layout and the poster-stem rules stay in `docs/dev/video/storage.md`; the rest of the
 `/videos` surface is in `docs/dev/video/endpoints.md`, and `docs/dev/video/tests.md` indexes
 the tests for all of it.
 

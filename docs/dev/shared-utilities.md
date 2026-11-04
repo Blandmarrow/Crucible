@@ -4,8 +4,8 @@ The three cross-cutting modules every router and service imports from, two job h
 `backend/services/`, and the frontend components that recur across subsystems. Many of these helpers exist to enforce a rule in
 CLAUDE.md § Key invariants; read that section for the *why* behind the containment guards,
 the stem-collision rules and the in-place-rewrite bookkeeping. Siblings: `docs/dev/provenance.md` (the license and
-provenance rules built on `licenses.py`), `docs/dev/video.md` (`media_types.py` and the
-poster-stem rules), `docs/dev/image-files.md` (naming and collisions) and `docs/dev/image-import.md` (folder import, rescan and caption sidecars).
+provenance rules built on `licenses.py`), `docs/dev/video.md` (`media_types.py`) and
+`docs/dev/video/storage.md` (the poster-stem rules), `docs/dev/image-files.md` (naming and collisions) and `docs/dev/image-import.md` (folder import, rescan and caption sidecars).
 
 ## `backend/utils.py`
 

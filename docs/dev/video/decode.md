@@ -7,7 +7,7 @@ which reads a container header for dimensions, fps, codec and duration;
 Frame extraction is a separate pair of modules — see `docs/dev/video/shots.md` for the
 pipeline and `docs/dev/video/heuristics.md` for the numpy judgement calls it uses. The
 `Video` model, the `videos/` storage layout, the poster-stem collision rules and ingest stay
-in `docs/dev/video.md`, the `/videos` request surface is in `docs/dev/video/endpoints.md`,
+in `docs/dev/video/storage.md`, the `/videos` request surface is in `docs/dev/video/endpoints.md`,
 the frontend surfaces are in `docs/dev/video/ui.md`, and tests for all of it are indexed in
 `docs/dev/video/tests.md`.
 
@@ -178,7 +178,7 @@ looks at them — no migration, no backfill job. So `has_poster: false` is no re
 UI to avoid the endpoint — both `VideoStrip`
 and `VideoDetailPage` point at it regardless, the strip falling back to the glyph on the
 `<img>` error event. The stem it heals onto comes from `unique_poster_path` against the
-claimed set (`docs/dev/video.md` § Poster stems and collisions), not from the video's own
+claimed set (`docs/dev/video/storage.md` § Poster stems and collisions), not from the video's own
 name, or healing one of two same-stem rows would overwrite the other's poster.
 
 **The backfill is serialised per dataset.** `routers/videos.py::_poster_lock(dataset_id)` —

@@ -33,7 +33,7 @@ Five immediate-save preferences:
 - Subfolder rename on move (`on | off`). Stored under `SUBFOLDER_RENAME_KEY`. Read by `SelectionToolbar`'s `moveSubfolderMutation` at mutation time; passed as `rename_on_move` to `POST /images/batch/move-subfolder`.
 - **Gallery defaults** section: default sort (`GALLERY_DEFAULT_SORT_KEY`, index into `SORT_OPTIONS`), default caption filter (`GALLERY_DEFAULT_CAPTION_KEY`, `"all" | "captioned" | "uncaptioned"`), default quality filter (`GALLERY_DEFAULT_QUALITY_KEY`, flag key or `""`). Applied the first time you open a dataset's gallery, before any filter choices have been remembered for it. Once visited, per-dataset `gallery-state-*` state (persisted to `localStorage`) takes precedence — use the Reset filters button in the gallery toolbar to clear it and fall back to these defaults again. A third tier outranks both: a gallery **deep link** (`?subfolder=` / `?source_video_id=`, or the equivalent pane view) is applied once per change during render and overrides the restored subfolder and lineage filter, resetting the page to 1. It touches only those two: the sort, the caption/quality filters, the license and label filters, and the search / detection-label / score-chip filters are all left as restored, so the precedence above still holds for all three of these defaults. See `docs/dev/gallery/state.md` and PM-012. Helpers `getGalleryDefaultSort()`, `getGalleryDefaultCaptionFilter()`, `getGalleryDefaultQualityFilter()` in `storage.ts` are used at `useState` init time.
 
-Constants defined in `docs/dev/frontend-core.md` § Frontend constants and `docs/dev/persistence.md`.
+Constants defined in `docs/dev/frontend-constants.md` and `docs/dev/persistence.md`.
 
 ## Captioning tab
 

@@ -17,7 +17,7 @@ from backend.models import BackgroundJob, Image
 from backend.models.openai_provider import OpenAIProvider
 from backend.services.image_scope import flag_exclusions
 from backend.utils import ALLOWED_FLAG_KEYS, normalize_subfolder, subsume_tags
-from backend.workers.job_queue import job_queue
+from backend.workers.job_queue import job_queue, run_job_config, run_job_label
 
 router = APIRouter(prefix="/captioning", tags=["captioning"])
 logger = logging.getLogger(__name__)
@@ -311,6 +311,23 @@ async def list_models(db: AsyncSession = Depends(get_db)):
 
 @router.post("/run")
 async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get_db)):
+    return await start_caption_job(db, body)
+
+
+async def start_caption_job(
+    db: AsyncSession,
+    body: CaptionJobRequest,
+    *,
+    run_id: str | None = None,
+    run_stage: str | None = None,
+    label_prefix: str = "",
+) -> dict:
+    """Queue a caption job; the `/run` route and an automated run both start here.
+
+    Answers `{"job_id": None, ...}` when nothing is in scope. **`image_ids: []` widens
+    to the whole dataset** (`if body.image_ids:`), so a caller from code must not pass
+    an empty list — the automated run skips the stage instead.
+    """
     query = (
         select(Image.id, Image.file_path, Image.filename, Image.subfolder, Image.caption_text)
         .where(Image.dataset_id == body.dataset_id)
@@ -334,10 +351,10 @@ async def run_captioning(body: CaptionJobRequest, db: AsyncSession = Depends(get
     auto_label = f"{_model_short_label(body.model)} — {len(rows)} image{'s' if len(rows) != 1 else ''}"
     job = BackgroundJob(
         job_type="caption",
-        label=body.label or auto_label,
+        label=run_job_label(label_prefix, body.label or auto_label),
         dataset_id=body.dataset_id,
         total_items=len(rows),
-        config=body.model_dump(),
+        config=run_job_config(body.model_dump(), run_id, run_stage),
     )
     db.add(job)
     await db.commit()

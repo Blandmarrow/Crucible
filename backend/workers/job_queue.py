@@ -41,6 +41,29 @@ NON_COOPERATIVE_GRACE: dict[str, float] = {
 }
 
 
+def run_job_config(config: dict[str, Any], run_id: str | None, run_stage: str | None) -> dict[str, Any]:
+    """A job's stored config, tagged with the automated run that started it.
+
+    The run keys are added only when a run started the job, so a job started over
+    HTTP stores exactly what it always did. The post-terminal hook reads `run_id` to
+    step the run, and `run_stage` to ignore a job from a stage the run has left
+    (docs/dev/comfyui/automation.md).
+    """
+    if run_id is None:
+        return config
+    return {**config, "run_id": run_id, "run_stage": run_stage}
+
+
+def run_job_label(prefix: str, label: str) -> str:
+    """A child job's label behind its run's prefix, cut to the column's 200 chars.
+
+    With no prefix the label is returned untouched, as the routes always stored it.
+    """
+    if not prefix:
+        return label
+    return (prefix + label)[:200]
+
+
 async def mark_interrupted_jobs() -> int:
     """Fail any job rows left 'running'/'pending' by a previous process.
 

@@ -296,12 +296,15 @@ def _write_spec(
 
 async def apply(
     db: AsyncSession, plan: ComfyPlan, spec: BlueprintSpec, seed: int, *,
-    prompt_alias: str, start_order: int, confirm_total: int, allow_over_cap: bool,
+    prompt_alias: str, start_order: int, confirm_total: int | None, allow_over_cap: bool,
     delete_orphan_pending: bool,
 ) -> dict:
     """Save the spec, reconcile the leaves, and add each leaf's missing rows. Commits once.
 
     Raises BlueprintInvalid, OverCap or TotalChanged before writing anything.
+    `confirm_total` is the row count the user saw in the preview; `None` skips that
+    check, for an automated run, which has no preview and holds the plan lock from
+    this count to the write, so the count cannot move under it.
     """
     bp = await load_blueprint(db, plan.id)
     fill = await _compute(db, plan, bp, spec, seed, allow_over_cap)
@@ -312,7 +315,7 @@ async def apply(
             f"The blueprint adds {fill.rows_to_add} rows, over the limit of {fill.row_cap}"
             + ("" if allow_over_cap else " — allow a larger expansion to go ahead")
         )
-    if fill.rows_to_add != confirm_total:
+    if confirm_total is not None and fill.rows_to_add != confirm_total:
         raise TotalChanged(confirm_total, fill.rows_to_add)
 
     bp = _write_spec(db, plan, bp, spec, seed)

@@ -29,7 +29,7 @@ from backend.services.duplicate_service import (
     prune_orphaned_duplicate_flags,
 )
 from backend.utils import chunked, normalize_subfolder, score_columns
-from backend.workers.job_queue import job_queue
+from backend.workers.job_queue import job_queue, run_job_config, run_job_label
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +161,23 @@ class StyleSimilarityRequest(BaseModel):
 
 @router.post("/score")
 async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
+    return await start_score_job(db, body)
+
+
+async def start_score_job(
+    db: AsyncSession,
+    body: ScoreRequest,
+    *,
+    run_id: str | None = None,
+    run_stage: str | None = None,
+    label_prefix: str = "",
+) -> dict:
+    """Queue a quality-scoring job; the `/score` route and an automated run both start here.
+
+    Answers `{"job_id": None, ...}` when nothing is in scope. **`image_ids: []` widens
+    to the whole dataset** (`if body.image_ids:`), so a caller from code must not pass
+    an empty list — the automated run skips the stage instead.
+    """
     query = select(Image).where(Image.dataset_id == body.dataset_id)
     if body.image_ids:
         query = query.where(Image.id.in_(body.image_ids))
@@ -194,10 +211,10 @@ async def score_quality(body: ScoreRequest, db: AsyncSession = Depends(get_db)):
     auto_label = f"Quality: {', '.join(checks) or 'none'} — {len(images)} image{'s' if len(images) != 1 else ''}"
     job = BackgroundJob(
         job_type="quality_score",
-        label=body.label or auto_label,
+        label=run_job_label(label_prefix, body.label or auto_label),
         dataset_id=body.dataset_id,
         total_items=len(images),
-        config=body.model_dump(),
+        config=run_job_config(body.model_dump(), run_id, run_stage),
     )
     db.add(job)
     await db.commit()

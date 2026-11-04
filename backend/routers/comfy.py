@@ -57,7 +57,7 @@ from backend.utils import (
     thumbnail_path_for,
     unique_filename_with_thumb,
 )
-from backend.workers.job_queue import job_queue
+from backend.workers.job_queue import job_queue, run_job_config, run_job_label
 
 router = APIRouter(prefix="/comfy", tags=["comfy"])
 logger = logging.getLogger(__name__)
@@ -1512,6 +1512,42 @@ async def apply_blueprint(plan_id: str, body: BlueprintApplyRequest, db: AsyncSe
             raise HTTPException(409, str(e))
 
 
+async def fill_blueprint(
+    db: AsyncSession, plan: ComfyPlan, spec: BlueprintSpec, seed: int, *,
+    prompt_alias: str, confirm_total: int | None, allow_over_cap: bool, delete_orphan_pending: bool,
+) -> dict:
+    """Top up's fill, without its run: Apply, then reset the blueprint's failed rows and
+    list its pending ones. Top up and an automated run's `prompts` stage both call it.
+
+    The caller holds the plan lock and has checked that no `_ROW_JOB_TYPES` job is
+    live. Rows a rewrite-enabled scenario has not had rewritten yet would run as
+    template text, so when there are any it stops after Apply: nothing is reset and
+    `pending` is empty. Returns `{created, reset, deleted_rows, awaiting_rewrite,
+    pending}`, raising the HTTPExceptions Apply's errors always mapped to.
+    """
+    try:
+        applied = await blueprint_service.apply(
+            db, plan, spec, seed,
+            prompt_alias=prompt_alias,
+            start_order=await _next_sort_order(db, plan.id),
+            confirm_total=confirm_total,
+            allow_over_cap=allow_over_cap,
+            delete_orphan_pending=delete_orphan_pending,
+        )
+    except blueprint_service.BlueprintInvalid as e:
+        raise HTTPException(400, f"The blueprint has errors: {e}")
+    except blueprint_service.OverCap as e:
+        raise HTTPException(400, str(e))
+    except blueprint_service.TotalChanged as e:
+        raise HTTPException(409, str(e))
+    out = {"created": applied["created"], "reset": 0, "deleted_rows": applied["deleted_rows"], "awaiting_rewrite": 0, "pending": []}
+    awaiting = await blueprint_rewrite.count_awaiting(db, plan.id, prompt_alias)
+    if awaiting:
+        return {**out, "awaiting_rewrite": awaiting}
+    reset, pending = await blueprint_service.prepare_top_up(db, plan)
+    return {**out, "reset": reset, "pending": pending}
+
+
 @router.post("/plans/{plan_id}/blueprint/top-up")
 async def top_up_blueprint(plan_id: str, body: BlueprintTopUpRequest, db: AsyncSession = Depends(get_db)):
     """Fill every folder that came up short: Apply, reset the blueprint's failed rows,
@@ -1535,32 +1571,15 @@ async def top_up_blueprint(plan_id: str, body: BlueprintTopUpRequest, db: AsyncS
     async with _plan_lock(plan_id):
         if await _plan_job_active(db, plan_id, _ROW_JOB_TYPES):
             raise HTTPException(409, "A run, prompt-generation or rewrite job for this plan is queued or running — wait for it to finish")
-        try:
-            applied = await blueprint_service.apply(
-                db, plan, body.spec, body.seed,
-                prompt_alias=alias,
-                start_order=await _next_sort_order(db, plan_id),
-                confirm_total=body.confirm_total,
-                allow_over_cap=body.allow_over_cap,
-                delete_orphan_pending=body.delete_orphan_pending,
-            )
-        except blueprint_service.BlueprintInvalid as e:
-            raise HTTPException(400, f"The blueprint has errors: {e}")
-        except blueprint_service.OverCap as e:
-            raise HTTPException(400, str(e))
-        except blueprint_service.TotalChanged as e:
-            raise HTTPException(409, str(e))
-        # Rows a rewrite-enabled scenario has not had rewritten yet would run as
-        # template text, so Top up stops here and says so. Nothing is reset or run.
-        awaiting = await blueprint_rewrite.count_awaiting(db, plan_id, alias)
-        if awaiting:
-            return {
-                "created": applied["created"], "reset": 0, "deleted_rows": applied["deleted_rows"],
-                "job_id": None, "total": 0, "awaiting_rewrite": awaiting,
-            }
-        reset, pending = await blueprint_service.prepare_top_up(db, plan)
-
-        out = {"created": applied["created"], "reset": reset, "deleted_rows": applied["deleted_rows"], "job_id": None, "total": 0, "awaiting_rewrite": 0}
+        out = await fill_blueprint(
+            db, plan, body.spec, body.seed,
+            prompt_alias=alias,
+            confirm_total=body.confirm_total,
+            allow_over_cap=body.allow_over_cap,
+            delete_orphan_pending=body.delete_orphan_pending,
+        )
+        pending = out.pop("pending")
+        out.update({"job_id": None, "total": 0})
         if not pending:
             return out
         run = await _start_run(db, RunRequest(
@@ -1915,7 +1934,15 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
     return await _start_run(db, body)
 
 
-async def _start_run(db: AsyncSession, body: RunRequest, *, hold_lock: bool = True) -> dict:
+async def _start_run(
+    db: AsyncSession,
+    body: RunRequest,
+    *,
+    hold_lock: bool = True,
+    run_id: str | None = None,
+    run_stage: str | None = None,
+    label_prefix: str = "",
+) -> dict:
     """Pre-flight, 409 guard and enqueue for a `comfy_generate` run: `POST /comfy/run`,
     and Top up's run of the pending rows.
 
@@ -1948,10 +1975,10 @@ async def _start_run(db: AsyncSession, body: RunRequest, *, hold_lock: bool = Tr
         auto_label = f"ComfyUI: {plan.name} — {n} row{'s' if n != 1 else ''}"
         job = BackgroundJob(
             job_type="comfy_generate",
-            label=body.label or auto_label,
+            label=run_job_label(label_prefix, body.label or auto_label),
             dataset_id=plan.dataset_id,
             total_items=n,
-            config=body.model_dump(),
+            config=run_job_config(body.model_dump(), run_id, run_stage),
         )
         db.add(job)
         await db.commit()

@@ -5,11 +5,15 @@ every folder of the plan's blueprint that is short, generates the images, scores
 captions them and exports the dataset, one stage after another, while you do something
 else. It can also repeat: generate, check each image against a quality bar, and go round
 again until every folder holds enough images that pass (see
-[Repeating until every folder is full](#repeating-until-every-folder-is-full)).
+[Repeating until every folder is full](repeating-runs.md)).
 
 Open it from **Runs** in a dataset's sidebar. A run works on a plan you have already set
 up on the ComfyUI page, with a workflow, a pinned prompt (★) and either queued rows or a
 blueprint. See [ComfyUI Generation](comfyui.md) and [ComfyUI Blueprints](comfy-structured.md).
+
+The start form's caption and export settings, the dry run and saved recipes are on
+[Setting up a run](run-setup.md). Repeating a run, with its caps, is on
+[Repeating a run](repeating-runs.md).
 
 ## The stages
 
@@ -28,9 +32,9 @@ when you want them. Switch off any stage you do not want.
 | **Free ComfyUI's VRAM** | Asks ComfyUI to unload its models, so Crucible's scorers and captioners have the GPU. If your ComfyUI cannot do that, the run notes it and carries on. |
 | **Score** | Scores the images this run made. Technical scores always run, because they are what finds duplicates. The aesthetic score is optional. |
 | **Gate** | Off by default, and only with Score. Checks each new image against the bar you set and moves the ones that fail to a `rejects` folder (see below). |
-| **Caption** | Captions the images this run made, with the settings below. **Caption images that already have a caption** is on by default, because a ComfyUI run already saves each prompt as the image's caption. |
+| **Caption** | Captions the images this run made, with the settings in [Setting up a run](run-setup.md#caption-and-export-settings). **Caption images that already have a caption** is on by default, because a ComfyUI run already saves each prompt as the image's caption. |
 | **Unload the caption model** | Frees the GPU from the model that captioned: an LM Studio model, an Ollama model, or one of Crucible's own captioners. On by default, and it only runs with Caption. LM Studio needs version 0.4 or later for this; with an older one the run notes that the model stays loaded and carries on. |
-| **Export** | Exports the whole dataset to the folder you choose, with the settings below. Duplicates, watermarked images and images a gate rejected are left out by default. |
+| **Export** | Exports the whole dataset to the folder you choose, with the settings in [Setting up a run](run-setup.md#caption-and-export-settings). Duplicates, watermarked images and images a gate rejected are left out by default. |
 
 A stage with nothing to do is **skipped**, not run on everything. If a run made no new
 images, scoring and captioning are skipped, and no other image in the dataset is touched.
@@ -38,114 +42,6 @@ images, scoring and captioning are skipped, and no other image in the dataset is
 A language model is unloaded by the two stages above: after rewriting, and after
 captioning. If one is already loaded in LM Studio when the run starts, it stays loaded
 through generating and scoring unless Rewrite is on.
-
-## Caption and export settings
-
-When you switch on **Caption** or **Export**, the form shows the same settings as the
-Captioning and Export pages, so you can set them for this run:
-
-- **Caption:** the model (for LM Studio or another provider, pick the model from its
-  list), the prompt or one of your saved prompt presets, the style, target resolution,
-  how existing captions are handled, quality filters and the post-processing options.
-- **Export:** the format, output folder, concept and repeats, caption file, filters,
-  resize, image format, stripping metadata, and captions only.
-
-The export's **Has caption** filter is ticked to start with, so an image with no caption
-is left out. A custom resize is a whole number from 1 to 16384; a blank one counts as 1024.
-
-Each section has a **Fill from the Captioning page** or **Fill from the Export page**
-button. It copies what that page last used, and you can change anything after. Without
-it, the form starts from the usual defaults. A run keeps its settings once started, so
-changing those pages later does not change a run in progress.
-
-Loss masks, the license and label filters, and limiting the export to some subfolders are
-only on the Export page for now.
-
-## Checking before you start
-
-Press **Dry run** to see what the run would do without doing it. Nothing is written and
-nothing is generated. The report shows:
-- every **problem** that would stop the start, such as ComfyUI not answering, a blueprint
-  over the row limit, or a caption model your provider does not list;
-- **warnings** that do not stop it, such as versioning being off with Snapshot on;
-- the stages, and what the first pass would do: the rows it generates and the images that
-  should make, an estimate of the disk space needed, and about how many rewrite and
-  caption calls it makes (marked when the provider is billed);
-- each folder, with how many images it holds against its target and how many rows the
-  first pass makes for it, and a total.
-
-Press **Close** to hide the report.
-
-**Start run** makes the same checks and refuses on the first problem, before anything is
-written. If you change the form after a dry run, the report says it is out of date.
-
-## Saving the form as a recipe
-
-The form is remembered between visits. Its plan and base folder are remembered for each
-dataset.
-
-To keep a set of settings, type a name under **Recipe** and press **Save as recipe**.
-Recipes are shared by every dataset. Pick one and press **Load** to fill the form, or
-**Rename** or **Delete** it. Loading keeps the plan and run name you have chosen.
-
-**Export** saves a recipe as a file to share, and **Import…** reads one. A file never
-carries your export folder, and it names each LLM provider instead of pointing at yours.
-On import, a provider with the same name here is used. Otherwise that field is left empty,
-and the page says what to choose. It is also left empty, with a note saying
-*ambiguous*, when two providers here have names that differ only in capital letters.
-
-Each past run also has **Use these settings**, which fills the form with what it ran with.
-
-## Repeating until every folder is full
-
-Tick **Repeat until every folder is full** to make the run go round in passes. Each pass
-fills the blueprint, rewrites (if on), generates, scores and gates. When a pass ends, the
-run counts each folder again. If a folder is still short, it starts another pass that
-makes just what is missing. Captioning, unloading the caption model and the export run
-once, after the last pass.
-
-Only images that count fill a folder. An image flagged as a **duplicate**, or **rejected
-by the gate**, does not count, so the next pass makes another. The ComfyUI page's preview
-and its **Top up** button count the same way. Because some images fail, a pass makes a
-few more than the folder is short, based on how many passed last time.
-
-A repeating run needs:
-- **Fill the blueprint** and **Generate** on, and a blueprint on the plan.
-- **A random seed.** If the workflow has a `seed` or `noise_seed` input, pin it on the
-  ComfyUI page with **Random**. Otherwise every pass would make the same pictures again,
-  and they would all be rejected as duplicates. The run refuses to start and names the
-  node.
-
-### The caps
-
-Every repeating run has hard limits, so it cannot run forever:
-
-| Cap | What it limits |
-|---|---|
-| **Most passes** | How many times the run goes round. |
-| **Most images** | How many images the run may make in all, rejects included. A pass that would go over makes fewer rows, shared out across the folders. A workflow that saves several images per prompt can go over on the first pass. |
-| **Most minutes of work** | Time spent working. Time paused, or Crucible being shut down, does not count. It is checked before each costly stage, so a long generate stage can run a little over. |
-| **Most paid LLM calls** | Shown only when a **billed** provider rewrites or captions. It counts rewrite requests and captioned images. When captioning is billed, it must be at least **Most images**, so there are always calls left to caption every image. |
-
-A provider is **billed** when you tick that box for it in Settings → LLM Providers. Left
-alone, a provider on another machine counts as billed and one on this machine does not.
-Ollama and Crucible's own captioners are never billed.
-
-When a cap runs out, the run stops making new images, still frees ComfyUI's VRAM, runs
-captioning and the export, and says which cap stopped it. If the paid-call cap cannot
-cover every image, the run captions as many as it can and says how many it left out.
-
-To carry on, press **Raise caps and continue** on the run under *Past runs*. Raise the cap
-that stopped it; no cap can go down. The run adds another pass for the folders still
-short, then captions and exports again. Only the new images are captioned, and what the
-run has already used still counts against the caps.
-
-### Giving up on a folder
-
-If a folder gains no images that count in two passes in a row, the run gives up on it and
-fills the others. This catches a folder whose prompts never make a picture that passes.
-A folder that simply got no rows in a pass, because the image cap was shared out, is not
-given up on. The finished run lists each folder still short, and why.
 
 ## The gate
 
@@ -199,7 +95,7 @@ paused, that plan's **Apply** and **Top up** buttons are refused, so nothing add
 between its passes. A repeating run shows its stages grouped by pass.
 
 Finished runs are listed under *Past runs*. Each has **Delete**, **Use these settings**,
-**Resume** if it failed, and **Raise caps and continue** if a cap stopped it. The last
+**Resume** if it failed, and **Raise caps and continue** (see [Repeating a run](repeating-runs.md)) if a cap stopped it. The last
 three are not offered while a run is going, since the start form is hidden then. A
 run that could not start its first stage shows its error instead of "Run started".
 

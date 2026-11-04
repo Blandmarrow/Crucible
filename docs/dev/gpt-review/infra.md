@@ -3,7 +3,7 @@
 The rest of GPT-007 is fixed (PM-031). `backend/request_guard.py` refuses a rebound `Host` and a
 cross-site state-changing request, and the launchers bind `127.0.0.1` unless `--lan` (or
 `CRUCIBLE_HOST`) opts in; see `docs/dev/http-edge.md` § Request guard and
-`docs/dev/environment-setup.md`. Conventions are in `docs/dev/gpt-review/README.md`.
+`docs/dev/server-start.md`. Conventions are in `docs/dev/gpt-review/README.md`.
 
 ## GPT-007 step 3 — a shared token for LAN mode
 

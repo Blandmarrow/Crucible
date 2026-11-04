@@ -4,9 +4,9 @@ M6 §6 keeps a run's settings in two places. The **recipe library** holds named,
 recipes saved from the Runs page, with a JSON document to export and import them. The
 **remembered form** is the start form as last left, kept on the server. This file covers
 both, and the converters between the form and a recipe that both rely on. How a recipe
-runs is `docs/dev/comfyui/automation.md` (the stages, the start check) and
-`docs/dev/comfyui/run-loop.md` (the loop). The user guide is `docs/runs.md` § Saving the
-form as a recipe.
+runs is `docs/dev/comfyui/run-stages.md` (the stages), `docs/dev/comfyui/run-start.md` (the
+start check) and `docs/dev/comfyui/run-loop.md` (the loop). The user guide is
+`docs/run-setup.md` § Saving the form as a recipe.
 
 ## The library
 

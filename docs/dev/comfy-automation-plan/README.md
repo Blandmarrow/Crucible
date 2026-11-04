@@ -178,8 +178,9 @@ Departures from the sketch that stood here, all from the review before it merged
 ## 4. The stepping run (landed)
 
 Built on 2026-11-04. Everything durable — the `Run` row, `advance_run` and the worker's
-`_after_terminal` hook, the stages, cancel, pause, resume and restart, the VRAM handoff and
-the Runs page — is in `docs/dev/comfyui/automation.md`. The start functions §4 needed
+`_after_terminal` hook, cancel, pause, resume and restart — is in `docs/dev/comfyui/automation.md`; the stages
+and the VRAM handoff are in `docs/dev/comfyui/run-stages.md`, and the Runs page in
+`docs/dev/comfyui/run-start.md`. The start functions §4 needed
 (`start_score_job`, `start_caption_job`, `start_export_job`, `fill_blueprint`) sit beside
 their job closures in their routers, as `_start_run` already did.
 
@@ -207,8 +208,9 @@ Departures from the sketch that stood here:
 ## 5. Goal loop, gates, budgets (landed)
 
 Built on 2026-11-04. Everything durable — the body and the tail, `next_pass` and the
-abandon rule, the gate and `rejects/`, the rewrite stage, the budgets and the paid-call
-cap, the seed check, the Runs page's sections — is in `docs/dev/comfyui/run-loop.md`. The
+abandon rule, the rewrite stage, the Runs page's sections — is in
+`docs/dev/comfyui/run-loop.md`; the gate and `rejects/` are in `docs/dev/comfyui/run-gate.md`,
+and the budgets, the paid-call cap and the seed check in `docs/dev/comfyui/run-budgets.md`. The
 kept rule and the kept-based yield are in `docs/dev/comfyui/structured.md` § Fill
 accounting; the per-provider `billed` setting is in `docs/dev/llm-providers.md`.
 
@@ -234,8 +236,9 @@ Departures from the sketch that stood here, most from an Opus review of the desi
 ## 6. Dry run, snapshot stage and the recipe library (landed)
 
 Built on 2026-11-04. Everything durable is in the docs: the snapshot stage, the shared
-start check and the dry run in `docs/dev/comfyui/automation.md`; the head stage and
-carrying on past a cap in `docs/dev/comfyui/run-loop.md`; the library, the document, the
+start check and the dry run in `docs/dev/comfyui/run-start.md` and `docs/dev/comfyui/run-stages.md`;
+the head stage in `docs/dev/comfyui/run-loop.md`; carrying on past a cap in
+`docs/dev/comfyui/run-budgets.md`; the library, the document, the
 form converters and the remembered form in `docs/dev/comfyui/recipes.md`.
 
 The user settled four points that day:
@@ -282,7 +285,10 @@ family sits behind the hub `docs/dev/comfyui.md`, so each new file goes in
   cross-reference them rather than moving them.
 - `docs/dev/comfyui/automation.md`, written with §4 (2026-11-04), and
   `docs/dev/comfyui/run-loop.md`, written with §5 (2026-11-04). §6 extended both and added
-  `docs/dev/comfyui/recipes.md` (2026-11-04).
+  `docs/dev/comfyui/recipes.md` (2026-11-04). The 2026-11-04 splits moved the stages to
+  `docs/dev/comfyui/run-stages.md`, the start check and the Runs page to
+  `docs/dev/comfyui/run-start.md`, the gate to `docs/dev/comfyui/run-gate.md` and the budgets
+  to `docs/dev/comfyui/run-budgets.md`.
 
 `docs/dev/backend-infrastructure.md` § After a job ends: the run hook, written with §4. User docs are owed in the same change as each feature — `docs/comfyui.md`
 or a new page, plus a row in `docs/features.md` and whatever `README.md` needs. Run

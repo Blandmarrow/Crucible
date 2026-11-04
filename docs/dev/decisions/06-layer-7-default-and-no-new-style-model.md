@@ -16,7 +16,7 @@
   everywhere outside drawn art; PE-Core's only gain, on films, sat at the bar and is not
   separated from content matching. In the user's words, there are no better alternatives
   available currently. The evidence is summarised in
-  `docs/dev/quality/style-similarity.md` § Other models were measured and not adopted (until
+  `docs/dev/quality/style-evaluation.md` § Other models were measured and not adopted (until
   the M7 port, in a `style-model-research/` folder since deleted).
 - **Rejected alternatives:** adopting Kaloscope (the strongest on drawn art, but a restrictive
   licence and no general gain) or CSD (the permissive fallback, with a small and uneven gain)

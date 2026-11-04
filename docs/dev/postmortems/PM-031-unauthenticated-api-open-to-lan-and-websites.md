@@ -47,7 +47,7 @@ The launchers bind `127.0.0.1` by default through `scripts/bind_host.py`; `--lan
 `CRUCIBLE_HOST` opts in with a printed warning. Tests now use `http://localhost`, and
 `backend/tests/test_request_guard_http.py` covers each rule, including a shutdown from a
 foreign origin that must not reach `os.kill`. See `docs/dev/http-edge.md`
-§ Request guard and `docs/dev/environment-setup.md` § Bind address and `--lan`.
+§ Request guard and `docs/dev/server-start.md` § Bind address and `--lan`.
 
 Still open by design: a LAN opt-in has no authentication. A per-install token was deferred.
 

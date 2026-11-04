@@ -1,7 +1,8 @@
 """The run's snapshot stage (M6 §6): an opt-in undo point taken once, before the first
 pass, and the cancel that waits for it.
 
-What is pinned (docs/dev/comfyui/automation.md § The stages, § Cancel, pause, resume):
+What is pinned (docs/dev/comfyui/run-stages.md § The stages;
+docs/dev/comfyui/automation.md § Cancel, pause, resume, restart):
 - versioning off → the stage is skipped with a note, and the run goes on;
 - the snapshot is a head stage: a looping run takes it once, not once per pass;
 - a cancel during a running snapshot waits for it (`cancel_requested`), then the run

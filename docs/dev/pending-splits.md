@@ -185,22 +185,6 @@ utilities → `docs/dev/shared-utilities.md`.
   do not is a fact to move *there* rather than lose. A handful of Features bullets name
   things with no topic doc at all (verify each against the Docs table before cutting).
 
-## docs/dev/quality/style-similarity.md
-
-- **Moves:** § Other models were measured and not adopted — its three `###` parts (DINOv3;
-  Kaloscope, CSD and PE-Core; How to test the next candidate), about 950 words
-- **New file:** docs/dev/quality/style-models.md, with a row in `docs/dev/quality.md`'s
-  routing table rather than in CLAUDE.md's Map (the Quality family is hubbed)
-- **Why here:** recorded at 3,198 words (91% of budget) by the M7 port, which folded in the
-  deleted `style-model-research/` folder. That section is about *which model*, not about how
-  the shipped modes work: it is research history plus a test protocol, and it grows every
-  time a candidate is tried, where the rest of the file changes only when the code does.
-  Moving it leaves the producing half near 2,250 words, under the 60% target.
-- **Watch for:** decision 6 and `docs/dev/roadmap.md` § M7 cite § Other models were
-  measured and not adopted and § Kaloscope, CSD and PE-Core by name, and § Which layer, and
-  why it moved twice points at "the later model runs (below)" — that pointer becomes
-  cross-file. `docs/dev/style-embedding-plan/README.md` Stage 2 cites § DINOv3.
-
 ## docs/dev/image-processing-models.md
 
 - **Moves:** from § Upscaling, the five job paragraphs (Replace mode follows the PNG fallback;
@@ -219,36 +203,3 @@ utilities → `docs/dev/shared-utilities.md`.
   PM-009/PM-013 cite § Upscaling and § LUT grading; repoint the ones that mean the job.
   `docs/dev/video/reextract.md` cites § LUT Color Grading for the PNG fallback.
   The intro's sentence naming the shared loop points at "§ Upscaling's last paragraphs".
-
-## docs/dev/comfyui/automation.md
-
-- **Moves:** § Starting, and the checks it runs first (the shared start check, `plan_run`,
-  the dry run and its report) and the dry-run part of § The Runs page
-- **New file:** docs/dev/comfyui/run-start.md, a row in the hub `docs/dev/comfyui.md`
-  rather than in the CLAUDE.md Map
-- **Why here:** M6 §6 took the file to 3,345 of 3,500 words (96%), recorded on 2026-11-04
-  before it tripped. The review-fix pass the same day took it to about 3,780 (over), by
-  documenting the every-item-failed rule, the stale-job guard, the second Cancel and the
-  chunked starts. The start check is a subject of its own: it runs before a `Run` row
-  exists, while everything else in the file is about stepping a run that does. The rest
-  (the row, `advance_run`, the stages, cancel and restart, the page) stays together.
-- **Watch for:** the hub's Where-things-live rows for `blueprint_service.fill_plan` and the
-  `run_service` row name § Starting, and run-loop.md's § Raising a cap and carrying on and
-  recipes.md point at automation.md for the start; `test_run_dry_run.py`'s docstring names
-  the section too. The `_no_real_llm_server` paragraph in § Testing goes with the tests,
-  not with the start.
-
-## docs/runs.md
-
-- **Moves:** § Saving the form as a recipe (156 words) and § Caption and export settings
-  (197 words) into a page on the start form, named after what it mirrors: a
-  "Setting up a run" page. § Repeating until every folder is full (575 words, with the caps
-  and giving up on a folder) is the other candidate, if the form page is too thin.
-- **New file:** none chosen. Plain text name for now: docs/run-setup.md.
-- **Why here:** the review-fix pass on 2026-11-04 took the file to about 2,590 of 2,500
-  words, by adding the dry-run report, the stage defaults, the every-item-failed stop and
-  the gate flag clearing. The page mixes two jobs: how to fill in the start form, and how
-  to follow and understand a run once it is going. The seam is that line.
-- **Watch for:** README.md and docs/features.md link to runs.md and its anchors, including
-  `runs.md#the-gate` from docs/scoring.md and the anchors used by docs/comfyui.md and
-  docs/comfy-structured.md.

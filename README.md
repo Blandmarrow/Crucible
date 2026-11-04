@@ -73,7 +73,7 @@ Every step from raw images to a training-ready export, in order:
 ### Versioning & export
 - **Version** datasets with named snapshots and branches — restore any prior state → [details](docs/versioning.md)
 - **Export** to Kohya, AI Toolkit, or plain folder format with per-export filtering and resizing → [details](docs/export.md)
-- **Track source & license** per image and per dataset — captured automatically from scraper sidecars and EXIF, filterable in the gallery and at export, written out as `CREDITS.md` / `licenses.csv` → [details](docs/provenance.md)
+- **Track source & license** per image and per dataset — captured automatically from scraper sidecars and EXIF, filterable in the gallery and at export, written out as `CREDITS.md` / `licenses.csv` → [details](docs/provenance.md), [licenses and credits](docs/licenses.md)
 
 ### Workspace & tooling
 - **Statistics** — inspect dataset composition with caption-length, token, resolution, and score histograms, plus CSV export → [details](docs/statistics.md)
@@ -315,6 +315,8 @@ Start at the [feature index](docs/features.md), or jump straight to a topic:
 | ComfyUI Generation | [docs/comfyui.md](docs/comfyui.md) |
 | ComfyUI Blueprints | [docs/comfy-structured.md](docs/comfy-structured.md) |
 | Automated Runs | [docs/runs.md](docs/runs.md) |
+| Setting up a run | [docs/run-setup.md](docs/run-setup.md) |
+| Repeating a run | [docs/repeating-runs.md](docs/repeating-runs.md) |
 | AI Captioning | [docs/captioning.md](docs/captioning.md) |
 | Quality Scoring | [docs/scoring.md](docs/scoring.md) |
 | Style Similarity | [docs/style-similarity.md](docs/style-similarity.md) |
@@ -325,6 +327,7 @@ Start at the [feature index](docs/features.md), or jump straight to a topic:
 | Statistics Dashboard | [docs/statistics.md](docs/statistics.md) |
 | Dataset Versioning | [docs/versioning.md](docs/versioning.md) |
 | Source & License Provenance | [docs/provenance.md](docs/provenance.md) |
+| Licenses and Credits | [docs/licenses.md](docs/licenses.md) |
 | Export | [docs/export.md](docs/export.md) |
 | Settings | [docs/settings.md](docs/settings.md) |
 | Workspace — dialogs, jobs, hardware meters, split view, logs, booru lookup | [docs/workspace.md](docs/workspace.md) |

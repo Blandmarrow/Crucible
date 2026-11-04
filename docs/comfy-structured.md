@@ -118,7 +118,7 @@ you have finished pruning.
 To go on from Top up to scoring, captioning and exporting without pressing each one, start
 a run from the **Runs** page. Its first stage is this same Top up, and it can repeat until
 every folder is full. While a run on the plan is going or paused, Apply and Top up are
-refused. See [Automated Runs](runs.md).
+refused. See [Automated Runs](runs.md) and [Repeating a run](repeating-runs.md).
 
 If a scenario has **Rewrite into prose** ticked and some of its rows have not been
 rewritten yet, Top up adds the missing rows and then stops. It tells you how many rows

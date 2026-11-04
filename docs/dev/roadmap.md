@@ -39,7 +39,7 @@ restates its stages.
    runs live on `exp/style-media`, which contains the other two and is the record the docs
    cite. Its plan is
    now [style-embedding-plan/README.md](style-embedding-plan/README.md), and the research
-   folder's findings moved into `docs/dev/quality/style-similarity.md`. What is left in M7 is
+   folder's findings moved into `docs/dev/quality/style-evaluation.md`. What is left in M7 is
    below.
 4. **M6 is ported and its build has started, held on `feat/m6-comfy-automation`**
    ([decision 7](decisions/07-m6-built-whole-on-one-branch.md)): per-row folders are 8dee5de
@@ -232,7 +232,7 @@ gates are green and it is pushed.
   audits) and its fixes, each with a regression test. Two rulings by the user: a run fails
   when a generate or caption job failed every item (`docs/dev/comfyui/automation.md`), and
   `gate_rejected` is cleared when an image leaves `rejects/` (`services/gate_flags.py`,
-  `docs/dev/comfyui/run-loop.md` § The gate). The rest: the gate honours a cancel and needs
+  `docs/dev/comfyui/run-gate.md` § The gate). The rest: the gate honours a cancel and needs
   no plan, a second Cancel finishes a stuck snapshot wait, a stale job cannot step a resumed
   stage, an empty pass stops the loop, `kept` counts completed rows only, Top up's error
   after a committed fill says so, id lists in the score and caption starts are chunked,
@@ -262,7 +262,7 @@ Stage 2 there (DINOv3) is not built, by
   seven-illustrator run in docs/dev/roadmap/style-embedding.md on `exp/style-media`.
 - [x] Research and test other models for style similarity (2026-11-03, no
   app code). Kaloscope 3.0 and CSD passed a pre-registered test on a new anime set and on
-  `test3`; PE-Core tied. Summary: `docs/dev/quality/style-similarity.md` § Kaloscope, CSD and
+  `test3`; PE-Core tied. Summary: `docs/dev/quality/style-evaluation.md` § Kaloscope, CSD and
   PE-Core.
 - [x] Test the three models on photographs, 3D art and digital paintings (2026-11-03,
   `exp/style-media`, no app code). No candidate is general; Kaloscope's verdict is fragile.

@@ -1,6 +1,6 @@
 """Carrying on a run that stopped on a cap (M6 §6): `run_service.extend_run`.
 
-What is pinned (docs/dev/comfyui/run-loop.md § Raising a cap and carrying on):
+What is pinned (docs/dev/comfyui/run-budgets.md § Raising a cap and carrying on):
 - a loop stopped by a cap records which (`context.loop.cap`) and offers `can_extend`;
 - carrying on refuses a cap that goes down, a stopping cap not raised, another live
   run on the dataset, and a run that ended any other way;

@@ -1,6 +1,6 @@
 """The dry run and the shared start check (M6 §6): `run_service.plan_run`.
 
-What is pinned (docs/dev/comfyui/automation.md § Starting, and the checks it runs first):
+What is pinned (docs/dev/comfyui/run-start.md § Starting, and the checks it runs first):
 - a dry run writes nothing: no run, job, row or leaf, and ComfyUI gets no prompt;
 - the start raises the check's first error, so a run that the dry run says cannot
   start is never written — ComfyUI unreachable, a missing caption provider, a model

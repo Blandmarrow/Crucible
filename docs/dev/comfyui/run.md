@@ -16,8 +16,12 @@ second pending/running run for the same plan — matched on `job_type` **and**
 `config["plan_id"]`, so a prompt-generation job never blocks a run (see
 `docs/dev/comfyui/prompts.md`). The pre-flight is `_run_preflight` and the rest of the route is
 `_start_run`, which a blueprint's Top up calls with explicit row ids
-(`docs/dev/comfyui/structured.md` § Top up). The 409 check and the job's commit hold the
-per-plan `_plan_lock`, which blueprint Apply shares. Standard job pattern (nested `_run(job_id)`
+(`docs/dev/comfyui/structured.md` § Top up) and an automated run's `generate` stage calls
+with `hold_lock=False` (it already holds the plan lock) plus `run_id`, `run_stage` and
+`label_prefix`, which tag the job for `advance_run` (`docs/dev/comfyui/automation.md`).
+The 409 check and the job's commit hold the per-plan `_plan_lock`, which blueprint Apply
+shares. A second 409 refuses the run while a `comfy_rewrite` job for the plan is queued or
+running, since a rewrite would change the text of rows the run has just loaded. Standard job pattern (nested `_run(job_id)`
 closure, own `AsyncSessionLocal`, auto label `ComfyUI: {plan} — N rows`).
 
 **The run's whole folder tree is declared once, before the row loop.**
@@ -51,8 +55,8 @@ Two per-row locals decide where the image lands and what it is called, computed 
 the loop body and **never hoisted** — the broad handler's `populate_existing` re-select
 repopulates `row.subfolder` after a rollback, so a value read once before the loop goes stale.
 `row_subfolder = join_subfolder(subfolder, row.subfolder or "")` is the `Image.subfolder`
-stamped on every output. `row_stem` is `slugify_filename` of the row's **own** folder leaf
-(`row.subfolder.rsplit("/", 1)[-1]`), falling back to the plan slug when the row has no folder:
+stamped on every output. `row_stem` is `slugify_filename` of the row's **own** folder leaf (the last segment of
+`join_subfolder(row.subfolder or "")`, the normalized path), falling back to the plan slug when the row has no folder:
 the leaf, not the combined path, because naming files after the combined path would silently
 rename every future file for a user who only ever sets a run-level base folder. The `own_leaf`
 guard is an explicit emptiness check, not `slugify_filename(x) or fallback` — that helper ends

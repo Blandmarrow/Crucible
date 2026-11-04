@@ -23,7 +23,7 @@ A recipe with `loop` settings (`LoopSettings`) gets a `next_pass` entry; nobody 
 it on, and `StageKey` leaves it out. Without `loop`, a run is §4's single pass, gate
 included if chosen.
 
-**Every stage entry carries `pass_no`** (1, 2, …), or None for a tail stage. A pass that
+**Every stage entry carries `pass_no`** (1, 2, …), or None for a head or tail stage. A pass that
 must follow is **inserted** by `next_pass`, right after itself and before the tail.
 Insertion always lands after the current index and before entries that have not started,
 so every started stage keeps its index. `stage_tag`'s `"<index>:<key>"` therefore stays
@@ -61,7 +61,9 @@ An inline stage: no job, nothing inside it commits. In order:
    includes rows whose rewrite failed. A leaf the image cap's round-robin left out gained
    nothing through no fault of its own, so that pass never counts against it.
 3. With no leaf open, the loop ends: `met`, or `short` naming the abandoned folders.
-4. Otherwise the caps (below). Past one, the loop ends `short` with the reason.
+4. Otherwise the caps (below). Past one, the loop ends `short` with the reason. A pass
+   that **made no rows** ends it too (`short`, reason "the pass made no rows", no cap to
+   raise): it cannot move any folder, and the next pass would plan the same nothing.
 5. Otherwise the next pass's entries are inserted, **unless entries for that pass
    already exist**.
 
@@ -128,7 +130,25 @@ commit=False)`. Subfolders are DB labels, so no file moves, and the flags, the m
 the job's numbers commit once.
 
 **The flag, not the folder, is what keeps a reject out** of its leaf's kept count, the
-caption tail and the export. Moving an image back by hand leaves it flagged.
+caption tail and the export. **It goes when the image leaves `rejects/`** (the user's
+ruling, 2026-11-04), so an image moved back by hand counts again.
+`services/gate_flags.py` holds `REJECTS_FOLDER` (`run_gate` re-exports it) and
+`clear_gate_flags_outside_rejects(db, dataset_id)`. The helper copies and reassigns
+`quality_flags` without `gate_rejected` and `gate_reasons` for every flagged image of the
+dataset whose subfolder has no `rejects` segment, and it does not commit. Every writer of
+`Image.subfolder` calls it after the write: `image_move.move_to_subfolder` (both
+branches; the rename branch does it as its own step after the loop, so nothing fallible
+sits between a rename and its commit, PM-013), `dataset_service.repath_subfolder` and
+`delete_subfolder`, and `images.py`'s `batch_move_dataset` and `batch_copy_dataset` for
+the destination dataset. **The gate itself passes `clear_gate_flags=False`**: it flags
+every reject before its first move, and the later targets' flags would otherwise be
+cleared while still outside `rejects/`. Version restore deliberately does not clear:
+it restores flags and subfolder together. `test_gate_flag_clearing.py` has a test per
+writer. A new writer of `Image.subfolder` belongs in that list.
+
+**The gate job honours a cancel.** `_stage_gate`'s job checks `raise_if_cancelled` before
+the work and again before its one commit (rolling back first), so a cancel commits nothing.
+**The stage needs no plan**: only `rewrite` and `next_pass` refuse a deleted plan.
 
 **A known edge:** the duplicate scan does not know about the gate. A group's root can be
 a rejected image, which leaves that group with nothing kept. That is accepted.
@@ -256,10 +276,11 @@ forms and converters (kept apart so the component file exports components only):
 - **Rewrite**: the blueprint's rewrite-on scenarios as checkboxes, the provider and the
   `ModelPicker`.
 
-`NEEDS_STAGE` makes the gate depend on Score and `free_rewrite_model` on Rewrite, as
+`NEEDS_STAGE` (in `runRecipeForm.ts`) makes the gate depend on Score, `rewrite` on
+Fill the blueprint (`prompts`) and `free_rewrite_model` on Rewrite, as
 `free_caption_model` depends on Caption. `blockers` gains one reason for each section.
-`StageList` puts a "Pass N" heading before each pass, and "After the last pass" before
-the tail, and `LoopOutcome` shows the ending and up to 20 folders still short.
+`StageList` puts a "Before the first pass" heading before the head stage, a "Pass N"
+heading before each pass, and "After the last pass" before the tail, and `LoopOutcome` shows the ending and up to 20 folders still short.
 
 ## Testing
 
@@ -271,7 +292,8 @@ rejects until a stuck folder is abandoned (rejects filed and left out of the exp
 pass when everything passes; the pass cap and `next_pass`'s idempotency; the image cap's
 round-robin clamp; the seed refusals; the paid-call checks; Apply and Top up refusing
 during a run; the rewrite stage with one folder failing, and failing a run that does not
-loop when nothing was rewritten; `_stop_loop` keeping a handoff and `_spent` ignoring an
+loop when nothing was rewritten; the row cap holding on pass 1 and lifting from pass 2; a
+pass that made no rows stopping the loop; `_stop_loop` keeping a handoff and `_spent` ignoring an
 interrupted job's downtime; and a billed caption tail captioning what the cap allows. The gate's blur tests need
 cv2 (`needs_cv2`). `frontend/e2e/runs.spec.ts` runs one repeating journey from the form,
 with Score and the gate off, ending with every folder full.

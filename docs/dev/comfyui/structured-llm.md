@@ -166,7 +166,8 @@ user's ruling). It takes its session, writer, cancel flag and clock as arguments
   committed stays, and the result is still recorded rather than lost with the exception.
 
 **The routes.**
-- `GET …/blueprint/rewrite?batch_size=N` returns `{rows, leaves, calls, budget}`.
+- `GET …/blueprint/rewrite?batch_size=N` returns `{rows, leaves, calls, budget}`; a
+  `batch_size` outside 1–10 is a 400.
 - `POST …/blueprint/rewrite` takes `{provider_id, model_name, batch_size, temperature,
   confirm_budget, label}`.
   - **400:** no prompt pin, the model, or nothing to rewrite. **404:** no blueprint, or the

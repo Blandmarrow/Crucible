@@ -18,7 +18,7 @@ Optionally, install the **CrucibleBridge** extension into ComfyUI so **Sync from
 A **plan** holds one workflow template, the parameters pinned on it, and a queue of rows. A dataset can have as many plans as you like — typically one per workflow, or one per experiment.
 
 - **+ New plan** creates one; plan names are unique within a dataset. **Rename** and **Delete** act on the selected plan (deleting a plan discards its rows, but never the images it generated).
-- The plan splits into two sections: **Rows** (the queue) and **Workflow & Pins** (the template).
+- The plan splits into three sections: **Rows** (the queue), **Workflow & Pins** (the template) and **Blueprint** (a way to fill the queue, below).
 
 ## Loading a workflow
 
@@ -66,10 +66,11 @@ From the **Rows** toolbar:
 - **✨ Generate prompts…** — write prompts with an LLM using any provider configured under Settings → LLM Providers → [details](settings.md). Two fields do different jobs: **Instructions** describe *how* prompts should be written and are saved with the plan in the app, so they are the same in every browser, while **Request** describes *what* to generate this time. Instructions saved before this change are copied over the first time each browser opens the updated app. If a second browser holds a different copy, you are asked which to keep. The model is told which prompts already exist so it diverges from them, and duplicates are dropped. There are two ways to run it:
   - **Generate N more** makes one batch and puts it in the review box, where you edit or delete lines before clicking **Add N rows**.
   - **Generate until N** runs in the background until the queue holds N prompts, adding rows batch by batch **without a review step**. You can close the window, leave the page, or reload — it keeps going, shows up in the progress bar at the top, and can be stopped from either place. Rows already added are always kept when it stops. Because nothing is reviewed by eye first, glance over the new rows before running them.
-- **Blueprint** tab — describe the whole dataset once (characters, places, camera angles, alone and in pairs) and expand it into rows, each already filed in its folder → [details](comfy-structured.md).
 - **Edit prompts…** — find/replace, prepend, append, or remove across every row's prompt or just the selected ones, with an optional regex mode.
 - **Set folder** — give every selected row the same destination folder (see below).
 - **Delete selected** removes rows; **Reset failed** puts failed rows back to pending.
+
+The **Blueprint** tab is not a toolbar button but its own section of the plan. Describe the whole dataset once (characters, places, camera angles, alone and in pairs) and it expands into rows, each already filed in its folder → [details](comfy-structured.md). To take those rows on through scoring, captioning and export in one press, see [Automated Runs](runs.md).
 
 Each row has its own **Folder**, the leftmost column, which decides where that row's images are filed — so one run can produce a whole folder structure instead of a single pile. Type a path like `salt-fen/iron-knight` into the cell, or tick several rows and use **Set folder** to give them all the same one. Blank means the run's base folder. Nested paths are written with `/`, folders that do not exist yet are created as the run starts, and the images are named after the folder rather than the plan.
 

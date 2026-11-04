@@ -18,7 +18,7 @@ no Map row and no word budget. When a stage lands, move its durable rationale in
 named in § Documentation this arc owes and delete the stage from here; delete the folder when
 everything is done.
 
-Nothing below §1 is decided by the code yet. Read `CLAUDE.md`, `docs/dev/comfyui.md`,
+Stages §1 to §7 are built on this branch; only the ComfyUI page rework and the merge remain. Read `CLAUDE.md`, `docs/dev/comfyui.md`,
 `docs/dev/comfyui/run.md` and `docs/dev/comfyui/prompts.md` before implementing, and prefer the repo's conventions over the
 sketches here.
 
@@ -50,8 +50,8 @@ the ComfyUI page rework and the merge.
 
 **§1 (per-row `subfolder` + `leaf_id`) is ported**, commit 8dee5de on the branch; its rationale
 lives in `docs/dev/comfyui/queue.md` (the columns and endpoints) and `docs/dev/comfyui/run.md` (how a run
-files each row). The `comfy_leaves` table it left for later is §2a's to build:
-`leaf_id` is a column with no writer.
+files each row). The `comfy_leaves` table it left for later was built in §2a, and a blueprint's
+Apply is now the writer of `leaf_id` (`docs/dev/comfyui/structured.md`).
 
 **§7 (the mock ComfyUI server) has landed**, so every later stage tests against it:
 `backend/tests/fake_comfy.py`, documented in `docs/dev/comfyui/run.md` § Testing the run. pytest

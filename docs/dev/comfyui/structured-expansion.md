@@ -12,8 +12,9 @@ What the DB keeps, fill accounting, orphans, Apply and Top up are
 `BlueprintSpec` holds:
 - `axes`: name → entities `{id, label, descriptor}`
 - `variations`: name → pieces
-- `scenarios`: each with `name`, `combine`, `mode` (`full` | `sample:K`), `count`, `path`
-  and `template`
+- `scenarios`: each with `name`, `combine`, `mode` (`full` | `sample:K`), `count`, `path`,
+  `template` and `rewrite` (M6 §3's opt-in prose pass; expansion ignores it, and the outline
+  call never sets it)
 
 A `combine` item is a bare axis name (take one) or `{axis, take}`.
 

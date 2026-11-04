@@ -42,6 +42,7 @@ The order images travel through the app:
 | Consolidate Tags | [tag-consolidation.md](tag-consolidation.md) |
 | Versions | [versioning.md](versioning.md) |
 | ComfyUI | [comfyui.md](comfyui.md) · [comfy-structured.md](comfy-structured.md) |
+| Runs | [runs.md](runs.md) |
 | Export | [export.md](export.md) |
 | Booru Browser | [workspace.md](workspace.md#booru-tag-lookup) |
 | File Browser | [file-browser.md](file-browser.md) |

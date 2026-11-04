@@ -49,13 +49,18 @@ pasted verbatim into every prompt that names them.
 on each call**, never kept in a counter: dedupe and gallery deletes remove images, and a
 stored count would quietly go wrong.
 
-- **A target counts kept images.** `kept` is the number of a leaf's rows' `image_ids` that
-  still exist as `Image` rows in the plan's dataset **and carry none of `NOT_KEPT_FLAGS`**
+- **A target counts kept images.** `kept` is the number of **completed** rows' `image_ids`
+  that still exist as `Image` rows in the plan's dataset **and carry none of `NOT_KEPT_FLAGS`**
   (`is_duplicate`, `gate_rejected`). The flag test is `image_scope.flag_exclusions`, which
   silently drops a key missing from `ALLOWED_FLAG_KEYS`, so both keys must stay
   allowlisted. The lookup runs through `utils.chunked`, because of the bind limit.
   - `row.image_ids` is written only by the run and never pruned, so its length is what a
     row produced, whatever has been deleted since.
+  - **A completed row that a values edit reset to pending counts only as open** (the user's
+    ruling, 2026-11-04). It keeps its old `image_ids` for reference, but its images are
+    not counted as kept as well, or the one row would count twice and the leaf read full
+    with nothing to add. `_tally` reads `kept` from completed rows alone, and it is also
+    the numerator of the yield.
   - Deleting an image in the gallery makes its leaf short again. So does a duplicate scan
     flagging it, or an automated run's gate rejecting it. That is the intent.
   - A duplicate group's root carries no flag, so each group keeps one image.
@@ -109,6 +114,9 @@ This was the user's ruling on the plan's open question about edit-then-top-up.
 - `POST …/blueprint/apply` adds `confirm_total` and `delete_orphan_pending`, and returns
   `{created, leaves, deleted_rows}`. In order:
   - **400:** no prompt pin (`NO_PROMPT_PIN_MSG`).
+  - **409, first check under the plan lock:** an automated run on the plan is running or
+    paused (`_refuse_live_run`). It sits inside the lock, since a run starting between a
+    check outside it and the lock would find rows added under it.
   - **409:** a `comfy_generate`, `comfy_prompts` or `comfy_rewrite` job is pending or
     running for the plan (`_plan_job_active` over `_ROW_JOB_TYPES`). A run loaded its rows
     at start and must not lose pending ones to the orphan delete. A prompt job seeds its
@@ -126,7 +134,8 @@ This was the user's ruling on the plan's open question about edit-then-top-up.
   cap. (The plan allowed a job for a large expansion; the cap makes every expansion
   small.)
 - **One per-plan lock, `_plan_lock`, covers every writer from its 409 check to its
-  commit:** Apply, the blueprint PUT, `run_plan`, `generate_prompts_job` and the rewrite
+  commit:** Apply, Top up, the blueprint PUT, the draft discard, the outline route and its
+  job, `run_plan` (through `_start_run`), `generate_prompts_job` and the rewrite
   route (`docs/dev/comfyui/structured-llm.md` § The rewrite pass). One process
   serves the app, so an in-process `asyncio.Lock` is enough. Each holder closes one race:
   - Two double-clicked Applies would both pass the guards and give each leaf its rows twice.
@@ -148,15 +157,17 @@ deleted_rows, job_id, total, awaiting_rewrite}`. In order:
    (`_run_preflight`: workflow present, ComfyUI URL set, dataset exists), and
    `normalize_subfolder` on the base folder (a `..` is a 400). Otherwise a missing URL or a
    bad folder would add rows for a run that is then refused.
-2. **Under the plan lock, all the way to the run's commit:** the 409 for a live run,
-   prompt or rewrite job, then Apply itself, with the same `confirm_total` rule, so what
+2. **Under the plan lock, all the way to the run's commit:** the 409 for a live run
+   (`_refuse_live_run`, inside the lock as in Apply), then for a prompt or rewrite job,
+   then Apply itself, with the same `confirm_total` rule, so what
    runs is what the preview showed.
    - **Then it stops if any row waits for the rewrite** (M6 §3): a `template` row, not
      completed, in a scenario with `rewrite` on (`blueprint_rewrite.count_awaiting`). It
      returns `awaiting_rewrite: N` with `job_id: null`, having reset and run nothing, so
      switching rewrite on always means prose. The user's choice, 2026-11-03. An
-     automated run pauses here for the same reason, rather than starting the rewrite
-     itself (`docs/dev/comfyui/automation.md` § The stages). A plain *Run* is unchanged:
+     automated run pauses here for rows of a scenario it was not told to rewrite; the ones
+     it ticked it rewrites itself in the `rewrite` stage (`docs/dev/comfyui/run-loop.md`
+     § The rewrite stage). A plain *Run* is unchanged:
      it runs what the user queued.
    Apply, this stop and step 3 are `fill_blueprint` in `routers/comfy.py`, which an
    automated run's `prompts` stage calls too, with `confirm_total=None`.
@@ -180,6 +191,9 @@ deleted_rows, job_id, total, awaiting_rewrite}`. In order:
    - The lock is held through the run's commit for a reason. Released in between, a second
      press queued on it would pass the 409 (no job yet), add nothing, and then hit the
      run's 409: an error over a run that did start.
+   - **If the run cannot start after the fill committed**, the rows are already there. The
+     error keeps the original status but says so: "Applied: N rows added, M reset. Could
+     not start the run: …", rather than reading as though nothing happened.
 
 **Nothing pending means nothing queued: `job_id: null`.** Because targets are absolute,
 pressing Top up again once every folder is full adds no rows and starts no run.

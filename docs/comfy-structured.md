@@ -29,7 +29,7 @@ Enter one piece per line.
 | Field | What it does |
 |---|---|
 | **Combine** | The axes this scenario uses. **Take** 2 or more on an axis makes groups of different entities together (pairs, trios), never the same one twice. |
-| **Mode** | **Full** makes every combination. **Sample K** picks K of them at random, and keeps the same K each time you reopen it. |
+| **Mode** | **Every combination** makes all of them. **Sample** picks some at random: set how many in the **Folders** box. It keeps the same ones each time you reopen it. |
 | **Images per folder** | How many images each folder should end up holding. |
 | **Folder path** | Where each combination is filed, e.g. `{biome}/{character}`. Leave it blank for one folder level per axis, in the order you combined them. Pairs become `iron_knight_and_salt_witch`. |
 | **Prompt template** | E.g. `{character}, standing in {biome}, {camera}, {time}`. Leave it blank to list every axis, then one piece of every variation. |
@@ -131,10 +131,15 @@ Template prompts read like tag lists, which suits tag-based models. Models that 
 sentences can do better with prose. Tick **Rewrite into prose (LLM)** on a scenario, Apply,
 then press **Rewrite N prompts** under the preview. An LLM rewrites each folder's prompts
 into sentences that keep every detail, and describes each character the same way
-throughout.
+throughout. The button sits in the Preview header, and shows only while some prompts
+wait for a rewrite. It is greyed out until you have applied, because only rows that exist
+can be rewritten.
 
 - **Pick a provider and model** in the dialog. It starts from the plan's **Generate
   prompts** settings, and follows the **Instructions** saved there. It never changes them.
+- **Batch size and Temperature** are in the dialog too. Batch size (1 to 10, 5 to start
+  with) is how many prompts go to the model in one call. Temperature (0.7 to start with)
+  makes the wording more varied when it is higher.
 - **It shows the cost first:** how many prompts and folders, and the most LLM calls it
   will make. It never goes over that number.
 - **It runs in the background**, one folder at a time, and saves each batch as it comes
@@ -153,14 +158,16 @@ would take.
 ## Changing a blueprint after applying it
 
 A folder is identified by its path. Renaming an entity's label, or changing a folder path,
-makes new folders. The old folders' rows then belong to nothing: the preview reports how
-many rows and images that is, and they count toward no target. Changing it back is safe: a
-folder that comes back picks up the rows and images already in it, rather than starting
-from zero.
+makes new folders. The old folders' rows then belong to nothing: the preview says "N rows
+(M images) belong to folders this blueprint no longer makes", and they count toward no
+target. Changing it back is safe: a folder that comes back picks up the rows and images
+already in it, rather than starting from zero.
 
-Renaming an axis or a variation updates every scenario that uses it. Tick **Delete their pending
-rows** to remove the ones that have not run yet. Rows that already ran, and their images,
-are never deleted; tidy them up by hand if you want.
+Tick **Delete their pending rows** on that notice to remove the old rows that have not run
+yet, the next time you Apply or Top up. Rows that already ran, and their images, are never
+deleted; tidy them up by hand if you want.
+
+Renaming an axis or a variation updates every scenario that uses it.
 
 **New sampling seed** changes which combinations a *Sample K* scenario picks and which
 prompts the template walk produces. Use it before you apply, not after.

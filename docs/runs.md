@@ -13,13 +13,15 @@ blueprint. See [ComfyUI Generation](comfyui.md) and [ComfyUI Blueprints](comfy-s
 
 ## The stages
 
-They always run in this order. Switch off any you do not want.
+They always run in this order. A new form starts with the blueprint fill, the two VRAM
+stages, Generate and Score on. **Caption** and **Export** start off, so switch them on
+when you want them. Switch off any stage you do not want.
 
 | Stage | What it does |
 |---|---|
 | **Snapshot the dataset** | Off by default. Takes a version of the dataset before the run changes anything, so you can go back to it on the Versions page. It runs once, before the first pass. With versioning off in Settings it is skipped, and the run says so. |
 | **Fill the blueprint** | The same as **Top up** on the Blueprint tab: adds the rows each short folder needs, and puts failed rows back in the queue. With no blueprint it is skipped, and the run generates the plan's pending rows instead. |
-| **Rewrite prompts** | Off by default. Rewrites the new template prompts into prose with a language model before generating, for the scenarios you tick (see below). |
+| **Rewrite prompts** | Off by default, and it needs **Fill the blueprint**, because it rewrites the rows the fill adds. Rewrites the new template prompts into prose with a language model before generating, for the scenarios you tick (see below). |
 | **Unload the rewrite model** | Frees the GPU from the model that rewrote, so ComfyUI has it. Only runs with Rewrite. |
 | **Free VRAM for ComfyUI** | Unloads Crucible's own models (captioners, scorers), so ComfyUI has the GPU. |
 | **Generate** | Runs this run's rows through ComfyUI, filing each image in its row's folder, under the base folder if you set one. |
@@ -33,8 +35,9 @@ They always run in this order. Switch off any you do not want.
 A stage with nothing to do is **skipped**, not run on everything. If a run made no new
 images, scoring and captioning are skipped, and no other image in the dataset is touched.
 
-A language model is unloaded only after captioning, by the stage above. If one is already
-loaded in LM Studio when the run starts, it stays loaded through generating and scoring.
+A language model is unloaded by the two stages above: after rewriting, and after
+captioning. If one is already loaded in LM Studio when the run starts, it stays loaded
+through generating and scoring unless Rewrite is on.
 
 ## Caption and export settings
 
@@ -46,6 +49,9 @@ Captioning and Export pages, so you can set them for this run:
   how existing captions are handled, quality filters and the post-processing options.
 - **Export:** the format, output folder, concept and repeats, caption file, filters,
   resize, image format, stripping metadata, and captions only.
+
+The export's **Has caption** filter is ticked to start with, so an image with no caption
+is left out. A custom resize is a whole number from 1 to 16384; a blank one counts as 1024.
 
 Each section has a **Fill from the Captioning page** or **Fill from the Export page**
 button. It copies what that page last used, and you can change anything after. Without
@@ -62,7 +68,13 @@ nothing is generated. The report shows:
 - every **problem** that would stop the start, such as ComfyUI not answering, a blueprint
   over the row limit, or a caption model your provider does not list;
 - **warnings** that do not stop it, such as versioning being off with Snapshot on;
-- the stages, and how many rows and images the first pass makes in each folder.
+- the stages, and what the first pass would do: the rows it generates and the images that
+  should make, an estimate of the disk space needed, and about how many rewrite and
+  caption calls it makes (marked when the provider is billed);
+- each folder, with how many images it holds against its target and how many rows the
+  first pass makes for it, and a total.
+
+Press **Close** to hide the report.
 
 **Start run** makes the same checks and refuses on the first problem, before anything is
 written. If you change the form after a dry run, the report says it is out of date.
@@ -79,7 +91,8 @@ Recipes are shared by every dataset. Pick one and press **Load** to fill the for
 **Export** saves a recipe as a file to share, and **Import…** reads one. A file never
 carries your export folder, and it names each LLM provider instead of pointing at yours.
 On import, a provider with the same name here is used. Otherwise that field is left empty,
-and the page says what to choose.
+and the page says what to choose. It is also left empty, with a note saying
+*ambiguous*, when two providers here have names that differ only in capital letters.
 
 Each past run also has **Use these settings**, which fills the form with what it ran with.
 
@@ -148,7 +161,9 @@ A rejected image is **moved, not deleted**. It goes to `rejects/` under the run'
 folder, keeping its folder's path: `knights/iron_knight` becomes
 `rejects/knights/iron_knight`. It is also flagged **Rejected by a run's gate**, which is
 what keeps it out of its folder's count, the captions and the export. You can filter the
-gallery by that flag. Moving an image back by hand does not clear the flag.
+gallery by that flag. The flag goes when the image leaves `rejects/`: move it back to a
+folder, copy it to another dataset, or rename or delete the `rejects` folder, and the
+image counts again.
 
 ## Rewriting inside a run
 
@@ -175,16 +190,27 @@ name in front of its label.
   again, and a generated row is never generated twice.
 - **Cancel** stops the current stage's job, and no later stage starts. Images already made
   stay in the dataset. A snapshot cannot stop partway, so a cancel during one waits for it
-  to finish, and the run reads *cancelling* until then.
+  to finish, and the run reads *cancelling after the snapshot* until then. Cancel stays
+  available meanwhile: if the snapshot has already finished or is gone, pressing it again
+  ends the run at once.
 
 A dataset can have one run going or paused at a time. While a run on a plan is going or
 paused, that plan's **Apply** and **Top up** buttons are refused, so nothing adds rows
 between its passes. A repeating run shows its stages grouped by pass.
 
+Finished runs are listed under *Past runs*. Each has **Delete**, **Use these settings**,
+**Resume** if it failed, and **Raise caps and continue** if a cap stopped it. The last
+three are not offered while a run is going, since the start form is hidden then. A
+run that could not start its first stage shows its error instead of "Run started".
+
 ## When a run stops on its own
 
 - **A stage failed.** The run says which stage and why. Fix the cause, then press
   **Resume** on it under *Past runs*.
+- **Every item of a stage failed.** If Generate failed every row, or Caption failed every
+  image, the run fails with a message such as *Generate: every row failed (5 of 5)* and the
+  first row's error. A stage where only some items failed still counts as done. **Resume**
+  tries the failed rows again.
 - **You cancelled one of its jobs from the top bar.** The run treats that as a failure, so
   you can resume it.
 - **Crucible restarted.** The run comes back **paused** at the stage it was on. Press

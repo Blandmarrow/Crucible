@@ -19,7 +19,7 @@ another job on it. A run therefore **is not a job**. It is a `Run` row
 - `recipe`: the `schemas/run.RunRecipe` it was started with. That means which stages are
   on, plus each one's settings.
 - `stages`: one entry per stage, in `STAGE_ORDER`, each `{key, status, job_id, note,
-  summary, started_at, finished_at}`. Status is `pending`, `running`, `done`, `skipped`,
+  summary, started_at, finished_at, pass_no}`. Status is `pending`, `running`, `done`, `skipped`,
   `failed` or `cancelled`. The list is copied, edited and reassigned, never mutated in
   place (CLAUDE.md § Key invariants).
 - `context`: `{"row_ids": [...]}`, the plan rows this run generates. These are **row ids,
@@ -28,8 +28,8 @@ another job on it. A run therefore **is not a job**. It is a `Run` row
   poll of the run. Since §5 it also holds the rows of each pass (`passes`), the loop's
   per-folder counts (`leaves`) and its ending (`loop`): `docs/dev/comfyui/run-loop.md`.
 - `status` (`running`, `paused`, `completed`, `failed`, `cancelled`), `pause_requested`,
-  `current_job_id` and `error_msg`. `current_job_id` has no FK, because finished job rows
-  are swept after 30 days.
+  `cancel_requested` (§ Cancel, pause, resume, restart), `current_job_id` and `error_msg`.
+  `current_job_id` has no FK, because finished job rows are swept after 30 days.
 
 Each stage that does work queues an **ordinary child job** through a start function, and
 the child keeps its own job type: `comfy_generate`, `quality_score`, `caption`, `export`,
@@ -56,19 +56,30 @@ job, and the Runs page polls.
 
 `advance_run`, under the run's lock:
 
-1. **The stale guard.** It acts only if the run is `running` and the job's `run_stage` tag
-   (`"<index>:<key>"`, from `stage_tag`) names the stage that is `running` now. A job the
-   run has moved past, such as a child cancelled with the run that finishes late, changes
-   nothing.
+1. **The stale guard.** It acts only if the run is `running` and a stage is `running`
+   whose tag (`"<index>:<key>"`, from `stage_tag`) matches the job's `run_stage` **and**
+   whose recorded `job_id` is this job. A job the run has moved past, such as a child
+   cancelled with the run that finishes late, changes nothing. The tag alone is not
+   enough: a stage resumed under the same tag has a new job, and the old one finishing
+   late must not step it.
 2. It records the stage's summary from the job's `result_data` (`_summary`). The outcome
    follows from the job's status:
-   - `completed` → `done`;
+   - `completed` → `done`, unless the job did nothing (below);
    - `failed` → the stage and the run are `failed`, with the job's error;
    - `cancelled` while the run was running (a `TopBar` cancel) → the stage is `cancelled`,
      and the run is `failed` "cancelled outside the run".
 
    A `comfy_generate` with some rows failed still **completes**. The failed rows are in the
    summary, and the next run's Top up resets and retries them.
+
+   **A job that failed every item fails the stage and the run** (the user's ruling,
+   2026-11-04), through `_every_item_failed`. A `comfy_generate` that completed with
+   `completed == 0` and `failed > 0` ends with "Generate: every row failed (N of N):
+   <the first failed row's `error_msg`>". A `caption` job with `failed_count >=
+   total_items` ends with "every image failed (N of N)". Partial failures still complete.
+   A stage that made nothing would otherwise read green and hand an empty set to the next
+   one. **Resume** retries it: `_stage_generate` resets failed rows to pending, and a
+   caption stage runs again.
 3. If a pause was asked for, the run becomes `paused`. Otherwise it calls `_start_next`.
 
 `_start_next` walks the stages from the first `pending` one. Each stage's start returns
@@ -89,7 +100,7 @@ so a child the worker finishes at once cannot step a row the API has not written
 Stages that touch the plan's rows also take ComfyUI's plan lock (`_plan_lock`). That lock
 is not re-entrant, so they call `_start_run(..., hold_lock=False)` inside it. A third,
 `_dataset_lock`, holds "one live run per dataset" from its check to the commit that makes a
-run live, in both start and resume. Without it, two presses in two panes both passed the
+run live, in start, resume and extend. Without it, two presses in two panes both passed the
 check. The order is always run lock, then dataset or plan lock, never the reverse.
 
 ## The stages
@@ -113,16 +124,19 @@ function's `job_id: None` as a skip too. Export takes no id list at all.
 `test_a_stage_with_no_images_is_skipped_and_never_started_with_an_empty_list` holds it,
 with a bystander image in the dataset that a `[]` would sweep in.
 
-**Known limit:** `start_score_job` and `start_caption_job` put the whole id list in one
-`IN`, unchunked, so a run of more than about 32,000 images would hit SQLite's bound-variable
-limit and fail its score stage. It is the class M8's follow-up 9 tracks
-(`docs/dev/cleanup-plan/README.md` § Stage 1 follow-ups). No UI sent lists that long
-before the run, and a run that long is unlikely.
+**Long id lists are chunked.** `start_score_job` and `start_caption_job` run an
+`image_ids` filter through `utils.chunked` and gather the rows, de-duplicating the ids
+first. A run can pass up to 100,000 ids, past SQLite's bound-variable limit (the class
+M8's follow-up 9 tracks, `docs/dev/cleanup-plan/README.md` § Stage 1 follow-ups).
+`backend/tests/test_start_id_chunking.py` holds it with more ids than one chunk.
 
 **Rows waiting for a §3 rewrite pause the run** at `prompts`, with "N rows wait for a
 rewrite. Run it on the ComfyUI page, then resume." Top up refuses them for the same reason
 (`docs/dev/comfyui/structured.md` § Top up). An unattended run cannot review which scenarios
-to rewrite, so it does not start the rewrite job itself.
+to rewrite on its own, so only the scenarios ticked on the start form are rewritten, by
+the run's own `rewrite` stage (`start_rewrite_job`; `docs/dev/comfyui/run-loop.md` § The
+rewrite stage). Rows of any other rewrite-enabled scenario still pause the run. The
+`rewrite`, `free_rewrite_model`, `gate` and `next_pass` stages are that file's too.
 
 **Unloading the caption model** (`free_caption_model`, `_free_caption_model`). The
 OpenAI-compatible API has no unload, so each kind of model is freed its own way, and
@@ -139,8 +153,9 @@ every failure is a note:
   as `handoff_to_comfy` does.
 
 All LLM-server calls go through `run_service._LLM_TRANSPORT`, which the tests set to an
-`httpx.MockTransport`. The two VRAM handoffs before it still do nothing for an LLM: §4's
-stages make no LLM call before captioning.
+`httpx.MockTransport`. The two VRAM handoffs still do nothing for an LLM. Since §5 a rewrite
+stage can run an LLM before generating, and `free_rewrite_model` unloads it after the
+rewrite through the same `_free_llm` (`docs/dev/comfyui/run-loop.md`).
 
 ## Starting, and the checks it runs first
 
@@ -169,12 +184,15 @@ it always did:
   model checks only the id's prefix), and a model its server lists without the chosen
   one is a 400. A server that cannot be asked is a warning. The listing goes through
   `_LLM_TRANSPORT` (§ The stages);
-- **the disk**: below the floor is a 507; short of the estimate (the mean size of the
-  plan's images, else the dataset's, times the planned images) is a warning;
+- **the disk**, only when Generate is on: below the floor is a 507; short of the estimate
+  (the mean size of the plan's images, else the dataset's, times the planned images, or
+  times `loop.max_images` on a loop) is a warning;
 - the live-run 409, last. `start_run` checks it again under `_dataset_lock`.
 
 Warnings never block: versioning off with Snapshot on, rows that will wait for a rewrite,
-the image cap clamping the first pass, an export folder `os.access` calls unwritable.
+the image cap clamping the first pass, an export folder `os.access` calls unwritable, a
+disk short of the estimate, and "Could not list the models of <provider>, so the model was
+not checked" (also worded for Ollama) when a server cannot be asked.
 
 The report's first-pass rows use `round_robin_counts`, the split `_clamp_rows` itself
 uses, so the clamp the dry run shows is the one the run applies. The per-folder split of
@@ -196,6 +214,10 @@ stages into `STAGE_ORDER` whatever order they arrive in.
   `running`; `advance_run` records what the snapshot did and then ends the run
   `cancelled`. Pause and resume 409 meanwhile, and the restart reconcile turns such a
   run `cancelled` rather than paused. A snapshot still queued is cancelled like any child.
+  **A second Cancel finishes a stuck wait.** If the snapshot job is gone or already
+  finished (its hook never came, since it raised or was skipped), `cancel_run` ends the
+  run `cancelled` at once instead of returning early. While the snapshot is pending or
+  running it still returns the run unchanged.
 - **Pause** sets `pause_requested`. The running child finishes, and `advance_run` stops at
   the boundary. Resume before the boundary just clears the flag. A pause asked for during
   the last stage has no boundary left, so the run completes, and a run that fails drops
@@ -212,7 +234,9 @@ stages into `STAGE_ORDER` whatever order they arrive in.
   A child that ends inside `stop()`'s grace period commits `completed`, but its hook is
   skipped while the queue is stopping, so the run never heard. Resetting that stage would
   make a resume export again, or caption again on a paid provider. So it is recorded `done`
-  with its summary, and a run with no stage left is `completed` rather than paused.
+  with its summary, and a run with no stage left is `completed` rather than paused. A
+  completed child that failed every item (`_every_item_failed`) is recorded `failed`
+  instead, and the run ends `failed`, as `advance_run` would have ended it.
 - **Delete** (`DELETE /runs/{id}`) refuses a live run with a 409.
 
 ## The Runs page
@@ -226,7 +250,9 @@ dataset, so a dataset switch shows that dataset's own; a `prevDatasetId` effect,
 - The start form's state is one `RunFormState` (`components/runs/runRecipeForm.ts`).
   `formToRecipe` builds the recipe that Start, Dry run and saving a recipe all send;
   `recipeToForm` reverses it for a loaded recipe or a past run's **Use these settings**,
-  through an inverse written beside each forward converter. The plan and base folder are
+  through the inverse converters, which all live in `runRecipeForm.ts`
+  (`fromCaptionSettings`, `fromExportSettings` and the rest). The forward ones are in
+  `runForms.ts` and `runLoopForms.ts`. The plan and base folder are
   kept per dataset, outside `RunFormState` proper, and a plan id this dataset does not
   have falls back to its first plan. The recipe bar, the remembered form and the inverses'
   traps are `docs/dev/comfyui/recipes.md`.
@@ -238,7 +264,10 @@ dataset, so a dataset switch shows that dataset's own; a `prevDatasetId` effect,
   own fields, minus scope, and reuse their controls: `DelimiterControls`,
   `ResolutionPicker`, the provider `ModelPicker`, the saved prompt presets and
   `FLAG_OPTIONS`. The form state uses those pages' names, and `components/runs/runForms.ts`
-  converts it to the run's settings.
+  converts it to the run's settings. The custom export resize is a `NumberField` bounded
+  1–16384 (the schema's bounds). The field and the start read the stored string through
+  one parser, `customResizeValue`, so a blank or out-of-range value (one a recipe or the
+  Export page's form carries in) shows and is sent as the 1024 default, never as a 422.
 - **"Fill from the Captioning page"** copies that page's saved workflow
   (`appDataApi.getCaptioningWorkflow`), except its scope, which a run does not have.
   **"Fill from the Export page"** copies the Export page's browser-stored workflow and this
@@ -259,7 +288,8 @@ dataset, so a dataset switch shows that dataset's own; a `prevDatasetId` effect,
   (`docs/dev/comfyui/run-loop.md` § Raising a cap and carrying on). The last two are not
   offered while a run is live, since no start form shows then.
 - While a cancel waits for a snapshot, the run reads "cancelling after the snapshot", and
-  its Pause, Resume and Cancel are not offered.
+  its Pause and Resume are not offered. Cancel stays enabled, with a tooltip and a
+  "Cancel again?" confirm, because a second press ends the run if the snapshot is gone.
 
 ## Testing
 
@@ -274,7 +304,12 @@ provider). It covers:
   resume;
 - the restart reconcile, including a stage whose child completed during the shutdown;
   a resumed stage dropping its old note; a pause during the last stage;
-- the rewrite pause, the start-time checks, and the stale guard.
+- the rewrite pause, the start-time checks, and the stale guard (including a stale job
+  that matches the tag but not the stage's `job_id`);
+- a generate job that failed every row, or a caption job that failed every image, failing
+  the run, with Resume retrying the rows; a gate cancelled before its commit committing
+  nothing; the gate running after its plan was deleted; and a second Cancel ending a run
+  whose snapshot is gone.
 
 Its `_block_worker` holds the single worker on a gate job, which keeps a child queued
 deterministically. `backend/tests/test_caption_start_scope.py` pins what

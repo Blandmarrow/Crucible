@@ -227,7 +227,9 @@ utilities → `docs/dev/shared-utilities.md`.
 - **New file:** docs/dev/comfyui/run-start.md, a row in the hub `docs/dev/comfyui.md`
   rather than in the CLAUDE.md Map
 - **Why here:** M6 §6 took the file to 3,345 of 3,500 words (96%), recorded on 2026-11-04
-  before it tripped. The start check is a subject of its own: it runs before a `Run` row
+  before it tripped. The review-fix pass the same day took it to about 3,780 (over), by
+  documenting the every-item-failed rule, the stale-job guard, the second Cancel and the
+  chunked starts. The start check is a subject of its own: it runs before a `Run` row
   exists, while everything else in the file is about stepping a run that does. The rest
   (the row, `advance_run`, the stages, cancel and restart, the page) stays together.
 - **Watch for:** the hub's Where-things-live rows for `blueprint_service.fill_plan` and the
@@ -235,3 +237,18 @@ utilities → `docs/dev/shared-utilities.md`.
   recipes.md point at automation.md for the start; `test_run_dry_run.py`'s docstring names
   the section too. The `_no_real_llm_server` paragraph in § Testing goes with the tests,
   not with the start.
+
+## docs/runs.md
+
+- **Moves:** § Saving the form as a recipe (156 words) and § Caption and export settings
+  (197 words) into a page on the start form, named after what it mirrors: a
+  "Setting up a run" page. § Repeating until every folder is full (575 words, with the caps
+  and giving up on a folder) is the other candidate, if the form page is too thin.
+- **New file:** none chosen. Plain text name for now: docs/run-setup.md.
+- **Why here:** the review-fix pass on 2026-11-04 took the file to about 2,590 of 2,500
+  words, by adding the dry-run report, the stage defaults, the every-item-failed stop and
+  the gate flag clearing. The page mixes two jobs: how to fill in the start form, and how
+  to follow and understand a run once it is going. The seam is that line.
+- **Watch for:** README.md and docs/features.md link to runs.md and its anchors, including
+  `runs.md#the-gate` from docs/scoring.md and the anchors used by docs/comfyui.md and
+  docs/comfy-structured.md.

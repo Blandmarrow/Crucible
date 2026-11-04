@@ -17,7 +17,7 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-04, after M6 §6 was built)
+## Next session (updated 2026-11-04, after the M6 branch review's fixes)
 
 1. M5's five stages merged on 2026-10-30 as PR #101. Only its cleanup is open, and that waits
    a release. See [server-state-plan/README.md](server-state-plan/README.md) for what was
@@ -46,7 +46,7 @@ restates its stages.
    there, the plan is rewritten in
    [comfy-automation-plan/README.md](comfy-automation-plan/README.md) by decisions 8 and 9, and
    `comfy-per-row-subfolders` is deleted. **Work on M6 happens on that branch.**
-   - The ComfyUI dev docs sit behind the hub `docs/dev/comfyui.md`, with ten files in
+   - The ComfyUI dev docs sit behind the hub `docs/dev/comfyui.md`, with eleven files in
      `docs/dev/comfyui/`.
    - §7 (the mock ComfyUI server), §2a (blueprints, see `docs/dev/comfyui/structured.md`),
      §2b (the outline call) and §2c (Top up) have landed there, so the arc's cut point is
@@ -75,6 +75,12 @@ restates its stages.
      same day. Its hand checks, against a real
      ComfyUI and LM Studio: a dry run and a start with ComfyUI off, a run with Snapshot on
      (and a Cancel during it), a recipe exported and imported, and a pass cap raised.
+   - **A branch review and its fixes landed on 2026-11-04** (four code reviewers, two doc
+     audits). The user ruled twice: a run whose generate or caption job failed every item
+     now fails, and `gate_rejected` clears when an image leaves `rejects/`. Still owed by
+     hand against a real ComfyUI: a run whose ComfyUI rejects every row ends `failed` and
+     Resume retries it, and a rejected image moved back loses its flag in the gallery and
+     the Stats card.
    - **Next M6 work: the ComfyUI page rework**, so prompts are easier to categorize and
      the prompt library easier to use. Its scope is not set; plan it with the user first.
    - Decisions 7–9 and this M6 checklist exist only on that branch until it merges, so
@@ -222,6 +228,16 @@ gates are green and it is pushed.
   `run_recipes` library (`b2e7c9a4d1f6`) and the remembered form (`c4a8e2f6b9d3`),
   `extend_run`, and `docs/dev/comfyui/recipes.md`. Not yet checked by hand against a real
   ComfyUI and LM Studio.
+- [x] Review-fix pass. Done 2026-11-04: a branch review (four code reviewers and two doc
+  audits) and its fixes, each with a regression test. Two rulings by the user: a run fails
+  when a generate or caption job failed every item (`docs/dev/comfyui/automation.md`), and
+  `gate_rejected` is cleared when an image leaves `rejects/` (`services/gate_flags.py`,
+  `docs/dev/comfyui/run-loop.md` § The gate). The rest: the gate honours a cancel and needs
+  no plan, a second Cancel finishes a stuck snapshot wait, a stale job cannot step a resumed
+  stage, an empty pass stops the loop, `kept` counts completed rows only, Top up's error
+  after a committed fill says so, id lists in the score and caption starts are chunked,
+  recipe import refuses an ambiguous provider, and blueprint and export inputs are bounded.
+  The M6 docs were audited against the final code.
 - [ ] Rework the ComfyUI page's UI and some of its behaviour, so prompts are easier to
   categorize and the prompt library is easier to use (the user's call, 2026-11-04: this
   lands before the merge). Scope not yet set; plan it with the user first.

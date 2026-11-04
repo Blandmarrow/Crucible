@@ -3,7 +3,8 @@
 The frontend of the ComfyUI queue: how `ComfyPage` is routed and registered, what its e2e spec
 covers, the plan bar, `WorkflowPinPanel` and the workflow scan, the run-default strip, the rows
 table and its Folder column, the run bar and how the page tracks concurrent runs, the prompt
-library modals and the Rows toolbar. The data model and endpoints it calls are in
+library modals, the Rows toolbar and the Blueprint tab (`BlueprintPanel`, the draft dialog,
+Preview, Top up and the rewrite). The data model and endpoints it calls are in
 `docs/dev/comfyui/queue.md`; what a run does server-side is `docs/dev/comfyui/run.md`; *Generate
 prompts* is `docs/dev/comfyui/prompts.md` and *Sync from canvas* `docs/dev/comfyui/sync.md`.
 
@@ -47,7 +48,13 @@ image's generation metadata on its detail page, and a failed row's error tooltip
     only the key would turn each reference into an error. Entity ids are generated
     client-side and never shown. The numeric
     fields clamp to the schema's bounds (take ≤ 4, count ≤ 10,000), because past them both
-    the save and the preview 422.
+    the save and the preview 422. The text inputs carry a `maxLength` for the same reason,
+    from `BLUEPRINT_LIMITS` in `blueprintKeys.ts`, which mirrors `schemas/comfy_blueprint.py`
+    (name 40, scenario name 100, path 400, template 4000, label 200, descriptor 2000, piece
+    300). The same const holds the list sizes (8 axes, 200 entities an axis, 12 variations,
+    100 pieces a variation, 50 scenarios, 6 combined axes): each *+ Add* button disables at
+    its cap. The pieces box cannot be stopped by `maxLength`, so it saves the first 100
+    lines, each cut to 300 characters, and shows a warning for what it left out.
   - **Read-only while the plan runs.** A disabled `<fieldset>`, since Apply would 409 anyway.
   - **The outline draft.** *✨ Draft from a description…* opens `OutlineModal`, which queues
     the `comfy_outline` job (`docs/dev/comfyui/structured-llm.md` § The outline call).
@@ -64,7 +71,9 @@ image's generation metadata on its detail page, and a failed row's error tooltip
       that lands while the tab is open.
     - **While a draft exists, the modal is its review** (`DraftReview`), not the brief
       form, so a draft that lands with the modal open is shown there. The banner's
-      *Review…* opens the same view, and *Draft again…* goes back to the brief. The review's
+      *Review…* opens the same view, and *Draft again…* goes back to the brief, where
+      *Back to the draft* returns to the review. The review's *Decide later* just closes
+      the modal and keeps the draft. The review's
       expansion is the ordinary preview endpoint with the draft in the body, on its own key
       (`["comfy","blueprint-draft-preview",…]`); that endpoint writes nothing, so the saved
       spec stays as it was until *Use it*. A failure of the job this modal started shows
@@ -120,7 +129,9 @@ image's generation metadata on its detail page, and a failed row's error tooltip
     - **The *Rewrite N prompts* button counts rows that exist now**, from
       `GET …/blueprint/rewrite` at the saved batch size, under
       `["comfy","blueprint-rewrite",planId,batch]`. It does not use the preview's count,
-      which includes rows Apply would add, so it reads "Apply first" until they exist.
+      which includes rows Apply would add. The button appears in the Preview header only
+      while the preview says some rows need rewriting (`rewrite_rows > 0`). It is
+      **disabled, with an "Apply first" tooltip,** while no such row exists yet.
     - `RewriteModal` follows `OutlineModal`: defaults from the saved settings, read only;
       its job derived from `jobStore`, seeded with `plan_id` on start. It sends the shown
       estimate's `budget` as `confirm_budget`, and a 409 refetches the estimate.
@@ -136,8 +147,10 @@ image's generation metadata on its detail page, and a failed row's error tooltip
         since Top up will refuse while they do.
       - The job is in neither image job-type set: it changes rows, never images.
   - **The e2e.** `comfy-run.spec.ts` authors a blueprint by hand, applies it, checks the rows'
-    folders and `leaf_id`s, and runs them. A second journey ticks the rewrite, checks the
-    totals line and Top up's notice, and opens `RewriteModal`, all without an LLM.
+    folders and `leaf_id`s, and runs them. Another ticks the rewrite, checks the
+    totals line and Top up's notice, and opens `RewriteModal`, all without an LLM. Two more
+    cover the draft: the Blueprint tab opens the draft-from-a-description dialog, and a
+    waiting draft can be reviewed, with its expansion, before *Use it*.
 - **`WorkflowPinPanel`** — paste textarea + `.json` file loader + *Scan folder…* button
   (opens `WorkflowScanModal`) + *Sync from canvas* button (`canvas-workflow` →
   `SyncCanvasModal`, see `docs/dev/comfyui/sync.md`); validates API-format client-side; warns (non-blocking) when no

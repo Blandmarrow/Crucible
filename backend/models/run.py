@@ -44,6 +44,12 @@ class Run(Base):
     pause_requested: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=sa.false()
     )
+    # A cancel asked for while the snapshot stage's job runs. Snapshot jobs never stop
+    # partway, so the run stays `running` until the snapshot ends, then is cancelled,
+    # rather than reading cancelled while the job still writes (M6 §6).
+    cancel_requested: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=sa.false()
+    )
     # No FK: finished job rows are swept after 30 days, and the run outlives them.
     current_job_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     error_msg: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -45,8 +45,8 @@ blueprint rather than once per leaf.
 
 **Section numbers are stable identities, not an order.** The build order is the roadmap's M6
 checklist alone. In short: the `docs/dev/comfyui.md` split and §7 (both done 2026-11-03), then
-§2a, §2b, Top up (§2c), §3, a rebase after M8 stages 2–3, §4 (all landed), then §5, §6
-and the merge.
+§2a, §2b, Top up (§2c), §3, a rebase after M8 stages 2–3, §4, §5 and §6 (all landed), then
+the ComfyUI page rework and the merge.
 
 **§1 (per-row `subfolder` + `leaf_id`) is ported**, commit 8dee5de on the branch; its rationale
 lives in `docs/dev/comfyui/queue.md` (the columns and endpoints) and `docs/dev/comfyui/run.md` (how a run
@@ -231,26 +231,40 @@ Departures from the sketch that stood here, most from an Opus review of the desi
 - **`style_sim_min` is not a gate setting**: the score stage never writes that score.
 - **Apply and Top up 409 while a run on the plan is live.**
 
-## 6. Dry run and the recipe library
+## 6. Dry run, snapshot stage and the recipe library (landed)
 
-**The dry run calls the same planning function the real run calls** — the expansion service and
-the stage list — so its estimate cannot drift. Preflight everything reachable while it is cheap:
-ComfyUI ping, provider and model, the plan's prompt pin, export directory writability, disk
-headroom for N images.
+Built on 2026-11-04. Everything durable is in the docs: the snapshot stage, the shared
+start check and the dry run in `docs/dev/comfyui/automation.md`; the head stage and
+carrying on past a cap in `docs/dev/comfyui/run-loop.md`; the library, the document, the
+form converters and the remembered form in `docs/dev/comfyui/recipes.md`.
 
-**The snapshot stage lands here** (moved from §4 by the user, 2026-11-04): opt-in, first in
-`STAGE_ORDER`, and it *skips with a recorded note* when versioning is off. Snapshot jobs are
-deliberately non-cancellable, so a run's Cancel during it must wait for the snapshot rather
-than leave the run marked cancelled while the job still writes; and a resumed run that
-re-runs it makes a second snapshot.
+The user settled four points that day:
+- the dry run is its own button, and its report shows under the form;
+- Start runs the same checks and refuses on the first error before writing a run;
+  warnings never block;
+- saved recipes keep this machine's provider ids and export folder, the JSON export
+  strips both (providers by name), and an import resolves providers by name or blanks
+  them with a note;
+- three extras are in: **Use these settings** on a past run, raising a cap to carry a run
+  on (the second "Still open" point below), and remembering the start form.
 
-§4's start form is the recipe's first shape: `schemas/run.RunRecipe`, stored on `Run.recipe`.
-Recipes are **global — no dataset or plan foreign key** — for the same reason
-`comfy_library_prompts` is: a recipe describes a process, not a dataset. JSON export and import.
-
-**A recipe must never persist a provider API key, an absolute path from another machine, or a
-plan id.** Validate that on load as well as on save; a recipe is a document that can arrive from
-elsewhere.
+Departures from the sketch that stood here:
+- **The dry run counts with `blueprint_service.fill_plan`**, which is `_compute` on the
+  stored blueprint, and not Preview, which lists at most 500 leaves and counts rewrite
+  calls the run would not make. It shares `round_robin_counts` with the image cap's clamp.
+- **A first pass over the row cap is now a start refusal**, not a run that fails at its
+  first stage.
+- **The snapshot is a head stage** with no pass number, since a body stage is copied into
+  every pass. Its cancel waits through `Run.cancel_requested` (migration `a6d2f8c4e0b3`).
+  `start_snapshot_job` was lifted out of the snapshot route, which had a closure. A resume
+  never takes a second snapshot once one is done: a killed snapshot commits nothing.
+- **Stored recipes are `RunRecipeDraft`s**, whose machine-specific fields may be empty, so
+  an import saves and is finished in the form. The start validates the strict recipe.
+- **The model check lists the provider's models through `_LLM_TRANSPORT`**, and an autouse
+  fixture now refuses every test's LLM-server call, because the tests' providers sit on LM
+  Studio's real port.
+- **A carried-on run's new tail captions only its new passes** (`_tail_rows`), and the
+  rewrite's caption reserve counts captions already made.
 
 ## Documentation this arc owes
 
@@ -267,8 +281,8 @@ family sits behind the hub `docs/dev/comfyui.md`, so each new file goes in
   2026-11-03). §1's two columns stay documented beside the row model;
   cross-reference them rather than moving them.
 - `docs/dev/comfyui/automation.md`, written with §4 (2026-11-04), and
-  `docs/dev/comfyui/run-loop.md`, written with §5 (2026-11-04). §6's dry run and recipes
-  extend whichever of the two fits.
+  `docs/dev/comfyui/run-loop.md`, written with §5 (2026-11-04). §6 extended both and added
+  `docs/dev/comfyui/recipes.md` (2026-11-04).
 
 `docs/dev/backend-infrastructure.md` § After a job ends: the run hook, written with §4. User docs are owed in the same change as each feature — `docs/comfyui.md`
 or a new page, plus a row in `docs/features.md` and whatever `README.md` needs. Run
@@ -278,8 +292,8 @@ or a new page, plus a row in `docs/features.md` and whatever `README.md` needs. 
 
 - Whether an entity filter (built on `comfy_leaves`, scoped to a blueprint) is wanted in the
   gallery. Not built until someone misses it (decision 8).
-- Whether a run stopped by a cap can have the cap raised and be resumed. The recipe is
-  stored on the row, and nothing edits it after the start today.
+- ~~Whether a run stopped by a cap can have the cap raised and be resumed.~~ Settled by the
+  user on 2026-11-04: it can (§6, `extend_run`).
 
 Settled 2026-11-03 by the user: per-leaf targets are edited per scenario in the UI and stored
 per leaf in the DB; a deleted leaf's rows count toward nothing (see §2c). Also settled that day:

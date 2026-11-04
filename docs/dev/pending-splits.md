@@ -219,3 +219,19 @@ utilities → `docs/dev/shared-utilities.md`.
   PM-009/PM-013 cite § Upscaling and § LUT grading; repoint the ones that mean the job.
   `docs/dev/video/reextract.md` cites § LUT Color Grading for the PNG fallback.
   The intro's sentence naming the shared loop points at "§ Upscaling's last paragraphs".
+
+## docs/dev/comfyui/automation.md
+
+- **Moves:** § Starting, and the checks it runs first (the shared start check, `plan_run`,
+  the dry run and its report) and the dry-run part of § The Runs page
+- **New file:** docs/dev/comfyui/run-start.md, a row in the hub `docs/dev/comfyui.md`
+  rather than in the CLAUDE.md Map
+- **Why here:** M6 §6 took the file to 3,345 of 3,500 words (96%), recorded on 2026-11-04
+  before it tripped. The start check is a subject of its own: it runs before a `Run` row
+  exists, while everything else in the file is about stepping a run that does. The rest
+  (the row, `advance_run`, the stages, cancel and restart, the page) stays together.
+- **Watch for:** the hub's Where-things-live rows for `blueprint_service.fill_plan` and the
+  `run_service` row name § Starting, and run-loop.md's § Raising a cap and carrying on and
+  recipes.md point at automation.md for the start; `test_run_dry_run.py`'s docstring names
+  the section too. The `_no_real_llm_server` paragraph in § Testing goes with the tests,
+  not with the start.

@@ -52,6 +52,24 @@ from backend.database import Base, get_db
 
 API = "/api/v1"
 
+
+@pytest.fixture(autouse=True)
+def _no_real_llm_server(monkeypatch):
+    """Keep every automated run's LLM-server call off the network.
+
+    `run_service._LLM_TRANSPORT` carries the run's model listing (the start check, M6
+    §6) and its unloads. Its default is the real network, and the tests' providers point
+    at `127.0.0.1:1234` — LM Studio's real port on a dev machine — so a test could list,
+    or unload, the developer's own models. Every call now fails as a refused connection
+    would, which is what CI sees; a test that wants a server sets its own transport.
+    """
+    from backend.services import run_service
+
+    def _refuse(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("no LLM server in tests", request=request)
+
+    monkeypatch.setattr(run_service, "_LLM_TRANSPORT", httpx.MockTransport(_refuse))
+
 # Sentinel for "the variable was absent", which is not the same state as "" — clearing an
 # override pops HF_TOKEN rather than blanking it, and
 # test_settings_secrets.py::test_clearing_with_no_env_value_removes_the_variable asserts on

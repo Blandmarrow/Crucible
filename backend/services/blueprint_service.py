@@ -313,6 +313,40 @@ async def preview(
     }
 
 
+async def fill_plan(db: AsyncSession, plan: ComfyPlan, *, allow_over_cap: bool = False) -> dict | None:
+    """What a run's first fill would do, without writing anything: Apply on the **stored**
+    blueprint, then the rows `prepare_top_up` would list. None when the plan has none.
+
+    It is `_compute`, the function `apply` itself runs, so the dry run (M6 §6) and the
+    real fill cannot disagree on a count. Unlike `preview` it lists every leaf and
+    counts the rows each would generate: the new ones plus its open rows (pending,
+    running and failed), which Top up resets and runs. A run's first pass excludes no
+    leaf, so none is excluded here.
+    """
+    bp = await load_blueprint(db, plan.id)
+    if bp is None:
+        return None
+    spec = BlueprintSpec.model_validate(bp.spec or {})
+    fill = await _compute(db, plan, bp, spec, bp.seed, allow_over_cap)
+    return {
+        "errors": fill.expansion.errors,
+        "warnings": fill.expansion.warnings,
+        "rows_to_add": fill.rows_to_add,
+        "row_cap": fill.row_cap,
+        "over_cap": fill.rows_to_add > fill.row_cap,
+        "rewrite_on": sorted(rewrite_scenarios(spec)),
+        "leaves": [
+            {
+                "path": e.leaf.path, "scenario": e.leaf.scenario, "target": e.leaf.target,
+                "kept": e.stats.kept, "to_add": e.to_add, "rows": e.to_add + e.stats.open,
+                # Unfinished template rows after the fill: what a rewrite would change.
+                "template_rows": e.template_open + e.to_add,
+            }
+            for e in fill.entries
+        ],
+    }
+
+
 async def save_spec(db: AsyncSession, plan: ComfyPlan, spec: BlueprintSpec, seed: int) -> ComfyBlueprint:
     """Write the spec and seed, creating the blueprint on first save. Does not commit."""
     return _write_spec(db, plan, await load_blueprint(db, plan.id), spec, seed)

@@ -35,13 +35,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models import BackgroundJob, ComfyPlan, ComfyRow, Image, Run
 from backend.schemas.run import (
-    BODY_STAGES, STAGE_LABELS, STAGE_ORDER, ExportSettings, RunRecipe, RunStartRequest,
+    BODY_STAGES, STAGE_LABELS, STAGE_ORDER, TAIL_STAGES, ExportSettings, LoopSettings, RunCheck, RunPlanFolder,
+    RunPlanReport, RunRecipe, RunStartRequest,
 )
 from backend.utils import chunked, normalize_subfolder
 from backend.workers.job_queue import job_queue, run_job_config, run_job_label
 
 logger = logging.getLogger(__name__)
 
+_CANCELLING_MSG = "This run is cancelling: it stops when its snapshot finishes"
 LIVE_STATUSES = ("running", "paused")
 FINISHED_STATUSES = ("completed", "failed", "cancelled")
 # The stages that talk to ComfyUI, so need its URL and the plan's workflow.
@@ -174,33 +176,298 @@ def _caption_body(dataset_id: str, recipe: RunRecipe, image_ids: list[str]):
     return CaptionJobRequest(dataset_id=dataset_id, image_ids=image_ids, **c.model_dump())
 
 
-async def _preflight(db: AsyncSession, plan: ComfyPlan, recipe: RunRecipe) -> None:
-    """Every check that can fail cheaply, at the press rather than at stage five."""
+class _Checks:
+    """The findings of `plan_run`, in the order the checks ran. A check is a call that
+    raises `HTTPException` to refuse; the refusal is recorded rather than raised, so the
+    dry run can show every problem at once and the start can raise the first."""
+
+    def __init__(self) -> None:
+        self.items: list[RunCheck] = []
+
+    async def run(self, key: str, fn) -> tuple[bool, Any]:
+        try:
+            out = fn()
+            if asyncio.iscoroutine(out):
+                out = await out
+            return True, out
+        except HTTPException as e:
+            self.items.append(RunCheck(key=key, level="error", message=str(e.detail), status_code=e.status_code))
+            return False, None
+
+    def error(self, key: str, message: str, status_code: int = 400) -> None:
+        self.items.append(RunCheck(key=key, level="error", message=message, status_code=status_code))
+
+    def warn(self, key: str, message: str) -> None:
+        self.items.append(RunCheck(key=key, level="warning", message=message))
+
+    @property
+    def first_error(self) -> RunCheck | None:
+        return next((c for c in self.items if c.level == "error"), None)
+
+
+# The most folders a dry run's report lists; `folder_count` says how many there are.
+FOLDER_LIST_LIMIT = 200
+
+
+async def plan_run(db: AsyncSession, body: RunStartRequest) -> RunPlanReport:
+    """Every check a run can fail cheaply, and what its first pass would do (M6 §6).
+
+    The one function behind both the dry run and the start: `start_run` raises the
+    first error, the dry run returns the whole report, so the two cannot drift. It
+    writes nothing. The checks run in a fixed order, the pre-§6 ones first, so a start
+    refuses with the same status it always did; the live-run 409 comes last. A missing
+    plan, or one of another dataset, raises at once, since nothing else means anything
+    without it.
+    """
+    from backend.models import Dataset
     from backend.routers import comfy as comfy_router
     from backend.routers import export as export_router
     from backend.services import blueprint_service
+    from backend.services.threshold_service import get_thresholds
 
-    if any(s in recipe.stages for s in _COMFY_STAGES):
-        await comfy_router._run_preflight(db, plan)
-    normalize_subfolder(recipe.generate.subfolder)
-    if "prompts" in recipe.stages and await blueprint_service.load_blueprint(db, plan.id) is not None:
-        if not comfy_router._prompt_alias(plan):
-            raise HTTPException(400, comfy_router.NO_PROMPT_PIN_MSG)
-    if "caption" in recipe.stages:
+    plan = await db.get(ComfyPlan, body.plan_id)
+    if plan is None:
+        raise HTTPException(404, "Plan not found")
+    if plan.dataset_id != body.dataset_id:
+        raise HTTPException(400, "That plan belongs to another dataset")
+    recipe = body.recipe
+    stages = set(recipe.stages)
+    checks = _Checks()
+    bp = await blueprint_service.load_blueprint(db, plan.id)
+    fills = "prompts" in stages and bp is not None
+
+    comfy_url = None
+    if stages & set(_COMFY_STAGES):
+        ok, out = await checks.run("comfyui", lambda: comfy_router._run_preflight(db, plan))
+        comfy_url = out[0] if ok else None
+    await checks.run("subfolder", lambda: normalize_subfolder(recipe.generate.subfolder))
+    if fills and not comfy_router._prompt_alias(plan):
+        checks.error("prompt_pin", comfy_router.NO_PROMPT_PIN_MSG)
+    caption_ok = False
+    if "caption" in stages:
         try:
             _caption_body(plan.dataset_id, recipe, ["preflight"])
+            caption_ok = True
         except ValidationError as e:
-            raise HTTPException(400, f"Caption settings: {e.errors()[0].get('msg', e)}")
-    if "export" in recipe.stages:
+            checks.error("caption", f"Caption settings: {e.errors()[0].get('msg', e)}")
+    if "export" in stages:
         assert recipe.export is not None
-        export_router.check_export_request(_export_body(plan.dataset_id, recipe.export))
-    if "rewrite" in recipe.stages:
-        await _preflight_rewrite(db, plan, recipe)
+        await checks.run("export", lambda: export_router.check_export_request(
+            _export_body(plan.dataset_id, recipe.export)))
+    rewrite_ok = False
+    if "rewrite" in stages:
+        rewrite_ok, _ = await checks.run("rewrite", lambda: _preflight_rewrite(db, plan, recipe))
     if recipe.loop is not None:
-        if await blueprint_service.load_blueprint(db, plan.id) is None:
-            raise HTTPException(400, "Repeating fills the plan's blueprint, and this plan has none")
-        check_seeds(plan)
-        await _preflight_paid_cap(db, recipe)
+        if bp is None:
+            checks.error("loop", "Repeating fills the plan's blueprint, and this plan has none")
+        else:
+            await checks.run("seeds", lambda: check_seeds(plan))
+            await checks.run("paid_cap", lambda: _preflight_paid_cap(db, recipe))
+
+    # ── §6's checks: ComfyUI reachable, the fill itself, the providers, the disk ──
+    if comfy_url:
+        try:
+            await comfy_router.ComfyClient(comfy_url).ping()
+        except Exception as e:
+            checks.error("comfyui_reachable", f"ComfyUI does not answer at {comfy_url} ({type(e).__name__}). Start it, or check the URL in Settings.")
+
+    report = RunPlanReport(ok=True, checks=[], stages=_initial_stages(recipe), has_blueprint=bp is not None)
+    folders: list[dict] = []
+    if fills:
+        fill = await blueprint_service.fill_plan(db, plan)
+        assert fill is not None
+        if fill["errors"]:
+            checks.error("blueprint", f"The blueprint has errors: {'; '.join(fill['errors'])}")
+        elif fill["over_cap"]:
+            # Pass 1 keeps a manual Apply's cap (§5's ruling), so this is a mistake to
+            # refuse now rather than a run that fails at its first stage.
+            checks.error("blueprint", f"The blueprint adds {fill['rows_to_add']} rows, over the limit of {fill['row_cap']}")
+        for w in fill["warnings"]:
+            checks.warn("blueprint", w)
+        folders = fill["leaves"]
+        report.rows_to_add = fill["rows_to_add"]
+        run_rewrites = set(recipe.rewrite.scenarios) if recipe.rewrite and "rewrite" in stages else set()
+        waiting = sum(f["template_rows"] for f in folders if f["scenario"] in set(fill["rewrite_on"]) - run_rewrites)
+        if waiting:
+            checks.warn("rewrite_waiting", f"{waiting} row{'s' if waiting != 1 else ''} will wait for a rewrite, so the run "
+                        "pauses at the fill. Run the rewrite on the ComfyUI page first, or tick their scenarios under Rewrite.")
+        if run_rewrites and recipe.rewrite is not None:
+            from backend.services.blueprint_rewrite import expected_calls
+            counts = [f["template_rows"] for f in folders if f["scenario"] in run_rewrites]
+            report.rewrite_calls = expected_calls(counts, recipe.rewrite.batch_size)
+        sizes = [f["rows"] for f in folders]
+    elif "generate" in stages:
+        n = len((await db.execute(
+            select(ComfyRow.id).where(ComfyRow.plan_id == plan.id, ComfyRow.status == "pending")
+        )).all())
+        sizes = [n]
+    else:
+        sizes = []
+
+    report.images_per_row = round(await _images_per_row(db, plan), 2)
+    report.rows_before_clamp = sum(sizes)
+    planned = sizes
+    if recipe.loop is not None and sizes:
+        max_rows = max(1, math.ceil(recipe.loop.max_images / report.images_per_row))
+        if sum(sizes) > max_rows:
+            planned = round_robin_counts(sizes, max_rows)
+            checks.warn("image_cap", f"The image cap leaves room for {sum(planned)} of {sum(sizes)} rows in the first pass; "
+                        "the rest come in later passes.")
+    report.rows_planned = sum(planned)
+    report.images_estimate = math.ceil(report.rows_planned * report.images_per_row)
+    for f, k in zip(folders, planned):
+        f["planned"] = k
+    folders.sort(key=lambda f: (f["kept"] >= f["target"], f["path"]))
+    report.folders = [
+        RunPlanFolder(path=f["path"], target=f["target"], kept=f["kept"], rows=f.get("planned", f["rows"]))
+        for f in folders[:FOLDER_LIST_LIMIT]
+    ]
+    report.folder_count = len(folders)
+
+    if caption_ok:
+        await _check_caption_model(db, recipe, checks)
+        report.caption_billed = await _caption_billed(db, recipe)
+        report.caption_calls = report.images_estimate
+    if rewrite_ok and recipe.rewrite is not None:
+        await _check_rewrite_model(db, recipe, checks)
+        report.rewrite_billed = await _rewrite_billed(db, recipe)
+
+    if "generate" in stages:
+        dataset = await db.get(Dataset, plan.dataset_id)
+        if dataset is not None:
+            images = recipe.loop.max_images if recipe.loop is not None else report.images_estimate
+            report.disk_estimate_bytes = await _disk_check(db, plan, dataset.folder_path, images, checks)
+    if "export" in stages and recipe.export is not None and not _writable(recipe.export.output_dir):
+        checks.warn("export_writable", f"The export folder {recipe.export.output_dir} may not be writable.")
+    if "snapshot" in stages and (await get_thresholds(db)).versioning_mode == "off":
+        checks.warn("snapshot", "Versioning is off, so the snapshot stage will be skipped. Turn it on in Settings.")
+
+    await checks.run("live_run", lambda: _refuse_second_live_run(db, body.dataset_id))
+    report.checks = checks.items
+    report.ok = checks.first_error is None
+    return report
+
+
+async def _llm_models(url: str, headers: dict[str, str] | None = None, *, ollama: bool = False) -> list[str] | None:
+    """The model ids an LLM server lists, or None when it cannot be asked or lists none.
+
+    Through `_LLM_TRANSPORT`, like every other LLM-server call here, so the tests never
+    reach a real server (LM Studio's default port is a real one on a dev machine)."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0, transport=_LLM_TRANSPORT) as client:
+            resp = await client.get(url, headers=headers or {})
+            resp.raise_for_status()
+            data = resp.json()
+        items = data.get("models" if ollama else "data") or []
+        key = "name" if ollama else "id"
+        ids = sorted(str(m[key]) for m in items if isinstance(m, dict) and m.get(key))
+        return ids or None
+    except Exception:
+        return None
+
+
+async def _check_model_listed(
+    checks: _Checks, key: str, provider, model_name: str, what: str,
+) -> None:
+    listed = await _llm_models(
+        provider.base_url.rstrip("/") + "/models",
+        {"Authorization": f"Bearer {provider.api_key or 'no-key'}"},
+    )
+    if listed is None:
+        checks.warn(key, f'Could not list the models of "{provider.name}", so the {what} model was not checked. '
+                    "Is the server running?")
+    elif model_name not in listed:
+        checks.error(key, f'"{provider.name}" does not list the {what} model {model_name}')
+
+
+async def _check_caption_model(db: AsyncSession, recipe: RunRecipe, checks: _Checks) -> None:
+    """The caption model's provider exists and lists it. `CaptionJobRequest` checks only
+    the id's prefix, so a deleted provider used to pass the start and fail at the stage."""
+    from backend.config import settings as app_settings
+    from backend.models.openai_provider import OpenAIProvider
+
+    model = recipe.caption.model if recipe.caption else ""
+    if model.startswith("openai_compat:"):
+        parts = model.split(":", 2)
+        provider = await db.get(OpenAIProvider, parts[1])
+        if provider is None:
+            checks.error("caption_provider", "The caption provider was not found. Pick another in the caption settings.", 404)
+            return
+        name = (parts[2] if len(parts) > 2 else "").strip() or (provider.default_model or "")
+        if name:
+            await _check_model_listed(checks, "caption_model", provider, name, "caption")
+    elif model.startswith("ollama:"):
+        name = model.split(":", 1)[1]
+        listed = await _llm_models(f"{app_settings.ollama_base_url.rstrip('/')}/api/tags", ollama=True)
+        if listed is None:
+            checks.warn("caption_model", "Could not list Ollama's models, so the caption model was not checked. Is Ollama running?")
+        elif name not in listed and f"{name}:latest" not in listed:
+            checks.error("caption_model", f"Ollama does not list the caption model {name}")
+
+
+async def _check_rewrite_model(db: AsyncSession, recipe: RunRecipe, checks: _Checks) -> None:
+    from backend.models.openai_provider import OpenAIProvider
+
+    rw = recipe.rewrite
+    assert rw is not None
+    provider = await db.get(OpenAIProvider, rw.provider_id)
+    if provider is not None:
+        await _check_model_listed(checks, "rewrite_model", provider,
+                                  rw.model_name.strip() or (provider.default_model or ""), "rewrite")
+
+
+async def _bytes_per_image(db: AsyncSession, plan: ComfyPlan) -> float | None:
+    """The average size of an image this plan's blueprint rows made, else of the
+    dataset's images, else None."""
+    from sqlalchemy import func
+
+    ids = [i for ids in (await db.execute(
+        select(ComfyRow.image_ids).where(ComfyRow.plan_id == plan.id, ComfyRow.status == "completed")
+        .order_by(ComfyRow.sort_order.desc()).limit(200)
+    )).scalars() for i in (ids or [])]
+    avg = None
+    if ids:
+        avg = (await db.execute(
+            select(func.avg(Image.file_size_bytes)).where(Image.id.in_(ids[:900]))
+        )).scalar()
+    if avg is None:
+        avg = (await db.execute(
+            select(func.avg(Image.file_size_bytes)).where(Image.dataset_id == plan.dataset_id)
+        )).scalar()
+    return float(avg) if avg else None
+
+
+async def _disk_check(db: AsyncSession, plan: ComfyPlan, folder: str, images: int, checks: _Checks) -> int | None:
+    """Below the floor is an error, as for every bulk write (`require_free_space`). Short
+    of the estimate is a warning: it is only an estimate."""
+    from backend.utils import InsufficientDiskSpaceError, require_free_space
+
+    try:
+        require_free_space(folder)
+    except InsufficientDiskSpaceError as e:
+        checks.error("disk", str(e), 507)
+        return None
+    per = await _bytes_per_image(db, plan)
+    if per is None or images <= 0:
+        return None
+    estimate = int(per * images)
+    try:
+        require_free_space(folder, estimate)
+    except InsufficientDiskSpaceError as e:
+        checks.warn("disk", str(e))
+    return estimate
+
+
+def _writable(output_dir: str) -> bool:
+    """Whether the nearest existing folder of `output_dir` is writable. A warning only:
+    `os.access` is unreliable on Windows, and the export's own write is the real test."""
+    import os
+    from pathlib import Path
+
+    probe = Path(output_dir)
+    while not probe.exists() and probe.parent != probe:
+        probe = probe.parent
+    return os.access(probe, os.W_OK)
 
 
 async def _preflight_rewrite(db: AsyncSession, plan: ComfyPlan, recipe: RunRecipe) -> None:
@@ -274,13 +541,14 @@ def check_seeds(plan: ComfyPlan) -> None:
 
 
 async def start_run(db: AsyncSession, body: RunStartRequest) -> Run:
+    """Refuse on the shared check's first error (`plan_run`), then write and start."""
+    report = await plan_run(db, body)
+    err = next((c for c in report.checks if c.level == "error"), None)
+    if err is not None:
+        raise HTTPException(err.status_code or 400, err.message)
     plan = await db.get(ComfyPlan, body.plan_id)
-    if plan is None:
-        raise HTTPException(404, "Plan not found")
-    if plan.dataset_id != body.dataset_id:
-        raise HTTPException(400, "That plan belongs to another dataset")
+    assert plan is not None
     recipe = body.recipe
-    await _preflight(db, plan, recipe)
 
     run = Run(
         dataset_id=body.dataset_id,
@@ -380,6 +648,7 @@ async def _end_stage(db: AsyncSession, run: Run, idx: int, status: str, *, note:
         run.status = run_status
         run.error_msg = error
         run.pause_requested = False
+        run.cancel_requested = False
         if run_status in FINISHED_STATUSES:
             run.finished_at = datetime.utcnow()
     await db.commit()
@@ -393,6 +662,8 @@ async def _begin_stage(db: AsyncSession, run: Run, idx: int, key: str) -> _Outco
         raise HTTPException(404, "The run's plan was deleted")
     if key in ("rewrite", "gate", "next_pass") and plan is None:
         raise HTTPException(404, "The run's plan was deleted")
+    if key == "snapshot":
+        return await _stage_snapshot(db, run, tag)
     if key == "prompts":
         return await _stage_prompts(db, run, plan, recipe, idx)
     if key == "rewrite":
@@ -433,6 +704,24 @@ async def _begin_stage(db: AsyncSession, run: Run, idx: int, key: str) -> _Outco
         )
         return _Outcome("job", job_id=res["job_id"])
     raise HTTPException(400, f"Unknown stage {key!r}")
+
+
+async def _stage_snapshot(db: AsyncSession, run: Run, tag: str) -> _Outcome:
+    """The run's undo point (M6 §6): a versioning snapshot of the dataset before any
+    stage changes it. Opt-in, and skipped with a note when versioning is off, since a
+    snapshot then would be refused. Always a job, so the run steps on its completion."""
+    from backend.routers import versioning as versioning_router
+    from backend.services.threshold_service import get_thresholds
+
+    if (await get_thresholds(db)).versioning_mode == "off":
+        return _Outcome("skip", note="Versioning is off, so no snapshot was taken. Turn it on in Settings.")
+    job_id = await versioning_router.start_snapshot_job(
+        db, run.dataset_id,
+        name=f"Before run {run.name}"[:200],
+        description=f'Taken by the automated run "{run.name}" before it changed anything.',
+        run_id=run.id, run_stage=tag, label_prefix=_prefix(run, "snapshot"),
+    )
+    return _Outcome("job", job_id=job_id)
 
 
 async def _stage_prompts(db: AsyncSession, run: Run, plan: ComfyPlan, recipe: RunRecipe, idx: int) -> _Outcome:
@@ -496,7 +785,7 @@ async def _stage_prompts(db: AsyncSession, run: Run, plan: ComfyPlan, recipe: Ru
         stop = await _budget_stop(db, run, recipe)
         if stop:
             _set_pass_rows(run, p, [])
-            return _stop_loop(run, idx, stop)
+            return _stop_loop(run, idx, stop.reason, stop.cap)
         spent = await _spent(db, run, recipe)
         kept_rows = await _clamp_rows(db, plan, pending, recipe.loop.max_images - spent.images)
         if len(kept_rows) < len(pending):
@@ -538,16 +827,28 @@ async def _clamp_rows(db: AsyncSession, plan: ComfyPlan, pending: list[str], ima
     groups: dict[str | None, list[str]] = {}
     for rid in pending:
         groups.setdefault(leaf_of.get(rid), []).append(rid)
-    chosen: set[str] = set()
-    queues = [list(g) for g in groups.values()]
-    while len(chosen) < max_rows:
-        for q in queues:
-            if q and len(chosen) < max_rows:
-                chosen.add(q.pop(0))
-        queues = [q for q in queues if q]
-        if not queues:
-            break
+    queues = list(groups.values())
+    counts = round_robin_counts([len(q) for q in queues], max_rows)
+    chosen = {rid for q, k in zip(queues, counts) for rid in q[:k]}
     return [rid for rid in pending if rid in chosen]
+
+
+def round_robin_counts(sizes: list[int], budget: int) -> list[int]:
+    """How many of each group a round-robin take of `budget` items picks: one from each
+    group in turn, skipping empty ones, until the budget or the groups run out. Shared
+    by the image cap's clamp and the dry run (M6 §6), so both count the same."""
+    counts = [0] * len(sizes)
+    left = max(0, budget)
+    while left:
+        took = False
+        for i, n in enumerate(sizes):
+            if left and counts[i] < n:
+                counts[i] += 1
+                left -= 1
+                took = True
+        if not took:
+            break
+    return counts
 
 
 async def _stage_rewrite(
@@ -567,13 +868,16 @@ async def _stage_rewrite(
     if recipe.loop is not None:
         stop = await _budget_stop(db, run, recipe)
         if stop:
-            return _stop_loop(run, idx, stop)
+            return _stop_loop(run, idx, stop.reason, stop.cap)
         if recipe.loop.max_paid_calls is not None and await _rewrite_billed(db, recipe):
             spent = await _spent(db, run, recipe)
-            reserve = recipe.loop.max_images if await _caption_billed(db, recipe) else 0
+            # Captioning every image the loop may make is reserved for the tail. A run
+            # carried on past a cap (`extend_run`) has captioned some already, so only
+            # the rest is held back, or its rewrite would stop at once.
+            reserve = max(0, recipe.loop.max_images - spent.caption_calls) if await _caption_billed(db, recipe) else 0
             max_requests = recipe.loop.max_paid_calls - spent.paid_calls - reserve
             if max_requests <= 0:
-                return _stop_loop(run, idx, "the paid-call cap is spent")
+                return _stop_loop(run, idx, "the paid-call cap is spent", "paid_calls")
     if await db.get(OpenAIProvider, rw.provider_id) is None:
         raise HTTPException(404, "The rewrite provider was deleted")
     async with comfy_router._plan_lock(plan.id):
@@ -772,7 +1076,7 @@ async def _stage_generate(
     if recipe.loop is not None:
         stop = await _budget_stop(db, run, recipe)
         if stop:
-            return _stop_loop(run, idx, stop)
+            return _stop_loop(run, idx, stop.reason, stop.cap)
     async with comfy_router._plan_lock(plan.id):
         if await comfy_router._plan_job_active(db, plan.id, ("comfy_generate", "comfy_rewrite")):
             raise HTTPException(409, "A generation run or prompt rewrite for this plan is queued or running")
@@ -861,15 +1165,31 @@ async def in_dataset(db: AsyncSession, image_ids: list[str], dataset_id: str, *,
     return [i for i in image_ids if i in keep]
 
 
+def _tail_rows(run: Run, idx: int) -> list[str]:
+    """The rows the tail whose caption entry is at `idx` covers.
+
+    A run's first tail covers every row it generated (`row_ids`). A run carried on past
+    a cap (`extend_run`) gets a second tail after its new passes, which covers only the
+    passes since the previous tail's caption entry: the earlier ones are captioned. It
+    is read from the stage list, not stored, so it survives a resume and a restart.
+    """
+    prev = next((i for i in range(idx - 1, -1, -1) if run.stages[i]["key"] == "caption"), None)
+    if prev is None:
+        return (run.context or {}).get("row_ids") or []
+    passes = sorted({s["pass_no"] for s in run.stages[prev + 1:idx] if s.get("pass_no")})
+    return list(dict.fromkeys(r for p in passes for r in (_pass_rows(run, p) or [])))
+
+
 async def _stage_images(db: AsyncSession, run: Run, recipe: RunRecipe, key: str, idx: int, tag: str) -> _Outcome:
     if key == "score":
         # One pass's images: earlier passes' are scored already.
         ids = await in_dataset(db, await run_image_ids(db, _pass_rows(run, _pass_of(run, idx)) or []), run.dataset_id)
     else:
         # Caption what counts, in a run that loops or gates: not what a gate rejected,
-        # nor a duplicate.
+        # nor a duplicate. Only the passes since the last tail: `overwrite` is on, so a
+        # run carried on past a cap would otherwise caption, and bill, them all again.
         ids = await in_dataset(
-            db, await run_image_ids(db, (run.context or {}).get("row_ids") or []), run.dataset_id,
+            db, await run_image_ids(db, _tail_rows(run, idx)), run.dataset_id,
             kept_only=recipe.loop is not None or "gate" in recipe.stages,
         )
     # Never `[]`: score and caption read an empty list as the whole dataset.
@@ -959,10 +1279,12 @@ async def _stage_gate(db: AsyncSession, run: Run, recipe: RunRecipe, idx: int, t
 _UNDOES = {"handoff_to_local": "handoff_to_comfy", "free_rewrite_model": "rewrite"}
 
 
-def _stop_loop(run: Run, idx: int, reason: str) -> _Outcome:
+def _stop_loop(run: Run, idx: int, reason: str, cap: str | None) -> _Outcome:
     """End the loop at this stage: the pass's later body stages are skipped with the
-    reason, and the tail still runs. Records `{outcome: "short", reason}`. A handoff
-    whose partner ran this pass still runs (`_UNDOES`)."""
+    reason, and the tail still runs. Records `{outcome: "short", reason, cap}`, `cap`
+    naming the cap that stopped it, which is what lets the run be carried on with that
+    cap raised (`extend_run`). A handoff whose partner ran this pass still runs
+    (`_UNDOES`)."""
     p = _pass_of(run, idx)
     stages = copy.deepcopy(run.stages)
     done_here = {s["key"] for s in stages if s.get("pass_no") == p and s["status"] == "done"}
@@ -972,7 +1294,7 @@ def _stop_loop(run: Run, idx: int, reason: str) -> _Outcome:
                 continue
             s.update(status="skipped", note=f"Stopped: {reason}", finished_at=_now())
     run.stages = stages
-    run.context = {**(run.context or {}), "loop": {"outcome": "short", "reason": reason}}
+    run.context = {**(run.context or {}), "loop": {"outcome": "short", "reason": reason, "cap": cap}}
     return _Outcome("skip", note=f"Stopped: {reason}")
 
 
@@ -1033,14 +1355,15 @@ async def _stage_next_pass(db: AsyncSession, run: Run, plan: ComfyPlan, recipe: 
     if not open_:
         if abandoned:
             reason = f"{abandoned} folder{'s' if abandoned != 1 else ''} gave up after two passes with no gain"
-            run.context = {**(run.context or {}), "loop": {"outcome": "short", "reason": reason}}
+            run.context = {**(run.context or {}), "loop": {"outcome": "short", "reason": reason, "cap": None}}
             return _Outcome("done", summary=f"Pass {p}: {met} of {total} folders full; {reason}")
         run.context = {**(run.context or {}), "loop": {"outcome": "met", "reason": None}}
         return _Outcome("done", summary=f"Pass {p}: every folder is full ({total})")
-    stop = f"the pass cap ({loop.max_passes}) is reached" if p >= loop.max_passes else await _budget_stop(db, run, recipe)
+    stop = (_Stop(f"the pass cap ({loop.max_passes}) is reached", "passes") if p >= loop.max_passes
+            else await _budget_stop(db, run, recipe))
     if stop:
-        run.context = {**(run.context or {}), "loop": {"outcome": "short", "reason": stop}}
-        return _Outcome("done", summary=f"Pass {p}: {met} of {total} folders full. Stopped: {stop}")
+        run.context = {**(run.context or {}), "loop": {"outcome": "short", "reason": stop.reason, "cap": stop.cap}}
+        return _Outcome("done", summary=f"Pass {p}: {met} of {total} folders full. Stopped: {stop.reason}")
     if not any(s.get("pass_no") == p + 1 for s in run.stages):
         stages = copy.deepcopy(run.stages)
         keys = [s["key"] for s in stages if s.get("pass_no") == p]
@@ -1056,8 +1379,23 @@ async def _stage_next_pass(db: AsyncSession, run: Run, plan: ComfyPlan, recipe: 
 @dataclass
 class _Spent:
     minutes: float
-    paid_calls: int
     images: int
+    # Billed calls, by the stage that made them; `paid_calls` is their sum.
+    rewrite_calls: int = 0
+    caption_calls: int = 0
+
+    @property
+    def paid_calls(self) -> int:
+        return self.rewrite_calls + self.caption_calls
+
+
+@dataclass
+class _Stop:
+    """Why the loop stops, and which cap (`passes`, `minutes`, `images`, `paid_calls`)
+    did it. A run stopped by a cap can carry on with that cap raised (`extend_run`)."""
+
+    reason: str
+    cap: str
 
 
 async def _provider_billed(db: AsyncSession, provider_id: str) -> bool:
@@ -1098,25 +1436,26 @@ async def _spent(db: AsyncSession, run: Run, recipe: RunRecipe) -> _Spent:
         ((j.finished_at or now) - j.started_at).total_seconds()
         for j in jobs if j.started_at and j.error_msg != INTERRUPTED_MSG
     )
-    calls = 0
+    rewrite_calls = caption_calls = 0
     if await _rewrite_billed(db, recipe):
-        calls += sum(int((j.result_data or {}).get("calls") or 0) for j in jobs if j.job_type == "comfy_rewrite")
+        rewrite_calls = sum(int((j.result_data or {}).get("calls") or 0) for j in jobs if j.job_type == "comfy_rewrite")
     if await _caption_billed(db, recipe):
-        calls += sum(int(j.done_items or 0) for j in jobs if j.job_type == "caption")
+        caption_calls = sum(int(j.done_items or 0) for j in jobs if j.job_type == "caption")
     images = len(await run_image_ids(db, (run.context or {}).get("row_ids") or []))
-    return _Spent(minutes=max(0.0, seconds) / 60, paid_calls=calls, images=images)
+    return _Spent(minutes=max(0.0, seconds) / 60, images=images,
+                  rewrite_calls=rewrite_calls, caption_calls=caption_calls)
 
 
-async def _budget_stop(db: AsyncSession, run: Run, recipe: RunRecipe) -> str | None:
+async def _budget_stop(db: AsyncSession, run: Run, recipe: RunRecipe) -> _Stop | None:
     """Why the loop must stop before its next expensive stage, or None."""
     loop = recipe.loop
     if loop is None:
         return None
     spent = await _spent(db, run, recipe)
     if spent.minutes >= loop.max_minutes:
-        return f"the time cap ({loop.max_minutes} min) is spent"
+        return _Stop(f"the time cap ({loop.max_minutes} min) is spent", "minutes")
     if spent.images >= loop.max_images:
-        return f"the image cap ({loop.max_images}) is reached"
+        return _Stop(f"the image cap ({loop.max_images}) is reached", "images")
     return None
 
 
@@ -1139,6 +1478,10 @@ def _summary(job: BackgroundJob) -> str | None:
         return f"{n} image{'s' if n != 1 else ''} exported to {rd.get('output_dir', '')}".rstrip()
     if job.job_type == "run_handoff":
         return rd.get("note")
+    if job.job_type == "create_snapshot":
+        n = rd.get("images", job.total_items or 0)
+        name = rd.get("name")
+        return f"{n} image{'s' if n != 1 else ''} recorded" + (f' as "{name}"' if name else "")
     if job.job_type == "run_gate":
         n, bad = rd.get("checked", 0), rd.get("rejected", 0)
         return f"{bad} of {n} image{'s' if n != 1 else ''} rejected"
@@ -1180,6 +1523,15 @@ async def advance_run(run_id: str, job_id: str) -> None:
             stages[idx]["summary"] = _summary(job)
             run.stages = stages
             label = STAGE_LABELS.get(key, key)
+            if run.cancel_requested:
+                # A cancel waited for the snapshot (`cancel_run`): record what the job
+                # did, then end the run cancelled. Later stages stay pending, as after
+                # any cancel.
+                status = {"completed": "done", "failed": "failed"}.get(job.status, "cancelled")
+                await _end_stage(db, run, idx, status,
+                                 note=job.error_msg if job.status == "failed" else None,
+                                 run_status="cancelled")
+                return
             if job.status == "completed":
                 await _end_stage(db, run, idx, "done")
             elif job.status == "cancelled":
@@ -1216,6 +1568,8 @@ async def pause_run(db: AsyncSession, run_id: str) -> Run:
         run = await _get(db, run_id)
         if run.status != "running":
             raise HTTPException(409, f"Only a running run can be paused (this one is {run.status})")
+        if run.cancel_requested:
+            raise HTTPException(409, _CANCELLING_MSG)
         run.pause_requested = True
         await db.commit()
         return run
@@ -1225,6 +1579,8 @@ async def resume_run(db: AsyncSession, run_id: str) -> Run:
     """Go on from the first stage not done. Always explicit, never automatic."""
     async with _run_lock(run_id):
         run = await _get(db, run_id)
+        if run.cancel_requested:
+            raise HTTPException(409, _CANCELLING_MSG)
         if run.status == "running":
             # A pause asked for but not yet reached: take it back.
             run.pause_requested = False
@@ -1250,15 +1606,34 @@ async def resume_run(db: AsyncSession, run_id: str) -> Run:
 
 
 async def cancel_run(db: AsyncSession, run_id: str) -> Run:
-    """Mark the run cancelled, then cancel its current child the way `DELETE /jobs` does."""
+    """Mark the run cancelled, then cancel its current child the way `DELETE /jobs` does.
+
+    The exception is a running snapshot. Snapshot jobs never stop partway, so marking
+    the run cancelled would leave it reading cancelled while the job still writes.
+    Instead the cancel is recorded (`cancel_requested`) and `advance_run` ends the run
+    when the snapshot does. A snapshot still queued is cancelled like any other child.
+    """
     async with _run_lock(run_id):
         run = await _get(db, run_id)
         if run.status not in LIVE_STATUSES:
             raise HTTPException(409, f"A {run.status} run cannot be cancelled")
+        if run.cancel_requested:
+            return run
         child_id = run.current_job_id
+        child = await db.get(BackgroundJob, child_id) if child_id else None
+        if child is not None and child.job_type == "create_snapshot" and child.status == "running":
+            run.cancel_requested = True
+            run.pause_requested = False
+            await db.commit()
+            return run
         stages = copy.deepcopy(run.stages)
         for s in stages:
-            if s["status"] == "running":
+            if s["status"] != "running":
+                continue
+            if child is not None and s.get("job_id") == child.id and child.status == "completed":
+                # Finished, but its hook has not stepped the run yet: what it did stands.
+                s.update(status="done", summary=_summary(child), finished_at=_now())
+            else:
                 s.update(status="cancelled", finished_at=_now())
         run.stages = stages
         run.status = "cancelled"
@@ -1273,6 +1648,73 @@ async def cancel_run(db: AsyncSession, run_id: str) -> Run:
                     job.status = "cancelled"
                     await db.commit()
                 job_queue.request_cancel(child_id)
+        return run
+
+
+# The loop's caps, by the key `_Stop` records, with the words a refusal uses.
+_CAP_FIELDS = {
+    "passes": ("max_passes", "pass"), "images": ("max_images", "image"),
+    "minutes": ("max_minutes", "time"), "paid_calls": ("max_paid_calls", "paid-call"),
+}
+
+
+def can_extend(run: Run) -> bool:
+    """A completed run whose loop stopped on a cap with a folder still short."""
+    ctx = run.context or {}
+    loop = ctx.get("loop") or {}
+    return (
+        run.status == "completed" and loop.get("outcome") == "short" and loop.get("cap") in _CAP_FIELDS
+        and any((v or {}).get("state") == "open" for v in (ctx.get("leaves") or {}).values())
+    )
+
+
+async def extend_run(db: AsyncSession, run_id: str, loop: LoopSettings) -> Run:
+    """Carry on a run that stopped on a cap, with that cap raised (M6 §6).
+
+    The new caps replace the recipe's; none may go down, and the one that stopped the
+    run must go up. The next pass is appended after everything the run has done, then
+    a fresh tail, so every started stage keeps its index and `stage_tag` stays unique.
+    Folders it gave up on stay given up. Spending is read from the child jobs as ever,
+    so the raised caps count what the run has already used. The new tail captions only
+    the new passes (`_tail_rows`).
+    """
+    async with _run_lock(run_id):
+        run = await _get(db, run_id)
+        if not can_extend(run):
+            raise HTTPException(409, "Only a completed run that stopped on a cap, with a folder still short, can carry on")
+        recipe = RunRecipe.model_validate(run.recipe)
+        old = recipe.loop
+        assert old is not None
+        for key, (field, words) in _CAP_FIELDS.items():
+            before, after = getattr(old, field), getattr(loop, field)
+            if before is not None and (after is None or after < before):
+                raise HTTPException(400, f"The {words} cap cannot go down ({before})")
+        stopped = (run.context or {})["loop"]["cap"]
+        field, words = _CAP_FIELDS[stopped]
+        before = getattr(old, field)
+        if before is not None and not getattr(loop, field) > before:
+            raise HTTPException(400, f"Raise the {words} cap above {before}: it is what stopped the run")
+        new_recipe = recipe.model_copy(update={"loop": loop})
+        await _preflight_paid_cap(db, new_recipe)
+        if run.plan_id is None or await db.get(ComfyPlan, run.plan_id) is None:
+            raise HTTPException(409, "The run's plan was deleted")
+        async with _dataset_lock(run.dataset_id):
+            await _refuse_second_live_run(db, run.dataset_id, except_id=run.id)
+            stages = copy.deepcopy(run.stages)
+            last = max(s["pass_no"] for s in stages if s.get("pass_no"))
+            body = [s["key"] for s in stages if s.get("pass_no") == last]
+            tail = [k for k in STAGE_ORDER if k in TAIL_STAGES and k in recipe.stages]
+            stages += [_entry(k, last + 1) for k in body] + [_entry(k, None) for k in tail]
+            ctx = dict(run.context or {})
+            ctx.pop("loop", None)
+            run.stages = stages
+            run.context = ctx
+            run.recipe = new_recipe.model_dump()
+            run.status = "running"
+            run.error_msg = None
+            run.finished_at = None
+            await db.commit()
+        await _start_next(db, run)
         return run
 
 
@@ -1295,12 +1737,16 @@ async def reconcile_interrupted_runs() -> int:
     skipped while the queue is stopping, so the run never heard. Resetting that stage
     would make a resume export again, or caption again on a paid provider. It is
     recorded `done` with its summary instead; with no stage left, the run is completed.
+
+    A run whose cancel was waiting for its snapshot (`cancel_requested`) is cancelled,
+    not paused: the user already asked for it to stop.
     """
     from backend.database import AsyncSessionLocal
 
     async with AsyncSessionLocal() as db:
         runs = (await db.execute(select(Run).where(Run.status == "running"))).scalars().all()
         for run in runs:
+            cancelling = bool(run.cancel_requested)
             stages = copy.deepcopy(run.stages)
             for s in stages:
                 if s["status"] != "running":
@@ -1308,13 +1754,20 @@ async def reconcile_interrupted_runs() -> int:
                 child = await db.get(BackgroundJob, s["job_id"]) if s.get("job_id") else None
                 if child is not None and child.status == "completed":
                     s.update(status="done", summary=_summary(child), finished_at=_now())
+                elif cancelling:
+                    s.update(status="cancelled", finished_at=_now(),
+                             note="Crucible restarted before this stage finished.")
                 else:
                     s.update(status="pending", job_id=None, started_at=None, summary=None,
                              note="Crucible restarted during this stage. Resume to run it again.")
             run.stages = stages
             run.pause_requested = False
+            run.cancel_requested = False
             run.current_job_id = None
-            if any(s["status"] == "pending" for s in stages):
+            if cancelling:
+                run.status = "cancelled"
+                run.finished_at = datetime.utcnow()
+            elif any(s["status"] == "pending" for s in stages):
                 run.status = "paused"
             else:
                 run.status = "completed"

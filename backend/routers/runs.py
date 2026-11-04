@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
 from backend.models import Run
-from backend.schemas.run import RunOut, RunStartRequest
+from backend.schemas.run import LoopSettings, RunOut, RunPlanReport, RunStartRequest
 from backend.services import run_service
 
 router = APIRouter(prefix="/runs", tags=["runs"])
@@ -37,6 +37,7 @@ def _out(run: Run) -> RunOut:
         stages=run.stages or [],
         status=run.status,
         pause_requested=bool(run.pause_requested),
+        cancel_requested=bool(run.cancel_requested),
         current_job_id=run.current_job_id,
         error_msg=run.error_msg,
         row_count=len((run.context or {}).get("row_ids") or []),
@@ -44,6 +45,7 @@ def _out(run: Run) -> RunOut:
         leaves=leaves[:LEAF_LIST_LIMIT],
         leaf_count=len(leaves),
         met_count=sum(1 for l in leaves if l["state"] == "met"),
+        can_extend=run_service.can_extend(run),
         created_at=run.created_at,
         started_at=run.started_at,
         finished_at=run.finished_at,
@@ -53,6 +55,14 @@ def _out(run: Run) -> RunOut:
 @router.post("/", response_model=RunOut)
 async def start_run(body: RunStartRequest, db: AsyncSession = Depends(get_db)):
     return _out(await run_service.start_run(db, body))
+
+
+# Above `/{run_id}`, though no route collides: it is a POST of one segment.
+@router.post("/dry-run", response_model=RunPlanReport)
+async def dry_run(body: RunStartRequest, db: AsyncSession = Depends(get_db)):
+    """What the run would do and every check it would fail, writing nothing. Answers
+    200 with the errors in the report; only a missing or foreign plan is an error."""
+    return await run_service.plan_run(db, body)
 
 
 @router.get("/", response_model=list[RunOut])
@@ -85,6 +95,12 @@ async def resume_run(run_id: str, db: AsyncSession = Depends(get_db)):
 @router.post("/{run_id}/cancel", response_model=RunOut)
 async def cancel_run(run_id: str, db: AsyncSession = Depends(get_db)):
     return _out(await run_service.cancel_run(db, run_id))
+
+
+@router.post("/{run_id}/extend", response_model=RunOut)
+async def extend_run(run_id: str, body: LoopSettings, db: AsyncSession = Depends(get_db)):
+    """Carry on a run that stopped on a cap, with the caps in `body` (M6 §6)."""
+    return _out(await run_service.extend_run(db, run_id, body))
 
 
 @router.delete("/{run_id}", status_code=204)

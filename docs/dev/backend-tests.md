@@ -30,6 +30,14 @@ the module *errors* on the runner rather than skipping; a test that creates a re
 likewise carries `conftest.needs_symlinks` (Windows refuses one without privilege, and
 `backend-tests-windows` runs the suite there).
 
+## No real LLM server
+
+The autouse fixture `_no_real_llm_server` in `backend/tests/conftest.py` points
+`run_service._LLM_TRANSPORT` at a transport that refuses every connection, for every test.
+Test providers use `127.0.0.1:1234`, which is LM Studio's real port on a developer's
+machine, so a run test could otherwise list or unload real models, and pass or fail by
+what is running. A test that wants a server sets its own transport with `monkeypatch`.
+
 ## Foreign keys in api_env
 
 `api_env` enforces foreign keys by default,

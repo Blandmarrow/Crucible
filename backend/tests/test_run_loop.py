@@ -146,7 +146,7 @@ def test_the_pass_cap_stops_the_loop_and_next_pass_is_idempotent(tmp_path, monke
                                       gate={"exclude_flags": ["is_blurry"]}, loop=_loop(max_passes=1))
             assert code == 200, body
             done = await wait_for_run(env, body["id"], timeout=60)
-            assert done["outcome"] == {"outcome": "short", "reason": "the pass cap (1) is reached"}
+            assert done["outcome"] == {"outcome": "short", "reason": "the pass cap (1) is reached", "cap": "passes"}
 
             # Run `next_pass` again by hand, as a restart or resume would, with a
             # higher cap: it inserts pass 2 once, and does not recount pass 1.
@@ -173,7 +173,7 @@ def test_the_image_cap_clamps_a_pass_round_robin_and_stops_the_loop(tmp_path, mo
             assert code == 200, body
             done = await wait_for_run(env, body["id"], timeout=60)
             assert done["stages"][0]["summary"] == "4 rows added, 0 reset, 3 to generate (the image cap leaves room for 3 of 4)"
-            assert done["outcome"] == {"outcome": "short", "reason": "the image cap (3) is reached"}
+            assert done["outcome"] == {"outcome": "short", "reason": "the image cap (3) is reached", "cap": "images"}
             # Round-robin: both folders got rows, so neither is starved of the budget.
             async with env.Session() as db:
                 rows = (await db.execute(select(ComfyRow).where(ComfyRow.plan_id == plan_id))).scalars().all()
@@ -311,9 +311,9 @@ def test_a_stopped_pass_still_frees_comfyuis_vram_and_downtime_is_not_work(tmp_p
     stages = [run_service._entry(k, 1) for k in ("prompts", "handoff_to_comfy", "generate", "handoff_to_local", "score", "next_pass")]
     stages[0]["status"] = stages[1]["status"] = "done"
     r = Run(id="r", dataset_id="d", plan_id="p", name="r", recipe={}, stages=stages, context={}, status="running")
-    run_service._stop_loop(r, 2, "the time cap (1 min) is spent")
+    run_service._stop_loop(r, 2, "the time cap (1 min) is spent", "minutes")
     assert [s["status"] for s in r.stages] == ["done", "done", "pending", "pending", "skipped", "skipped"]
-    assert r.context["loop"] == {"outcome": "short", "reason": "the time cap (1 min) is spent"}
+    assert r.context["loop"] == {"outcome": "short", "reason": "the time cap (1 min) is spent", "cap": "minutes"}
 
     async def go():
         async with api_env(tmp_path) as env:
@@ -383,14 +383,15 @@ def test_the_row_cap_holds_on_pass_one_and_lifts_from_pass_two(tmp_path, monkeyp
             assert done["status"] == "completed", done
             assert {s["pass_no"] for s in done["stages"] if s["pass_no"]} == {1, 2}
 
-            # Three folders' worth is over the cap on pass 1, and the run fails there.
+            # Three folders' worth is over the cap on pass 1. Since M6 §6 the start check
+            # runs the fill's count, so the start refuses and no run is written.
             _fake, ds2, plan2 = await _loop_plan(
                 env, monkeypatch, _spec(GOOD, BLURRY, {**GOOD, "id": "g", "label": "Gold Knight"}), name="ds2",
             )
             code, body = await _start(env, ds2["id"], plan2, LOOP_STAGES,
                                       gate={"exclude_flags": ["is_blurry"]}, loop=_loop())
-            assert code == 200, body
-            failed = await wait_for_run(env, body["id"], timeout=60)
-            assert failed["status"] == "failed", failed
-            assert "over the limit of 5" in failed["error_msg"], failed["error_msg"]
+            assert code == 400, body
+            assert "over the limit of 5" in body["detail"], body
+            async with env.Session() as db:
+                assert (await db.execute(select(Run).where(Run.dataset_id == ds2["id"]))).first() is None
     run(go())

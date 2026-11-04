@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
@@ -6,20 +6,24 @@ import { useJobSSE } from "../hooks/useSSE";
 import { useJobStore } from "../store/jobStore";
 import { comfyApi } from "../api/comfy";
 import { providersApi } from "../api/providers";
-import { runsApi, isLiveRun, RUN_STAGES, RUN_STAGE_LABELS } from "../api/runs";
-import type { Run, RunRecipe, RunStage, RunStageKey, StageStatus } from "../api/runs";
+import { runsApi, isLiveRun, HEAD_STAGES, RUN_STAGES, RUN_STAGE_LABELS } from "../api/runs";
+import type { Run, RunPlanReport, RunRecipe, RunStage, RunStageKey, RunStartBody, StageStatus } from "../api/runs";
+import RecipeBar from "../components/runs/RecipeBar";
+import ExtendRunDialog from "../components/runs/ExtendRunDialog";
 import { captionBackend } from "../constants/captionModels";
 import RunCaptionFields from "../components/runs/RunCaptionFields";
 import RunExportFields from "../components/runs/RunExportFields";
-import {
-  CAPTION_FORM_DEFAULTS, EXPORT_FORM_DEFAULTS, captionModelId, toCaptionSettings, toExportSettings,
-  type CaptionForm, type ExportForm,
-} from "../components/runs/runForms";
+import DryRunReport from "../components/runs/DryRunReport";
+import { captionModelId, type CaptionForm, type ExportForm } from "../components/runs/runForms";
 import { RunGateFields, RunLoopFields, RunRewriteFields } from "../components/runs/RunLoopFields";
+import type { GateForm, LoopForm, RewriteForm } from "../components/runs/runLoopForms";
 import {
-  GATE_FORM_DEFAULTS, LOOP_FORM_DEFAULTS, REWRITE_FORM_DEFAULTS,
-  toGateSettings, toLoopSettings, toRewriteSettings, type GateForm, type LoopForm, type RewriteForm,
-} from "../components/runs/runLoopForms";
+  NEEDS_STAGE, formToRecipe, hydrateRunForm, recipeToForm, toSavedRunForm, type PerDataset, type RunFormState,
+} from "../components/runs/runRecipeForm";
+import ServerStateGate from "../components/common/ServerStateGate";
+import { RUN_FORM_PATH, appDataApi } from "../api/appData";
+import { serverWritesSettled, writeToServer } from "../utils/serverWriter";
+import { useDebouncedPersist } from "../hooks/useDebouncedPersist";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import { apiErrorDetail } from "../utils/apiError";
 
@@ -45,6 +49,9 @@ export default function RunsPage() {
 
   const active = runs.find(isLiveRun) ?? null;
   const history = runs.filter((r) => !isLiveRun(r));
+  // "Use these settings" on a past run: handed to the start form, which clears it once
+  // applied, so a form that mounts later never applies a stale one.
+  const [loadRequest, setLoadRequest] = useState<LoadRequest | null>(null);
 
   return (
     <div style={{ padding: "24px 28px", overflowY: "auto", flex: 1 }}>
@@ -58,8 +65,28 @@ export default function RunsPage() {
       <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 980 }}>
         {datasetId && isFetched && (active
           ? <ActiveRun run={active} datasetId={datasetId} />
-          : <StartRunForm datasetId={datasetId} onStarted={() => qc.invalidateQueries({ queryKey: ["runs", datasetId] })} />)}
-        {datasetId && history.length > 0 && <RunHistory runs={history} datasetId={datasetId} />}
+          : (
+            // The form reads the remembered one in its state initializers, so it waits
+            // for it (docs/dev/app-stored-data.md), after any write still on its way.
+            <ServerStateGate
+              queryKey={["app-data", "run-form"]}
+              load={async () => {
+                await serverWritesSettled(RUN_FORM_PATH);
+                return appDataApi.getRunForm();
+              }}
+              label="your saved run form"
+            >
+              {(saved) => (
+                <StartRunForm datasetId={datasetId} saved={saved}
+                  onStarted={() => qc.invalidateQueries({ queryKey: ["runs", datasetId] })}
+                  loadRequest={loadRequest} onLoaded={() => setLoadRequest(null)} />
+              )}
+            </ServerStateGate>
+          ))}
+        {datasetId && history.length > 0 && (
+          <RunHistory runs={history} datasetId={datasetId}
+            onUse={active ? undefined : (r) => setLoadRequest({ recipe: r.recipe, label: `the run "${r.name}"`, nonce: Date.now() })} />
+        )}
       </div>
     </div>
   );
@@ -67,45 +94,72 @@ export default function RunsPage() {
 
 // ── Start form ───────────────────────────────────────────────────────────────
 
-const DEFAULT_STAGES: RunStageKey[] = ["prompts", "handoff_to_comfy", "generate", "handoff_to_local", "score", "free_caption_model"];
-
-/** A stage that only means something after another: sent only when that one is on too. */
-const NEEDS_STAGE: Partial<Record<RunStageKey, RunStageKey>> = {
-  free_caption_model: "caption", free_rewrite_model: "rewrite", gate: "score", rewrite: "prompts",
-};
-
 /** The provider id inside an `openai_compat:<id>:<model>` caption model, else null. */
 function compatProviderId(model: string | null): string | null {
   return model?.startsWith("openai_compat:") ? model.split(":")[1] ?? null : null;
 }
 
-function StartRunForm({ datasetId, onStarted }: { datasetId: string; onStarted: () => void }) {
-  const [planId, setPlanId] = useState<string | null>(null);
-  const [name, setName] = useState("");
-  const [stages, setStages] = useState<Set<RunStageKey>>(new Set(DEFAULT_STAGES));
-  const [subfolder, setSubfolder] = useState("");
-  const [runAesthetic, setRunAesthetic] = useState(true);
-  const [aestheticModel, setAestheticModel] = useState<"laion" | "v2_5">("laion");
-  const [caption, setCaption] = useState<CaptionForm>(CAPTION_FORM_DEFAULTS);
-  const [exportForm, setExportForm] = useState<ExportForm>(EXPORT_FORM_DEFAULTS);
-  const [loop, setLoop] = useState<LoopForm>(LOOP_FORM_DEFAULTS);
-  const [gate, setGate] = useState<GateForm>(GATE_FORM_DEFAULTS);
-  const [rewrite, setRewrite] = useState<RewriteForm>(REWRITE_FORM_DEFAULTS);
+/** A recipe to fill the start form with, from outside it (a past run's settings). */
+interface LoadRequest {
+  recipe: RunRecipe;
+  label: string;
+  nonce: number;
+}
+
+function saveRunForm(path: string, value: object) {
+  writeToServer(path, "PUT", { value });
+}
+
+function StartRunForm({ datasetId, saved, onStarted, loadRequest, onLoaded }: {
+  datasetId: string; saved: unknown; onStarted: () => void; loadRequest: LoadRequest | null; onLoaded: () => void;
+}) {
+  // Seeded once from the remembered form (M6 §6); the form owns its state after that.
+  const [initial] = useState(() => hydrateRunForm(saved));
+  const [rawForm, setForm] = useState<RunFormState>(initial.form);
+  // The plan and base folder are per dataset, so switching datasets shows that
+  // dataset's own: they live here, keyed by dataset id, not in `rawForm`.
+  const [perDataset, setPerDataset] = useState<PerDataset>(initial.byDataset);
+  const here = perDataset[datasetId];
+  const form: RunFormState = { ...rawForm, planId: here?.planId ?? null, subfolder: here?.subfolder ?? "" };
+  const setDatasetEntry = (p: Partial<PerDataset[string]>) =>
+    setPerDataset((b) => {
+      // Re-inserted last, so the cap on remembered datasets drops the longest untouched.
+      const { [datasetId]: cur, ...rest } = b;
+      return { ...rest, [datasetId]: { ...(cur ?? { planId: null, subfolder: "" }), ...p } };
+    });
+  useDebouncedPersist(RUN_FORM_PATH, toSavedRunForm(rawForm, perDataset), undefined, saveRunForm);
+
+  const patch = (p: Partial<RunFormState>) => setForm((f) => ({ ...f, ...p }));
+  const { planId, name, subfolder, runAesthetic, aestheticModel, caption, exportForm, loop, gate, rewrite } = form;
+  const stages = useMemo(() => new Set(rawForm.stages), [rawForm.stages]);
+  const setPlanId = (v: string | null) => setDatasetEntry({ planId: v });
+  const setName = (v: string) => patch({ name: v });
+  const setSubfolder = (v: string) => setDatasetEntry({ subfolder: v });
+  const setRunAesthetic = (v: boolean) => patch({ runAesthetic: v });
+  const setAestheticModel = (v: "laion" | "v2_5") => patch({ aestheticModel: v });
+  const setCaption = (v: CaptionForm) => patch({ caption: v });
+  const setExportForm = (v: ExportForm) => patch({ exportForm: v });
+  const setLoop = (v: LoopForm) => patch({ loop: v });
+  const setGate = (v: GateForm) => patch({ gate: v });
+  const setRewrite = (v: RewriteForm) => patch({ rewrite: v });
+  const [dry, setDry] = useState<{ report: RunPlanReport; key: string } | null>(null);
 
   const prevDatasetId = useRef(datasetId);
   useEffect(() => {
     if (datasetId === prevDatasetId.current) return;
     prevDatasetId.current = datasetId;
-    setPlanId(null);
-    setSubfolder("");
-    setRewrite(REWRITE_FORM_DEFAULTS);
+    // Rewrite scenarios belong to the last dataset's plan; the provider and model stay.
+    setForm((f) => ({ ...f, rewrite: { ...f.rewrite, scenarios: [] } }));
+    setDry(null);
   }, [datasetId]);
 
   const { data: plans = [] } = useQuery({
     queryKey: ["comfy", "plans", datasetId],
     queryFn: () => comfyApi.listPlans(datasetId),
   });
-  const effectivePlanId = planId ?? plans[0]?.id ?? null;
+  // A plan id from a loaded recipe or another dataset is not trusted: the start would
+  // 400 "belongs to another dataset" with nothing on screen saying why.
+  const effectivePlanId = (planId && plans.some((p) => p.id === planId) ? planId : plans[0]?.id) ?? null;
   const { data: blueprint } = useQuery({
     queryKey: ["comfy", "blueprint", effectivePlanId],
     queryFn: () => comfyApi.getBlueprint(effectivePlanId!),
@@ -122,12 +176,31 @@ function StartRunForm({ datasetId, onStarted }: { datasetId: string; onStarted: 
   // The paid-call cap applies only when a billed provider rewrites or captions.
   const paidCap = (rewriteOn && billed(rewriteProviderId)) || (stages.has("caption") && billed(compatProviderId(captionModel)));
 
-  const toggle = (k: RunStageKey) =>
-    setStages((prev) => {
-      const next = new Set(prev);
-      if (next.has(k)) next.delete(k); else next.add(k);
-      return next;
+  /** Fill the form from a stored recipe, keeping this form's plan and run name. What
+   *  the recipe names that is not here (a provider, an export folder) is cleared and
+   *  said in a toast. */
+  const applyRecipe = (recipe: RunRecipe, label: string) => {
+    const { form: next, notes } = recipeToForm(recipe, { planId, name }, {
+      providerIds: providers.map((p) => p.id),
+      rewriteScenarios: blueprint ? rewriteScenarios : null,
     });
+    setForm(next);
+    setDatasetEntry({ subfolder: next.subfolder });
+    setDry(null);
+    toast.success(`Filled the form from ${label}`);
+    for (const n of notes) toast(n, { duration: 8000 });
+  };
+  // The latest `applyRecipe`, for the effect below, which must fire on a new request only.
+  const applyRef = useRef(applyRecipe);
+  useEffect(() => { applyRef.current = applyRecipe; });
+  useEffect(() => {
+    if (!loadRequest) return;
+    applyRef.current(loadRequest.recipe, loadRequest.label);
+    onLoaded();
+  }, [loadRequest, onLoaded]);
+
+  const toggle = (k: RunStageKey) =>
+    setForm((f) => ({ ...f, stages: f.stages.includes(k) ? f.stages.filter((s) => s !== k) : [...f.stages, k] }));
 
   const blockers: string[] = [];
   if (!effectivePlanId) blockers.push("Create a plan on the ComfyUI page first.");
@@ -142,20 +215,23 @@ function StartRunForm({ datasetId, onStarted }: { datasetId: string; onStarted: 
   if (rewriteOn && !rewriteProviderId) blockers.push("Add an LLM provider in Settings for the rewrite.");
   if (rewriteOn && tickedScenarios.length === 0) blockers.push("Tick the scenarios the rewrite may change.");
 
+  // The one request Start and Dry run both send, so the report is about this run.
+  const body = (): RunStartBody => ({
+    dataset_id: datasetId,
+    plan_id: effectivePlanId!,
+    name: name.trim(),
+    recipe: formToRecipe(form, { rewriteProviderId, tickedScenarios, paidCap }),
+  });
+  const bodyKey = blockers.length === 0 ? JSON.stringify(body()) : null;
+
+  const dryRun = useMutation({
+    mutationFn: (b: RunStartBody) => runsApi.dryRun(b),
+    onSuccess: (report, b) => setDry({ report, key: JSON.stringify(b) }),
+    onError: (err) => toast.error(apiErrorDetail(err, "Could not check the run")),
+  });
+
   const start = useMutation({
-    mutationFn: () => {
-      const recipe: RunRecipe = {
-        stages: RUN_STAGES.filter((s) => stages.has(s) && (!NEEDS_STAGE[s] || stages.has(NEEDS_STAGE[s]!))),
-        generate: { subfolder: subfolder.trim(), set_caption: true },
-        score: { run_aesthetic: runAesthetic, aesthetic_model: aestheticModel },
-        caption: stages.has("caption") ? toCaptionSettings(caption) : null,
-        export: stages.has("export") ? toExportSettings(exportForm) : null,
-        gate: stages.has("gate") && stages.has("score") ? toGateSettings(gate, runAesthetic) : null,
-        rewrite: rewriteOn ? toRewriteSettings({ ...rewrite, scenarios: tickedScenarios }, rewriteProviderId) : null,
-        loop: toLoopSettings(loop, paidCap),
-      };
-      return runsApi.start({ dataset_id: datasetId, plan_id: effectivePlanId!, name: name.trim(), recipe });
-    },
+    mutationFn: () => runsApi.start(body()),
     onSuccess: (run) => {
       // The start answers 200 for a run whose first stage could not start: say so.
       if (run.status === "failed") toast.error(run.error_msg ?? "The run failed at its first stage");
@@ -171,6 +247,10 @@ function StartRunForm({ datasetId, onStarted }: { datasetId: string; onStarted: 
     <div className="panel">
       <div className="panel-h"><h3>Start a run</h3></div>
       <div style={{ padding: "4px 22px" }}>
+        <RecipeBar
+          buildRecipe={() => formToRecipe(form, { rewriteProviderId, tickedScenarios, paidCap })}
+          onLoad={(r) => applyRecipe(r.recipe, `the recipe "${r.name}"`)}
+        />
         <div className="form-row">
           <div className="lbl-col"><h4>Plan</h4><p>The ComfyUI plan whose rows this run generates.</p></div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -244,8 +324,12 @@ function StartRunForm({ datasetId, onStarted }: { datasetId: string; onStarted: 
           <button className="btn primary" disabled={blockers.length > 0 || start.isPending} onClick={() => start.mutate()}>
             {start.isPending ? "Starting…" : "Start run"}
           </button>
+          <button className="btn" disabled={blockers.length > 0 || dryRun.isPending} onClick={() => dryRun.mutate(body())}>
+            {dryRun.isPending ? "Checking…" : "Dry run"}
+          </button>
           {blockers.length > 0 && <span style={{ fontSize: 12, color: "var(--fg-mute)" }}>{blockers[0]}</span>}
         </div>
+        {dry && <DryRunReport report={dry.report} stale={dry.key !== bodyKey} onClose={() => setDry(null)} />}
       </div>
     </div>
   );
@@ -291,21 +375,26 @@ function ActiveRun({ run, datasetId }: { run: Run; datasetId: string }) {
   });
 
   const running = run.status === "running";
+  // A cancel asked for during the snapshot waits for it: the run is still `running`.
+  const cancelling = run.cancel_requested;
+  const state = cancelling
+    ? "cancelling after the snapshot"
+    : running ? (run.pause_requested ? "pausing after this stage" : "running") : "paused";
   return (
     <div className="panel">
       <div className="panel-h">
         <h3>{run.name}</h3>
-        <span style={{ fontSize: 12, color: running ? "var(--accent)" : "var(--warn)", marginLeft: 10 }}>
-          {running ? (run.pause_requested ? "pausing after this stage" : "running") : "paused"}
+        <span style={{ fontSize: 12, color: running && !cancelling ? "var(--accent)" : "var(--warn)", marginLeft: 10 }}>
+          {state}
         </span>
         <div style={{ flex: 1 }} />
-        {running && !run.pause_requested && (
+        {running && !run.pause_requested && !cancelling && (
           <button className="btn sm ghost" disabled={act.isPending} onClick={() => act.mutate("pause")}>Pause</button>
         )}
-        {(!running || run.pause_requested) && (
+        {(!running || run.pause_requested) && !cancelling && (
           <button className="btn sm primary" disabled={act.isPending} onClick={() => act.mutate("resume")}>Resume</button>
         )}
-        <button className="btn sm ghost" style={{ color: "var(--bad)" }} disabled={act.isPending} onClick={() => setConfirmCancel(true)}>Cancel</button>
+        <button className="btn sm ghost" style={{ color: "var(--bad)" }} disabled={act.isPending || cancelling} onClick={() => setConfirmCancel(true)}>Cancel</button>
       </div>
       <div style={{ padding: "8px 22px 16px" }}>
         <StageList run={run} />
@@ -314,7 +403,9 @@ function ActiveRun({ run, datasetId }: { run: Run; datasetId: string }) {
       {confirmCancel && (
         <ConfirmDialog
           title="Cancel this run?"
-          message="The job it is running now is cancelled, and no later stage starts. Images already made stay."
+          message={run.stages.some((s) => s.key === "snapshot" && s.status === "running")
+            ? "The snapshot cannot stop partway, so the run stops once it is recorded. No later stage starts."
+            : "The job it is running now is cancelled, and no later stage starts. Images already made stay."}
           confirmLabel="Cancel run"
           danger
           onConfirm={() => { setConfirmCancel(false); act.mutate("cancel"); }}
@@ -349,12 +440,16 @@ function ChildProgress({ done, total, message }: { done: number; total: number; 
   );
 }
 
-/** A heading before each pass of a looping run, and before the stages after the last. */
+/** A heading before each pass of a looping run, and before the stages before the first
+ *  pass and after the last. A head stage (the snapshot) carries no pass number either,
+ *  so it is told apart from the tail by its key. */
 function passHeading(stages: RunStage[], i: number, loops: boolean): string | null {
   if (!loops) return null;
-  const here = stages[i].pass_no ?? null;
-  const before = i > 0 ? stages[i - 1].pass_no ?? null : undefined;
+  const group = (s: RunStage) => (HEAD_STAGES.includes(s.key) ? "head" : s.pass_no ?? null);
+  const here = group(stages[i]);
+  const before = i > 0 ? group(stages[i - 1]) : undefined;
   if (here === before) return null;
+  if (here === "head") return "Before the first pass";
   return here === null ? "After the last pass" : `Pass ${here}`;
 }
 
@@ -409,9 +504,14 @@ function LoopOutcome({ run }: { run: Run }) {
 
 // ── History ──────────────────────────────────────────────────────────────────
 
-function RunHistory({ runs, datasetId }: { runs: Run[]; datasetId: string }) {
+function RunHistory({ runs, datasetId, onUse }: {
+  runs: Run[]; datasetId: string;
+  /** Fill the start form from a run's recipe; absent while a run is live (no form shows). */
+  onUse?: (r: Run) => void;
+}) {
   const qc = useQueryClient();
   const [open, setOpen] = useState<string | null>(null);
+  const [extending, setExtending] = useState<Run | null>(null);
   const act = useMutation({
     mutationFn: async ({ kind, id }: { kind: "resume" | "remove"; id: string }): Promise<void> => {
       if (kind === "resume") await runsApi.resume(id);
@@ -430,6 +530,17 @@ function RunHistory({ runs, datasetId }: { runs: Run[]; datasetId: string }) {
               <button className="btn sm ghost" onClick={() => setOpen(open === r.id ? null : r.id)}>{open === r.id ? "▾" : "▸"}</button>
               <span style={{ fontSize: 12.5, flex: 1 }}>{r.name}</span>
               <span style={{ fontSize: 12, color: r.status === "completed" ? "var(--good)" : r.status === "failed" ? "var(--bad)" : "var(--fg-mute)" }}>{r.status}</span>
+              {r.can_extend && onUse && (
+                <button className="btn sm ghost" title="Raise the cap that stopped this run, and carry on"
+                  onClick={() => setExtending(r)}>
+                  Raise caps and continue
+                </button>
+              )}
+              {onUse && (
+                <button className="btn sm ghost" title="Fill the start form with this run's settings" onClick={() => onUse(r)}>
+                  Use these settings
+                </button>
+              )}
               {r.status === "failed" && (
                 <button className="btn sm ghost" disabled={act.isPending} onClick={() => act.mutate({ kind: "resume", id: r.id })}>Resume</button>
               )}
@@ -439,6 +550,10 @@ function RunHistory({ runs, datasetId }: { runs: Run[]; datasetId: string }) {
           </div>
         ))}
       </div>
+      {extending && (
+        <ExtendRunDialog run={extending} onClose={() => setExtending(null)}
+          onDone={() => { setExtending(null); qc.invalidateQueries({ queryKey: ["runs", datasetId] }); }} />
+      )}
     </div>
   );
 }

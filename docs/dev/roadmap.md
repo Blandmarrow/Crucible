@@ -17,7 +17,7 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-04, after M6 §5 was built)
+## Next session (updated 2026-11-04, after M6 §6 was built)
 
 1. M5's five stages merged on 2026-10-30 as PR #101. Only its cleanup is open, and that waits
    a release. See [server-state-plan/README.md](server-state-plan/README.md) for what was
@@ -69,13 +69,18 @@ restates its stages.
      fixed. Still unchecked by hand, against a real ComfyUI and LM Studio: a two-pass
      loop to target, and a run stopped by a cap. §4's three hand checks above come
      first, by the user's choice.
-   - **After §5, the next M6 work is §6**, the dry run, the snapshot stage and the recipe
-     library. Before the merge, the user also wants the ComfyUI page reworked so prompts
-     are easier to categorize and the prompt library easier to use; its scope is not set.
+   - **§6, the dry run, the snapshot stage and the recipe library, was built on
+     2026-11-04**, with the user's three extras (Use these settings, raising a cap to carry
+     a run on, the remembered start form) and every automated gate green, and pushed the
+     same day. Its hand checks, against a real
+     ComfyUI and LM Studio: a dry run and a start with ComfyUI off, a run with Snapshot on
+     (and a Cancel during it), a recipe exported and imported, and a pass cap raised.
+   - **Next M6 work: the ComfyUI page rework**, so prompts are easier to categorize and
+     the prompt library easier to use. Its scope is not set; plan it with the user first.
    - Decisions 7–9 and this M6 checklist exist only on that branch until it merges, so
      `main`'s next decision takes number 10. Its migrations `e5c1a9d3f7b2` →
-     `b7d2f4a9c1e3` → `d4a8c2e6f1b9` → `f3b9d1a7c5e2` → `c8e4a6b2d0f7` follow `main`'s
-     `c2b8e4f6a1d7`;
+     `b7d2f4a9c1e3` → `d4a8c2e6f1b9` → `f3b9d1a7c5e2` → `c8e4a6b2d0f7` → `a6d2f8c4e0b3` →
+     `b2e7c9a4d1f6` → `c4a8e2f6b9d3` follow `main`'s `c2b8e4f6a1d7`;
      rebase at stage boundaries.
 5. M8's follow-ups 8, 9, 10 and 11 can go any time; stage 3 left inpaint and detection crop
    out, so item 8 no longer waits for it. Batch move and copy, in item 9, must wait for M4 to
@@ -211,7 +216,12 @@ gates are green and it is pushed.
   the caps and the paid-call cap, the per-provider `billed` setting (migration
   `c8e4a6b2d0f7`), the kept rule applied everywhere, and `docs/dev/comfyui/run-loop.md`.
   A two-pass loop and a capped run are not yet checked by hand.
-- [ ] §6: the dry run, the snapshot stage and the recipe library. Needs §4.
+- [x] §6: the dry run, the snapshot stage and the recipe library. Done 2026-11-04 with
+  every gate green: `plan_run` behind both the dry run and the
+  start, the head `snapshot` stage and its waiting cancel (migration `a6d2f8c4e0b3`), the
+  `run_recipes` library (`b2e7c9a4d1f6`) and the remembered form (`c4a8e2f6b9d3`),
+  `extend_run`, and `docs/dev/comfyui/recipes.md`. Not yet checked by hand against a real
+  ComfyUI and LM Studio.
 - [ ] Rework the ComfyUI page's UI and some of its behaviour, so prompts are easier to
   categorize and the prompt library is easier to use (the user's call, 2026-11-04: this
   lands before the merge). Scope not yet set; plan it with the user first.

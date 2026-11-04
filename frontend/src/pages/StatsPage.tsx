@@ -17,6 +17,7 @@ import { useJobStore } from "../store/jobStore";
 import { STATS_FILTERS_PREFIX } from "../constants/storage";
 import { loadPersisted, datasetScopedKey } from "../utils/persistentState";
 import { useDebouncedPersist } from "../hooks/useDebouncedPersist";
+import { safeFilename, triggerDownload } from "../utils/download";
 
 const LIVE_STATS_JOB_TYPES = new Set(["caption", "caption_pipeline", "quality_score", "detection", "run_gate"]);
 
@@ -900,22 +901,6 @@ function escapeCsv(v: string): string {
   return v;
 }
 
-function safeFilename(name: string): string {
-  return name.replace(/[/\\:*?"<>|]/g, "_").trim();
-}
-
-function triggerDownload(csv: string, filename: string) {
-  const blob = new Blob([csv], { type: "text/csv" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
-
 function meanOf(values: number[] | undefined): string {
   if (!values || values.length === 0) return "";
   return (values.reduce((a, b) => a + b, 0) / values.length).toFixed(4);
@@ -1035,14 +1020,14 @@ function downloadCsv(stats: any, sv: ScoreValues | undefined, det: DetectionStat
   ];
 
   const csv = rows.map(([k, v]) => `${k},${v}`).join("\n");
-  triggerDownload(csv, `dataset-${safeFilename(datasetName) || datasetId}-stats.csv`);
+  triggerDownload(csv, `dataset-${safeFilename(datasetName) || datasetId}-stats.csv`, "text/csv");
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function downloadTagsCsv(tags: any[], datasetId: string, datasetName: string) {
   const header = "tag,count";
   const rows = tags.map(t => `${escapeCsv(String(t.tag))},${t.count}`);
-  triggerDownload([header, ...rows].join("\n"), `dataset-${safeFilename(datasetName) || datasetId}-tags.csv`);
+  triggerDownload([header, ...rows].join("\n"), `dataset-${safeFilename(datasetName) || datasetId}-tags.csv`, "text/csv");
 }
 
 // ─── HistPanel ────────────────────────────────────────────────────────────────

@@ -10,7 +10,9 @@ Runs page's sections for them. The kept rule the fill and the loop share is
 
 ## The shape: a body that repeats, a tail that runs once
 
-`STAGE_ORDER` (`schemas/run.py`) is split in two:
+`STAGE_ORDER` (`schemas/run.py`) is split in three:
+- **The head**, `HEAD_STAGES`: `snapshot` alone (M6 §6). It runs once, before the first
+  pass, and carries no `pass_no`, which is what keeps `next_pass` from copying it.
 - **The body**, `BODY_STAGES`: `prompts`, `rewrite`, `free_rewrite_model`,
   `handoff_to_comfy`, `generate`, `handoff_to_local`, `score`, `gate`, `next_pass`.
 - **The tail**, `TAIL_STAGES`: `caption`, `free_caption_model`, `export`. It runs once,
@@ -38,7 +40,10 @@ reconcile, which only reset a stage's status and numbers.
   `state` one of `open`, `met`, `abandoned`. `kept[0]` is the baseline pass 1's
   `prompts` records after its fill; each `next_pass` appends one (the last 12 kept).
 - `leaves_pass`: the pass whose counts `leaves` holds (the idempotency guard below).
-- `loop`: `{outcome: "met" | "short", reason}` once the loop has ended.
+- `loop`: `{outcome: "met" | "short", reason}` once the loop has ended, plus `cap` on a
+  short one: `passes`, `minutes`, `images` or `paid_calls` for the cap that stopped it
+  (`_Stop`, which `_budget_stop` returns), or None when it gave up on its folders. The
+  cap is what lets the run carry on (§ Raising a cap and carrying on).
 
 `RunOut` exposes `outcome` and a capped `leaves` list (short folders first, at most
 `LEAF_LIST_LIMIT` = 200) with `leaf_count` and `met_count`, both over every folder, so a
@@ -182,7 +187,10 @@ When they are checked:
   each kept image costs one caption call; that reserves the tail. When both are billed,
   something must be left over for rewriting.
 - **The rewrite's `max_requests`** is the cap, less the calls spent, less that reserve. The
-  job therefore cannot overspend by its call budget's 25% slack.
+  job therefore cannot overspend by its call budget's 25% slack. The reserve is
+  `max_images` less the caption calls already made (`_Spent` counts rewrite and caption
+  calls apart): a run carried on past a cap has captioned some, and reserving all of
+  `max_images` again would stop its rewrite at once.
 - **Before the caption tail**: the kept images against the calls left. The reserve
   covers `max_images`, but a workflow that saves several images a row can make more on
   its first pass (the clamp plans at one a row until a row has completed), and a resumed
@@ -198,6 +206,29 @@ Running out ends the loop through `_stop_loop`: the pass's remaining body entrie
 A handoff whose partner already ran this pass is kept (`_UNDOES`): `handoff_to_local`
 after `handoff_to_comfy`, `free_rewrite_model` after `rewrite`. Otherwise a loop stopped
 at `generate` would leave ComfyUI holding the GPU through the caption tail.
+
+## Raising a cap and carrying on
+
+M6 §6: `POST /runs/{id}/extend` (`run_service.extend_run`) takes new `LoopSettings` for a
+run that stopped on a cap. `can_extend` (also `RunOut.can_extend`) allows it only for a
+`completed` run whose loop ended `short` with a recorded `cap` and with a folder still
+`open`. A run that gave up on all its folders has nothing a cap would change, and one
+from before §6 recorded no cap. `extend_run` then refuses a cap that goes down, a
+stopping cap not raised (both 400), a paid-call cap `_preflight_paid_cap` rejects, a
+deleted plan, and another live run on the dataset (409, under `_dataset_lock`).
+
+It **appends** the next pass's body entries, copied from the last pass, and a fresh tail
+after every entry the run has. Every started stage keeps its index, so `stage_tag` stays
+unique, and `next_pass`'s `leaves_pass` guard recounts for the new pass. `context.loop` is
+cleared and the recipe's `loop` replaced; abandoned folders stay abandoned. Spending is
+still read from the child jobs, so the raised caps count what the run has used.
+
+**The new tail captions only the new passes.** `_tail_rows(run, idx)` gives a caption
+entry the rows of the passes between the previous `caption` entry and itself; the first
+tail still takes `row_ids`. It is read from the stage list, so it survives a resume and
+the restart. Without it the second tail, `overwrite` on, would caption every image again
+and bill a paid provider twice, silently. No rows in scope skips the stage, never `[]`.
+The export simply runs again.
 
 ## The seed check
 
@@ -245,10 +276,19 @@ interrupted job's downtime; and a billed caption tail captioning what the cap al
 cv2 (`needs_cv2`). `frontend/e2e/runs.spec.ts` runs one repeating journey from the form,
 with Score and the gate off, ending with every folder full.
 
+`backend/tests/test_run_extend.py` (M6 §6) stops a loop on its image cap, which needs no
+score or gate, so it runs without cv2. It then carries the run on. It covers the
+refusals: a cap gone down, the stopping cap not raised, another live run, and a run that
+ended met. It also covers a second tail captioning only the new pass's images (two caption
+jobs, disjoint ids), `can_extend`'s cases, and the rewrite reserve after a tail. The
+e2e journey raises the image cap from the past run's dialog.
+
 ## Not yet
 
-- A cap cannot be raised on a run that stopped short; start another run, which picks up
+- A run that gave up on its folders cannot carry on; start another run, which picks up
   where the folders stand, because targets are absolute.
+- A first tail whose caption the paid-call cap trimmed is not made up by a later tail,
+  which captions only its own passes.
 - Time is checked at stage starts, so a long generate stage can overrun `max_minutes` by
   its own length.
 - The image cap can be overrun on the first pass by a workflow that saves several images

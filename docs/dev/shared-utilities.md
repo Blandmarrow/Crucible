@@ -56,7 +56,10 @@ gallery sidebar and the Export page's checklist, plus the tick helpers only the 
 `writeNavContext`, `injectNavId`/`removeNavId`, and `navPageParams`, the one builder for a
 listing request over a stored context) and `serverPageContext` (the one way to replace
 that context's ids with a verbatim server page — it clears the `injected` marker a
-listing response cannot carry) → `docs/dev/gallery/nav.md`.
+listing response cannot carry) → `docs/dev/gallery/nav.md`;
+`frontend/src/utils/download.ts` (`triggerDownload(content, filename, mime)`, which hands
+the viewer a file the page made, and `safeFilename`; used by the Stats page's CSVs and the
+Runs page's recipe export) → `docs/dev/comfyui/recipes.md` § The recipe bar.
 
 **`frontend/src/utils/clipboard.ts`** — `copyText(text): Promise<boolean>`, the one way this
 app writes to the clipboard. `navigator.clipboard` is `[SecureContext]`, so Chromium installs

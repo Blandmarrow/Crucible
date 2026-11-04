@@ -11,5 +11,6 @@ from backend.models.comfy import ComfyBlueprint, ComfyLeaf, ComfyLibraryPrompt, 
 from backend.models.style_run import StyleSimilarityRun
 from backend.models.app_data import CaptionPromptPreset, DeclaredCategory
 from backend.models.run import Run
+from backend.models.run_recipe import SavedRunRecipe
 
-__all__ = ["Dataset", "Image", "Video", "BackgroundJob", "Detection", "Label", "ImageLabel", "ThresholdSettings", "DatasetBranch", "DatasetVersion", "VersionImageState", "OpenAIProvider", "ComfyPlan", "ComfyRow", "ComfyLibraryPrompt", "ComfyBlueprint", "ComfyLeaf", "StyleSimilarityRun", "CaptionPromptPreset", "DeclaredCategory", "Run"]
+__all__ = ["Dataset", "Image", "Video", "BackgroundJob", "Detection", "Label", "ImageLabel", "ThresholdSettings", "DatasetBranch", "DatasetVersion", "VersionImageState", "OpenAIProvider", "ComfyPlan", "ComfyRow", "ComfyLibraryPrompt", "ComfyBlueprint", "ComfyLeaf", "StyleSimilarityRun", "CaptionPromptPreset", "DeclaredCategory", "Run", "SavedRunRecipe"]

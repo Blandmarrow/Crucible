@@ -5,9 +5,9 @@ exported dataset: it fills the plan's blueprint, frees the GPU, generates, frees
 other way, scores, captions and exports. This file covers the `Run` row, how it is stepped,
 each stage, cancel, pause, resume and restart, and the Runs page. The ruling is
 [decision 9](../decisions/09-runs-step-forward-on-job-completion.md). The goal loop that
-repeats a run's body, the gate and the budgets (M6 §5) are `docs/dev/comfyui/run-loop.md`;
-the stage still to come (the recipe library) is in
-`docs/dev/comfy-automation-plan/README.md`. The user guide is `docs/runs.md`.
+repeats a run's body, the gate, the budgets and carrying on past a cap (M6 §5, §6) are
+`docs/dev/comfyui/run-loop.md`; the recipe library and the remembered start form (M6 §6)
+are `docs/dev/comfyui/recipes.md`. The user guide is `docs/runs.md`.
 
 ## The shape: a row stepped forward, never a waiting job
 
@@ -96,7 +96,8 @@ check. The order is always run lock, then dataset or plan lock, never the revers
 
 | Stage | What it does |
 |---|---|
-| `prompts` | Top up's fill on the **stored** blueprint, through `routers/comfy.fill_blueprint` under the plan lock (Apply, then `prepare_top_up`). `confirm_total=None`, since the lock holds from Apply's count to its write. Stores the pending row ids in `context`. With no blueprint it is skipped. Over the row cap it fails with Apply's message, because a run never passes `allow_over_cap`. |
+| `snapshot` | M6 §6, opt-in. A `create_snapshot` job through `routers/versioning.start_snapshot_job`, lifted out of the snapshot route and always the job path (the route keeps its inline path for small datasets in auto mode). Skipped with a note when `versioning_mode` is off. The only **head** stage (`HEAD_STAGES`): it has no `pass_no`, so `next_pass` never copies it into a later pass. The job writes `{version_id, name, images}` to `result_data` after the snapshot's own commit. |
+| `prompts` | Top up's fill on the **stored** blueprint, through `routers/comfy.fill_blueprint` under the plan lock (Apply, then `prepare_top_up`). `confirm_total=None`, since the lock holds from Apply's count to its write. Stores the pending row ids in `context`. With no blueprint it is skipped. A first pass over the row cap is refused at the start (§ Starting); the stage still fails with Apply's message if the blueprint grew past the cap between the start and the stage. |
 | `handoff_to_comfy` | A `run_handoff` job: `model_manager.evict_all()`. The note counts the models that were resident (`evict_all` returns every registered id) and names any still leased. `evict_all` ends with a torch cache flush that raises on a torch-free install; that is caught, because nothing torch-backed was loaded there. |
 | `generate` | The run's rows that are not completed yet: `failed` and `running` ones go back to pending, under the plan lock. Then `_start_run` with those exact row ids. With no `context.row_ids` (no blueprint, or `prompts` off) it takes the plan's pending rows when it first starts, and stores them. Completed rows are never run twice. |
 | `handoff_to_local` | A `run_handoff` job: `ComfyClient.free()` (`POST /free`), best effort. Any error is a note. It is built through `backend.routers.comfy.ComfyClient`, the name the tests patch onto the fake. |
@@ -143,14 +144,42 @@ stages make no LLM call before captioning.
 
 ## Starting, and the checks it runs first
 
-`POST /runs/` (`run_service.start_run`) refuses before writing anything:
-- 404 for an unknown plan, and 400 for a plan of another dataset;
-- 409 when the dataset already has a live run (`running` or `paused`; one per dataset);
-- `_preflight`: the ComfyUI URL and workflow when a ComfyUI stage is on, the base folder,
-  the prompt pin when the blueprint will be filled, the caption model (by building the
-  `CaptionJobRequest`, so a bad id is a 400 now and not at stage six), and
-  `export.check_export_request`, which gives a 400 for a relative folder or a 507 for a
-  full disk.
+**One check function, `run_service.plan_run`, is behind both the start and the dry run**
+(M6 §6), so what the dry run reports is what the start does. It writes nothing. Each
+check that refuses raises `HTTPException`; `_Checks.run` records it as a `RunCheck`
+(`key`, `level`, `message`, `status_code`) instead of raising, so the dry run can show
+every problem at once. `POST /runs/` (`start_run`) raises the first error with its own
+status before writing a run; `POST /runs/dry-run` returns the whole `RunPlanReport` with
+200. Only a missing plan (404) or a plan of another dataset (400) raises at once in both.
+
+The checks run in a fixed order, the pre-§6 ones first, so a start refuses with the status
+it always did:
+- the ComfyUI URL and workflow when a ComfyUI stage is on, the base folder, the prompt pin
+  when the blueprint will be filled, the caption settings (by building the
+  `CaptionJobRequest`), `export.check_export_request` (400 for a relative folder, 507 for
+  a full disk), the rewrite's provider and scenarios, and a loop's blueprint, seeds and
+  paid-call cap;
+- **ComfyUI answers** (`comfy_router.ComfyClient(url).ping()`, called through the router
+  module so the tests' fake applies);
+- **the fill** (`blueprint_service.fill_plan`): `_compute` on the stored blueprint, the
+  function `apply` runs, so an invalid blueprint or a first pass over the row cap is
+  refused before the run exists. Rows a pass would generate in a folder are its new rows
+  plus its open ones, which `prepare_top_up` resets and lists;
+- **the caption and rewrite models**: the caption provider must exist (404; the request
+  model checks only the id's prefix), and a model its server lists without the chosen
+  one is a 400. A server that cannot be asked is a warning. The listing goes through
+  `_LLM_TRANSPORT` (§ The stages);
+- **the disk**: below the floor is a 507; short of the estimate (the mean size of the
+  plan's images, else the dataset's, times the planned images) is a warning;
+- the live-run 409, last. `start_run` checks it again under `_dataset_lock`.
+
+Warnings never block: versioning off with Snapshot on, rows that will wait for a rewrite,
+the image cap clamping the first pass, an export folder `os.access` calls unwritable.
+
+The report's first-pass rows use `round_robin_counts`, the split `_clamp_rows` itself
+uses, so the clamp the dry run shows is the one the run applies. The per-folder split of
+the last round can differ by one where a folder's open rows sort before another's new
+ones; the total cannot.
 
 The recipe's own validator 422s a caption or export stage with no settings, and puts the
 stages into `STAGE_ORDER` whatever order they arrive in.
@@ -161,6 +190,12 @@ stages into `STAGE_ORDER` whatever order they arrive in.
   run `cancelled`, then cancels the child the way `DELETE /jobs/{id}` does: a pending child
   is written `cancelled`, and a running one gets `request_cancel`. When the child then ends,
   `advance_run` sees a run that is not `running` and stops.
+  **A running snapshot is the exception** (M6 §6). Snapshot jobs never poll the cancel flag
+  (`create_snapshot` commits once, at its end), so the run would read cancelled while the
+  job still wrote. `cancel_run` sets `Run.cancel_requested` instead and leaves the run
+  `running`; `advance_run` records what the snapshot did and then ends the run
+  `cancelled`. Pause and resume 409 meanwhile, and the restart reconcile turns such a
+  run `cancelled` rather than paused. A snapshot still queued is cancelled like any child.
 - **Pause** sets `pause_requested`. The running child finishes, and `advance_run` stops at
   the boundary. Resume before the boundary just clears the flag. A pause asked for during
   the last stage has no boundary left, so the run completes, and a run that fails drops
@@ -184,9 +219,19 @@ stages into `STAGE_ORDER` whatever order they arrive in.
 
 `frontend/src/pages/RunsPage.tsx`, routed at `/datasets/:datasetId/runs` (page type
 `runs`, pickable from a pane, sidebar entry "Runs"), with `frontend/src/api/runs.ts`. It
-is **not keyed** by dataset id in `PageRenderer`. The form re-seeds through a
-`prevDatasetId` effect, as `ComfyPage` does.
+is **not keyed** by dataset id in `PageRenderer`. Its plan and base folder are kept per
+dataset, so a dataset switch shows that dataset's own; a `prevDatasetId` effect, as on
+`ComfyPage`, clears only the rewrite's ticked scenarios and the dry-run report.
 
+- The start form's state is one `RunFormState` (`components/runs/runRecipeForm.ts`).
+  `formToRecipe` builds the recipe that Start, Dry run and saving a recipe all send;
+  `recipeToForm` reverses it for a loaded recipe or a past run's **Use these settings**,
+  through an inverse written beside each forward converter. The plan and base folder are
+  kept per dataset, outside `RunFormState` proper, and a plan id this dataset does not
+  have falls back to its first plan. The recipe bar, the remembered form and the inverses'
+  traps are `docs/dev/comfyui/recipes.md`.
+- **Dry run** shows `DryRunReport` under the form, marked out of date once the request
+  the form would send no longer matches the one it reported on.
 - With no live run it shows the start form: the plan, the stage switches, the base folder
   and the aesthetic model, then the caption stage's fields (`components/runs/RunCaptionFields.tsx`)
   and the export stage's (`RunExportFields.tsx`). They are the Captioning and Export pages'
@@ -209,9 +254,12 @@ is **not keyed** by dataset id in `PageRenderer`. The form re-seeds through a
   terminal event, which also invalidates the dataset's images, subfolders and the plan's
   rows. The children keep their own job types, so `TopBar`'s `LIVE_IMAGE_JOB_TYPES` and
   `IMAGE_MODIFYING_JOB_TYPES` fire their usual invalidations; `run_handoff` needs no entry.
-- Past runs are listed below, with Resume for a failed one, and Delete.
-
-The form is not saved anywhere. §6's recipe library is where a run's settings will be kept.
+- Past runs are listed below, with Resume for a failed one, Delete, **Use these
+  settings**, and **Raise caps and continue** where `RunOut.can_extend`
+  (`docs/dev/comfyui/run-loop.md` § Raising a cap and carrying on). The last two are not
+  offered while a run is live, since no start form shows then.
+- While a cancel waits for a snapshot, the run reads "cancelling after the snapshot", and
+  its Pause, Resume and Cancel are not offered.
 
 ## Testing
 
@@ -232,3 +280,19 @@ Its `_block_worker` holds the single worker on a gate job, which keeps a child q
 deterministically. `backend/tests/test_caption_start_scope.py` pins what
 `start_caption_job` puts in scope, including the `[]` widening. `frontend/e2e/runs.spec.ts`
 runs a blueprint through prompts, both handoffs, generate and a plain export from the page.
+
+M6 §6 added three files:
+- `backend/tests/test_run_snapshot.py`: the snapshot skipped with versioning off, taken
+  once in a two-pass loop, a cancel that waits for it, a queued one cancelled at once, the
+  reconcile of a waiting cancel, and no second snapshot on resume. `_hold_snapshots`
+  patches `version_service.create_snapshot` to wait on a gate once running.
+- `backend/tests/test_run_dry_run.py`: nothing written, ComfyUI unreachable, a missing
+  caption provider, the model list (listed, absent, unreachable), warnings not blocking,
+  and the dry run's first-pass count equal to what the run generates, clamp included.
+- `frontend/e2e/runs.spec.ts`'s dry-run journey.
+
+**Every test's LLM-server calls are refused** by the autouse `_no_real_llm_server`
+fixture in `backend/tests/conftest.py`, which points `run_service._LLM_TRANSPORT` at a
+transport that raises `ConnectError`. The tests' providers use `127.0.0.1:1234`, LM
+Studio's real port, so before it a run test could list, or unload, a developer's own
+models. A test that wants a server sets its own transport.

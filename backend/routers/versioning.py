@@ -16,7 +16,7 @@ from backend.schemas.versioning import (
 )
 from backend.services import version_service
 from backend.services.dataset_busy import busy
-from backend.workers.job_queue import job_queue
+from backend.workers.job_queue import job_queue, run_job_config, run_job_label
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/datasets", tags=["versioning"])
@@ -249,6 +249,54 @@ async def list_versions(
     return result.scalars().all()
 
 
+async def start_snapshot_job(
+    db: AsyncSession, dataset_id: str, *, name: str | None, description: str,
+    branch_id: str | None = None, image_count: int | None = None,
+    run_id: str | None = None, run_stage: str | None = None, label_prefix: str = "",
+) -> str:
+    """Queue a snapshot job and return its id. Always a job, never inline, so an
+    automated run (M6 §6) has a child to step on; the route takes this path for manual
+    mode and for large datasets. The caller has already checked the dataset and branch.
+
+    The job never polls the cancel flag (`NON_COOPERATIVE_GRACE`): `create_snapshot`
+    commits once at its end, so stopping it partway would leave nothing recorded.
+    """
+    if image_count is None:
+        from backend.models.image import Image
+        image_count = (await db.execute(
+            select(func.count(Image.id)).where(Image.dataset_id == dataset_id)
+        )).scalar() or 0
+    job = BackgroundJob(
+        job_type="create_snapshot",
+        label=run_job_label(label_prefix, f"Snapshot: {name or 'auto'}"),
+        dataset_id=dataset_id,
+        total_items=image_count,
+        config=run_job_config({}, run_id, run_stage),
+    )
+    db.add(job)
+    await db.commit()
+
+    async def _run(job_id: str) -> None:
+        from backend.database import AsyncSessionLocal
+        async with AsyncSessionLocal() as session, busy(dataset_id, "snapshot"):
+            version = await version_service.create_snapshot(
+                session, dataset_id,
+                name=name, description=description,
+                branch_id=branch_id, job_id=job_id,
+            )
+            # After the snapshot's own commit: the version is recorded whatever this
+            # does, so a failure here is logged, never raised into the job's outcome.
+            try:
+                await _store_result(session, job_id, {
+                    "version_id": version.id, "name": version.name, "images": image_count,
+                })
+            except Exception:
+                logger.exception("Could not record snapshot job %s's result", job_id)
+
+    await job_queue.enqueue(job, _run)
+    return job.id
+
+
 @router.post("/{dataset_id}/versions")
 async def create_snapshot(
     dataset_id: str, body: SnapshotCreate, db: AsyncSession = Depends(get_db)
@@ -275,30 +323,11 @@ async def create_snapshot(
 
     # Manual mode always runs as background job; auto mode inline if small
     if mode == "manual" or image_count > _SNAPSHOT_INLINE_LIMIT:
-        job = BackgroundJob(
-            job_type="create_snapshot",
-            label=f"Snapshot: {body.name or 'auto'}",
-            dataset_id=dataset_id,
-            total_items=image_count,
+        job_id = await start_snapshot_job(
+            db, dataset_id, name=body.name, description=body.description,
+            branch_id=body.branch_id, image_count=image_count,
         )
-        db.add(job)
-        await db.commit()
-
-        snap_name = body.name
-        snap_desc = body.description
-        snap_branch_id = body.branch_id
-
-        async def _run(job_id: str) -> None:
-            from backend.database import AsyncSessionLocal
-            async with AsyncSessionLocal() as session, busy(dataset_id, "snapshot"):
-                await version_service.create_snapshot(
-                    session, dataset_id,
-                    name=snap_name, description=snap_desc,
-                    branch_id=snap_branch_id, job_id=job_id,
-                )
-
-        await job_queue.enqueue(job, _run)
-        return {"job_id": job.id}
+        return {"job_id": job_id}
 
     try:
         version = await version_service.create_snapshot(

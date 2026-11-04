@@ -4,8 +4,9 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-# The order stages always run in, whichever are switched on. §6 adds the snapshot.
+# The order stages always run in, whichever are switched on.
 STAGE_ORDER: tuple[str, ...] = (
+    "snapshot",
     "prompts",
     "rewrite",
     "free_rewrite_model",
@@ -19,16 +20,21 @@ STAGE_ORDER: tuple[str, ...] = (
     "free_caption_model",
     "export",
 )
+# The head (M6 §6) runs once, before the first pass: the snapshot is the run's undo point,
+# so it must not repeat. It carries no pass number, which is what keeps `next_pass`
+# from copying it into every later pass.
+HEAD_STAGES: tuple[str, ...] = STAGE_ORDER[: STAGE_ORDER.index("prompts")]
 # The loop body (M6 §5): these repeat once per pass. `next_pass` ends each pass and is
 # never chosen by hand: a run gets one when its recipe has `loop` settings. The tail
 # after it (caption, the unload, export) runs once, after the last pass.
-BODY_STAGES: tuple[str, ...] = STAGE_ORDER[: STAGE_ORDER.index("next_pass") + 1]
+BODY_STAGES: tuple[str, ...] = STAGE_ORDER[STAGE_ORDER.index("prompts"): STAGE_ORDER.index("next_pass") + 1]
 TAIL_STAGES: tuple[str, ...] = STAGE_ORDER[STAGE_ORDER.index("next_pass") + 1:]
 StageKey = Literal[
-    "prompts", "rewrite", "free_rewrite_model", "handoff_to_comfy", "generate", "handoff_to_local",
-    "score", "gate", "caption", "free_caption_model", "export",
+    "snapshot", "prompts", "rewrite", "free_rewrite_model", "handoff_to_comfy", "generate",
+    "handoff_to_local", "score", "gate", "caption", "free_caption_model", "export",
 ]
 STAGE_LABELS: dict[str, str] = {
+    "snapshot": "Snapshot the dataset",
     "prompts": "Fill the blueprint",
     "rewrite": "Rewrite prompts",
     "free_rewrite_model": "Unload the rewrite model",
@@ -197,6 +203,74 @@ class RunRecipe(BaseModel):
         return set(self.gate.exclude_flags) if self.gate and "gate" in self.stages else set()
 
 
+class CaptionDraft(CaptionSettings):
+    # Empty when the recipe came from another machine whose provider is not set up here.
+    model: str = Field(default="", max_length=300)
+
+
+class ExportDraft(ExportSettings):
+    # Empty when imported: an absolute folder from another machine is never kept.
+    output_dir: str = Field(default="", max_length=1024)
+
+
+class RewriteDraft(RewriteSettings):
+    provider_id: str = Field(default="", max_length=36)
+    scenarios: list[str] = Field(default_factory=list)
+
+
+class RunRecipeDraft(RunRecipe):
+    """A recipe as the library stores it (M6 §6): a `RunRecipe` whose machine-specific
+    fields may be empty, so an imported one can be saved and finished in the form. The
+    stage rules still hold; the start validates the strict `RunRecipe`."""
+
+    caption: CaptionDraft | None = None
+    export: ExportDraft | None = None
+    rewrite: RewriteDraft | None = None
+
+
+def _recipe_name(v: str) -> str:
+    """Runs of whitespace become one space; a name of nothing but spaces is refused."""
+    v = " ".join(v.split())
+    if not v:
+        raise ValueError("A recipe needs a name")
+    return v
+
+
+class RecipeSave(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    recipe: RunRecipeDraft
+    # Overwrite the recipe that has this name, rather than refusing with a 409.
+    replace: bool = False
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, v: str) -> str:
+        return _recipe_name(v)
+
+
+class RecipeRename(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, v: str) -> str:
+        return _recipe_name(v)
+
+
+class RecipeOut(BaseModel):
+    id: str
+    name: str
+    recipe: dict
+    created_at: datetime | None
+    updated_at: datetime | None
+
+
+class RecipeImportOut(BaseModel):
+    recipe: RecipeOut
+    # What the import changed or could not carry over, in words for the user.
+    notes: list[str]
+
+
 class RunStartRequest(BaseModel):
     dataset_id: str
     # Required: a run's images are the images its plan rows produce.
@@ -205,10 +279,53 @@ class RunStartRequest(BaseModel):
     recipe: RunRecipe
 
 
+class RunCheck(BaseModel):
+    """One finding of the shared start check (`run_service.plan_run`). An error refuses
+    the start, with `status_code` as its HTTP status; a warning never blocks."""
+
+    key: str
+    level: Literal["error", "warning"]
+    message: str
+    status_code: int | None = None
+
+
+class RunPlanFolder(BaseModel):
+    path: str
+    target: int
+    kept: int
+    # Rows pass 1 would generate here: the fill's new rows plus the open ones it resets.
+    rows: int
+
+
+class RunPlanReport(BaseModel):
+    """What a run would do, and whether it may start: the dry run's answer (M6 §6).
+    `POST /runs/` computes the same report and refuses on its first error, so the two
+    cannot disagree."""
+
+    ok: bool
+    checks: list[RunCheck]
+    stages: list["RunStage"]
+    has_blueprint: bool
+    # The fill's folders, short ones first, capped at `FOLDER_LIST_LIMIT`.
+    folders: list[RunPlanFolder] = Field(default_factory=list)
+    folder_count: int = 0
+    rows_to_add: int = 0
+    # Rows pass 1 would generate before and after the image cap's clamp.
+    rows_before_clamp: int = 0
+    rows_planned: int = 0
+    images_per_row: float = 1.0
+    images_estimate: int = 0
+    rewrite_calls: int | None = None
+    rewrite_billed: bool = False
+    caption_calls: int | None = None
+    caption_billed: bool = False
+    disk_estimate_bytes: int | None = None
+
+
 class RunStage(BaseModel):
     key: str
     status: str
-    # Which pass of the loop the entry belongs to; None for a tail stage.
+    # Which pass of the loop the entry belongs to; None for a head or tail stage.
     pass_no: int | None = None
     job_id: str | None = None
     note: str | None = None
@@ -226,6 +343,9 @@ class RunOut(BaseModel):
     stages: list[RunStage]
     status: str
     pause_requested: bool
+    # A cancel asked for while the snapshot runs: snapshot jobs never stop partway, so
+    # the run is cancelled when the snapshot ends (M6 §6).
+    cancel_requested: bool = False
     current_job_id: str | None
     error_msg: str | None
     row_count: int
@@ -235,6 +355,12 @@ class RunOut(BaseModel):
     leaves: list[dict] = Field(default_factory=list)
     leaf_count: int = 0
     met_count: int = 0
+    # Stopped on a cap with a folder still short: it can carry on with the cap raised.
+    can_extend: bool = False
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
+
+
+# `RunPlanReport` names `RunStage`, defined after it.
+RunPlanReport.model_rebuild()

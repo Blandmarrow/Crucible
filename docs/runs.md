@@ -17,6 +17,7 @@ They always run in this order. Switch off any you do not want.
 
 | Stage | What it does |
 |---|---|
+| **Snapshot the dataset** | Off by default. Takes a version of the dataset before the run changes anything, so you can go back to it on the Versions page. It runs once, before the first pass. With versioning off in Settings it is skipped, and the run says so. |
 | **Fill the blueprint** | The same as **Top up** on the Blueprint tab: adds the rows each short folder needs, and puts failed rows back in the queue. With no blueprint it is skipped, and the run generates the plan's pending rows instead. |
 | **Rewrite prompts** | Off by default. Rewrites the new template prompts into prose with a language model before generating, for the scenarios you tick (see below). |
 | **Unload the rewrite model** | Frees the GPU from the model that rewrote, so ComfyUI has it. Only runs with Rewrite. |
@@ -53,6 +54,34 @@ changing those pages later does not change a run in progress.
 
 Loss masks, the license and label filters, and limiting the export to some subfolders are
 only on the Export page for now.
+
+## Checking before you start
+
+Press **Dry run** to see what the run would do without doing it. Nothing is written and
+nothing is generated. The report shows:
+- every **problem** that would stop the start, such as ComfyUI not answering, a blueprint
+  over the row limit, or a caption model your provider does not list;
+- **warnings** that do not stop it, such as versioning being off with Snapshot on;
+- the stages, and how many rows and images the first pass makes in each folder.
+
+**Start run** makes the same checks and refuses on the first problem, before anything is
+written. If you change the form after a dry run, the report says it is out of date.
+
+## Saving the form as a recipe
+
+The form is remembered between visits. Its plan and base folder are remembered for each
+dataset.
+
+To keep a set of settings, type a name under **Recipe** and press **Save as recipe**.
+Recipes are shared by every dataset. Pick one and press **Load** to fill the form, or
+**Rename** or **Delete** it. Loading keeps the plan and run name you have chosen.
+
+**Export** saves a recipe as a file to share, and **Import…** reads one. A file never
+carries your export folder, and it names each LLM provider instead of pointing at yours.
+On import, a provider with the same name here is used. Otherwise that field is left empty,
+and the page says what to choose.
+
+Each past run also has **Use these settings**, which fills the form with what it ran with.
 
 ## Repeating until every folder is full
 
@@ -92,6 +121,11 @@ Ollama and Crucible's own captioners are never billed.
 When a cap runs out, the run stops making new images, still frees ComfyUI's VRAM, runs
 captioning and the export, and says which cap stopped it. If the paid-call cap cannot
 cover every image, the run captions as many as it can and says how many it left out.
+
+To carry on, press **Raise caps and continue** on the run under *Past runs*. Raise the cap
+that stopped it; no cap can go down. The run adds another pass for the folders still
+short, then captions and exports again. Only the new images are captioned, and what the
+run has already used still counts against the caps.
 
 ### Giving up on a folder
 
@@ -140,7 +174,8 @@ name in front of its label.
 - **Resume** goes on from the first stage that is not done. Nothing already done runs
   again, and a generated row is never generated twice.
 - **Cancel** stops the current stage's job, and no later stage starts. Images already made
-  stay in the dataset.
+  stay in the dataset. A snapshot cannot stop partway, so a cancel during one waits for it
+  to finish, and the run reads *cancelling* until then.
 
 A dataset can have one run going or paused at a time. While a run on a plan is going or
 paused, that plan's **Apply** and **Top up** buttons are refused, so nothing adds rows
@@ -160,6 +195,7 @@ between its passes. A repeating run shows its stages grouped by pass.
 
 ## Limits for now
 
-- The form is not remembered between visits. Saved run recipes are planned.
-- A run that stopped at a cap cannot have the cap raised. Start a new run: it picks up
-  where the folders stand, and makes only what is still missing.
+- A run that gave up on its folders, rather than stopping at a cap, cannot carry on. Start
+  a new run: it picks up where the folders stand, and makes only what is still missing.
+- A snapshot is taken once, at the start. A run resumed after its snapshot failed takes
+  a new one.

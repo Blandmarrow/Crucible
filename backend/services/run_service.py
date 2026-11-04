@@ -98,13 +98,24 @@ def _export_body(dataset_id: str, s: ExportSettings):
     common: dict[str, Any] = {
         "dataset_id": dataset_id,
         "output_dir": s.output_dir,
+        "output_format": s.output_format,
+        "jpeg_quality": s.jpeg_quality,
+        "resize_to": None if s.captions_only else s.resize_to,
+        "aesthetic_min": s.aesthetic_min,
         "captioned_only": s.captioned_only,
-        "exclude_flags": "is_duplicate" if s.exclude_duplicates else "",
+        "exclude_flags": ",".join(s.exclude_flags),
+        "style_sim_min": s.style_sim_min,
+        "strip_metadata": s.strip_metadata and not s.captions_only,
+        "captions_only": s.captions_only,
     }
     if s.kind == "kohya":
-        return export_router.KohyaExportRequest(**common, n_repeats=s.n_repeats, concept_token=s.concept_token)
+        return export_router.KohyaExportRequest(
+            **common, caption_format=s.caption_format, n_repeats=s.n_repeats, concept_token=s.concept_token,
+        )
     if s.kind == "aitoolkit":
-        return export_router.AIToolkitExportRequest(**common, concept_name=s.concept_name)
+        return export_router.AIToolkitExportRequest(
+            **common, caption_format=s.caption_format, concept_name=s.concept_name,
+        )
     return export_router.PlainExportRequest(**common)
 
 
@@ -113,10 +124,9 @@ def _caption_body(dataset_id: str, recipe: RunRecipe, image_ids: list[str]):
 
     c = recipe.caption
     assert c is not None
-    return CaptionJobRequest(
-        dataset_id=dataset_id, image_ids=image_ids, model=c.model, style=c.style,
-        custom_prompt=c.custom_prompt, overwrite=c.overwrite,
-    )
+    # Field for field: CaptionSettings is named after CaptionJobRequest, so its
+    # validators (the model id, the flag names) judge the run's settings too.
+    return CaptionJobRequest(dataset_id=dataset_id, image_ids=image_ids, **c.model_dump())
 
 
 async def _preflight(db: AsyncSession, plan: ComfyPlan, recipe: RunRecipe) -> None:

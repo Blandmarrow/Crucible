@@ -204,6 +204,45 @@ def test_the_handoffs_are_best_effort(tmp_path, monkeypatch):
     run(go())
 
 
+def test_caption_and_export_settings_reach_their_jobs(tmp_path, monkeypatch):
+    """The recipe's settings are named after the job requests and passed through whole,
+    so nothing the form sets is dropped on the way, and the requests' own validators
+    judge them at start."""
+    async def go():
+        async with api_env(tmp_path) as env:
+            fake, ds, plan_id = await _plan(env, monkeypatch)
+            await _add_row(env, plan_id, "a knight")
+            model = await _caption_model(env, monkeypatch)
+            out_dir = tmp_path / "kohya"
+            caption = {"model": model, "custom_prompt": "Describe the armour.", "strip_thinking": True,
+                       "delimiter_mode": "append", "delimiter": " | ", "exclude_flags": ["is_blurry"]}
+            export = {"kind": "kohya", "output_dir": str(out_dir), "n_repeats": 3, "concept_token": "tok",
+                      "caption_format": "caption", "output_format": "jpeg", "jpeg_quality": 80,
+                      "exclude_flags": ["is_duplicate", "has_watermark"]}
+
+            code, body = await _start(env, ds["id"], plan_id, ["caption"],
+                                      caption={**caption, "exclude_flags": ["not_a_flag"]})
+            assert code == 400, body
+
+            code, body = await _start(env, ds["id"], plan_id, ["generate", "caption", "export"],
+                                      caption=caption, export=export)
+            assert code == 200, body
+            done = await wait_for_run(env, body["id"])
+            assert done["status"] == "completed", done
+
+            [cap_job] = await _jobs(env, "caption")
+            for k, v in caption.items():
+                assert cap_job.config[k] == v, k
+            [exp_job] = await _jobs(env, "export")
+            assert exp_job.config["caption_format"] == "caption"
+            assert exp_job.config["output_format"] == "jpeg"
+            assert exp_job.config["jpeg_quality"] == 80
+            assert exp_job.config["n_repeats"] == 3
+            assert exp_job.config["exclude_flags"] == "is_duplicate,has_watermark"
+            assert list(out_dir.rglob("*.caption"))
+    run(go())
+
+
 # 3 ───────────────────────────────────────────────────────────────────────────
 
 def test_advance_run_raising_leaves_the_child_job_and_the_worker_alone(tmp_path, monkeypatch):

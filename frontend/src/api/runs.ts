@@ -25,20 +25,53 @@ export const RUN_STAGE_LABELS: Record<RunStageKey, string> = {
 export type RunStatus = "running" | "paused" | "completed" | "failed" | "cancelled";
 export type StageStatus = "pending" | "running" | "done" | "skipped" | "failed" | "cancelled";
 
+/** `schemas/run.CaptionSettings`: named as on the caption job request, passed through whole. */
+export interface RunCaptionSettings {
+  model: string;
+  style: string;
+  custom_prompt: string;
+  overwrite: boolean;
+  target_width: number | null;
+  target_height: number | null;
+  strip_refusals: boolean;
+  strip_thinking: boolean;
+  strip_underscores: boolean;
+  strip_hedges: boolean;
+  dedupe_tags: boolean;
+  save_backup: boolean;
+  rename_on_caption: boolean;
+  wd14_threshold: number;
+  delimiter_mode: "overwrite" | "append" | "prepend";
+  delimiter: string;
+  min_aesthetic_score: number | null;
+  exclude_flags: string[] | null;
+}
+
+/** `schemas/run.ExportSettings`: named as on the export requests; `exclude_flags` is a list. */
+export interface RunExportSettings {
+  kind: "plain" | "kohya" | "aitoolkit";
+  output_dir: string;
+  n_repeats: number;
+  concept_token: string;
+  concept_name: string;
+  caption_format: "txt" | "caption" | "jsonl";
+  output_format: string;
+  jpeg_quality: number;
+  resize_to: number | null;
+  aesthetic_min: number | null;
+  captioned_only: boolean;
+  exclude_flags: string[];
+  style_sim_min: number | null;
+  strip_metadata: boolean;
+  captions_only: boolean;
+}
+
 export interface RunRecipe {
   stages: RunStageKey[];
   generate: { subfolder: string; set_caption: boolean };
   score: { run_aesthetic: boolean; aesthetic_model: "laion" | "v2_5" };
-  caption: { model: string; style: string; custom_prompt: string; overwrite: boolean } | null;
-  export: {
-    kind: "plain" | "kohya" | "aitoolkit";
-    output_dir: string;
-    n_repeats: number;
-    concept_token: string;
-    concept_name: string;
-    captioned_only: boolean;
-    exclude_duplicates: boolean;
-  } | null;
+  caption: RunCaptionSettings | null;
+  export: RunExportSettings | null;
 }
 
 export interface RunStage {

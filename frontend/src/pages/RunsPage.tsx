@@ -1,18 +1,19 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
-import { FolderOpen } from "lucide-react";
 import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
 import { useJobSSE } from "../hooks/useSSE";
 import { useJobStore } from "../store/jobStore";
 import { comfyApi } from "../api/comfy";
-import { captioningApi } from "../api/captioning";
-import { providersApi } from "../api/providers";
 import { runsApi, isLiveRun, RUN_STAGES, RUN_STAGE_LABELS } from "../api/runs";
 import type { Run, RunRecipe, RunStageKey, StageStatus } from "../api/runs";
-import { captionBackend, captionModelOptions } from "../constants/captionModels";
-import DirPickerModal from "../components/common/DirPickerModal";
-import ModelPicker from "../components/providers/ModelPicker";
+import { captionBackend } from "../constants/captionModels";
+import RunCaptionFields from "../components/runs/RunCaptionFields";
+import RunExportFields from "../components/runs/RunExportFields";
+import {
+  CAPTION_FORM_DEFAULTS, EXPORT_FORM_DEFAULTS, captionModelId, toCaptionSettings, toExportSettings,
+  type CaptionForm, type ExportForm,
+} from "../components/runs/runForms";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import { apiErrorDetail } from "../utils/apiError";
 
@@ -69,15 +70,8 @@ function StartRunForm({ datasetId, onStarted }: { datasetId: string; onStarted: 
   const [subfolder, setSubfolder] = useState("");
   const [runAesthetic, setRunAesthetic] = useState(true);
   const [aestheticModel, setAestheticModel] = useState<"laion" | "v2_5">("laion");
-  const [captionBase, setCaptionBase] = useState("");
-  const [providerModel, setProviderModel] = useState("");
-  const [overwrite, setOverwrite] = useState(true);
-  const [exportKind, setExportKind] = useState<"plain" | "kohya" | "aitoolkit">("kohya");
-  const [outputDir, setOutputDir] = useState("");
-  const [nRepeats, setNRepeats] = useState(10);
-  const [concept, setConcept] = useState("concept");
-  const [excludeDupes, setExcludeDupes] = useState(true);
-  const [dirPicker, setDirPicker] = useState(false);
+  const [caption, setCaption] = useState<CaptionForm>(CAPTION_FORM_DEFAULTS);
+  const [exportForm, setExportForm] = useState<ExportForm>(EXPORT_FORM_DEFAULTS);
 
   const prevDatasetId = useRef(datasetId);
   useEffect(() => {
@@ -97,26 +91,7 @@ function StartRunForm({ datasetId, onStarted }: { datasetId: string; onStarted: 
     queryFn: () => comfyApi.getBlueprint(effectivePlanId!),
     enabled: !!effectivePlanId,
   });
-  const { data: modelsData } = useQuery({
-    queryKey: ["captioning-models"],
-    queryFn: captioningApi.models,
-    enabled: stages.has("caption"),
-  });
-  const { data: providers = [] } = useQuery({
-    queryKey: ["providers"],
-    queryFn: providersApi.list,
-    staleTime: 30_000,
-    enabled: stages.has("caption"),
-  });
-  const modelOptions = useMemo(() => captionModelOptions(modelsData, providers), [modelsData, providers]);
-  const groups = useMemo(() => {
-    const out = new Map<string, typeof modelOptions>();
-    for (const o of modelOptions) out.set(o.group, [...(out.get(o.group) ?? []), o]);
-    return [...out.entries()];
-  }, [modelOptions]);
-  const isProvider = captionBase.startsWith("openai_compat:");
-  const selectedProvider = isProvider ? providers.find((p) => captionBase === `openai_compat:${p.id}`) : undefined;
-  const captionModel = isProvider && providerModel.trim() ? `${captionBase}:${providerModel.trim()}` : captionBase;
+  const captionModel = captionModelId(caption);
 
   const toggle = (k: RunStageKey) =>
     setStages((prev) => {
@@ -129,7 +104,7 @@ function StartRunForm({ datasetId, onStarted }: { datasetId: string; onStarted: 
   if (!effectivePlanId) blockers.push("Create a plan on the ComfyUI page first.");
   if (stages.size === 0) blockers.push("Switch on at least one stage.");
   if (stages.has("caption") && (!captionModel || captionBackend(captionModel) === null)) blockers.push("Choose a caption model.");
-  if (stages.has("export") && !outputDir.trim()) blockers.push("Choose an export folder.");
+  if (stages.has("export") && !exportForm.outputDir.trim()) blockers.push("Choose an export folder.");
 
   const start = useMutation({
     mutationFn: () => {
@@ -137,16 +112,8 @@ function StartRunForm({ datasetId, onStarted }: { datasetId: string; onStarted: 
         stages: RUN_STAGES.filter((s) => stages.has(s)),
         generate: { subfolder: subfolder.trim(), set_caption: true },
         score: { run_aesthetic: runAesthetic, aesthetic_model: aestheticModel },
-        caption: stages.has("caption")
-          ? { model: captionModel, style: "detailed", custom_prompt: "", overwrite }
-          : null,
-        export: stages.has("export")
-          ? {
-              kind: exportKind, output_dir: outputDir.trim(), n_repeats: nRepeats,
-              concept_token: concept, concept_name: concept,
-              captioned_only: false, exclude_duplicates: excludeDupes,
-            }
-          : null,
+        caption: stages.has("caption") ? toCaptionSettings(caption) : null,
+        export: stages.has("export") ? toExportSettings(exportForm) : null,
       };
       return runsApi.start({ dataset_id: datasetId, plan_id: effectivePlanId!, name: name.trim(), recipe });
     },
@@ -216,82 +183,9 @@ function StartRunForm({ datasetId, onStarted }: { datasetId: string; onStarted: 
           </div>
         )}
 
-        {stages.has("caption") && (
-          <div className="form-row">
-            <div className="lbl-col"><h4>Caption</h4><p>Only this run's own images are captioned.</p></div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              <select className="select" value={captionBase} onChange={(e) => {
-                const v = e.target.value;
-                setCaptionBase(v);
-                const p = providers.find((pr) => v === `openai_compat:${pr.id}`);
-                setProviderModel(p?.default_model ?? "");
-              }}>
-                <option value="">— choose a model —</option>
-                {groups.map(([group, opts]) => (
-                  <optgroup key={group} label={group}>
-                    {opts.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
-                  </optgroup>
-                ))}
-              </select>
-              {isProvider && selectedProvider && (
-                // The same picker CaptioningPage uses: it asks the provider for its models.
-                <ModelPicker
-                  key={selectedProvider.id}
-                  value={providerModel}
-                  onChange={setProviderModel}
-                  providerId={selectedProvider.id}
-                  baseUrl={selectedProvider.base_url}
-                  placeholder={`Model name (default: ${selectedProvider.default_model || "none"})`}
-                />
-              )}
-              <label className="row-flex" style={{ gap: 8 }}>
-                <input type="checkbox" className="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} />
-                <span style={{ fontSize: 12.5 }}>Replace existing captions (the generate stage writes each prompt as one)</span>
-              </label>
-            </div>
-          </div>
-        )}
+        {stages.has("caption") && <RunCaptionFields value={caption} onChange={setCaption} />}
 
-        {stages.has("export") && (
-          <div className="form-row">
-            <div className="lbl-col"><h4>Export</h4><p>Exports the whole dataset through these settings.</p></div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              <div className="row-flex" style={{ flexWrap: "wrap" }}>
-                {([["kohya", "kohya"], ["aitoolkit", "ai-toolkit"], ["plain", "plain folder"]] as const).map(([v, label]) => (
-                  <button key={v} className={`btn sm${exportKind === v ? " primary" : ""}`} onClick={() => setExportKind(v)}>{label}</button>
-                ))}
-              </div>
-              <div className="row-flex" style={{ gap: 6 }}>
-                <input className="input" style={{ flex: 1 }} placeholder="Output folder (absolute path)" value={outputDir} onChange={(e) => setOutputDir(e.target.value)} />
-                <button className="btn sm ghost" onClick={() => setDirPicker(true)} title="Browse"><FolderOpen size={14} /></button>
-              </div>
-              {exportKind !== "plain" && (
-                <div className="row-flex" style={{ gap: 8 }}>
-                  {exportKind === "kohya" && (
-                    <label className="row-flex" style={{ gap: 6 }}>
-                      <span style={{ fontSize: 12.5 }}>Repeats</span>
-                      <input type="number" className="input" min={1} max={1000} value={nRepeats}
-                        onChange={(e) => setNRepeats(Math.max(1, Math.min(1000, Number(e.target.value) || 1)))} style={{ width: 70 }} />
-                    </label>
-                  )}
-                  <label className="row-flex" style={{ gap: 6 }}>
-                    <span style={{ fontSize: 12.5 }}>{exportKind === "kohya" ? "Concept token" : "Concept name"}</span>
-                    <input className="input" value={concept} maxLength={200} onChange={(e) => setConcept(e.target.value)} />
-                  </label>
-                </div>
-              )}
-              <label className="row-flex" style={{ gap: 8 }}>
-                <input type="checkbox" className="checkbox" checked={excludeDupes} onChange={(e) => setExcludeDupes(e.target.checked)} />
-                <span style={{ fontSize: 12.5 }}>Leave out duplicates</span>
-              </label>
-            </div>
-            {dirPicker && (
-              <DirPickerModal initialPath={outputDir}
-                onConfirm={(p) => { setOutputDir(p); setDirPicker(false); }}
-                onCancel={() => setDirPicker(false)} />
-            )}
-          </div>
-        )}
+        {stages.has("export") && <RunExportFields value={exportForm} onChange={setExportForm} datasetId={datasetId} />}
 
         <div className="row-flex" style={{ gap: 12, padding: "14px 0" }}>
           <button className="btn primary" disabled={blockers.length > 0 || start.isPending} onClick={() => start.mutate()}>

@@ -20,14 +20,33 @@ They always run in this order. Switch off any you do not want.
 | **Generate** | Runs this run's rows through ComfyUI, filing each image in its row's folder, under the base folder if you set one. |
 | **Free ComfyUI's VRAM** | Asks ComfyUI to unload its models, so Crucible's scorers and captioners have the GPU. If your ComfyUI cannot do that, the run notes it and carries on. |
 | **Score** | Scores the images this run made. Technical scores always run, because they are what finds duplicates. The aesthetic score is optional. |
-| **Caption** | Captions the images this run made with the model you choose. **Replace existing captions** is on by default, because a ComfyUI run already saves each prompt as the image's caption. |
-| **Export** | Exports the whole dataset to the folder you choose, as kohya, ai-toolkit or a plain folder. **Leave out duplicates** is on by default. |
+| **Caption** | Captions the images this run made, with the settings below. **Caption images that already have a caption** is on by default, because a ComfyUI run already saves each prompt as the image's caption. |
+| **Export** | Exports the whole dataset to the folder you choose, with the settings below. Duplicates and watermarked images are left out by default. |
 
 A stage with nothing to do is **skipped**, not run on everything. If a run made no new
 images, scoring and captioning are skipped, and no other image in the dataset is touched.
 
 Crucible does not unload a language model. If you caption with LM Studio, give the model a
 time-to-live in LM Studio so it frees the GPU on its own.
+
+## Caption and export settings
+
+When you switch on **Caption** or **Export**, the form shows the same settings as the
+Captioning and Export pages, so you can set them for this run:
+
+- **Caption:** the model (for LM Studio or another provider, pick the model from its
+  list), the prompt or one of your saved prompt presets, the style, target resolution,
+  how existing captions are handled, quality filters and the post-processing options.
+- **Export:** the format, output folder, concept and repeats, caption file, filters,
+  resize, image format, stripping metadata, and captions only.
+
+Each section has a **Fill from the Captioning page** or **Fill from the Export page**
+button. It copies what that page last used, and you can change anything after. Without
+it, the form starts from the usual defaults. A run keeps its settings once started, so
+changing those pages later does not change a run in progress.
+
+Loss masks, the license and label filters, and limiting the export to some subfolders are
+only on the Export page for now.
 
 ## Following a run
 

@@ -42,23 +42,54 @@ class ScoreSettings(BaseModel):
 
 
 class CaptionSettings(BaseModel):
+    """The caption stage's settings. Every field is named as on
+    `routers/captioning.CaptionJobRequest`, which they are passed to as they are
+    (`model_dump()`), so the request model's own validators check them. Only the scope
+    fields (dataset, ids, subfolder) and the label are the run's to set."""
+
     model: str = Field(min_length=1, max_length=300)
     style: str = Field(default="detailed", max_length=100)
-    custom_prompt: str = Field(default="", max_length=4000)
+    custom_prompt: str = Field(default="", max_length=20000)
     # On by default: a ComfyUI run with `set_caption` has already written each prompt
     # as the caption, so `False` would find nothing to caption. The stage is scoped to
     # this run's own images, so nothing else is touched.
     overwrite: bool = True
+    target_width: int | None = Field(default=None, ge=1, le=8192)
+    target_height: int | None = Field(default=None, ge=1, le=8192)
+    strip_refusals: bool = True
+    strip_thinking: bool = False
+    strip_underscores: bool = False
+    strip_hedges: bool = False
+    dedupe_tags: bool = False
+    save_backup: bool = False
+    rename_on_caption: bool = False
+    wd14_threshold: float = Field(default=0.35, ge=0.0, le=1.0)
+    delimiter_mode: Literal["overwrite", "append", "prepend"] = "overwrite"
+    delimiter: str = Field(default=", ", max_length=20)
+    min_aesthetic_score: float | None = None
+    exclude_flags: list[str] | None = None
 
 
 class ExportSettings(BaseModel):
+    """The export stage's settings, named as on the `routers/export` request models.
+    `exclude_flags` is a list here and joined for the request, which takes a string.
+    Duplicates are left out by default, since the score stage has just flagged them."""
+
     kind: Literal["plain", "kohya", "aitoolkit"] = "plain"
     output_dir: str = Field(min_length=1, max_length=1024)
     n_repeats: int = Field(default=10, ge=1, le=1000)
     concept_token: str = Field(default="concept", max_length=200)
     concept_name: str = Field(default="concept", max_length=200)
+    caption_format: Literal["txt", "caption", "jsonl"] = "txt"
+    output_format: str = Field(default="original", max_length=20)
+    jpeg_quality: int = Field(default=95, ge=1, le=100)
+    resize_to: int | None = Field(default=None, ge=1, le=16384)
+    aesthetic_min: float | None = None
     captioned_only: bool = False
-    exclude_duplicates: bool = True
+    exclude_flags: list[str] = Field(default_factory=lambda: ["is_duplicate"])
+    style_sim_min: float | None = None
+    strip_metadata: bool = False
+    captions_only: bool = False
 
 
 class RunRecipe(BaseModel):

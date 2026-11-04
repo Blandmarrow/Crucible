@@ -99,8 +99,8 @@ check. The order is always run lock, then dataset or plan lock, never the revers
 | `generate` | The run's rows that are not completed yet: `failed` and `running` ones go back to pending, under the plan lock. Then `_start_run` with those exact row ids. With no `context.row_ids` (no blueprint, or `prompts` off) it takes the plan's pending rows when it first starts, and stores them. Completed rows are never run twice. |
 | `handoff_to_local` | A `run_handoff` job: `ComfyClient.free()` (`POST /free`), best effort. Any error is a note. It is built through `backend.routers.comfy.ComfyClient`, the name the tests patch onto the fake. |
 | `score` | `start_score_job` over the run's images, technical scoring always on (it flags duplicates through `_flag_duplicates`, dataset-wide) and aesthetic optional. |
-| `caption` | `start_caption_job` over the run's images, with `overwrite` on by default. `comfy_generate` with `set_caption` has already written each prompt as the caption, so `overwrite=False` would find nothing. |
-| `export` | `start_export_job` with `image_ids=None`: the whole dataset through the form's filters, duplicates left out by default (`exclude_flags="is_duplicate"`). |
+| `caption` | `start_caption_job` over the run's images. `CaptionSettings` is named field for field after `CaptionJobRequest` and passed through whole (`_caption_body`), so the request's own validators judge it, and a field the request gains later only needs adding to the settings. `overwrite` is on by default: `comfy_generate` with `set_caption` has already written each prompt as the caption, so `False` would find nothing. |
+| `export` | `start_export_job` with `image_ids=None`: the whole dataset through the form's filters. `ExportSettings` is named after the export requests, with `exclude_flags` a list joined for them (`_export_body`); duplicates are left out by default. Loss masks, the license and label filters and the subfolder limit are not in it yet. |
 
 **A stage with nothing in scope is skipped, never started with `[]`.** Score, caption and
 export read `image_ids: []` as the whole dataset (`if body.image_ids:`; the HTTP routes keep
@@ -170,10 +170,19 @@ stages into `STAGE_ORDER` whatever order they arrive in.
 is **not keyed** by dataset id in `PageRenderer`. The form re-seeds through a
 `prevDatasetId` effect, as `ComfyPage` does.
 
-- With no live run it shows the start form: the plan, the stage switches, the base folder,
-  the aesthetic model, a caption model from `captionModelOptions` (a provider's model comes
-  from the same `ModelPicker` `CaptioningPage` uses, which asks the provider for its
-  models), and the export kind, folder and fields. Start is disabled with the first
+- With no live run it shows the start form: the plan, the stage switches, the base folder
+  and the aesthetic model, then the caption stage's fields (`components/runs/RunCaptionFields.tsx`)
+  and the export stage's (`RunExportFields.tsx`). They are the Captioning and Export pages'
+  own fields, minus scope, and reuse their controls: `DelimiterControls`,
+  `ResolutionPicker`, the provider `ModelPicker`, the saved prompt presets and
+  `FLAG_OPTIONS`. The form state uses those pages' names, and `components/runs/runForms.ts`
+  converts it to the run's settings.
+- **"Fill from the Captioning page"** copies that page's saved workflow
+  (`appDataApi.getCaptioningWorkflow`), except its scope, which a run does not have.
+  **"Fill from the Export page"** copies the Export page's browser-stored workflow and this
+  dataset's filters; their shapes and defaults moved to `constants/exportWorkflow.ts` so
+  the Runs page can read them without importing `ExportPage`. Both are optional: the form
+  starts from defaults. Start is disabled with the first
   reason (`blockers`) until the form is complete. The start answers 200 even for a run
   whose first stage could not start, so the toast reads the returned status: a `failed`
   run shows its error, not "Run started".

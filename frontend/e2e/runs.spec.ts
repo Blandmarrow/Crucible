@@ -54,8 +54,13 @@ test('a run fills the blueprint, generates and exports in one press', async ({ p
   await expect(page.getByText('This plan has a blueprint', { exact: false })).toBeVisible()
   await page.getByRole('checkbox', { name: 'Score', exact: true }).uncheck()
   await page.getByRole('checkbox', { name: 'Export', exact: true }).check()
-  await page.getByRole('button', { name: 'plain folder' }).click()
-  await page.getByPlaceholder('Output folder (absolute path)').fill(outDir)
+  // "Fill from the Export page" copies what that page saved in this browser.
+  await page.evaluate((dir) => {
+    localStorage.setItem('export-workflow-config', JSON.stringify({ format: 'plain', outputDir: dir }))
+  }, outDir)
+  await page.getByRole('button', { name: 'Fill from the Export page' }).click()
+  await expect(page.getByPlaceholder('Output folder (absolute path)')).toHaveValue(outDir)
+  await expect(page.getByRole('button', { name: 'plain folder' })).toHaveClass(/primary/)
   await page.getByPlaceholder('Run name (optional)').fill('e2e run')
   await page.getByRole('button', { name: 'Start run' }).click()
 

@@ -68,7 +68,7 @@ fixtures, where detection emits nothing and the defect cannot manifest.
 
 The invariant also had no written home. `docs/dev/video/extract.md` documented the phase
 bands and `video_id` in detail but described `done` only as part of a generic payload, and
-`docs/dev/frontend-jobs.md` described the live branch as firing "on each `done` increment"
+`docs/dev/job-invalidation.md` described the live branch as firing "on each `done` increment"
 without saying what `done` had to mean for that to work.
 
 ### Fix
@@ -86,7 +86,7 @@ without saying what `done` had to mean for that to work.
   invariant over a whole real run — no `detecting` payload with a non-zero `done`, `done`
   non-decreasing, `done <= total` during extraction — rather than the field names.
 - Written down in `docs/dev/video/extract.md` § the `video_extract` job and
-  `docs/dev/frontend-jobs.md` beside the live branch.
+  `docs/dev/job-invalidation.md` beside the live branch.
 
 ### Status & date
 

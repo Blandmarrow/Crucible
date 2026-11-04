@@ -223,7 +223,7 @@ Extraction then carries the
 `EXTRACT_COMMIT_EVERY` rather than once per shot, while `_emit`'s `fraction` stays on
 *planned* frames so the bar keeps its per-shot smoothness. Both halves are required by
 `TopBar`'s live gallery invalidation, a per-job monotonic high-water mark on `done`
-(`docs/dev/frontend-jobs.md`): counting decoded frames during detection fires it twice a
+(`docs/dev/job-invalidation.md`): counting decoded frames during detection fires it twice a
 second while nothing has been written and then leaves it silent for the only phase that
 writes anything, and counting *planned* frames during extraction refetches identical data 24
 times out of 25. `backend/tests/test_video_extract_http.py` pins the invariant — no

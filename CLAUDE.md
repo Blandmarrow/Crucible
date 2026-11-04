@@ -215,7 +215,8 @@ substantial edit.
 | `docs/dev/file-browser-rename-delete.md` | Working on `POST /filesystem/rename` or `/delete` — guards C/D/A/B and `_DATASET_LAYOUT_DIRS`, the thumbnail-stem 409, the delete's hook ordering and `_add_orphan` | ~1500 |
 | `docs/dev/frontend-core.md` | Working on global frontend state, the `SelectionToolbar` modals, or the JS error console — `uploadStore` | ~1700 |
 | `docs/dev/frontend-constants.md` | Working on a shared `frontend/src/constants/` module — the caption style table, license vocabulary, `queryKeys.ts` invalidation helpers, `apiErrorDetail` | ~1650 |
-| `docs/dev/frontend-jobs.md` | Adding a job-triggering UI or changing what a finished job invalidates — job-completion cache invalidation (single-job and id-list patterns), the stale-thumbnail warning and the terminal-emit ordering rule | ~3215 |
+| `docs/dev/frontend-jobs.md` | Adding a job-triggering UI, `useJobSSE`/`useAllJobsSSE`, reconciling after an SSE gap, or job reporting — the partial-failure line, the stale-thumbnail warning and the terminal-emit ordering rule | ~1650 |
+| `docs/dev/job-invalidation.md` | Changing what a finished job invalidates — the single-job and id-list patterns, `TopBar`'s global watcher, `IMAGE_MODIFYING_JOB_TYPES` | ~1850 |
 | `docs/dev/panes-routing.md` | Working on panes, adding a routed page, or lazy page loading — sidebar layout and `usePaneNavigate` | ~1435 |
 | `docs/dev/persistence.md` | Adding a storage key or persisting page configuration | ~2750 |
 | `docs/dev/app-stored-data.md` | Working on the `/app-data` routes, a form whose saved state lives on the server, or the one-time browser import — `ServerStateGate`, `writeToServer`, the conflict dialog, NULL meaning never saved | ~950 |

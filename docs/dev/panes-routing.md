@@ -4,7 +4,7 @@ This file covers the shell every page renders inside: the Sidebar's active-datas
 split-view pane manager (`paneStore`, `PaneContext`, the `pane/` components and their `App.tsx`
 integration), and route-level code splitting including the six-site checklist a new routed page
 must satisfy. The state a page itself uses is in `docs/dev/frontend-core.md` and its constants in `docs/dev/frontend-constants.md`,
-job progress and cache invalidation in `docs/dev/frontend-jobs.md`, and the CSS tokens and
+job progress in `docs/dev/frontend-jobs.md`, job-completion cache invalidation in `docs/dev/job-invalidation.md`, and the CSS tokens and
 modal conventions in `docs/dev/styling.md`.
 
 ### Layout

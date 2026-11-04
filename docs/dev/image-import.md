@@ -34,7 +34,7 @@ Captions are persisted *out* to `{stem}.txt` sidecars (`caption_service._write_t
 
 The `GalleryPage` toolbar also carries an **"Import folder" button** (next to Rescan/Upload) that opens the shared `ImportFolderModal` for the current dataset, so folder import is reachable without returning to `DatasetsPage`. See `docs/dev/dataset-operations.md` for `ImportFolderModal` and the in-app `DirPickerModal` Browse button.
 
-**An import's outcome toasts come from `TopBar`, for every entry point** (GPT-030): the summary on completion (`utils/importToast.ts`), "Import failed: `<server error>`" on failure, and a cancel notice. The modal only says "Import submitted", because a folder that turns out not to exist, or a drive without room, fails in the worker after the modal has closed. Before, that failure showed nothing but the old "Import started". See `docs/dev/frontend-jobs.md` § Job completion → cache invalidation.
+**An import's outcome toasts come from `TopBar`, for every entry point** (GPT-030): the summary on completion (`utils/importToast.ts`), "Import failed: `<server error>`" on failure, and a cancel notice. The modal only says "Import submitted", because a folder that turns out not to exist, or a drive without room, fails in the worker after the modal has closed. Before, that failure showed nothing but the old "Import started". See `docs/dev/job-invalidation.md` § Job completion → cache invalidation.
 
 ## Dropping a caption file onto an image
 

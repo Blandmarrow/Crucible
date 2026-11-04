@@ -17,7 +17,7 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-04, after M8 stages 2 and 3 and the M6 rebase)
+## Next session (updated 2026-11-04, after M6 §4)
 
 1. M5's five stages merged on 2026-10-30 as PR #101. Only its cleanup is open, and that waits
    a release. See [server-state-plan/README.md](server-state-plan/README.md) for what was
@@ -45,21 +45,27 @@ restates its stages.
    ([decision 7](decisions/07-m6-built-whole-on-one-branch.md)): per-row folders are 8dee5de
    there, the plan is rewritten in
    [comfy-automation-plan/README.md](comfy-automation-plan/README.md) by decisions 8 and 9, and
-   `comfy-per-row-subfolders` is deleted. **Work on M6 happens on that branch.** There the
-   ComfyUI dev docs now sit behind the hub `docs/dev/comfyui.md`, with eight files in
-   `docs/dev/comfyui/` (2026-11-03). §7 (the mock ComfyUI server), §2a (blueprints, see
-   `docs/dev/comfyui/structured.md`), §2b (the outline call) and §2c (Top up) have landed there
-   too, so the arc's cut point is reached. §3, the optional LLM rewrite pass, landed there
-   on 2026-11-03 (`docs/dev/comfyui/structured-llm.md` § The rewrite pass). On 2026-11-04
-   the user ran a draft and a rewrite with LM Studio and a thinking model, and both worked.
-   Two hand checks are still open: a Stop mid-run, and a hand-edited row left alone. M8 stages 2 and 3 merged to `main` on 2026-11-04 as
-   PR #109, and this branch was rebased onto it the same day, so **the next M6 work is §4**,
-   which gets its own plan session first. §4 builds the code-callable start functions for the
-   score, caption and export jobs itself; M8 did not
-   ([decision 9](decisions/09-runs-step-forward-on-job-completion.md), corrected 2026-11-04).
-   Decisions 7–9 and this M6 checklist exist only on that branch until it
-   merges, so `main`'s next decision takes number 10. Its migrations `e5c1a9d3f7b2` → `b7d2f4a9c1e3` → `d4a8c2e6f1b9` follow
-   `main`'s `c2b8e4f6a1d7`; rebase at stage boundaries.
+   `comfy-per-row-subfolders` is deleted. **Work on M6 happens on that branch.**
+   - The ComfyUI dev docs sit behind the hub `docs/dev/comfyui.md`, with nine files in
+     `docs/dev/comfyui/`.
+   - §7 (the mock ComfyUI server), §2a (blueprints, see `docs/dev/comfyui/structured.md`),
+     §2b (the outline call) and §2c (Top up) have landed there, so the arc's cut point is
+     reached.
+   - §3, the optional LLM rewrite pass, landed on 2026-11-03
+     (`docs/dev/comfyui/structured-llm.md` § The rewrite pass). On 2026-11-04 the user ran a
+     draft and a rewrite with LM Studio and a thinking model, and both worked. Two hand
+     checks are still open: a Stop mid-run, and a hand-edited row left alone.
+   - M8 stages 2 and 3 merged to `main` on 2026-11-04 as PR #109, and this branch was
+     rebased onto it the same day.
+   - **§4, the stepping run, landed on 2026-11-04** (`docs/dev/comfyui/automation.md`, the
+     Runs page), with every automated gate green. It is not yet checked by hand against a
+     real ComfyUI: a full run with score and caption, that `/free` really unloads, Pause, a
+     restart mid-run and a `TopBar` cancel.
+   - **The next M6 work is §5**, the goal loop and the gate, which the user moved out of §4.
+   - Decisions 7–9 and this M6 checklist exist only on that branch until it merges, so
+     `main`'s next decision takes number 10. Its migrations `e5c1a9d3f7b2` →
+     `b7d2f4a9c1e3` → `d4a8c2e6f1b9` → `f3b9d1a7c5e2` follow `main`'s `c2b8e4f6a1d7`;
+     rebase at stage boundaries.
 5. M8's follow-ups 8, 9, 10 and 11 can go any time; stage 3 left inpaint and detection crop
    out, so item 8 no longer waits for it. Batch move and copy, in item 9, must wait for M4 to
    merge. Items 7, 12 and 13 wait for stage 6, which replaces that code. M8 stages 5 and 6
@@ -183,9 +189,13 @@ gates are green and it is pushed.
   are not yet checked.
 - [x] Rebase onto `main` once M8 stages 2 and 3 have landed there. Needed by §4. Done
   2026-11-04, after PR #109.
-- [ ] §4: the stepping run (`Run` row, `advance_run()`), its page and the VRAM handoff.
-- [ ] §5: the goal loop, gates and budgets. Needs §4.
-- [ ] §6: the dry run and the recipe library. Needs §4.
+- [x] §4: the stepping run (`Run` row, `advance_run()`), its page and the VRAM handoff. Done
+  2026-11-04: start functions lifted out of the score, caption and export routes and Top
+  up, migration `f3b9d1a7c5e2` (`runs`), `run_service.py`, the worker's `_after_terminal`
+  hook, the Runs page and `docs/runs.md`. The user moved the gate to §5 and the snapshot
+  stage to §6 that day. Not yet checked by hand against a real ComfyUI.
+- [ ] §5: the goal loop, the gate and budgets. Needs §4.
+- [ ] §6: the dry run, the snapshot stage and the recipe library. Needs §4.
 - [ ] Merge: rebase onto `main`, re-parent the first migration onto M4's head if M4 merged
   first, run every gate, open the PR. The ComfyUI docs moved behind a hub on this branch, so
   any doc `main` has added since that names an old path (comfy-prompts.md, comfyui-sync.md, or

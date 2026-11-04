@@ -13,6 +13,7 @@ The order images travel through the app:
 | 1 | File images into subfolders; rename and re-nest them | [Subfolders](subfolders.md) |
 | 1 | Generate images with your own ComfyUI workflow | [ComfyUI Generation](comfyui.md) |
 | 1 | Describe a whole foldered dataset once and expand it into a ComfyUI queue | [ComfyUI Blueprints](comfy-structured.md) |
+| 1–7 | Run a plan end to end in one press: fill, generate, score, caption, export | [Automated Runs](runs.md) |
 | 1 | Hold videos as sources for frame extraction | [Videos](video.md) |
 | 1 | Extract frames from videos, shot by shot | [Frame Extraction](video-extraction.md) |
 | 2 | Caption with local ML models or any OpenAI-compatible API | [AI Captioning](captioning.md) |

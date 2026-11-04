@@ -136,8 +136,12 @@ deleted_rows, job_id, total, awaiting_rewrite}`. In order:
    - **Then it stops if any row waits for the rewrite** (M6 §3): a `template` row, not
      completed, in a scenario with `rewrite` on (`blueprint_rewrite.count_awaiting`). It
      returns `awaiting_rewrite: N` with `job_id: null`, having reset and run nothing, so
-     switching rewrite on always means prose. The user's choice, 2026-11-03; §4 will chain
-     Apply → rewrite → run. A plain *Run* is unchanged: it runs what the user queued.
+     switching rewrite on always means prose. The user's choice, 2026-11-03. An
+     automated run pauses here for the same reason, rather than starting the rewrite
+     itself (`docs/dev/comfyui/automation.md` § The stages). A plain *Run* is unchanged:
+     it runs what the user queued.
+   Apply, this stop and step 3 are `fill_blueprint` in `routers/comfy.py`, which an
+   automated run's `prompts` stage calls too, with `confirm_total=None`.
 3. **`blueprint_service.prepare_top_up`:** reset the current leaves' failed rows to pending
    (clearing `error_msg` and `prompt_id`, as `rows/reset` does), then list their pending
    rows in queue order.

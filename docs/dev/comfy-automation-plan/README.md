@@ -45,7 +45,8 @@ blueprint rather than once per leaf.
 
 **Section numbers are stable identities, not an order.** The build order is the roadmap's M6
 checklist alone. In short: the `docs/dev/comfyui.md` split and §7 (both done 2026-11-03), then
-§2a, §2b, Top up (§2c), §3, a rebase after M8 stages 2–3, §4, §5, §6, then the merge.
+§2a, §2b, Top up (§2c), §3, a rebase after M8 stages 2–3, §4 (all landed), then §5, §6
+and the merge.
 
 **§1 (per-row `subfolder` + `leaf_id`) is ported**, commit 8dee5de on the branch; its rationale
 lives in `docs/dev/comfyui/queue.md` (the columns and endpoints) and `docs/dev/comfyui/run.md` (how a run
@@ -174,103 +175,40 @@ Departures from the sketch that stood here, all from the review before it merged
   whole cached row, so an edit during the pass undid it.
 - **The job rewrites only the scenarios the user reviewed**, stored in its config.
 
-## 4. The stepping run
+## 4. The stepping run (landed)
 
-Read `docs/dev/backend-infrastructure.md`, `docs/dev/frontend-jobs.md`,
-`docs/dev/panes-routing.md`, `docs/dev/model-residency.md`. Decision 9 is the ruling.
+Built on 2026-11-04. Everything durable — the `Run` row, `advance_run` and the worker's
+`_after_terminal` hook, the stages, cancel, pause, resume and restart, the VRAM handoff and
+the Runs page — is in `docs/dev/comfyui/automation.md`. The start functions §4 needed
+(`start_score_job`, `start_caption_job`, `start_export_job`, `fill_blueprint`) sit beside
+their job closures in their routers, as `_start_run` already did.
 
-**Prerequisite, met 2026-11-04:** M8 stages 2 and 3 merged to `main` as PR #109, and this
-branch is rebased onto them. They gave a shared image-scope helper
-(`backend/services/image_scope.py`) and moved upscale and LUT into one service loop
-(`backend/services/image_edit_job.py`). They did **not** give the stages below a way to start
-a job from code: score, caption and export still preflight and enqueue inside their router
-handlers. Pulling each into a function a stage can call is §4's own first step (decision 9's
-2026-11-04 correction). `captioning.py` sits at 63% coverage, so add tests before moving it.
+The user settled three points before it was built (2026-11-04): the **gate** moves to §5,
+with the loop; the **snapshot** stage moves to §6, with the recipe library; and a run's
+settings come from a **compact form** on the Runs page, stored on the row as its recipe.
 
-### The shape
-
-`backend/workers/job_queue.py`'s worker runs one job to completion before taking the next, so
-nothing on that queue may wait for another job on it. Instead of waiting, a run **steps**:
-
-- A `Run` row holds the dataset, the plan, the recipe (its stage list and settings), the index of
-  the current stage, a status (`running`, `paused`, `completed`, `failed`, `cancelled`) and a short
-  per-stage log.
-- Starting a run enqueues the first stage's job with `config["run_id"]`.
-- When any job carrying a `run_id` reaches a terminal state, the worker calls
-  `advance_run(run_id, job)` **after the job's own commit**, in its own session, inside a
-  `try/except` that logs and can never change the job's outcome — CLAUDE.md's "nothing fallible
-  after the commit" rule (PM-013). It reads the job's status and `result_data`, records the
-  stage's outcome, and either enqueues the next stage, or marks the run `completed`, `failed`,
-  `cancelled` or `paused`.
-- A stage that does its work directly (a gate query, a VRAM handoff) runs inside
-  `advance_run()`'s step, or as a small job of its own if it can be slow.
-- **A stage whose service answers "nothing in scope" is skipped**, not waited on. Write that test
-  first.
-
-### Cancellation, pause and resume
-
-- **Cancel** cancels the current child through the normal job cancel and marks the run
-  `cancelled`; `advance_run()` sees the cancelled child and does not enqueue. `TopBar`'s
-  Cancel-all reaches the child directly, and the run reads that as a stage failure.
-- **Pause** marks the run so `advance_run()` stops at the next stage boundary; the running child
-  finishes.
-- **Restart:** `mark_interrupted_jobs()` fails every running job at startup. A run whose current
-  child is failed that way is set to `paused` with a resume hint — reconcile in the lifespan,
-  right after it.
-- **Resume** is explicit, never automatic, and calls `advance_run()` from the first stage not
-  done. Per-stage idempotence comes from the absolute per-leaf targets and the pending-rows-only
-  run. The exceptions: a re-run `snapshot` makes a second snapshot, and `export` rewrites its
-  output.
-
-### Stages
-
-| Stage | Shape |
-|---|---|
-| `snapshot` | direct; opt-in, skips with a note when versioning is off |
-| `prompts` | §2a expansion / Top up, then a `comfy_rewrite` job when a scenario has §3 on |
-| `vram_handoff` | direct; both directions, can appear twice |
-| `generate` | job (`comfy_generate`) |
-| `score` | job, scoped by image ids |
-| `dedupe` | job + policy; default `flag`, never `resolve` |
-| `gate` | direct; a query plus moves to `rejects/` |
-| `caption` | job, scoped by image ids |
-| `export` | job |
-
-### The VRAM handoff
-
-On a single-GPU box the run alternates between ComfyUI and local torch models, so both directions:
-
-- **Crucible's models:** `model_manager.evict_all()` frees every idle model and skips leased ones
-  (`docs/dev/model-residency.md`). Between stages no job holds a lease, so it frees everything; if
-  `leased_ids()` is not empty, record it in the stage log rather than failing.
-- **ComfyUI's models:** a new best-effort `ComfyClient` call to ComfyUI's `/free`, before scoring.
-  `ComfyClient` has no such method yet. Verify the endpoint on the target ComfyUI build, and treat
-  any error as a no-op with a note — a missing `/free` must never fail a run.
-- **The LLM:** an Ollama provider unloads with `keep_alive: 0`. **LM Studio does not expose unload
-  over its OpenAI-compatible API**, so that case is a TTL the user sets in LM Studio, not
-  something this stage can do over HTTP.
-
-### Run context
-
-Hold **row ids per iteration, not image ids**. The images an iteration produced are a query over
-the rows' `image_ids`; storing thousands of uuids in a JSON column returned on every poll is a
-large response. The generate job's `created_image_ids` is a cross-check, not the source of truth.
-
-### Frontend
-
-A new dataset-scoped routed page (see § Decisions): the six-site checklist in
-`docs/dev/panes-routing.md` plus `PaneHeader`'s `PAGE_OPTIONS` and `NEEDS_DATASET`. It reads the
-`Run` row and its current child's progress through the existing job stream.
-
-**The run itself is not a job, and its children stay in their own job-type sets** —
-`LIVE_IMAGE_JOB_TYPES` and `IMAGE_MODIFYING_JOB_TYPES` already fire every invalidation for them.
-Tag each child with its run in `TopBar` rather than hiding it.
+Departures from the sketch that stood here:
+- **No separate dedupe stage.** Duplicate flagging is already the tail of a technical score
+  (`_flag_duplicates`, dataset-wide), so the score stage always runs technical. `resolve`
+  is never run.
+- **Rows waiting for a rewrite pause the run** rather than starting a `comfy_rewrite` job:
+  the job rewrites only the scenarios the user reviewed, and an unattended run cannot
+  review them.
+- **Every stage that does work is a job**, the VRAM handoff included (`run_handoff`), so
+  `advance_run` itself only records and enqueues, and nothing slow runs inside the hook.
+- **The hook also runs on the cancelled-while-queued path**, which skips `_finish`.
+- **The handoff does not unload an LLM.** §4 makes no LLM call; a provider's TTL covers it.
+- **Export takes no id list**: it exports the dataset through its filters, duplicates left
+  out by default, which keeps it clear of the `[]` trap below.
 
 ## 5. Goal loop, gates, budgets
 
-The loop: compute each leaf's shortfall (§2c) → top up → generate → score → dedupe → gate →
-recompute → repeat. Each iteration is a pass through §4's stages; the loop is `advance_run()`
-returning to the `prompts` stage rather than finishing.
+The loop: compute each leaf's shortfall (§2c) → top up → generate → score (which flags
+duplicates) → gate → recompute → repeat. Each iteration is a pass through §4's stages; the
+loop is `advance_run()` returning to the `prompts` stage rather than finishing. §4's
+`stage_tag` already carries the stage's index, so a job from an earlier pass of the same
+stage key reads as stale. `context.row_ids` then needs to hold row ids per iteration, not
+one flat list.
 
 - **Hard caps are required fields, not options**: max iterations, max images, max LLM calls, max
   wall-clock. Each iteration burns GPU time, and a stop condition can fail to converge.
@@ -280,7 +218,12 @@ returning to the `prompts` stage rather than finishing.
   deletes rows and `scores_stale` can invalidate a score.
 - **Abandon a leaf that gains nothing across two consecutive iterations.**
 - The gate is a pure predicate over `Image` columns, reusing the quality router's flag-key
-  vocabulary. It **moves** failures to `rejects/`.
+  vocabulary. It **moves** failures to `rejects/`. A new stage key `gate`, between `score` and
+  `caption` in `STAGE_ORDER`, run as a small job of its own like `run_handoff`. The only
+  move-to-subfolder code today is `images.py`'s `batch_move_subfolder` handler, so lift a
+  start function out of it as §4 did for score and caption, called with
+  `rename_on_move=False` (a pure `Image.subfolder` update) and never with an empty id list,
+  which it 404s.
 - **Forbid in-place pixel ops in a recipe for this phase.** `utils.record_in_place` marks scores
   stale, and a gate reading those scores would judge deleted pixels. If they are ever allowed, the
   gate must treat a stale score as not-kept.
@@ -292,6 +235,13 @@ the stage list — so its estimate cannot drift. Preflight everything reachable 
 ComfyUI ping, provider and model, the plan's prompt pin, export directory writability, disk
 headroom for N images.
 
+**The snapshot stage lands here** (moved from §4 by the user, 2026-11-04): opt-in, first in
+`STAGE_ORDER`, and it *skips with a recorded note* when versioning is off. Snapshot jobs are
+deliberately non-cancellable, so a run's Cancel during it must wait for the snapshot rather
+than leave the run marked cancelled while the job still writes; and a resumed run that
+re-runs it makes a second snapshot.
+
+§4's start form is the recipe's first shape: `schemas/run.RunRecipe`, stored on `Run.recipe`.
 Recipes are **global — no dataset or plan foreign key** — for the same reason
 `comfy_library_prompts` is: a recipe describes a process, not a dataset. JSON export and import.
 
@@ -313,11 +263,10 @@ family sits behind the hub `docs/dev/comfyui.md`, so each new file goes in
   `docs/dev/comfyui/structured-llm.md` (the outline call, and §3's rewrite pass since
   2026-11-03). §1's two columns stay documented beside the row model;
   cross-reference them rather than moving them.
-- docs/dev/comfyui/automation.md, still owed — the `Run` row, `advance_run()`, stages,
-  cancel, pause and resume, the VRAM handoff, the goal loop, budgets and recipes.
+- `docs/dev/comfyui/automation.md`, written with §4 (2026-11-04). §5's goal loop, gate and
+  budgets, and §6's dry run and recipes, extend it.
 
-`docs/dev/backend-infrastructure.md` (~2,000 words) gains a paragraph on the post-terminal
-`advance_run()` hook. User docs are owed in the same change as each feature — `docs/comfyui.md`
+`docs/dev/backend-infrastructure.md` § After a job ends: the run hook, written with §4. User docs are owed in the same change as each feature — `docs/comfyui.md`
 or a new page, plus a row in `docs/features.md` and whatever `README.md` needs. Run
 `python scripts/check_docs.py` and `python scripts/check_migrations.py` on every stage.
 

@@ -110,6 +110,10 @@ some of its images in the gallery, perhaps the ones you didn't like.
 Pressing Top up when every folder is full does nothing, so it is safe to press whenever
 you have finished pruning.
 
+To go on from Top up to scoring, captioning and exporting without pressing each one, start
+a run from the **Runs** page. Its first stage is this same Top up. See
+[Automated Runs](runs.md).
+
 If a scenario has **Rewrite into prose** ticked and some of its rows have not been
 rewritten yet, Top up adds the missing rows and then stops. It tells you how many rows
 wait, so they never run as plain templates by mistake. Press **Rewrite**, then Top up

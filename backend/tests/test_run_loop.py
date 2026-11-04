@@ -1,7 +1,7 @@
 """The goal loop (M6 §5) end to end against FakeComfy in varied mode: passes repeat
 until every folder holds its target of images that pass the gate, within hard caps.
 
-What is pinned (docs/dev/comfyui/run-loop.md):
+What is pinned (docs/dev/comfyui/run-loop.md, run-gate.md and run-budgets.md):
 - a pass is the body stages, inserted before the tail when a folder is still short;
 - the gate flags and files rejects under `<base>/rejects/<leaf>`, and neither the
   fill, the caption tail nor the export counts them;

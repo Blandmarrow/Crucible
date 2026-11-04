@@ -1,6 +1,6 @@
 # ComfyUI — the run gate
 
-The gate is the check a looping run puts between scoring and the next pass (`BODY_STAGES`,
+The gate is the check a run puts after scoring, before any next pass (`BODY_STAGES`,
 `docs/dev/comfyui/run-loop.md`): it tests each new image against the bar the recipe sets and
 files the failures under `rejects/`. This file covers `services/run_gate.py` and its
 `run_gate` job, `services/gate_flags.py` and the flag's clearing, and the gate's section on

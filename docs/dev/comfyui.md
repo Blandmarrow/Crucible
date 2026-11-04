@@ -80,7 +80,7 @@ not a see-also, and says which part of the code it owns.
 | `frontend/src/pages/RunsPage.tsx`, `frontend/src/api/runs.ts`, `frontend/src/components/runs/RunCaptionFields.tsx`, `RunExportFields.tsx`, `runForms.ts`, `DryRunReport.tsx` | `docs/dev/comfyui/run-start.md` § The Runs page; + `docs/dev/comfyui/run-loop.md` § The Runs page for the pass headings and `LoopOutcome`; + `docs/dev/comfyui/run-gate.md` § The Runs page's Gate section; + `docs/dev/comfyui/recipes.md` for the form state, `recipesApi` and the remembered form |
 | `frontend/src/components/runs/runRecipeForm.ts`, `RecipeBar.tsx` | `docs/dev/comfyui/recipes.md` |
 | `frontend/src/components/runs/ExtendRunDialog.tsx` | `docs/dev/comfyui/run-budgets.md` § Raising a cap and carrying on |
-| `frontend/src/components/runs/RunLoopFields.tsx`, `runLoopForms.ts` | `docs/dev/comfyui/run-loop.md` § The Runs page |
+| `frontend/src/components/runs/RunLoopFields.tsx`, `runLoopForms.ts` | `docs/dev/comfyui/run-loop.md` § The Runs page; + `docs/dev/comfyui/run-gate.md` § The Runs page's Gate section |
 | `frontend/src/components/layout/TopBar.tsx` (the `comfy_prompts`, `comfy_outline` and `comfy_rewrite` branches, and `comfy_generate` in `LIVE_IMAGE_JOB_TYPES`) | `docs/dev/comfyui/prompts.md` § Frontend for the `comfy_prompts` branch; + `docs/dev/comfyui/page.md` § Frontend for the `comfy_generate` live refresh and the `comfy_outline` and `comfy_rewrite` branches; outside this family: `docs/dev/job-invalidation.md` |
 
 ### Tests

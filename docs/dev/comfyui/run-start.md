@@ -6,7 +6,7 @@ that same answer without writing anything. This file covers that shared start ch
 and the list of past runs. What the stages do once the run is going is
 `docs/dev/comfyui/run-stages.md`; how a run is stepped, cancelled and resumed is
 `docs/dev/comfyui/automation.md`; the loop's own form sections are
-`docs/dev/comfyui/run-loop.md`, and the recipe bar is `docs/dev/comfyui/recipes.md`. The user
+`docs/dev/comfyui/run-loop.md` (the gate's in `docs/dev/comfyui/run-gate.md`), and the recipe bar is `docs/dev/comfyui/recipes.md`. The user
 guide is `docs/runs.md`, with the form in `docs/run-setup.md`.
 
 ## Starting, and the checks it runs first

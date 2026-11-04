@@ -236,7 +236,7 @@ Departures from the sketch that stood here, most from an Opus review of the desi
 ## 6. Dry run, snapshot stage and the recipe library (landed)
 
 Built on 2026-11-04. Everything durable is in the docs: the snapshot stage, the shared
-start check and the dry run in `docs/dev/comfyui/run-start.md` and `docs/dev/comfyui/run-stages.md`;
+start check and the dry run in `docs/dev/comfyui/run-start.md`;
 the head stage in `docs/dev/comfyui/run-loop.md`; carrying on past a cap in
 `docs/dev/comfyui/run-budgets.md`; the library, the document, the
 form converters and the remembered form in `docs/dev/comfyui/recipes.md`.

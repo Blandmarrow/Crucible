@@ -1,6 +1,6 @@
 # Environment setup: venv, prerequisites & GPU wheels
 
-This file covers everything `manage.ps1` / `manage.sh` do to build a working environment and launch it: the venv's ML packages, prerequisite auto-install, Python version discovery, PyTorch GPU auto-detection, the SAM2/SAM3 install steps, the update self-handoff, and the `manage.ps1` encoding constraint. The launch side (the bind address and `--lan`, and the startup splash) is in `docs/dev/server-start.md`. Server control and the request guard live in `docs/dev/http-edge.md`, the job queue and SSE in `docs/dev/backend-infrastructure.md`, the database in `docs/dev/database.md`; the models these packages serve are in `docs/dev/model-registry.md` and `docs/dev/detection.md`.
+This file covers everything `manage.ps1` / `manage.sh` do to build a working environment: the venv's ML packages, prerequisite auto-install, Python version discovery, PyTorch GPU auto-detection, the SAM2/SAM3 install steps, the update self-handoff, and the `manage.ps1` encoding constraint. The launch side (the bind address and `--lan`, and the startup splash) is in `docs/dev/server-start.md`. Server control and the request guard live in `docs/dev/http-edge.md`, the job queue and SSE in `docs/dev/backend-infrastructure.md`, the database in `docs/dev/database.md`; the models these packages serve are in `docs/dev/model-registry.md` and `docs/dev/detection.md`.
 
 ### Venv ML packages
 

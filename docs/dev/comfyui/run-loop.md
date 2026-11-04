@@ -112,7 +112,6 @@ The tail's **caption** scope is every run image that passes the kept rule
 images. The **export** adds `gate_rejected` to its exclusions whenever the gate is on, in
 case the form was filled from an Export page whose saved filter predates the flag.
 
-
 ## The rewrite stage
 
 `comfy.start_rewrite_job` is lifted out of the rewrite route, which keeps its own checks
@@ -138,7 +137,6 @@ rewrite stage without the fill: it rewrites the rows the fill adds.
 Rows of a scenario with rewrite on but not ticked still pause the run at `prompts`, as in
 §4 (`fill_blueprint`'s `run_rewrites` exempts only the ticked ones). That covers a
 scenario switched on while the run is going.
-
 
 ## Manual Apply and Top up during a run
 
@@ -179,7 +177,6 @@ interrupted job's downtime; and a billed caption tail captioning what the cap al
 cv2 (`needs_cv2`). `frontend/e2e/runs.spec.ts` runs one repeating journey from the form,
 with Score and the gate off, ending with every folder full. `backend/tests/test_run_extend.py`
 is `docs/dev/comfyui/run-budgets.md` § Testing.
-
 
 ## Not yet
 

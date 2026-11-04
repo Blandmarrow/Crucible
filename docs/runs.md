@@ -117,7 +117,7 @@ run that could not start its first stage shows its error instead of "Run started
 
 ## Limits for now
 
-- A run that gave up on its folders, rather than stopping at a cap, cannot carry on. Start
-  a new run: it picks up where the folders stand, and makes only what is still missing.
+- A run that gave up on its folders, rather than stopping at a cap, cannot carry on (see
+  [Giving up on a folder](repeating-runs.md#giving-up-on-a-folder)). Start a new run: it picks up where the folders stand, and makes only what is still missing.
 - A snapshot is taken once, at the start. A run resumed after its snapshot failed takes
   a new one.

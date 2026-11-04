@@ -85,7 +85,10 @@ lazy-load on the async session. With no stage left pending, the run is `complete
 `advance_run`. A start or resume holds it while it queues the child and commits the run row,
 so a child the worker finishes at once cannot step a row the API has not written yet.
 Stages that touch the plan's rows also take ComfyUI's plan lock (`_plan_lock`). That lock
-is not re-entrant, so they call `_start_run(..., hold_lock=False)` inside it.
+is not re-entrant, so they call `_start_run(..., hold_lock=False)` inside it. A third,
+`_dataset_lock`, holds "one live run per dataset" from its check to the commit that makes a
+run live, in both start and resume. Without it, two presses in two panes both passed the
+check. The order is always run lock, then dataset or plan lock, never the reverse.
 
 ## The stages
 
@@ -105,6 +108,12 @@ that). So the image stages skip when the run produced no images, and treat a sta
 function's `job_id: None` as a skip too. Export takes no id list at all.
 `test_a_stage_with_no_images_is_skipped_and_never_started_with_an_empty_list` holds it,
 with a bystander image in the dataset that a `[]` would sweep in.
+
+**Known limit:** `start_score_job` and `start_caption_job` put the whole id list in one
+`IN`, unchunked, so a run of more than about 32,000 images would hit SQLite's bound-variable
+limit and fail its score stage. It is the class M8's follow-up 9 tracks
+(`docs/dev/cleanup-plan/README.md` § Stage 1 follow-ups). No UI sent lists that long
+before the run, and a run that long is unlikely.
 
 **Rows waiting for a §3 rewrite pause the run** at `prompts`, with "N rows wait for a
 rewrite. Run it on the ComfyUI page, then resume." Top up refuses them for the same reason
@@ -136,15 +145,22 @@ stages into `STAGE_ORDER` whatever order they arrive in.
   is written `cancelled`, and a running one gets `request_cancel`. When the child then ends,
   `advance_run` sees a run that is not `running` and stops.
 - **Pause** sets `pause_requested`. The running child finishes, and `advance_run` stops at
-  the boundary. Resume before the boundary just clears the flag.
+  the boundary. Resume before the boundary just clears the flag. A pause asked for during
+  the last stage has no boundary left, so the run completes, and a run that fails drops
+  the request.
 - **Resume** (paused or failed) resets `running`, `failed` and `cancelled` stages to
-  `pending` and calls `_start_next`. It is always explicit. Re-running `prompts` is safe,
+  `pending`, clearing their note and summary, and calls `_start_next`. `_start_next`
+  clears them too whenever a stage starts, so a stage that failed and then succeeds never
+  still shows the old error. It is always explicit. Re-running `prompts` is safe,
   because per-leaf targets are absolute. Re-running `generate` runs only rows not
   completed. A re-run `export` rewrites its output.
 - **Restart.** `main.py`'s lifespan calls `reconcile_interrupted_runs()` right after
   `mark_interrupted_jobs()`. Every `running` run becomes `paused`, and its running stage
-  goes back to `pending` with a note. This also covers a child that ended while the queue
-  was stopping, whose hook was skipped.
+  goes back to `pending` with a note. **The exception is a stage whose child completed.**
+  A child that ends inside `stop()`'s grace period commits `completed`, but its hook is
+  skipped while the queue is stopping, so the run never heard. Resetting that stage would
+  make a resume export again, or caption again on a paid provider. So it is recorded `done`
+  with its summary, and a run with no stage left is `completed` rather than paused.
 - **Delete** (`DELETE /runs/{id}`) refuses a live run with a 409.
 
 ## The Runs page
@@ -157,7 +173,9 @@ is **not keyed** by dataset id in `PageRenderer`. The form re-seeds through a
 - With no live run it shows the start form: the plan, the stage switches, the base folder,
   the aesthetic model, a caption model from `captionModelOptions` (a provider takes a
   model name), and the export kind, folder and fields. Start is disabled with the first
-  reason (`blockers`) until the form is complete.
+  reason (`blockers`) until the form is complete. The start answers 200 even for a run
+  whose first stage could not start, so the toast reads the returned status: a `failed`
+  run shows its error, not "Run started".
 - With a live run it shows the stage list with each status, summary and note, the child's
   progress through `useJobSSE(current_job_id)`, and Pause, Resume and Cancel.
 - The run list refetches every 1.5 s while a run is `running`, and again on the child's
@@ -179,7 +197,9 @@ provider). It covers:
   worker goes on);
 - cancel while queued, a cancel from outside the run (queued and running), and pause then
   resume;
-- the restart reconcile, the rewrite pause, the start-time checks, and the stale guard.
+- the restart reconcile, including a stage whose child completed during the shutdown;
+  a resumed stage dropping its old note; a pause during the last stage;
+- the rewrite pause, the start-time checks, and the stale guard.
 
 Its `_block_worker` holds the single worker on a gate job, which keeps a child queued
 deterministically. `backend/tests/test_caption_start_scope.py` pins what

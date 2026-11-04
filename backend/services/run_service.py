@@ -43,12 +43,23 @@ FINISHED_STATUSES = ("completed", "failed", "cancelled")
 _COMFY_STAGES = ("prompts", "generate", "handoff_to_local")
 
 _locks: dict[str, asyncio.Lock] = {}
+_dataset_locks: dict[str, asyncio.Lock] = {}
 
 
 def _run_lock(run_id: str) -> asyncio.Lock:
     lock = _locks.get(run_id)
     if lock is None:
         lock = _locks[run_id] = asyncio.Lock()
+    return lock
+
+
+def _dataset_lock(dataset_id: str) -> asyncio.Lock:
+    """Holds "one live run per dataset" from its check to the commit that makes a run
+    live, so two presses (two panes, or a start beside a resume) cannot both pass.
+    Taken after a run lock where both are held, never before one."""
+    lock = _dataset_locks.get(dataset_id)
+    if lock is None:
+        lock = _dataset_locks[dataset_id] = asyncio.Lock()
     return lock
 
 
@@ -136,7 +147,6 @@ async def start_run(db: AsyncSession, body: RunStartRequest) -> Run:
         raise HTTPException(404, "Plan not found")
     if plan.dataset_id != body.dataset_id:
         raise HTTPException(400, "That plan belongs to another dataset")
-    await _refuse_second_live_run(db, body.dataset_id)
     recipe = body.recipe
     await _preflight(db, plan, recipe)
 
@@ -151,8 +161,10 @@ async def start_run(db: AsyncSession, body: RunStartRequest) -> Run:
         status="running",
         started_at=datetime.utcnow(),
     )
-    db.add(run)
-    await db.commit()
+    async with _dataset_lock(body.dataset_id):
+        await _refuse_second_live_run(db, body.dataset_id)
+        db.add(run)
+        await db.commit()
     async with _run_lock(run.id):
         await _start_next(db, run)
     return run
@@ -182,7 +194,10 @@ async def _start_next(db: AsyncSession, run: Run) -> None:
             await db.commit()
             return
         key = stages[idx]["key"]
-        stages[idx].update(status="running", started_at=_now(), finished_at=None, job_id=None)
+        # A stage starting again (after a resume, a restart or a pause) drops what its
+        # last attempt said, or a success would still read "· provider timeout".
+        stages[idx].update(status="running", started_at=_now(), finished_at=None, job_id=None,
+                           note=None, summary=None)
         run.stages = stages
         try:
             outcome = await _begin_stage(db, run, idx, key)
@@ -231,6 +246,7 @@ async def _end_stage(db: AsyncSession, run: Run, idx: int, status: str, *, note:
     if run_status is not None:
         run.status = run_status
         run.error_msg = error
+        run.pause_requested = False
         if run_status in FINISHED_STATUSES:
             run.finished_at = datetime.utcnow()
     await db.commit()
@@ -521,11 +537,14 @@ async def advance_run(run_id: str, job_id: str) -> None:
                 await _end_stage(db, run, idx, "failed", note=job.error_msg, run_status="failed",
                                  error=f"{label}: {job.error_msg or 'the job failed'}")
                 return
-            if run.pause_requested:
+            # A pause asked for during the last stage has nothing to stop before, so the
+            # run completes rather than waiting paused with no stage left.
+            if run.pause_requested and any(s["status"] == "pending" for s in run.stages):
                 run.status = "paused"
                 run.pause_requested = False
                 await db.commit()
                 return
+            run.pause_requested = False
             await _start_next(db, run)
 
 
@@ -560,17 +579,19 @@ async def resume_run(db: AsyncSession, run_id: str) -> Run:
             return run
         if run.status not in ("paused", "failed"):
             raise HTTPException(409, f"A {run.status} run cannot be resumed")
-        await _refuse_second_live_run(db, run.dataset_id, except_id=run.id)
-        stages = copy.deepcopy(run.stages)
-        for s in stages:
-            if s["status"] in ("running", "failed", "cancelled"):
-                s.update(status="pending", job_id=None, started_at=None, finished_at=None)
-        run.stages = stages
-        run.status = "running"
-        run.pause_requested = False
-        run.error_msg = None
-        run.finished_at = None
-        await db.commit()
+        async with _dataset_lock(run.dataset_id):
+            await _refuse_second_live_run(db, run.dataset_id, except_id=run.id)
+            stages = copy.deepcopy(run.stages)
+            for s in stages:
+                if s["status"] in ("running", "failed", "cancelled"):
+                    s.update(status="pending", job_id=None, note=None, summary=None,
+                             started_at=None, finished_at=None)
+            run.stages = stages
+            run.status = "running"
+            run.pause_requested = False
+            run.error_msg = None
+            run.finished_at = None
+            await db.commit()
         await _start_next(db, run)
         return run
 
@@ -614,7 +635,14 @@ async def delete_run(db: AsyncSession, run_id: str) -> None:
 
 async def reconcile_interrupted_runs() -> int:
     """At startup, right after `mark_interrupted_jobs`: every run left `running` is set
-    `paused`, its running stage back to pending, for an explicit resume."""
+    `paused` for an explicit resume.
+
+    Its running stage goes back to pending — **unless that stage's child completed**. A
+    child that ends inside `stop()`'s grace period commits `completed`, but its hook is
+    skipped while the queue is stopping, so the run never heard. Resetting that stage
+    would make a resume export again, or caption again on a paid provider. It is
+    recorded `done` with its summary instead; with no stage left, the run is completed.
+    """
     from backend.database import AsyncSessionLocal
 
     async with AsyncSessionLocal() as db:
@@ -622,12 +650,21 @@ async def reconcile_interrupted_runs() -> int:
         for run in runs:
             stages = copy.deepcopy(run.stages)
             for s in stages:
-                if s["status"] == "running":
-                    s.update(status="pending", job_id=None, started_at=None,
+                if s["status"] != "running":
+                    continue
+                child = await db.get(BackgroundJob, s["job_id"]) if s.get("job_id") else None
+                if child is not None and child.status == "completed":
+                    s.update(status="done", summary=_summary(child), finished_at=_now())
+                else:
+                    s.update(status="pending", job_id=None, started_at=None, summary=None,
                              note="Crucible restarted during this stage. Resume to run it again.")
             run.stages = stages
-            run.status = "paused"
             run.pause_requested = False
             run.current_job_id = None
+            if any(s["status"] == "pending" for s in stages):
+                run.status = "paused"
+            else:
+                run.status = "completed"
+                run.finished_at = datetime.utcnow()
         await db.commit()
         return len(runs)

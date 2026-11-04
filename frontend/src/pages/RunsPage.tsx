@@ -149,7 +149,11 @@ function StartRunForm({ datasetId, onStarted }: { datasetId: string; onStarted: 
       return runsApi.start({ dataset_id: datasetId, plan_id: effectivePlanId!, name: name.trim(), recipe });
     },
     onSuccess: (run) => {
-      toast.success(run.status === "paused" ? "Run paused — see its first stage" : "Run started");
+      // The start answers 200 for a run whose first stage could not start: say so.
+      if (run.status === "failed") toast.error(run.error_msg ?? "The run failed at its first stage");
+      else if (run.status === "paused") toast("Run paused — see its first stage");
+      else if (run.status === "completed") toast.success("Run finished — every stage was skipped or done");
+      else toast.success("Run started");
       onStarted();
     },
     onError: (err) => toast.error(apiErrorDetail(err, "Could not start the run")),

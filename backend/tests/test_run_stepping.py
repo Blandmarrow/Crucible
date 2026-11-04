@@ -339,6 +339,76 @@ def test_the_startup_reconcile_pauses_a_running_run(tmp_path):
     run(go())
 
 
+def test_the_reconcile_keeps_a_stage_whose_child_finished_during_shutdown(tmp_path):
+    """A child that ends inside `stop()`'s grace commits `completed`, but its hook is
+    skipped while stopping. Resetting the stage would make a resume export again."""
+    async def go():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            async with env.Session() as db:
+                child = BackgroundJob(job_type="export", label="x", status="completed", total_items=3,
+                                      result_data={"exported": 3, "output_dir": "D:/out"}, config={})
+                db.add(child)
+                await db.flush()
+                last = Run(dataset_id=ds["id"], name="last", recipe={}, context={}, status="running",
+                           current_job_id=child.id,
+                           stages=[{"key": "generate", "status": "done"},
+                                   {"key": "export", "status": "running", "job_id": child.id}])
+                mid = Run(dataset_id=ds["id"], name="mid", recipe={}, context={}, status="running",
+                          current_job_id=child.id,
+                          stages=[{"key": "export", "status": "running", "job_id": child.id},
+                                  {"key": "caption", "status": "pending"}])
+                db.add_all([last, mid])
+                await db.commit()
+                last_id, mid_id = last.id, mid.id
+            assert await run_service.reconcile_interrupted_runs() == 2
+            out = await _get(env, last_id)
+            assert out["status"] == "completed"
+            assert out["stages"][1]["status"] == "done"
+            assert out["stages"][1]["summary"] == "3 images exported to D:/out"
+            out = await _get(env, mid_id)
+            assert out["status"] == "paused"
+            assert _statuses(out) == {"export": "done", "caption": "pending"}
+    run(go())
+
+
+def test_a_resumed_stage_drops_its_old_note(tmp_path, monkeypatch):
+    async def go():
+        async with api_env(tmp_path) as env:
+            fake, ds, plan_id = await _plan(env, monkeypatch)
+            async with env.Session() as db:
+                r = Run(dataset_id=ds["id"], plan_id=plan_id, name="x", context={}, status="failed",
+                        recipe={"stages": ["handoff_to_local"]}, error_msg="Free ComfyUI's VRAM: boom",
+                        stages=[{"key": "handoff_to_local", "status": "failed", "note": "boom",
+                                 "job_id": None, "summary": None, "started_at": None, "finished_at": None}])
+                db.add(r)
+                await db.commit()
+                run_id = r.id
+            res = await env.client.post(f"{API}/runs/{run_id}/resume")
+            assert res.status_code == 200, res.text
+            done = await wait_for_run(env, run_id)
+            assert done["status"] == "completed", done
+            assert done["stages"][0]["note"] is None
+            assert done["error_msg"] is None
+    run(go())
+
+
+def test_a_pause_during_the_last_stage_completes_the_run(tmp_path, monkeypatch):
+    async def go():
+        async with api_env(tmp_path) as env:
+            fake, ds, plan_id = await _plan(env, monkeypatch)
+            await _add_row(env, plan_id, "a knight")
+            gate = await _block_worker(env)
+            code, body = await _start(env, ds["id"], plan_id, ["generate"])
+            assert code == 200, body
+            assert (await env.client.post(f"{API}/runs/{body['id']}/pause")).status_code == 200
+            gate.set()
+            done = await wait_for_run(env, body["id"])
+            assert done["status"] == "completed", done
+            assert done["pause_requested"] is False
+    run(go())
+
+
 # 8 ───────────────────────────────────────────────────────────────────────────
 
 def test_rows_waiting_for_a_rewrite_pause_the_run(tmp_path, monkeypatch):

@@ -337,9 +337,18 @@ async def _handoff(direction: str, comfy_url: str | None) -> str:
     if direction == "to_comfy":
         from backend.ml.model_manager import model_manager
 
-        freed = await model_manager.evict_all()
-        note = f"Unloaded {len(freed)} local model{'s' if len(freed) != 1 else ''}"
+        # `evict_all` returns every registered id, resident or not, so count the
+        # resident ones first to report what was really freed.
+        resident = [m["id"] for m in model_manager.list_models() if m.get("loaded")]
+        try:
+            await model_manager.evict_all()
+        except Exception as e:
+            # `evict_all` ends with a torch cache flush, which raises on a torch-free
+            # install. Nothing torch-backed was loaded there, so nothing is lost.
+            logger.info("evict_all during a run's handoff: %s", e)
         leased = model_manager.leased_ids()
+        freed = [m for m in resident if m not in leased]
+        note = f"Unloaded {len(freed)} local model{'s' if len(freed) != 1 else ''}"
         if leased:
             note += f"; still in use: {', '.join(leased)}"
         return note

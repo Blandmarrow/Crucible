@@ -177,6 +177,33 @@ def test_a_blueprint_run_goes_through_every_stage(tmp_path, monkeypatch):
     run(go())
 
 
+def test_the_handoffs_are_best_effort(tmp_path, monkeypatch):
+    """A torch-free install raises from `evict_all`'s cache flush, and an older
+    ComfyUI may not serve `/free`: both are notes, never a failed run."""
+    async def go():
+        async with api_env(tmp_path) as env:
+            fake, ds, plan_id = await _plan(env, monkeypatch)
+            await _add_row(env, plan_id, "a knight")
+            from backend.ml.model_manager import model_manager
+            from backend.services.comfy_service import ComfyClient
+
+            async def _no_torch():
+                raise ModuleNotFoundError("No module named 'torch'")
+
+            async def _no_free(self, **kwargs):
+                raise RuntimeError("404 Not Found")
+
+            monkeypatch.setattr(model_manager, "evict_all", _no_torch)
+            monkeypatch.setattr(ComfyClient, "free", _no_free)
+            code, body = await _start(env, ds["id"], plan_id, ["handoff_to_comfy", "generate", "handoff_to_local"])
+            assert code == 200, body
+            done = await wait_for_run(env, body["id"])
+            assert done["status"] == "completed", done
+            assert done["stages"][0]["summary"] == "Unloaded 0 local models"
+            assert "did not free its models" in done["stages"][2]["summary"]
+    run(go())
+
+
 # 3 ───────────────────────────────────────────────────────────────────────────
 
 def test_advance_run_raising_leaves_the_child_job_and_the_worker_alone(tmp_path, monkeypatch):

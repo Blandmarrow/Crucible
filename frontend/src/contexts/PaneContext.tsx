@@ -14,7 +14,8 @@ export type PageType =
   | "bulk-edit"
   | "consolidate"
   | "versions"
-  | "comfy";
+  | "comfy"
+  | "runs";
 
 export interface PaneView {
   page: PageType;

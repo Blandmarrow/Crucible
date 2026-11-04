@@ -15,11 +15,12 @@ const PAGE_OPTIONS: { value: PageType; label: string }[] = [
   { value: "consolidate",  label: "Consolidate Tags" },
   { value: "versions",     label: "Versions" },
   { value: "comfy",        label: "ComfyUI" },
+  { value: "runs",         label: "Runs" },
   { value: "file-browser", label: "File Browser" },
   { value: "booru",        label: "Booru Browser" },
 ];
 
-const NEEDS_DATASET = new Set<PageType>(["gallery", "captioning", "quality", "stats", "export", "bulk-edit", "consolidate", "versions", "comfy"]);
+const NEEDS_DATASET = new Set<PageType>(["gallery", "captioning", "quality", "stats", "export", "bulk-edit", "consolidate", "versions", "comfy", "runs"]);
 
 interface Props {
   paneId: string;

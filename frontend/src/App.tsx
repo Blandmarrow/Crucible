@@ -21,6 +21,7 @@ import {
   SettingsPage,
   VersionsPage,
   ComfyPage,
+  RunsPage,
   LogsPage,
 } from "./pages/lazyPages";
 import PaneContainer from "./components/pane/PaneContainer";
@@ -94,6 +95,7 @@ function MainContent() {
         <Route path="/datasets/:datasetId/consolidate" element={<ErrorBoundary><TagConsolidatePage /></ErrorBoundary>} />
         <Route path="/datasets/:datasetId/versions" element={<ErrorBoundary><VersionsPage /></ErrorBoundary>} />
         <Route path="/datasets/:datasetId/comfy" element={<ErrorBoundary><ComfyPage /></ErrorBoundary>} />
+        <Route path="/datasets/:datasetId/runs" element={<ErrorBoundary><RunsPage /></ErrorBoundary>} />
         <Route path="/file-browser" element={<ErrorBoundary><FileBrowserPage /></ErrorBoundary>} />
         <Route path="/settings" element={<ErrorBoundary><SettingsPage /></ErrorBoundary>} />
         <Route path="/logs" element={<ErrorBoundary><LogsPage /></ErrorBoundary>} />

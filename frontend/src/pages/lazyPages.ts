@@ -25,4 +25,5 @@ export const FileBrowserPage = lazy(() => import("./FileBrowserPage"));
 export const SettingsPage = lazy(() => import("./SettingsPage"));
 export const VersionsPage = lazy(() => import("./VersionsPage"));
 export const ComfyPage = lazy(() => import("./ComfyPage"));
+export const RunsPage = lazy(() => import("./RunsPage"));
 export const LogsPage = lazy(() => import("./LogsPage"));

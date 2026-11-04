@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models import Image
 from backend.services.dataset_busy import ensure_not_busy
+from backend.services.gate_flags import clear_gate_flags_outside_rejects
 from backend.utils import (
     chunked,
     normalize_subfolder,
@@ -33,6 +34,7 @@ async def move_to_subfolder(
     *,
     rename_on_move: bool,
     commit: bool = True,
+    clear_gate_flags: bool = True,
 ) -> dict:
     """Move ``image_ids`` into ``subfolder``; returns ``{"moved", "failed", "subfolder"}``.
 
@@ -44,6 +46,12 @@ async def move_to_subfolder(
     ``commit=False`` (only with ``rename_on_move=False``) stages the UPDATE and
     leaves the commit to the caller. With ``rename_on_move=True`` each image is
     committed right after its rename (PM-013), so ``commit=False`` is refused.
+
+    A move to a ``subfolder`` with no ``rejects`` segment clears ``gate_rejected`` on the
+    dataset's flagged images (``gate_flags``; the user's ruling, 2026-11-04). The gate
+    passes ``clear_gate_flags=False``: it flags every reject before its first move, and
+    the flags of the later targets would otherwise be cleared while still outside
+    ``rejects/``.
     """
     if not image_ids:
         raise ValueError("move_to_subfolder needs at least one image id")
@@ -134,11 +142,22 @@ async def move_to_subfolder(
                         "batch_move_subfolder %s: thumbnail move failed; it will be regenerated",
                         img_id, exc_info=True,
                     )
+        if clear_gate_flags and moved:
+            # Its own step after the loop, so nothing fallible sits between a rename and
+            # its commit (PM-013); a failure leaves a stale flag, never a failed move.
+            try:
+                await clear_gate_flags_outside_rejects(db, dataset_id)
+                await db.commit()
+            except Exception:
+                logger.warning("batch_move_subfolder: clearing gate flags failed", exc_info=True)
+                await db.rollback()
         return {"moved": moved, "failed": failed, "subfolder": target}
 
     # Just update the subfolder field; filenames stay unchanged.
     for chunk in chunked([row.id for row in rows]):
         await db.execute(sa_update(Image).where(Image.id.in_(chunk)).values(subfolder=target))
+    if clear_gate_flags:
+        await clear_gate_flags_outside_rejects(db, dataset_id)
     if commit:
         await db.commit()
     return {"moved": len(rows), "failed": 0, "subfolder": target}

@@ -109,7 +109,8 @@ def test_a_stage_with_no_images_is_skipped_and_never_started_with_an_empty_list(
     async def go():
         async with api_env(tmp_path) as env:
             fake, ds, plan_id = await _plan(env, monkeypatch)
-            await _add_row(env, plan_id, f"broken {FAIL_MARKER}")
+            # No pending rows: generate has nothing to run, so no image is in scope. (A
+            # generate that fails every row now fails the run; see the all-failed tests.)
             # An image the run did not make: a `[]` would widen score and caption to it.
             from backend.tests.conftest import upload_image
             await upload_image(env, ds["id"], "bystander.png")
@@ -120,9 +121,9 @@ def test_a_stage_with_no_images_is_skipped_and_never_started_with_an_empty_list(
             assert code == 200, body
             done = await wait_for_run(env, body["id"])
             assert done["status"] == "completed", done
-            assert _statuses(done) == {"prompts": "skipped", "generate": "done", "score": "skipped", "caption": "skipped"}
+            assert _statuses(done) == {"prompts": "skipped", "generate": "skipped", "score": "skipped", "caption": "skipped"}
             assert "no blueprint" in done["stages"][0]["note"]
-            assert "1 failed" in done["stages"][1]["summary"]
+            assert "No rows to generate" in done["stages"][1]["note"]
             assert await _jobs(env, "quality_score") == []
             assert await _jobs(env, "caption") == []
     run(go())
@@ -487,6 +488,33 @@ def test_the_reconcile_keeps_a_stage_whose_child_finished_during_shutdown(tmp_pa
     run(go())
 
 
+def test_the_reconcile_fails_a_run_whose_finished_child_failed_every_item(tmp_path):
+    """The every-item-failed rule holds on the restart path too: a generate child that
+    completed with every row failed during shutdown fails the run, not pauses it."""
+    async def go():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            async with env.Session() as db:
+                child = BackgroundJob(job_type="comfy_generate", label="x", status="completed", total_items=2,
+                                      result_data={"completed": 0, "failed": 2, "failed_row_ids": [],
+                                                   "created_image_ids": []}, config={})
+                db.add(child)
+                await db.flush()
+                r = Run(dataset_id=ds["id"], name="r", recipe={}, context={}, status="running",
+                        current_job_id=child.id,
+                        stages=[{"key": "generate", "status": "running", "job_id": child.id},
+                                {"key": "score", "status": "pending"}])
+                db.add(r)
+                await db.commit()
+                run_id = r.id
+            assert await run_service.reconcile_interrupted_runs() == 1
+            out = await _get(env, run_id)
+            assert out["status"] == "failed"
+            assert out["error_msg"] == "Generate: every row failed (2 of 2)"
+            assert _statuses(out) == {"generate": "failed", "score": "pending"}
+    run(go())
+
+
 def test_a_resumed_stage_drops_its_old_note(tmp_path, monkeypatch):
     async def go():
         async with api_env(tmp_path) as env:
@@ -596,4 +624,167 @@ def test_a_job_for_a_stage_the_run_has_left_does_not_step_it(tmp_path, monkeypat
             out = await _get(env, body["id"])
             assert out["status"] == "running"
             assert _statuses(out) == {"generate": "done", "handoff_to_local": "running"}
+    run(go())
+
+
+# Review fixes (2026-11-04) ───────────────────────────────────────────────────
+
+def test_a_generate_that_failed_every_row_fails_the_run_and_resume_retries_it(tmp_path, monkeypatch):
+    async def go():
+        async with api_env(tmp_path) as env:
+            fake, ds, plan_id = await _plan(env, monkeypatch)
+            await _add_row(env, plan_id, f"broken {FAIL_MARKER}")
+            code, body = await _start(env, ds["id"], plan_id, ["generate", "handoff_to_local"])
+            assert code == 200, body
+            done = await wait_for_run(env, body["id"])
+            assert done["status"] == "failed", done
+            assert _statuses(done) == {"generate": "failed", "handoff_to_local": "pending"}
+            assert done["error_msg"].startswith("Generate: every row failed (1 of 1)"), done["error_msg"]
+            async with env.Session() as db:
+                from backend.models.comfy import ComfyRow
+                row = (await db.execute(select(ComfyRow))).scalars().one()
+                assert row.status == "failed" and row.error_msg
+                assert row.error_msg in done["error_msg"]
+            assert len(await _jobs(env, "comfy_generate")) == 1
+
+            # Resume resets the failed row and runs it again (and it fails again).
+            r = await env.client.post(f"{API}/runs/{body['id']}/resume")
+            assert r.status_code == 200, r.text
+            again = await wait_for_run(env, body["id"])
+            assert again["status"] == "failed", again
+            assert len(await _jobs(env, "comfy_generate")) == 2
+    run(go())
+
+
+def test_a_generate_that_failed_only_some_rows_still_completes(tmp_path, monkeypatch):
+    async def go():
+        async with api_env(tmp_path) as env:
+            fake, ds, plan_id = await _plan(env, monkeypatch)
+            await _add_row(env, plan_id, f"broken {FAIL_MARKER}")
+            await _add_row(env, plan_id, "a knight")
+            code, body = await _start(env, ds["id"], plan_id, ["generate"])
+            done = await wait_for_run(env, body["id"])
+            assert done["status"] == "completed", done
+            assert "1 failed" in done["stages"][0]["summary"]
+    run(go())
+
+
+def test_a_caption_job_that_failed_every_image_fails_the_run(tmp_path, monkeypatch):
+    async def go():
+        async with api_env(tmp_path) as env:
+            fake, ds, plan_id = await _plan(env, monkeypatch)
+            await _add_row(env, plan_id, "a knight")
+            model = await _caption_model(env, monkeypatch)
+            import backend.ml.openai_compat_captioner as mod
+
+            async def _boom(image_path, **kwargs):
+                raise RuntimeError("provider is down")
+
+            monkeypatch.setattr(mod, "caption_image", _boom)
+            code, body = await _start(env, ds["id"], plan_id, ["generate", "caption", "free_caption_model"],
+                                      caption={"model": model})
+            assert code == 200, body
+            done = await wait_for_run(env, body["id"])
+            assert done["status"] == "failed", done
+            assert _statuses(done) == {"generate": "done", "caption": "failed", "free_caption_model": "pending"}
+            assert done["error_msg"].startswith("Caption: every image failed (1 of 1)"), done["error_msg"]
+    run(go())
+
+
+def test_a_gate_cancelled_before_its_commit_commits_nothing(tmp_path, monkeypatch):
+    async def go():
+        async with api_env(tmp_path) as env:
+            fake, ds, plan_id = await _plan(env, monkeypatch, blueprint=SPEC)
+            from backend.services import run_gate
+
+            real = run_gate.apply_gate
+
+            async def _then_cancel(session, *a, **kw):
+                out = await real(session, *a, **kw)
+                assert out["rejected"] > 0
+                [gate_job] = await _jobs(env, "run_gate")
+                job_queue.request_cancel(gate_job.id)
+                return out
+
+            monkeypatch.setattr(run_gate, "apply_gate", _then_cancel)
+            code, body = await _start(env, ds["id"], plan_id, ["prompts", "generate", "score", "gate"],
+                                      gate={"exclude_flags": ["is_duplicate"]})
+            assert code == 200, body
+            done = await wait_for_run(env, body["id"])
+            assert done["status"] == "failed" and "cancelled outside the run" in done["error_msg"], done
+            async with env.Session() as db:
+                imgs = list((await db.execute(select(Image).where(Image.dataset_id == ds["id"]))).scalars())
+            assert imgs
+            assert not any((i.quality_flags or {}).get("gate_rejected") for i in imgs)
+            assert not any("rejects" in (i.subfolder or "") for i in imgs)
+    run(go())
+
+
+def test_a_cancel_asked_twice_finishes_when_its_snapshot_is_gone(tmp_path):
+    async def go():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            async with env.Session() as db:
+                snap = BackgroundJob(job_type="create_snapshot", label="s", status="completed", total_items=0, config={})
+                db.add(snap)
+                await db.flush()
+                r = Run(dataset_id=ds["id"], name="x", recipe={}, context={}, status="running",
+                        cancel_requested=True, current_job_id=snap.id,
+                        stages=[{"key": "snapshot", "status": "running", "job_id": snap.id},
+                                {"key": "generate", "status": "pending", "job_id": None}])
+                missing = Run(dataset_id=ds["id"], name="y", recipe={}, context={}, status="running",
+                              cancel_requested=True, current_job_id="gone",
+                              stages=[{"key": "snapshot", "status": "running", "job_id": "gone"}])
+                db.add_all([r, missing])
+                await db.commit()
+                run_id, missing_id = r.id, missing.id
+            for rid in (run_id, missing_id):
+                res = await env.client.post(f"{API}/runs/{rid}/cancel")
+                assert res.status_code == 200, res.text
+                out = res.json()
+                assert out["status"] == "cancelled" and out["cancel_requested"] is False, out
+                assert out["stages"][0]["status"] in ("cancelled", "done")
+    run(go())
+
+
+def test_a_stale_job_of_the_same_stage_does_not_step_a_resumed_stage(tmp_path, monkeypatch):
+    async def go():
+        async with api_env(tmp_path) as env:
+            fake, ds, plan_id = await _plan(env, monkeypatch)
+            async with env.Session() as db:
+                old = BackgroundJob(job_type="export", label="old", status="completed", total_items=0,
+                                    config={"run_id": "x", "run_stage": "0:generate"})
+                db.add(old)
+                await db.flush()
+                r = Run(dataset_id=ds["id"], plan_id=plan_id, name="x", context={}, status="running",
+                        recipe={}, current_job_id="current",
+                        stages=[{"key": "generate", "status": "running", "job_id": "current"},
+                                {"key": "handoff_to_local", "status": "pending", "job_id": None}])
+                db.add(r)
+                await db.commit()
+                run_id, old_id = r.id, old.id
+            await run_service.advance_run(run_id, old_id)
+            out = await _get(env, run_id)
+            assert out["status"] == "running"
+            assert _statuses(out) == {"generate": "running", "handoff_to_local": "pending"}
+    run(go())
+
+
+def test_the_gate_stage_starts_after_its_plan_was_deleted(tmp_path):
+    async def go():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            from backend.schemas.run import RunRecipe
+            recipe = RunRecipe(stages=["score", "gate"], gate={}, score={"run_aesthetic": False})
+            async with env.Session() as db:
+                r = Run(dataset_id=ds["id"], plan_id=None, name="x", context={}, status="running",
+                        recipe=recipe.model_dump(),
+                        stages=[{"key": "gate", "status": "pending", "job_id": None, "note": None,
+                                 "summary": None, "pass_no": None}])
+                db.add(r)
+                await db.commit()
+                await run_service._start_next(db, r)
+                out = (r.status, r.stages[0]["status"], r.stages[0]["note"])
+            # Reached the gate itself (nothing to judge), not "The run's plan was deleted".
+            assert out == ("completed", "skipped", "This pass produced no images to gate")
     run(go())

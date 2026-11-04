@@ -635,6 +635,9 @@ async def repath_subfolder(
         )
     )
     updated = (exact.rowcount or 0) + (descendants.rowcount or 0)
+    # A rename can take a reject out of `rejects/` (or a folder into it).
+    from backend.services.gate_flags import clear_gate_flags_outside_rejects
+    await clear_gate_flags_outside_rejects(db, dataset_id)
 
     ds = await db.get(Dataset, dataset_id)
     if ds:
@@ -671,6 +674,9 @@ async def delete_subfolder(db: AsyncSession, dataset_id: str, path: str) -> int:
         .values(subfolder="")
     )
     moved = result.rowcount
+    # Deleting `rejects` (or a folder above it) files its images at the root.
+    from backend.services.gate_flags import clear_gate_flags_outside_rejects
+    await clear_gate_flags_outside_rejects(db, dataset_id)
 
     ds = await db.get(Dataset, dataset_id)
     if ds:

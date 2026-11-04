@@ -660,7 +660,7 @@ async def _begin_stage(db: AsyncSession, run: Run, idx: int, key: str) -> _Outco
     tag = stage_tag(idx, key)
     if key in _COMFY_STAGES and plan is None:
         raise HTTPException(404, "The run's plan was deleted")
-    if key in ("rewrite", "gate", "next_pass") and plan is None:
+    if key in ("rewrite", "next_pass") and plan is None:
         raise HTTPException(404, "The run's plan was deleted")
     if key == "snapshot":
         return await _stage_snapshot(db, run, tag)
@@ -1260,11 +1260,19 @@ async def _stage_gate(db: AsyncSession, run: Run, recipe: RunRecipe, idx: int, t
         from backend.database import AsyncSessionLocal
 
         async with AsyncSessionLocal() as session:
+            # One commit ends the job, so a cancel before it leaves nothing behind: the
+            # check sits before the work and again before that commit (rolled back first).
+            job_queue.raise_if_cancelled(job_id)
             result = await run_gate.apply_gate(session, rows, base, gate, dataset_id=dataset_id)
             row = await session.get(BackgroundJob, job_id)
             if row is not None:
                 row.result_data = result
                 row.done_items = result["checked"]
+            try:
+                job_queue.raise_if_cancelled(job_id)
+            except BaseException:
+                await session.rollback()
+                raise
             # One commit: the flags, the moves and the job's numbers together.
             await session.commit()
 
@@ -1361,6 +1369,11 @@ async def _stage_next_pass(db: AsyncSession, run: Run, plan: ComfyPlan, recipe: 
         return _Outcome("done", summary=f"Pass {p}: every folder is full ({total})")
     stop = (_Stop(f"the pass cap ({loop.max_passes}) is reached", "passes") if p >= loop.max_passes
             else await _budget_stop(db, run, recipe))
+    if stop is None and not _pass_rows(run, p):
+        # A pass that made no rows cannot move any folder, and the next one would plan
+        # the same nothing. (A folder the image cap's round-robin left out is still
+        # exempt from the per-folder stall count above: that is about one folder.)
+        stop = _Stop("the pass made no rows", None)
     if stop:
         run.context = {**(run.context or {}), "loop": {"outcome": "short", "reason": stop.reason, "cap": stop.cap}}
         return _Outcome("done", summary=f"Pass {p}: {met} of {total} folders full. Stopped: {stop.reason}")
@@ -1395,7 +1408,7 @@ class _Stop:
     did it. A run stopped by a cap can carry on with that cap raised (`extend_run`)."""
 
     reason: str
-    cap: str
+    cap: str | None
 
 
 async def _provider_billed(db: AsyncSession, provider_id: str) -> bool:
@@ -1494,6 +1507,32 @@ def _summary(job: BackgroundJob) -> str | None:
     return None
 
 
+async def _every_item_failed(db: AsyncSession, job: BackgroundJob) -> str | None:
+    """The reason a *completed* generate or caption job made nothing, else None.
+
+    A partial failure still counts as done. For a generate job the first failed row's
+    own error is quoted, since that is what the user must fix.
+    """
+    rd = job.result_data or {}
+    if job.job_type == "comfy_generate":
+        failed = rd.get("failed", 0) or 0
+        if rd.get("completed", 0) or failed <= 0:
+            return None
+        why = ""
+        ids = rd.get("failed_row_ids") or []
+        if ids:
+            row = await db.get(ComfyRow, ids[0])
+            if row is not None and row.error_msg:
+                why = f": {row.error_msg}"
+        return f"every row failed ({failed} of {failed}){why}"
+    if job.job_type == "caption":
+        failed = rd.get("failed_count", 0) or 0
+        total = job.total_items or 0
+        if failed > 0 and failed >= total:
+            return f"every image failed ({failed} of {total})"
+    return None
+
+
 async def advance_run(run_id: str, job_id: str) -> None:
     """Called by the worker after a tagged child job's terminal commit. Records the
     stage and starts the next one, or ends the run.
@@ -1513,7 +1552,8 @@ async def advance_run(run_id: str, job_id: str) -> None:
             tag = (job.config or {}).get("run_stage")
             idx = next(
                 (i for i, s in enumerate(run.stages)
-                 if s["status"] == "running" and stage_tag(i, s["key"]) == tag),
+                 if s["status"] == "running" and stage_tag(i, s["key"]) == tag
+                 and s.get("job_id") == job_id),
                 None,
             )
             if idx is None:
@@ -1533,6 +1573,14 @@ async def advance_run(run_id: str, job_id: str) -> None:
                                  run_status="cancelled")
                 return
             if job.status == "completed":
+                every_failed = await _every_item_failed(db, job)
+                if every_failed:
+                    # The user's ruling, 2026-11-04: a job that failed every item did
+                    # nothing, so the run fails here. Resume retries the failed rows
+                    # (`_stage_generate` resets them) or captions again.
+                    await _end_stage(db, run, idx, "failed", note=every_failed, run_status="failed",
+                                     error=f"{label}: {every_failed}")
+                    return
                 await _end_stage(db, run, idx, "done")
             elif job.status == "cancelled":
                 await _end_stage(db, run, idx, "cancelled", run_status="failed",
@@ -1612,16 +1660,22 @@ async def cancel_run(db: AsyncSession, run_id: str) -> Run:
     the run cancelled would leave it reading cancelled while the job still writes.
     Instead the cancel is recorded (`cancel_requested`) and `advance_run` ends the run
     when the snapshot does. A snapshot still queued is cancelled like any other child.
+    Asking again once that snapshot is missing or finished (its hook never came) ends
+    the run cancelled at once.
     """
     async with _run_lock(run_id):
         run = await _get(db, run_id)
         if run.status not in LIVE_STATUSES:
             raise HTTPException(409, f"A {run.status} run cannot be cancelled")
-        if run.cancel_requested:
-            return run
         child_id = run.current_job_id
         child = await db.get(BackgroundJob, child_id) if child_id else None
-        if child is not None and child.job_type == "create_snapshot" and child.status == "running":
+        if run.cancel_requested:
+            # A cancel waits for a running snapshot and `advance_run` ends the run. If the
+            # snapshot is gone or finished and no hook came (it raised, or was skipped),
+            # asking again finishes the cancel instead of waiting for nothing.
+            if child is not None and child.status in ("pending", "running"):
+                return run
+        elif child is not None and child.job_type == "create_snapshot" and child.status == "running":
             run.cancel_requested = True
             run.pause_requested = False
             await db.commit()
@@ -1633,11 +1687,15 @@ async def cancel_run(db: AsyncSession, run_id: str) -> Run:
             if child is not None and s.get("job_id") == child.id and child.status == "completed":
                 # Finished, but its hook has not stepped the run yet: what it did stands.
                 s.update(status="done", summary=_summary(child), finished_at=_now())
+            elif child is not None and s.get("job_id") == child.id and child.status == "failed":
+                # Failed with no hook (a second cancel after a stuck snapshot): say so.
+                s.update(status="failed", note=child.error_msg, finished_at=_now())
             else:
                 s.update(status="cancelled", finished_at=_now())
         run.stages = stages
         run.status = "cancelled"
         run.pause_requested = False
+        run.cancel_requested = False
         run.current_job_id = None
         run.finished_at = datetime.utcnow()
         await db.commit()
@@ -1747,12 +1805,23 @@ async def reconcile_interrupted_runs() -> int:
         runs = (await db.execute(select(Run).where(Run.status == "running"))).scalars().all()
         for run in runs:
             cancelling = bool(run.cancel_requested)
+            failed_reason: str | None = None
             stages = copy.deepcopy(run.stages)
             for s in stages:
                 if s["status"] != "running":
                     continue
                 child = await db.get(BackgroundJob, s["job_id"]) if s.get("job_id") else None
-                if child is not None and child.status == "completed":
+                every_failed = (
+                    await _every_item_failed(db, child)
+                    if child is not None and child.status == "completed" else None
+                )
+                if every_failed:
+                    # The same rule `advance_run` applies (the user's ruling, 2026-11-04):
+                    # a child that failed every item did nothing, so the run fails here
+                    # rather than pausing as if the stage had worked.
+                    s.update(status="failed", note=every_failed, summary=_summary(child), finished_at=_now())
+                    failed_reason = f"{STAGE_LABELS.get(s['key'], s['key'])}: {every_failed}"
+                elif child is not None and child.status == "completed":
                     s.update(status="done", summary=_summary(child), finished_at=_now())
                 elif cancelling:
                     s.update(status="cancelled", finished_at=_now(),
@@ -1766,6 +1835,10 @@ async def reconcile_interrupted_runs() -> int:
             run.current_job_id = None
             if cancelling:
                 run.status = "cancelled"
+                run.finished_at = datetime.utcnow()
+            elif failed_reason:
+                run.status = "failed"
+                run.error_msg = failed_reason
                 run.finished_at = datetime.utcnow()
             elif any(s["status"] == "pending" for s in stages):
                 run.status = "paused"

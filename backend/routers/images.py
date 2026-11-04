@@ -54,6 +54,7 @@ from backend.services import version_service
 from backend.services.dataset_busy import ensure_not_busy
 from backend.services.detection_service import remap_detections_for_crop
 from backend.services.duplicate_service import carry_duplicate_flags, prune_orphaned_duplicate_flags
+from backend.services.gate_flags import clear_gate_flags_outside_rejects
 from backend.services.image_move import move_to_subfolder
 from backend.services.image_delete import unlink_files_for_rows, unlink_image_files
 from backend.services.label_service import copy_labels, label_filter_clause, labels_by_image
@@ -2269,6 +2270,10 @@ async def batch_move_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
             )
         )
 
+    # A reject moved out of `rejects/` loses its gate flag (the user's ruling,
+    # 2026-11-04); staged with the rest, ahead of the commit.
+    await clear_gate_flags_outside_rejects(db, body.target_dataset_id)
+
     # Commit DB before filesystem operations so the DB always reflects the intended
     # final state. If a rename fails mid-batch the images that were already moved
     # remain accessible; only not-yet-moved files are temporarily at the wrong path.
@@ -2469,6 +2474,10 @@ async def batch_copy_dataset(body: BatchMoveDatasetRequest, db: AsyncSession = D
     # file copies, preserving this function's stage-DB → copy-files → commit
     # ordering: an incomplete copy must leave nothing behind.
     await copy_labels(db, id_map)
+    # The copy keeps its flags (`quality_flags` is copied whole), so one landing outside
+    # `rejects/` loses the gate's (the user's ruling, 2026-11-04). Staged DB work, so
+    # it sits ahead of the file copies.
+    await clear_gate_flags_outside_rejects(db, body.target_dataset_id)
 
     for old_path, new_path, old_thumb, new_thumb, *_ in plan:
         copy_with_sidecar(old_path, new_path)

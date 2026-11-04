@@ -4,8 +4,10 @@ It judges each of the pass's images against the recipe's `GateSettings`. A failu
 flagged `gate_rejected` (with its `gate_reasons`) and filed under
 `<base>/rejects/<leaf path>`, one tree for every reject (the user's ruling,
 2026-11-04). Nothing is deleted, and subfolders are DB labels, so no file moves.
-The flag is what keeps a reject out of a folder's kept count and the export; moving
-an image back by hand does not clear it.
+The flag is what keeps a reject out of a folder's kept count and the export. It goes
+when the image leaves `rejects/` by any move, copy or subfolder rename or delete
+(`gate_flags.clear_gate_flags_outside_rejects`, the user's ruling, 2026-11-04); the
+gate's own move into `rejects/` keeps it.
 """
 from __future__ import annotations
 
@@ -15,10 +17,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.models import Image
 from backend.models.comfy import ComfyRow
 from backend.schemas.run import GateSettings
+from backend.services.gate_flags import REJECTS_FOLDER
 from backend.services.image_move import move_to_subfolder
 from backend.utils import chunked, join_subfolder
 
-REJECTS_FOLDER = "rejects"
+__all__ = ["REJECTS_FOLDER", "apply_gate", "gate_reasons"]
+
+# `REJECTS_FOLDER` lives in `gate_flags` (re-exported here) so `image_move` can use it
+# without an import cycle.
 
 
 def gate_reasons(img: Image, gate: GateSettings) -> list[str]:
@@ -78,7 +84,7 @@ async def apply_gate(
             img.quality_flags = {**flags, "gate_rejected": True, "gate_reasons": why}
             by_target.setdefault(join_subfolder(base, REJECTS_FOLDER, folder_of[img.id]), []).append(img.id)
     for target, ids in by_target.items():
-        await move_to_subfolder(db, ids, target, rename_on_move=False, commit=False)
+        await move_to_subfolder(db, ids, target, rename_on_move=False, commit=False, clear_gate_flags=False)
     return {
         "checked": checked,
         "rejected": sum(len(v) for v in by_target.values()),

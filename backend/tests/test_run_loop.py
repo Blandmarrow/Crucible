@@ -395,3 +395,30 @@ def test_the_row_cap_holds_on_pass_one_and_lifts_from_pass_two(tmp_path, monkeyp
             async with env.Session() as db:
                 assert (await db.execute(select(Run).where(Run.dataset_id == ds2["id"]))).first() is None
     run(go())
+
+
+@needs_cv2
+def test_a_pass_that_made_no_rows_stops_the_loop(tmp_path, monkeypatch):
+    async def go():
+        async with api_env(tmp_path) as env:
+            _fake, ds, plan_id = await _loop_plan(env, monkeypatch, _spec(GOOD, BLURRY))
+            code, body = await _start(env, ds["id"], plan_id, LOOP_STAGES,
+                                      gate={"exclude_flags": ["is_blurry"]}, loop=_loop(max_passes=1))
+            assert code == 200, body
+            done = await wait_for_run(env, body["id"], timeout=60)
+            assert done["outcome"]["cap"] == "passes"
+
+            # Re-run `next_pass` with room to go on, but a pass that submitted nothing:
+            # folders are still open, so the loop stops instead of inserting pass 2.
+            async with env.Session() as db:
+                r = await db.get(Run, body["id"])
+                plan = await db.get(ComfyPlan, plan_id)
+                recipe = RunRecipe.model_validate({**r.recipe, "loop": _loop(max_passes=5)})
+                idx = next(i for i, s in enumerate(r.stages) if s["key"] == "next_pass")
+                assert any(e["state"] == "open" for e in r.context["leaves"].values())
+                r.context = {**r.context, "passes": [[]], "row_ids": []}
+                out = await run_service._stage_next_pass(db, r, plan, recipe, idx)
+                assert out.kind == "done"
+                assert r.context["loop"] == {"outcome": "short", "reason": "the pass made no rows", "cap": None}
+                assert not any(s.get("pass_no") == 2 for s in r.stages)
+    run(go())

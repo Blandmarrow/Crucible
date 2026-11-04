@@ -42,7 +42,7 @@ not a see-also, and says which part of the file it owns.
 | `backend/services/video_service.py` | `docs/dev/video/decode.md` — the probe ladder, duration search and poster generation; + this file § Poster stems and collisions for `claimed_poster_stems` |
 | `backend/services/video_extract.py` | `docs/dev/video/shots.md` — sampling, shot detection, `render_shot`; + `docs/dev/video/extract.md` for the `video_extract` job; + `docs/dev/video/reextract.md` for `render_at_timestamps` |
 | `backend/services/video_frames.py` | `docs/dev/video/heuristics.md` — the pure-numpy judgement calls |
-| `backend/services/dataset_service.py` (its video half) | This file § Ingest — folder import, `_rescan_videos` and the poster rename-on-collision; + `docs/dev/datasets-page.md`'s **Dataset duplicate** paragraphs for `duplicate_dataset`'s video loop and `_copy_video_sync` |
+| `backend/services/dataset_service.py` (its video half) | This file § Ingest — folder import, `_rescan_videos` and the poster rename-on-collision; + `docs/dev/dataset-operations.md`'s **Dataset duplicate** paragraphs for `duplicate_dataset`'s video loop and `_copy_video_sync` |
 | `backend/tests/test_video_*.py` | `docs/dev/video/tests.md` — also the cv2 gate and the skip convention |
 
 ### Frontend
@@ -266,7 +266,7 @@ re-attach hook are in `docs/dev/video/extract-ui.md`, with its `CropOverlay`/`Tr
   reproduces them exactly.
 - `duplicate_dataset` carries videos only under `include_videos` (default off, preflighted,
   refused for a snapshot), remapping each copied frame's `source_video_id` onto the clone's
-  own video — see the **Dataset duplicate** paragraphs of `docs/dev/datasets-page.md`.
+  own video — see the **Dataset duplicate** paragraphs of `docs/dev/dataset-operations.md`.
 - The file browser (`docs/dev/file-browser.md`) reports `media_kind` per entry instead of the
   old `is_image` boolean, and its move/rename/delete endpoints sync `Video` rows alongside
   `Image` rows — otherwise a video moved through the browser leaves a dangling row. That

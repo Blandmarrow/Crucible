@@ -101,3 +101,7 @@ A subfolder row is *both* a droppable and a draggable, so the sidebar tree can b
 - **Right-click never starts a drag**: `@dnd-kit/core`'s `PointerSensor.activators` bails on `event.button !== 0`, so the row's context menu and its draggable coexist with no special handling.
 
 **Coverage gap, deliberate.** `frontend/e2e/gallery-subfolders.spec.ts` covers the *menu* routes to rename and move; **no committed spec drives the drag**. An 8 px `activationConstraint` needs a multi-step `mouse.move` dance and there was no existing drag spec to copy the idiom from, so the drop was verified against a throwaway spec instead — nesting, un-nesting onto `(root)`, the self-and-descendant refusal, and a press-and-slide on `×` not becoming a drag, each run three times clean. If a drag spec is ever wanted, that is the list it should cover.
+
+## Dropping files onto the grid to upload
+
+`GalleryPage` also accepts files dropped onto the grid: `onDragEnter`/`onDragLeave`/`onDrop` sit on the scroll container, and the drop runs `handleUpload`, which reports through `utils/uploadToast.ts` (`docs/dev/image-files.md` § Upload reporting). This is file-upload drag, distinct from the dnd-kit gestures above (file drags expose `"Files"` in `dataTransfer.types`). The dataset-card equivalent, `handleCardDrop` on `DatasetsPage`, is in `docs/dev/datasets-page.md`.

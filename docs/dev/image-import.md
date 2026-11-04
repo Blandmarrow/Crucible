@@ -1,6 +1,6 @@
 # Image import: folder import, rescan & caption import
 
-This file covers the three paths that bring images and captions in from a folder on disk — folder import, rescan/sync and standalone caption import — plus dropping a `.txt` onto an image to set its caption, and the rule the rescans share with every creation path: a stem-keyed derived artifact needs a collision guard at every writer. How a new file's name is picked (`unique_filename_with_thumb`), the `rename_with_sidecar` contract and cross-dataset moves are in `docs/dev/image-files.md`; `ImportFolderModal` and the `DirPickerModal` Browse button are in `docs/dev/datasets-page.md`; the video half of import and rescan is `docs/dev/video.md` § Ingest.
+This file covers the three paths that bring images and captions in from a folder on disk — folder import, rescan/sync and standalone caption import — plus dropping a `.txt` onto an image to set its caption, and the rule the rescans share with every creation path: a stem-keyed derived artifact needs a collision guard at every writer. How a new file's name is picked (`unique_filename_with_thumb`), the `rename_with_sidecar` contract and cross-dataset moves are in `docs/dev/image-files.md`; `ImportFolderModal` and the `DirPickerModal` Browse button are in `docs/dev/dataset-operations.md`; the video half of import and rescan is `docs/dev/video.md` § Ingest.
 
 ## Caption sidecars
 
@@ -32,7 +32,7 @@ Captions are persisted *out* to `{stem}.txt` sidecars (`caption_service._write_t
 
 ## Gallery entry points and import toasts
 
-The `GalleryPage` toolbar also carries an **"Import folder" button** (next to Rescan/Upload) that opens the shared `ImportFolderModal` for the current dataset, so folder import is reachable without returning to `DatasetsPage`. See `docs/dev/datasets-page.md` for `ImportFolderModal` and the in-app `DirPickerModal` Browse button.
+The `GalleryPage` toolbar also carries an **"Import folder" button** (next to Rescan/Upload) that opens the shared `ImportFolderModal` for the current dataset, so folder import is reachable without returning to `DatasetsPage`. See `docs/dev/dataset-operations.md` for `ImportFolderModal` and the in-app `DirPickerModal` Browse button.
 
 **An import's outcome toasts come from `TopBar`, for every entry point** (GPT-030): the summary on completion (`utils/importToast.ts`), "Import failed: `<server error>`" on failure, and a cancel notice. The modal only says "Import submitted", because a folder that turns out not to exist, or a drive without room, fails in the worker after the modal has closed. Before, that failure showed nothing but the old "Import started". See `docs/dev/frontend-jobs.md` § Job completion → cache invalidation.
 

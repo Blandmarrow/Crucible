@@ -205,6 +205,63 @@ test('the Blueprint tab opens the draft-from-a-description dialog', async ({ pag
   await expect(page.getByTestId('blueprint-draft-banner')).toHaveCount(0)
 })
 
+test('a waiting draft can be reviewed, with its expansion, before Use it', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-comfy-draft-review-${Date.now()}`)
+  const plan = await createPlanViaApi(request, ds.id, 'draft review plan')
+  const draft = {
+    axes: {
+      character: [
+        { id: 'iron', label: 'Iron Knight', descriptor: 'a knight in dented iron plate' },
+        { id: 'salt', label: 'Salt Witch', descriptor: 'a witch in a salt-crusted cloak' },
+      ],
+    },
+    variations: { shot: ['low angle', 'wide shot'] },
+    scenarios: [{
+      name: 'alone', combine: [{ axis: 'character', take: 1 }], mode: 'full', count: 1,
+      path: '{character}', template: '{character}, {shot}', rewrite: false,
+    }],
+  }
+  // No LLM in e2e, so the outline job's one output, the saved draft, is added to the
+  // blueprint GET. Everything after it is real: the preview of the draft, Use it's PUT
+  // and its DELETE of the draft, after which the GET stops carrying one.
+  let discarded = false
+  await page.route(`**/api/v1/comfy/plans/${plan.id}/blueprint/draft`, async (route) => {
+    if (route.request().method() === 'DELETE') discarded = true
+    await route.continue()
+  })
+  await page.route(`**/api/v1/comfy/plans/${plan.id}/blueprint`, async (route) => {
+    if (route.request().method() !== 'GET' || discarded) return route.continue()
+    const response = await route.fetch()
+    // `value` is null until the plan's first blueprint save.
+    const value = (await response.json()).value ?? {
+      spec: { axes: {}, variations: {}, scenarios: [] }, seed: 7, brief: null, updated_at: new Date().toISOString(),
+    }
+    await route.fulfill({ response, json: { value: { ...value, draft } } })
+  })
+
+  await page.goto(`/datasets/${ds.id}/comfy`)
+  await page.getByRole('button', { name: 'Blueprint', exact: true }).click()
+  await expect(page.getByTestId('blueprint-draft-banner')).toBeVisible()
+  await page.getByTestId('blueprint-draft-review').click()
+
+  const review = page.getByTestId('draft-review')
+  await expect(review).toBeVisible()
+  await expect(review.getByText('Iron Knight')).toBeVisible()
+  await expect(review.getByText('{character}, {shot}')).toBeVisible()
+  await expect(page.getByTestId('draft-review-totals')).toContainText('2 folders · 2 rows', { timeout: 15_000 })
+  // The review is read-only: the saved spec is still empty.
+  const before = (await (await request.get(`/api/v1/comfy/plans/${plan.id}/blueprint`)).json()).value
+  expect(Object.keys(before?.spec.axes ?? {})).toHaveLength(0)
+
+  await page.getByTestId('draft-review-use').click()
+  await expect(page.getByTestId('outline-modal')).toHaveCount(0)
+  await expect(page.getByTestId('blueprint-draft-banner')).toHaveCount(0)
+  await expect(page.getByTestId('axis-character')).toBeVisible()
+  const after = (await (await request.get(`/api/v1/comfy/plans/${plan.id}/blueprint`)).json()).value
+  expect(after.spec.axes.character.map((e: { label: string }) => e.label)).toEqual(['Iron Knight', 'Salt Witch'])
+  expect(after.draft).toBeNull()
+})
+
 test('a scenario can opt in to the LLM rewrite: Top up waits for it, and the dialog shows the estimate', async ({ page, request }) => {
   const ds = await createDatasetViaApi(request, `e2e-comfy-rewrite-${Date.now()}`)
   const plan = await createPlanViaApi(request, ds.id, 'rewrite plan')

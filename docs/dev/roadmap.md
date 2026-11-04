@@ -50,9 +50,9 @@ restates its stages.
    `docs/dev/comfyui/` (2026-11-03). §7 (the mock ComfyUI server), §2a (blueprints, see
    `docs/dev/comfyui/structured.md`), §2b (the outline call) and §2c (Top up) have landed there
    too, so the arc's cut point is reached. §3, the optional LLM rewrite pass, landed there
-   on 2026-11-03 (`docs/dev/comfyui/structured-llm.md` § The rewrite pass) and still wants
-   one check by hand against a real LLM: LM Studio with a thinking model, a Stop mid-run,
-   and a hand-edited row left alone. M8 stages 2 and 3 merged to `main` on 2026-11-04 as
+   on 2026-11-03 (`docs/dev/comfyui/structured-llm.md` § The rewrite pass). On 2026-11-04
+   the user ran a draft and a rewrite with LM Studio and a thinking model, and both worked.
+   Two hand checks are still open: a Stop mid-run, and a hand-edited row left alone. M8 stages 2 and 3 merged to `main` on 2026-11-04 as
    PR #109, and this branch was rebased onto it the same day, so **the next M6 work is §4**,
    which gets its own plan session first. §4 builds the code-callable start functions for the
    score, caption and export jobs itself; M8 did not
@@ -177,7 +177,10 @@ gates are green and it is pushed.
 - [x] §3: the optional LLM rewrite pass, and the outline's instruction-order fix. Done
   2026-11-03: the `comfy_rewrite` job, migration `d4a8c2e6f1b9` (`comfy_rows.prompt_origin`),
   Top up's refusal while rows wait, and `docs/dev/comfyui/structured-llm.md` § The rewrite
-  pass. Verified by hand against a real LLM: not yet.
+  pass. Verified by hand against a real LLM in part (2026-11-04, `qwen3.8-27b` in LM
+  Studio): a draft and a rewrite both worked, and the draft review, the label wording and
+  the rewrite count's refresh came out of that test. Stop mid-run and a hand-edited row
+  are not yet checked.
 - [x] Rebase onto `main` once M8 stages 2 and 3 have landed there. Needed by §4. Done
   2026-11-04, after PR #109.
 - [ ] §4: the stepping run (`Run` row, `advance_run()`), its page and the VRAM handoff.

@@ -1,13 +1,14 @@
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
-import { comfyApi } from "../../api/comfy";
+import { comfyApi, type BlueprintSpec, type SavedBlueprint } from "../../api/comfy";
 import { providersApi } from "../../api/providers";
 import { useJobStore } from "../../store/jobStore";
 import { apiErrorDetail } from "../../utils/apiError";
 import ModelPicker from "../providers/ModelPicker";
 import JobProgressBar from "../common/JobProgressBar";
 import ModalShell from "../common/ModalShell";
+import DraftReview from "./DraftReview";
 
 const TERMINAL = ["completed", "failed", "cancelled"];
 
@@ -15,14 +16,29 @@ interface Props {
   planId: string;
   /** The last brief used, to prefill the box. */
   initialBrief: string | null;
+  /** The saved draft, from BlueprintPanel's draft query. While one exists the modal shows it
+      for review instead of the brief form, so a draft that lands with the modal open is seen. */
+  draft: BlueprintSpec | null;
+  seed: number;
+  /** The current spec is empty, so *Use it* replaces nothing and needs no warning. */
+  specIsEmpty: boolean;
+  /** A run is live on this plan: the form is read-only, so *Use it* is too. */
+  running: boolean;
+  busy: boolean;
+  /** Resolves true once the draft is the saved spec. */
+  onUse: () => Promise<boolean>;
+  onDiscard: () => Promise<void>;
   onClose: () => void;
 }
 
-/** Asks an LLM to draft a blueprint from a description. The call runs as a `comfy_outline`
-    background job and saves a draft on the blueprint; it never changes the spec. Closing
-    this modal never cancels it. The attached job is derived from jobStore, not subscribed
-    to here (docs/dev/comfyui/prompts.md § Frontend). */
-export default function OutlineModal({ planId, initialBrief, onClose }: Props) {
+/** Asks an LLM to draft a blueprint from a description, then shows the draft for review.
+    The call runs as a `comfy_outline` background job and saves a draft on the blueprint;
+    it never changes the spec. Closing this modal never cancels it. The attached job is
+    derived from jobStore, not subscribed to here (docs/dev/comfyui/prompts.md § Frontend). */
+export default function OutlineModal({
+  planId, initialBrief, draft, seed, specIsEmpty, running, busy, onUse, onDiscard, onClose,
+}: Props) {
+  const qc = useQueryClient();
   const { data: providers = [] } = useQuery({ queryKey: ["providers"], queryFn: providersApi.list });
   // Read for defaults only: what the user picks here is not written back.
   const { data: gen } = useQuery({
@@ -51,9 +67,27 @@ export default function OutlineModal({ planId, initialBrief, onClose }: Props) {
     return started && !TERMINAL.includes(started.status) ? started : undefined;
   }, [activeJobs, planId, startedJobId]);
   const drafting = !!job || starting;
+  // The job this modal started, once it has ended. Failure is shown here as well as in the
+  // toast, since the user is looking at this window when it happens.
+  const startedJob = startedJobId ? activeJobs.get(startedJobId) : undefined;
+  const failure = startedJob?.status === "failed" && !startedJob.optimistic
+    ? startedJob.message || "The draft failed" : null;
+  // "Draft again" from the review: back to the brief form while the old draft stays saved.
+  const [redrafting, setRedrafting] = useState(false);
+  const reviewing = !!draft && !drafting && !redrafting;
+
+  async function handleUse() {
+    if (await onUse()) onClose();
+  }
 
   async function handleDraft() {
     if (!effectiveProviderId || !brief.trim()) return;
+    setRedrafting(false);
+    // Hide the draft this one replaces, so the review that opens when the job ends shows
+    // the new draft rather than the old one until the refetch lands. A failed job leaves
+    // the old draft saved, and TopBar's terminal invalidation brings it back.
+    qc.setQueryData<SavedBlueprint | undefined>(["comfy", "blueprint-draft", planId],
+      (old) => (old ? { ...old, draft: null } : old));
     setStarting(true);
     try {
       const res = await comfyApi.outlineBlueprint(planId, {
@@ -79,14 +113,36 @@ export default function OutlineModal({ planId, initialBrief, onClose }: Props) {
   }
 
   return (
-    <ModalShell label="Draft a blueprint" onClose={onClose} closeOnBackdrop style={{ width: 640, maxWidth: "94vw" }}>
+    <ModalShell label="Draft a blueprint" onClose={onClose} closeOnBackdrop style={{ width: reviewing ? 760 : 640, maxWidth: "94vw" }}>
       <div className="panel-h">
-        <h3>Draft from a description</h3>
+        <h3>{reviewing ? "Review the draft" : "Draft from a description"}</h3>
         <div style={{ flex: 1 }} />
-        <button className="icon-btn" title="Close — a running draft keeps going" onClick={onClose}>×</button>
+        <button className="icon-btn" title={reviewing ? "Close — the draft stays saved" : "Close — a running draft keeps going"} onClick={onClose}>×</button>
       </div>
       <div className="panel-b" style={{ display: "flex", flexDirection: "column", gap: 10 }} data-testid="outline-modal">
-        {providers.length === 0 ? (
+        {reviewing && draft ? (
+          <>
+            <DraftReview planId={planId} draft={draft} seed={seed} />
+            {!specIsEmpty && (
+              <p style={{ fontSize: 12, color: "var(--warn, var(--fg-mute))", margin: 0 }}>
+                Using it replaces your current blueprint. Rows already in the queue are not touched.
+              </p>
+            )}
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <button className="btn ghost" disabled={busy} onClick={() => void onDiscard()} data-testid="draft-review-discard">
+                Discard
+              </button>
+              <button className="btn ghost" disabled={busy} onClick={() => setRedrafting(true)}>Draft again…</button>
+              <div style={{ flex: 1 }} />
+              <button className="btn ghost" onClick={onClose}>Decide later</button>
+              <button className="btn primary" disabled={busy || running} data-testid="draft-review-use"
+                title={running ? "A run is in progress on this plan" : undefined}
+                onClick={() => void handleUse()}>
+                {specIsEmpty ? "Use it" : "Replace my blueprint"}
+              </button>
+            </div>
+          </>
+        ) : providers.length === 0 ? (
           <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: 0 }}>
             No LLM providers configured — add one in Settings → LLM Providers first.
           </p>
@@ -134,11 +190,21 @@ export default function OutlineModal({ planId, initialBrief, onClose }: Props) {
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 <JobProgressBar message={job?.message || "Drafting…"} percent={Math.max(0, job?.percent ?? 0)} />
                 <span style={{ fontSize: 11, color: "var(--fg-dim)" }}>
-                  You can close this window. A toast says when the draft is ready.
+                  The draft shows here when it is ready. You can close this window: it then waits for you
+                  above the blueprint.
                 </span>
               </div>
             )}
+            {failure && !drafting && (
+              <p role="alert" style={{ fontSize: 12, color: "var(--bad)", margin: 0 }} data-testid="outline-failure">
+                {failure}
+              </p>
+            )}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              {redrafting && draft && (
+                <button className="btn ghost" onClick={() => setRedrafting(false)}>Back to the draft</button>
+              )}
+              <div style={{ flex: 1 }} />
               <button className="btn ghost" onClick={onClose}>Close</button>
               <button className="btn primary" data-testid="outline-draft"
                 disabled={drafting || !effectiveProviderId || !brief.trim()} onClick={handleDraft}>

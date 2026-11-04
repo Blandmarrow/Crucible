@@ -84,8 +84,9 @@ function BlueprintForm({ planId, datasetId, hasPromptPin, running, subfolder, se
     }
   }
 
-  async function applyDraft() {
-    if (!draft) return;
+  /** Resolves true once the draft is the saved spec (the review modal closes on it). */
+  async function applyDraft(): Promise<boolean> {
+    if (!draft) return false;
     setConfirmUse(false);
     setBusy(true);
     try {
@@ -98,8 +99,10 @@ function BlueprintForm({ planId, datasetId, hasPromptPin, running, subfolder, se
       setSpec(draft);
       await comfyApi.discardBlueprintDraft(planId);
       await draftQuery.refetch();
+      return true;
     } catch (err) {
       toast.error(apiErrorDetail(err, "Could not use the draft"));
+      return false;
     } finally {
       setBusy(false);
     }
@@ -117,23 +120,30 @@ function BlueprintForm({ planId, datasetId, hasPromptPin, running, subfolder, se
         </button>
       </div>
       {draft && (
+        // Accent-coloured on purpose: the draft waits here, unused, until the user acts on
+        // it, and a quiet grey box was easy to miss after closing the modal.
         <div role="status" data-testid="blueprint-draft-banner"
-          style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 12, margin: "0 0 12px",
-            padding: "8px 10px", border: "1px solid var(--border)", borderRadius: 6 }}>
+          style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 13, margin: "0 0 12px",
+            padding: "10px 12px", border: "1px solid var(--accent)", borderRadius: 6, background: "var(--accent-glow)" }}>
           <span style={{ flex: 1 }}>
-            A drafted blueprint is ready: {Object.keys(draft.axes).length} axes, {draft.scenarios.length} scenarios
+            ✨ <strong>A drafted blueprint is waiting for you:</strong>{" "}
+            {Object.keys(draft.axes).length} axes, {draft.scenarios.length} scenarios. Nothing changes until you use it.
           </span>
+          <button className="btn sm" disabled={busy} data-testid="blueprint-draft-review"
+            onClick={() => setOutlining(true)}>Review…</button>
           <button className="btn primary sm" disabled={running || busy}
-            onClick={() => (specIsEmpty ? applyDraft() : setConfirmUse(true))}>Use it</button>
+            onClick={() => (specIsEmpty ? void applyDraft() : setConfirmUse(true))}>Use it</button>
           <button className="btn ghost sm" disabled={busy} onClick={discardDraft}>Discard</button>
         </div>
       )}
       {confirmUse && (
         <ConfirmDialog title="Use the draft" message="Replace the current blueprint with the draft?"
-          confirmLabel="Replace" onConfirm={applyDraft} onCancel={() => setConfirmUse(false)} />
+          confirmLabel="Replace" onConfirm={() => void applyDraft()} onCancel={() => setConfirmUse(false)} />
       )}
       {outlining && (
-        <OutlineModal planId={planId} initialBrief={draftQuery.data?.brief ?? null} onClose={() => setOutlining(false)} />
+        <OutlineModal planId={planId} initialBrief={draftQuery.data?.brief ?? null}
+          draft={draft} seed={seed} specIsEmpty={specIsEmpty} running={running} busy={busy}
+          onUse={applyDraft} onDiscard={discardDraft} onClose={() => setOutlining(false)} />
       )}
       <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "0 0 12px" }}>
         Describe the images you want as axes, variations and scenarios. The preview shows the folders and

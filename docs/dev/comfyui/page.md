@@ -62,15 +62,28 @@ image's generation metadata on its detail page, and a failed row's error tooltip
     - **The draft has its own query, `["comfy","blueprint-draft",planId]`.** The gate
       latches its first value and never refetches into the form, so it cannot show a draft
       that lands while the tab is open.
-  - **The draft banner's *Use it* clears the draft only after the spec holding it is
-    saved.** In order:
+    - **While a draft exists, the modal is its review** (`DraftReview`), not the brief
+      form, so a draft that lands with the modal open is shown there. The banner's
+      *Review…* opens the same view, and *Draft again…* goes back to the brief. The review's
+      expansion is the ordinary preview endpoint with the draft in the body, on its own key
+      (`["comfy","blueprint-draft-preview",…]`); that endpoint writes nothing, so the saved
+      spec stays as it was until *Use it*. A failure of the job this modal started shows
+      inline as well as in the toast.
+    - **A new *Draft* blanks the cached draft first**, with `setQueryData`. The old one
+      would otherwise show in the review between the job's end and the refetch TopBar
+      triggers. A failed job leaves the old draft saved, and that refetch brings it back.
+  - **The draft's *Use it* (banner or review) clears the draft only after the spec holding
+    it is saved.** In order:
     1. Await `serverWritesSettled`, so no older autosave can land on top.
     2. Save the draft with an awaited `comfyApi.putBlueprint`.
     3. Set the form to the draft.
     4. `DELETE …/draft`.
     - Not `writeToServer`: it drops a 4xx write, and `serverWritesSettled` then resolves,
       which would clear a draft whose save never landed.
-    - A non-empty spec asks before it is replaced. *Discard* just deletes the draft.
+    - A non-empty spec asks before it is replaced: the banner with a `ConfirmDialog`, the
+      review with its button relabelled *Replace my blueprint* and a warning line, since a
+      dialog over the modal would stack two. *Discard* just deletes the draft.
+    - `applyDraft` resolves true on success, and the review closes on it.
   - **`BlueprintPreview`** is a `useQuery` on
     `["comfy","blueprint-preview",planId,debouncedJSON,allowOverCap]` (350 ms via
     `hooks/useDebouncedValue.ts`, `keepPreviousData`).
@@ -112,7 +125,9 @@ image's generation metadata on its detail page, and a failed row's error tooltip
       its job derived from `jobStore`, seeded with `plan_id` on start. It sends the shown
       estimate's `budget` as `confirm_budget`, and a 409 refetches the estimate.
     - **TopBar's `comfy_rewrite` branch** refreshes the rows as each batch lands
-      (`rewriteDoneRef`), as the `comfy_prompts` branch does.
+      (`rewriteDoneRef`), as the `comfy_prompts` branch does, and the estimate and the
+      preview with them. Both count the rows still waiting, so refreshed only at the end
+      they sat on the starting count for the whole run (2026-11-04).
       - It toasts once per job (`rewriteTerminalRef`), reading `result_data` through
         `jobsApi.get`, since neither the terminal event nor a reconciled one carries it. It
         then invalidates rows, prompts, the preview and the estimate.

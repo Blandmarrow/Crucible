@@ -59,10 +59,15 @@ templates (tags or prose, say), and it never changes them.
 
 - **It runs in the background**, like *Generate until N*. You can close the window or
   leave the page, and a message tells you when the draft is ready.
-- **Nothing changes until you choose.** The draft appears above the editors with **Use
-  it** and **Discard**. *Use it* replaces your current blueprint, asking first if you have
-  one, and then you review it in the preview like any other: edit names, cut a scenario,
-  fix whatever the preview marks as an error. *Discard* throws it away.
+- **You can review the draft before you use it.** If the window is still open when the
+  draft is ready, it shows the draft: every entity with its descriptor, the variations,
+  each scenario's template, how many folders and rows it makes, any errors, and a few
+  sample prompts. If you closed the window, a green banner waits above the editors.
+  Press **Review…** there to see the same view.
+- **Nothing changes until you choose.** **Use it** replaces your current blueprint, asking
+  first if you have one. Then you edit it like any other: rename entities, cut a
+  scenario, fix whatever the preview marks as an error. **Discard** throws the draft away,
+  and **Draft again…** lets you change the description and try again.
 - The draft never adds rows. Only **Apply** does.
 
 ## Preview and Apply

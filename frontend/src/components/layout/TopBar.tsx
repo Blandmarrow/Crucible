@@ -191,10 +191,16 @@ export default function TopBar() {
       if (progress.job_type === REWRITE_JOB_TYPE) {
         // Rows change per batch: refresh the table as each lands, as the comfy_prompts
         // branch does, so it never shows template text the pass has already replaced.
+        // The Rewrite button's count and the preview's "N to rewrite" read the same rows,
+        // so they refresh per batch too, or they sit on the starting count until the end.
         const done = progress.done ?? 0;
         if (progress.status === "running" && done > (rewriteDoneRef.current.get(jobId) ?? -1)) {
           rewriteDoneRef.current.set(jobId, done);
-          if (progress.plan_id) qc.invalidateQueries({ queryKey: ["comfy", "rows", progress.plan_id] });
+          if (progress.plan_id) {
+            qc.invalidateQueries({ queryKey: ["comfy", "rows", progress.plan_id] });
+            qc.invalidateQueries({ queryKey: ["comfy", "blueprint-rewrite", progress.plan_id] });
+            qc.invalidateQueries({ queryKey: ["comfy", "blueprint-preview", progress.plan_id] });
+          }
         }
         if (TERMINAL_JOB_STATUSES.has(progress.status) && !progress.optimistic && !rewriteTerminalRef.current.has(jobId)) {
           rewriteTerminalRef.current.add(jobId);

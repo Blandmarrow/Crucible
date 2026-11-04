@@ -64,6 +64,28 @@ staleness sweep while still recording the seam.
   until they are repointed. Do **not** take `### VRAM after a run` as the seam: it is six
   lines and belongs exactly where it is, under § Running a scoring run.
 
+A batch of thirteen splits was executed on 2026-11-04 on `feat/m6-comfy-automation`, after
+an audit found ten files at 90%+ of budget with no entry here. Four had recorded seams
+(`docs/dev/comfyui/automation.md`, `docs/runs.md`, `docs/dev/quality/style-similarity.md`,
+`docs/dev/image-processing-models.md`), and **all four were re-cut on execution**, because
+the recorded seam moved too little to reach 60%. automation.md needed § The stages out as
+well (`docs/dev/comfyui/run-stages.md`) and took the whole Runs page into
+`docs/dev/comfyui/run-start.md`. runs.md also gave up § Repeating until every folder is
+full (`docs/repeating-runs.md`). style-similarity's § Other models measured 754 words, not
+the ~950 recorded, so the other measurement sections went with it into
+`docs/dev/quality/style-evaluation.md`. image-processing-models' five job paragraphs were
+867 words, not ~1,250, so the output-mode paragraphs, LUT job lines and the ImageDetailPage
+outcome bullet joined them in `docs/dev/image-edit-job.md`. The unrecorded seams:
+run-loop.md → `docs/dev/comfyui/run-gate.md` + `docs/dev/comfyui/run-budgets.md` (the seed
+check went with the budgets, not the gate); provenance → `docs/dev/provenance-api.md` and
+`docs/licenses.md`; frontend-core → `docs/dev/frontend-constants.md`; frontend-jobs →
+`docs/dev/job-invalidation.md` (moving invalidation out beat moving reporting out, which
+only reached 62%); environment-setup → `docs/dev/server-start.md` (remainder accepted at
+64%); the video hub → `docs/dev/video/storage.md`; and datasets-page, which first gained
+`##` headings, → `docs/dev/dataset-operations.md`. `MAX_CLAUDE_WORDS` went to 6,500 for the
+six new Map rows. The lesson matches the earlier re-cuts: a recorded word count goes stale
+as fast as the file grows, so re-measure the seam before moving anything.
+
 The old flat docs/dev/comfy-structured.md → `docs/dev/comfyui/structured-llm.md` **and**
 `docs/dev/comfyui/structured-expansion.md` was executed on 2026-11-03 on
 `feat/m6-comfy-automation`, ahead of M6 §3, and was **re-cut on execution**. Re-measured at

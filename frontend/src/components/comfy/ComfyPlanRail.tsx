@@ -2,6 +2,8 @@ import { useState } from "react";
 import { MoreHorizontal, Plus } from "lucide-react";
 import ContextMenu from "../common/ContextMenu";
 import type { ComfyPlanSummary } from "../../api/comfy";
+import DndRow from "./DndRow";
+import { DROP_RING, dropId } from "./dnd";
 
 interface Props {
   plans: ComfyPlanSummary[];
@@ -72,7 +74,14 @@ export default function ComfyPlanRail({
           );
         }
         return (
-          <div key={p.id} className={`comfy-rail-item${active ? " active" : ""}`}>
+          // A drop target for rows: a drop copies them into this plan, Shift moves (M6 §8c).
+          <DndRow
+            key={p.id}
+            drop={{ id: dropId.plan(p.id), data: { kind: "plan", planId: p.id, name: p.name } }}
+            className={`comfy-rail-item${active ? " active" : ""}`}
+          >
+            {({ isOver }) => (<>
+            {isOver && <span aria-hidden style={{ position: "absolute", inset: 0, borderRadius: "var(--r)", pointerEvents: "none", ...DROP_RING }} />}
             <button
               className="comfy-rail-node"
               aria-current={active ? "true" : undefined}
@@ -99,7 +108,8 @@ export default function ComfyPlanRail({
             >
               <MoreHorizontal size={14} />
             </button>
-          </div>
+          </>)}
+          </DndRow>
         );
       })}
 

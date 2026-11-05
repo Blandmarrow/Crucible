@@ -1,13 +1,15 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
-import { ChevronDown, ChevronRight, Folder, Lock, MoreHorizontal, Pencil, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Folder, GripVertical, Lock, MoreHorizontal, Pencil, X } from "lucide-react";
 import { comfyApi, type ComfyPlan, type ComfyRow, type LibraryPrompt, type LinkedMode, type PlanPrompt } from "../../api/comfy";
 import { datasetsApi } from "../../api/datasets";
 import ConfirmDialog from "../common/ConfirmDialog";
 import ContextMenu, { type ContextMenuAction } from "../common/ContextMenu";
 import MoveSubfolderModal from "../gallery/MoveSubfolderModal";
 import FolderNameModal from "./FolderNameModal";
+import DndRow from "./DndRow";
+import { DROP_RING, dragId, dropId } from "./dnd";
 import { COMFY_LIBRARY_VIEW_KEY } from "../../constants/storage";
 import { apiErrorDetail } from "../../utils/apiError";
 import { loadPersisted, savePersisted } from "../../utils/persistentState";
@@ -253,6 +255,7 @@ function LibraryTabBody({ datasetId, plan, folders, folderInView }: ComfyLibrary
             prompt={p}
             depth={node.depth + 1}
             checked={selected.includes(p.id)}
+            dragIds={selected.includes(p.id) ? selected : [p.id]}
             editing={editingId === p.id}
             saving={updateMutation.isPending}
             onToggle={() => toggleSelected(p.id)}
@@ -331,7 +334,10 @@ function LibraryTabBody({ datasetId, plan, folders, folderInView }: ComfyLibrary
         ) : tree.length === 0 ? (
           <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: 0 }}>Nothing matches “{search.trim()}”.</p>
         ) : (
-          tree.map(renderNode)
+          <>
+            <LibraryRootTarget />
+            {tree.map(renderNode)}
+          </>
         )}
       </div>
 
@@ -382,13 +388,17 @@ export function LibraryCategoryRow({ node, open, onToggle, onMenu }: {
   onMenu: (x: number, y: number) => void;
 }) {
   return (
-    <div
+    <DndRow
+      drop={{ id: dropId.category(node.path), data: { kind: "category", path: node.path } }}
+      drag={{ id: dragId.category(node.path), data: { kind: "category", path: node.path } }}
       className="comfy-rail-item"
       data-testid="comfy-lib-category"
       data-category={node.path}
       style={{ paddingLeft: node.depth * 14 }}
       onContextMenu={(e) => { e.preventDefault(); onMenu(e.clientX, e.clientY); }}
     >
+      {({ handle, isOver }) => (<>
+      {isOver && <span aria-hidden style={{ position: "absolute", inset: 0, borderRadius: "var(--r)", pointerEvents: "none", ...DROP_RING }} />}
       <button
         className="comfy-rail-twisty"
         aria-label={`${open ? "Collapse" : "Expand"} ${node.path}`}
@@ -397,7 +407,7 @@ export function LibraryCategoryRow({ node, open, onToggle, onMenu }: {
       >
         {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
       </button>
-      <button className="comfy-rail-node" title={node.path} onClick={onToggle}>
+      <button {...handle?.props} ref={handle?.attach} className="comfy-rail-node" title={node.path} onClick={onToggle}>
         <Folder size={13} style={{ flexShrink: 0, color: "var(--accent)" }} />
         <span className="comfy-rail-label">{node.label}</span>
         <span className="comfy-rail-count mono">{node.totalCount}</span>
@@ -412,15 +422,35 @@ export function LibraryCategoryRow({ node, open, onToggle, onMenu }: {
       >
         <MoreHorizontal size={14} />
       </button>
-    </div>
+      </>)}
+    </DndRow>
+  );
+}
+
+/** The library's top level as a drop target, so a dragged category can leave its parent
+ *  (the folder tree's (root) does the same for folders). */
+function LibraryRootTarget() {
+  return (
+    <DndRow
+      drop={{ id: dropId.category(""), data: { kind: "category", path: "" } }}
+      className="comfy-rail-item"
+      style={{ fontSize: 11.5, color: "var(--fg-mute)", padding: "3px 6px" }}
+    >
+      {({ isOver }) => (<>
+        {isOver && <span aria-hidden style={{ position: "absolute", inset: 0, borderRadius: "var(--r)", pointerEvents: "none", ...DROP_RING }} />}
+        <span>Top level</span>
+      </>)}
+    </DndRow>
   );
 }
 
 /** One library prompt as a compact card, or its editor while `editing`. */
-export function LibraryPromptCard({ prompt, depth, checked, editing, saving, onToggle, onEdit, onCancelEdit, onSave }: {
+export function LibraryPromptCard({ prompt, depth, checked, dragIds, editing, saving, onToggle, onEdit, onCancelEdit, onSave }: {
   prompt: LibraryPrompt;
   depth: number;
   checked: boolean;
+  /** What a drag of this card moves: the selection when the card is in it. */
+  dragIds: string[];
   editing: boolean;
   saving: boolean;
   onToggle: () => void;
@@ -429,7 +459,8 @@ export function LibraryPromptCard({ prompt, depth, checked, editing, saving, onT
   onSave: (text: string) => void;
 }) {
   return (
-    <div
+    <DndRow
+      drag={editing ? null : { id: dragId.lib(prompt.id), data: { kind: "lib", ids: dragIds } }}
       data-testid="comfy-lib-prompt"
       data-prompt-id={prompt.id}
       style={{
@@ -437,6 +468,13 @@ export function LibraryPromptCard({ prompt, depth, checked, editing, saving, onT
         fontSize: 12, borderBottom: "1px solid var(--border)", minWidth: 0,
       }}
     >
+      {({ handle }) => (<>
+      {handle && (
+        <button {...handle.props} ref={handle.attach} className="comfy-rail-twisty"
+          aria-label="Drag prompt" title="Drag prompt" style={{ cursor: "grab", height: 18 }}>
+          <GripVertical size={12} />
+        </button>
+      )}
       <input type="checkbox" className="checkbox" aria-label="Select prompt" checked={checked} onChange={onToggle} style={{ marginTop: 2 }} />
       {editing ? (
         <PromptEditor initial={prompt.text} saving={saving} onCancel={onCancelEdit} onSave={onSave} />
@@ -446,7 +484,8 @@ export function LibraryPromptCard({ prompt, depth, checked, editing, saving, onT
           <button className="icon-btn" aria-label="Edit prompt" title="Edit the text" onClick={onEdit}><Pencil size={12} /></button>
         </>
       )}
-    </div>
+      </>)}
+    </DndRow>
   );
 }
 
@@ -610,6 +649,9 @@ function OtherPlansTabBody({ datasetId, plan }: ComfyLibraryPanelProps) {
               linked={!!row?.blueprint_linked}
               checked={selected.includes(prompt.row_id)}
               onToggle={() => toggle(prompt.row_id)}
+              sourcePlanId={srcId}
+              sourceDatasetId={sourceDatasetId}
+              dragIds={selected.includes(prompt.row_id) ? selected : [prompt.row_id]}
             />
           ))
         )}
@@ -652,19 +694,37 @@ function OtherPlansTabBody({ datasetId, plan }: ComfyLibraryPanelProps) {
 }
 
 /** One row of another plan, with its folder; a lock marks a row the source blueprint still counts. */
-export function OtherPlanRowCard({ prompt, folder, linked, checked, onToggle }: {
+export function OtherPlanRowCard({ prompt, folder, linked, checked, onToggle, sourcePlanId, sourceDatasetId, dragIds }: {
   prompt: PlanPrompt;
   folder: string;
   linked: boolean;
   checked: boolean;
   onToggle: () => void;
+  sourcePlanId: string;
+  sourceDatasetId: string;
+  /** What a drag of this row copies: the selection when the row is in it. */
+  dragIds: string[];
 }) {
   return (
+    <DndRow
+      drag={{
+        id: dragId.xrow(prompt.row_id),
+        data: { kind: "xrows", planId: sourcePlanId, datasetId: sourceDatasetId, ids: dragIds },
+      }}
+      style={{ display: "flex", alignItems: "flex-start", gap: 2 }}
+    >
+    {({ handle }) => (<>
+    {handle && (
+        <button {...handle.props} ref={handle.attach} className="comfy-rail-twisty"
+          aria-label="Drag row" title="Drag row" style={{ cursor: "grab", height: 18 }}>
+          <GripVertical size={12} />
+        </button>
+      )}
     <label
       data-testid="comfy-xplan-row"
       data-row-id={prompt.row_id}
       style={{
-        display: "flex", gap: 6, alignItems: "flex-start", padding: "4px 4px", fontSize: 12,
+        flex: 1, display: "flex", gap: 6, alignItems: "flex-start", padding: "4px 4px", fontSize: 12,
         borderBottom: "1px solid var(--border)", cursor: "pointer", minWidth: 0,
       }}
     >
@@ -677,5 +737,7 @@ export function OtherPlanRowCard({ prompt, folder, linked, checked, onToggle }: 
       </span>
       {linked && <Lock size={11} style={{ flexShrink: 0, color: "var(--fg-mute)", marginTop: 2 }} aria-label="From the blueprint" role="img" />}
     </label>
+    </>)}
+    </DndRow>
   );
 }

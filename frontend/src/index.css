@@ -470,7 +470,7 @@
     display: flex; align-items: center; gap: 4px; padding: 2px 4px 6px;
     font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--fg-mute);
   }
-  .comfy-rail-item { display: flex; align-items: center; border-radius: var(--r); }
+  .comfy-rail-item { position: relative; display: flex; align-items: center; border-radius: var(--r); }
   .comfy-rail-item.active { background: var(--surface-3); }
   .comfy-rail-item:hover { background: var(--surface-2); }
   .comfy-rail-item.active:hover { background: var(--surface-3); }

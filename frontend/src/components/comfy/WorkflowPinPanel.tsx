@@ -261,10 +261,36 @@ export default function WorkflowPinPanel({ plan, onSave, saving }: Props) {
     whiteSpace: "nowrap",
   };
 
+  // A workflow `.json` dropped from the desktop goes through the same path as Load .json
+  // file (M6 §8c): validated, then waiting for Save. Native events, gated on "Files".
+  const [fileOver, setFileOver] = useState(false);
+  const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes("Files");
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       {/* Workflow JSON + output nodes */}
-      <div className="panel">
+      <div
+        className="panel"
+        data-testid="comfy-workflow-drop"
+        style={fileOver ? { boxShadow: "inset 0 0 0 2px var(--accent)" } : undefined}
+        onDragOver={(e) => {
+          if (!hasFiles(e)) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "copy";
+          if (!fileOver) setFileOver(true);
+        }}
+        onDragLeave={(e) => {
+          if (hasFiles(e) && !e.currentTarget.contains(e.relatedTarget as Node | null)) setFileOver(false);
+        }}
+        onDrop={(e) => {
+          if (!hasFiles(e)) return;
+          e.preventDefault();
+          setFileOver(false);
+          const f = Array.from(e.dataTransfer.files).find((x) => /\.json$/i.test(x.name));
+          if (f) loadFile(f);
+          else toast.error("Drop a workflow .json file (API format)");
+        }}
+      >
         <div className="panel-h">
           <h3>Workflow template</h3>
           <div style={{ flex: 1 }} />

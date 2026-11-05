@@ -1,10 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  DndContext, DragOverlay, MeasuringStrategy, PointerSensor, pointerWithin, useSensor, useSensors,
+  type CollisionDetection, type DragEndEvent, type DragMoveEvent, type DragStartEvent,
+} from "@dnd-kit/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
 import { useJobSSE } from "../hooks/useSSE";
 import { useJobStore } from "../store/jobStore";
-import { comfyApi, type ComfyPlanSummary, type ComfyRow } from "../api/comfy";
+import { comfyApi, type ComfyPlanSummary, type ComfyRow, type LibraryPrompt, type LinkedMode } from "../api/comfy";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import BlueprintPanel from "../components/comfy/BlueprintPanel";
 import WorkflowPinPanel from "../components/comfy/WorkflowPinPanel";
@@ -16,6 +20,9 @@ import type { GeneratePromptsJobBody } from "../components/comfy/GeneratePrompts
 import BulkEditRowsModal from "../components/comfy/BulkEditRowsModal";
 import ComfyLibraryPanel, { type LibraryTab } from "../components/comfy/ComfyLibraryPanel";
 import CopyRowsToPlanModal from "../components/comfy/CopyRowsToPlanModal";
+import LinkedAskDialog from "../components/comfy/LinkedAskDialog";
+import { useCopyRowsMutation } from "../components/comfy/copyRows";
+import { describeDrop, dropId, resolveDrop, type DragData, type DropAction, type DropContext, type DropData } from "../components/comfy/dnd";
 import SaveToLibraryModal from "../components/comfy/SaveToLibraryModal";
 import SetRowFolderModal from "../components/comfy/SetRowFolderModal";
 import ComfyPlanRail from "../components/comfy/ComfyPlanRail";
@@ -58,6 +65,12 @@ const STATUS_CHIPS: { value: StatusFilter; label: string }[] = [
   { value: "failed", label: "Failed" },
   { value: "completed", label: "Done" },
 ];
+
+/** The rows a drag of `rowId` moves: the whole selection, in run order, when the row is
+ *  in it, else that row alone (the gallery's rule). */
+function dragRowIds(rowId: string, selected: Set<string>, rows: ComfyRow[]): string[] {
+  return selected.has(rowId) ? rows.filter((r) => selected.has(r.id)).map((r) => r.id) : [rowId];
+}
 
 /** Hooks can't run in loops — render one of these per active run to keep a
  *  dedicated SSE subscription per job. */
@@ -104,9 +117,13 @@ export default function ComfyPage() {
   // can attach to a job it launched. The modal persists it per plan from there.
   const [promptJobId, setPromptJobId] = useState<string | null>(null);
   const [showBulkEdit, setShowBulkEdit] = useState(false);
-  const [copyToPlan, setCopyToPlan] = useState<{ targetId?: string; move?: boolean } | null>(null);
+  const [copyToPlan, setCopyToPlan] = useState<{ targetId?: string; move?: boolean; rowIds?: string[] } | null>(null);
   const [showSaveToLibrary, setShowSaveToLibrary] = useState(false);
   const [showSetFolder, setShowSetFolder] = useState(false);
+  // A drop that would move rows the blueprint counts, waiting on the user's choice.
+  const [linkedAsk, setLinkedAsk] = useState<{
+    body: Parameters<typeof comfyApi.placeRows>[1]; linked: number; total: number; folder: string;
+  } | null>(null);
   const txtFilesRef = useRef<HTMLInputElement>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
@@ -356,7 +373,7 @@ export default function ComfyPage() {
   const bulkAddMutation = useMutation({
     // `source` names the UI that initiated the add so onSuccess only closes/clears
     // that UI — e.g. Import .txt must not wipe an in-progress paste draft.
-    mutationFn: (vars: { lines: string[]; source: "paste" | "generate" | "files"; subfolder?: string }) =>
+    mutationFn: (vars: { lines: string[]; source: "paste" | "generate" | "files" | "library"; subfolder?: string }) =>
       comfyApi.bulkAddRows(effectivePlanId!, vars.lines, vars.subfolder ?? ""),
     onSuccess: (data, { source, subfolder: into }) => {
       qc.invalidateQueries({ queryKey: ["comfy", "rows", effectivePlanId] });
@@ -398,9 +415,17 @@ export default function ComfyPage() {
 
   const placeMutation = useMutation({
     mutationFn: (body: Parameters<typeof comfyApi.placeRows>[1]) => comfyApi.placeRows(effectivePlanId!, body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["comfy", "rows", effectivePlanId] }),
-    onError: (err: unknown) => toast.error(apiErrorDetail(err, "Failed to move the row")),
+    onSuccess: (_data, body) => {
+      qc.invalidateQueries({ queryKey: ["comfy", "rows", effectivePlanId] });
+      if (body.subfolder != null) {
+        qc.invalidateQueries({ queryKey: ["comfy", "plan", effectivePlanId] });
+        qc.invalidateQueries({ queryKey: ["comfy", "blueprint-preview", effectivePlanId] });
+      }
+      setLinkedAsk(null);
+    },
+    onError: (err: unknown) => toast.error(apiErrorDetail(err, "Failed to move the rows")),
   });
+  const copyMutation = useCopyRowsMutation();
 
   // Durable "generate until N". planId travels through the variables (as in
   // runMutation) rather than being read from effectivePlanId at call time.
@@ -483,6 +508,175 @@ export default function ComfyPage() {
   // Where a library prompt, an import or a copy lands when no folder is named: the
   // folder picked in the tree, or (root) when All rows is shown.
   const folderInView = folderFilter ?? "";
+
+  // ── Drag and drop (M6 §8c; docs/dev/comfyui/library-dnd.md § Drag and drop) ──────
+  // dnd-kit for every drag inside the page; desktop files are native events in the
+  // table and the workflow panel. Every drop calls the mutation its button route does.
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
+  const [drag, setDrag] = useState<DragData | null>(null);
+  const [overAction, setOverAction] = useState<DropAction | null>(null);
+  const [dropIndicator, setDropIndicator] = useState<{ rowId: string; position: "before" | "after" } | null>(null);
+  // Shift at drop time turns a copy onto a plan into a move. Tracked from key events
+  // during the drag: dnd-kit's drag end carries no modifier state.
+  const [shift, setShift] = useState(false);
+  const shiftRef = useRef(false);
+  useEffect(() => {
+    if (!drag) return;
+    const onKey = (e: KeyboardEvent) => { shiftRef.current = e.shiftKey; setShift(e.shiftKey); };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("keyup", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keyup", onKey);
+      shiftRef.current = false;
+      setShift(false);
+    };
+  }, [drag]);
+
+  // The drop context, read by the collision filter through a ref so that callback stays
+  // stable across renders; refreshed after each render, before any pointer event.
+  const ctxRef = useRef({ selected, rows, planId: effectivePlanId, folderInView });
+  useLayoutEffect(() => {
+    ctxRef.current = { selected, rows, planId: effectivePlanId, folderInView };
+  });
+  const dropContext = useCallback((d: DragData, position: "before" | "after"): DropContext => {
+    const c = ctxRef.current;
+    return {
+      rowIds: d.kind === "row" ? dragRowIds(d.rowId, c.selected, c.rows) : [],
+      currentPlanId: c.planId ?? "", folderInView: c.folderInView, shift: shiftRef.current, position,
+    };
+  }, []);
+
+  // pointerWithin, keeping only targets the drop matrix accepts, so an invalid target
+  // never lights up; a row or folder under the pointer wins over the table body around it.
+  const collision: CollisionDetection = useCallback((args) => {
+    const d = args.active.data.current as DragData | undefined;
+    if (!d) return [];
+    const hits = pointerWithin(args).filter((h) => {
+      const data = args.droppableContainers.find((c) => c.id === h.id)?.data.current as DropData | undefined;
+      return !!data && resolveDrop(d, data, dropContext(d, "before")) !== null;
+    });
+    const specific = hits.filter((h) => h.id !== dropId.table);
+    return specific.length ? specific : hits;
+  }, [dropContext]);
+
+  // Before or after a row: the pointer against the row's middle. The pointer, not the
+  // dragged rect: with a DragOverlay that rect is the small chip, not the row.
+  function dropPosition(e: DragMoveEvent | DragEndEvent): "before" | "after" {
+    const o = e.over?.rect;
+    const start = e.activatorEvent as PointerEvent | null;
+    if (!o || !start || typeof start.clientY !== "number") return "before";
+    return start.clientY + e.delta.y < o.top + o.height / 2 ? "before" : "after";
+  }
+
+  function actionFor(e: DragMoveEvent | DragEndEvent): DropAction | null {
+    const d = e.active.data.current as DragData | undefined;
+    const o = e.over?.data.current as DropData | undefined;
+    return d && o ? resolveDrop(d, o, dropContext(d, dropPosition(e))) : null;
+  }
+
+  const lastOverKey = useRef("");
+  function onDragMove(e: DragMoveEvent) {
+    const a = actionFor(e);
+    const key = a ? JSON.stringify(a) : "";
+    if (key === lastOverKey.current) return;
+    lastOverKey.current = key;
+    setOverAction(a);
+    setDropIndicator(a?.type === "place" ? { rowId: a.anchor, position: a.position } : null);
+  }
+
+  function endDrag() {
+    setDrag(null);
+    setOverAction(null);
+    setDropIndicator(null);
+    lastOverKey.current = "";
+  }
+
+  async function libraryCall<T>(fn: () => Promise<T>, ok: (r: T) => string, failed: string) {
+    try {
+      const r = await fn();
+      qc.invalidateQueries({ queryKey: ["comfy", "library"] });
+      toast.success(ok(r));
+    } catch (err) {
+      toast.error(apiErrorDetail(err, failed));
+    }
+  }
+
+  /** Move rows to a folder (and a place), asking first about rows the blueprint counts. */
+  function placeWithAsk(body: Parameters<typeof comfyApi.placeRows>[1], folder: string) {
+    const moving = rows.filter((r) => body.row_ids.includes(r.id) && r.subfolder !== folder);
+    const linked = moving.filter((r) => r.blueprint_linked).length;
+    if (linked > 0) setLinkedAsk({ body, linked, total: moving.length, folder });
+    else placeMutation.mutate({ ...body, linked: "refuse" });
+  }
+
+  function runDrop(a: DropAction) {
+    const n = (k: number, w: string) => `${k} ${w}${k !== 1 ? "s" : ""}`;
+    switch (a.type) {
+      case "set-folder":
+        // At the end of the folder, as Set folder files them; a drop between rows places them.
+        return placeWithAsk({ row_ids: a.ids, subfolder: a.folder }, a.folder);
+      case "place":
+        return placeWithAsk(
+          { row_ids: a.ids, anchor_row_id: a.anchor, position: a.position, subfolder: a.folder }, a.folder);
+      case "copy-rows": {
+        const move = shiftRef.current;
+        const linked = rows.some((r) => a.ids.includes(r.id) && r.blueprint_linked);
+        if (move && linked) return setCopyToPlan({ targetId: a.planId, move: true, rowIds: a.ids });
+        return copyMutation.mutate({
+          sourcePlanId: effectivePlanId!, sourceDatasetId: datasetId!, targetPlanId: a.planId,
+          targetDatasetId: datasetId!, targetName: a.planName, rowIds: a.ids, move,
+          linked: "refuse" as LinkedMode,
+        }, { onSuccess: () => { if (move) setSelected(new Set()); } });
+      }
+      case "save-to-library":
+        return libraryCall(async () => {
+          const prompts = await comfyApi.listPlanPrompts(effectivePlanId!);
+          const lines = prompts.filter((p) => a.ids.includes(p.row_id)).map((p) => p.prompt.replace(/\s+/g, " ").trim());
+          return comfyApi.libraryAdd(a.category, lines);
+        }, (r) => `Saved ${n(r.created, "prompt")} to ${a.category}${r.skipped ? ` (${r.skipped} already there)` : ""}`,
+        "Failed to save to the library");
+      case "add-lib": {
+        const lib = qc.getQueryData<LibraryPrompt[]>(["comfy", "library"]) ?? [];
+        const byId = new Map(lib.map((p) => [p.id, p.text]));
+        const lines = a.ids.map((id) => byId.get(id)).filter((t): t is string => !!t);
+        if (lines.length) bulkAddMutation.mutate({ lines, source: "library", subfolder: a.folder });
+        return;
+      }
+      case "move-lib":
+        return libraryCall(() => comfyApi.libraryMove(a.ids, a.category),
+          (r) => `Filed ${n(r.moved, "prompt")} under ${a.category}${r.merged ? `, ${r.merged} merged` : ""}`,
+          "Failed to move the prompts");
+      case "copy-xrows":
+        return copyMutation.mutate({
+          sourcePlanId: a.planId, sourceDatasetId: a.datasetId, targetPlanId: effectivePlanId!,
+          targetDatasetId: datasetId!, targetName: plan?.name ?? "this plan", rowIds: a.ids, move: false,
+          subfolder: a.folder,
+        });
+      case "move-folder":
+        return moveFolderMutation.mutate({ planId: effectivePlanId!, from: a.path, to: a.newPath });
+      case "move-category":
+        return libraryCall(() => comfyApi.libraryMoveCategory(a.path, a.newPath),
+          (r) => `Moved the category to ${a.newPath}${r.merged ? `, ${r.merged} merged` : ""}`,
+          "Failed to move the category");
+    }
+  }
+
+  function onDragEnd(e: DragEndEvent) {
+    const a = actionFor(e);
+    endDrag();
+    if (a) runDrop(a);
+  }
+
+  const dragCount = !drag ? 0
+    : drag.kind === "row" ? dragRowIds(drag.rowId, selected, rows).length
+    : drag.kind === "lib" || drag.kind === "xrows" ? drag.ids.length : 1;
+  const dragNoun = !drag ? ""
+    : drag.kind === "folder" ? `folder ${drag.path}` : drag.kind === "category" ? `category ${drag.path}`
+    : `${dragCount} ${drag.kind === "lib" ? "prompt" : "row"}${dragCount !== 1 ? "s" : ""}`;
+  const overLabel = overAction
+    ? describeDrop(overAction.type === "copy-rows" ? { ...overAction, move: shift } : overAction)
+    : null;
 
   /** The row menu's moves, within the row's folder, through `rows/place`. */
   function moveRow(row: ComfyRow, where: RowMove) {
@@ -607,6 +801,16 @@ export default function ComfyPage() {
       )}
 
       {(section === "rows" || plans.length === 0) && (
+        <DndContext
+          sensors={sensors}
+          collisionDetection={collision}
+          // Rows scroll inside the virtualizer, so rects measured at drag start go stale.
+          measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
+          onDragStart={(e: DragStartEvent) => setDrag((e.active.data.current as DragData | undefined) ?? null)}
+          onDragMove={onDragMove}
+          onDragEnd={onDragEnd}
+          onDragCancel={endDrag}
+        >
         <div className="comfy-rows-wrap">
         <div className={`comfy-rows-grid${libOpen && plan && section === "rows" ? " lib-open" : ""}`}>
           <aside className="comfy-rail">
@@ -763,6 +967,9 @@ export default function ComfyPage() {
             onToggleGroup={toggleGroup}
             rowBounds={rowBounds}
             onMoveRow={moveRow}
+            draggingRowId={drag?.kind === "row" ? drag.rowId : null}
+            dropIndicator={dropIndicator}
+            onDropFiles={(files) => importPromptFiles(files, folderInView)}
           />
           </>
           )}
@@ -780,6 +987,19 @@ export default function ComfyPage() {
           )}
         </div>
         </div>
+        <DragOverlay dropAnimation={null} zIndex={60}>
+          {drag && (
+            <div style={{
+              display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px", fontSize: 12,
+              borderRadius: 999, background: "var(--surface-3)", border: "1px solid var(--accent)",
+              boxShadow: "0 8px 24px rgba(0,0,0,.35)", whiteSpace: "nowrap", pointerEvents: "none",
+            }}>
+              <span style={{ fontWeight: 600 }}>{dragNoun}</span>
+              {overLabel && <span style={{ color: "var(--fg-mute)" }}>→ {overLabel}</span>}
+            </div>
+          )}
+        </DragOverlay>
+        </DndContext>
       )}
 
       {/* Paste prompts modal */}
@@ -844,12 +1064,23 @@ export default function ComfyPage() {
         />
       )}
 
+      {linkedAsk && (
+        <LinkedAskDialog
+          linked={linkedAsk.linked}
+          total={linkedAsk.total}
+          folder={linkedAsk.folder}
+          busy={placeMutation.isPending}
+          onChoose={(linked) => placeMutation.mutate({ ...linkedAsk.body, linked })}
+          onCancel={() => setLinkedAsk(null)}
+        />
+      )}
+
       {copyToPlan && plan && (
         <CopyRowsToPlanModal
           sourcePlanId={plan.id}
           datasetId={datasetId}
           plans={plans}
-          rows={selectedRows}
+          rows={copyToPlan.rowIds ? rows.filter((r) => copyToPlan.rowIds!.includes(r.id)) : selectedRows}
           initialTargetId={copyToPlan.targetId}
           initialMove={copyToPlan.move}
           onMoved={() => setSelected(new Set())}

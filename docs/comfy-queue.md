@@ -35,6 +35,19 @@ Each row starts with a ⋮⋮ handle. Click it for **Move to top of folder**, **
 
 Cells edit in place. Editing a row's parameters after it has run resets it to pending, so it will be picked up by the next run — **changing a folder does not**, since it only affects where the *next* image goes, and a finished row keeps its image. To set one parameter column across the whole queue at once, use the ✎ in that column's header — including clearing it back to the default.
 
+## Dragging and dropping
+
+Everything the toolbar and menus do with rows and prompts also works by dragging, if you prefer the mouse:
+
+- Drag a row by its ⋮⋮ handle onto a folder in the list or a folder's header in the table to file it there, or between two rows to put it in that spot. Drag several at once by ticking them first.
+- Drop rows on another plan in the list to copy them there; hold **Shift** as you drop to move them instead.
+- Drop rows on a library category to save their prompts there.
+- Drag a library prompt by its handle onto the table to add it to the folder you have picked, or onto a folder to add it there.
+- Drag a folder onto another folder, or onto *(root)*, to move it with its rows. Drag a category onto another category, or onto *Top level*, to move it.
+- Drop `.txt` files from your computer onto the table to import them, one prompt per file. Drop a workflow `.json` onto the **Workflow template** box to load it.
+
+A chip next to the pointer says what the drop will do. Moving rows the blueprint made asks first.
+
 ## Prompt library
 
 A single library shared across every dataset and plan, so a set of prompts written once is reusable everywhere. Click **Library** in the toolbar to open it as a panel beside the queue; click it again, or the ✕, to close it. The page remembers whether it was open.

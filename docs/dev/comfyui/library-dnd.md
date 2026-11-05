@@ -105,6 +105,67 @@ the page usable without a mouse, and e2e drives the buttons.
   - It holds buttons only: the e2e counts the table's textareas and `(root)` inputs as row
     cells.
 
+## Drag and drop
+
+One `DndContext` in `ComfyPage` wraps the Rows tab: the rail, the tree, the table and the
+panel. Desktop files are native events instead. The pieces:
+- `components/comfy/dnd.ts` is pure: what a draggable and a droppable carry
+  (`DragData`/`DropData`), their namespaced ids, and **`resolveDrop`, the one drop matrix**
+  (the plan's § 8c table, with `describeDrop` for the overlay's words).
+- `DndRow.tsx` is a row that is a drop target, a drag source, or both. The drag starts from a
+  handle it passes back: a grip, or a label button, never a row holding inputs.
+- `runDrop` in `ComfyPage` turns an action into the mutation its button route calls.
+- `LinkedAskDialog.tsx` asks before a drop moves rows the blueprint counts.
+
+**The settings, and why:**
+- `PointerSensor` with `distance: 8`, as the gallery. A click on the grip still opens the row
+  menu, and a click on a tree folder still filters the table.
+- `MeasuringStrategy.Always`: rows scroll inside the virtualizer, so rects measured at drag
+  start go stale.
+- **The virtualizer places items with `top`, not `translateY`.** dnd-kit measures droppables
+  ignoring transforms, so every translated row measured at the top of the body, and no drop
+  between rows found its target.
+- The virtualizer's `rangeExtractor` keeps the dragged row mounted while it scrolls out of
+  view (`draggingRowId`).
+- **Collision** is `pointerWithin`, filtered through `resolveDrop`, so a target the drag
+  cannot use never lights up. A row, header or folder under the pointer wins over the table
+  body around it. The body is a droppable of its own, which also lets dnd-kit auto-scroll it.
+- **Before or after a row** compares the pointer (the drag's start event plus its delta) with
+  the row's middle, not the dragged rect: with a `DragOverlay` that rect is the small chip.
+- **Shift** is read from `keydown`/`keyup` during the drag, since dnd-kit's drag end carries no
+  modifier state. The overlay chip names the drop as it changes ("Copy 2 rows to X · Shift
+  moves").
+
+**What each drop does:**
+- **Rows** drag from the grip. A selected row drags the whole selection, in run order;
+  otherwise the row alone. No row drags while its plan runs.
+  - Onto a folder or group header, they go through `rows/place` with the folder and no
+    anchor, so they land at the end of that folder.
+  - Between rows, through `rows/place` with the anchor, re-filing into the anchor's folder.
+  - Either asks first (`LinkedAskDialog`) when rows the blueprint counts would move.
+  - Onto another plan in the rail, `rows/copy` copies them, or moves them with Shift. A move
+    of linked rows opens `CopyRowsToPlanModal` preset to that plan, to ask.
+  - Onto a category, they are saved to the library.
+- **Library prompts** drag from their grip, the panel's selection when the card is in it.
+  - Onto the table they land in the folder in view; onto a folder, header or row, in that
+    folder. Either way through `rows/bulk`.
+  - Onto a category they are re-filed (`library/move`).
+- **Other plans' rows** copy through `rows/copy`: onto the table each keeps its own folder,
+  onto a folder they all go there.
+- **A folder** onto a folder or *(root)* re-nests (`folders/move`). A locked folder, and every
+  folder while the plan runs, cannot be dragged.
+- **A category** onto a category or the panel's *Top level* row re-nests (`categories/move`,
+  which merges).
+- **Desktop files:**
+  - `.txt` files onto the table body import into the folder in view
+    (`importPromptFiles`). They are matched by extension, since a `.txt` can report an empty
+    `type` on Windows.
+  - A `.json` onto *Workflow & Pins*' template panel goes to `loadFile`, then waits for Save
+    like a loaded file.
+  - Both gate on `dataTransfer.types` holding `"Files"`, so no internal drag lights them up;
+    dnd-kit uses pointer events and never sees a file drag. The table keeps a depth counter
+    with a capture-phase reset, as the gallery's upload overlay does.
+
 ## Testing
 
 `frontend/e2e/comfy-library.spec.ts` drives the panel: the nested tree and collapse, a text
@@ -117,3 +178,13 @@ merges, and *Copy here* keeping folders.
 - *Copy to plan* keeps folders, and Move empties the source;
 - the row menu reorders, and its bounds disable *Move down* on the last row;
 - the panel stays open across a reload.
+
+`frontend/e2e/comfy-dnd.spec.ts` drives the gestures themselves, the repo's first committed
+drags: a row onto a tree folder, a row below another, a library prompt onto the table, and
+`.txt` files dropped from the desktop.
+- `dragTo` presses, travels 12px to pass the 8px activation, then moves to the target in
+  steps. It scrolls both ends into view first: the browser sends no pointer events past the
+  viewport, and the table body's middle is often below it.
+- The file drop dispatches `dragenter`, `dragover` and `drop` with a `DataTransfer` built in
+  the page.
+- The drag spec ran 20 of 20 under `--repeat-each=5` when it landed.

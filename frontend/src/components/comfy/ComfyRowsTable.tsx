@@ -1,5 +1,6 @@
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
+import { useDroppable } from "@dnd-kit/core";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { apiErrorDetail } from "../../utils/apiError";
@@ -9,6 +10,8 @@ import { imagesApi } from "../../api/images";
 import { usePaneNavigate } from "../../hooks/usePaneNavigate";
 import { compareFolders } from "./folderTree";
 import ContextMenu, { type ContextMenuAction } from "../common/ContextMenu";
+import DndRow from "./DndRow";
+import { DROP_RING, dragId, dropId } from "./dnd";
 
 interface Props {
   plan: ComfyPlan;
@@ -26,6 +29,13 @@ interface Props {
   /** Where a row sits in its folder's run order, for the row menu's Move entries. */
   rowBounds: Map<string, { first: boolean; last: boolean }>;
   onMoveRow: (row: ComfyRow, where: RowMove) => void;
+  /** The row being dragged: kept mounted while it scrolls out of view, since dnd-kit
+   *  loses a drag whose source node unmounts. */
+  draggingRowId: string | null;
+  /** Where a drop between rows would land: drawn as a line on that row's edge. */
+  dropIndicator: { rowId: string; position: "before" | "after" } | null;
+  /** `.txt` files dropped on the table from the desktop. */
+  onDropFiles: (files: File[]) => void;
 }
 
 /** The row menu's moves, all within the row's folder (M6 §8c). Across folders is Set
@@ -205,11 +215,11 @@ function FolderCell({ row, disabled, onCommit }: {
 
 export default function ComfyRowsTable({
   plan, rows, totalRows, selected, onToggle, onToggleAll, runningJob, closedGroups, onToggleGroup,
-  rowBounds, onMoveRow,
+  rowBounds, onMoveRow, draggingRowId, dropIndicator, onDropFiles,
 }: Props) {
   const qc = useQueryClient();
   const { go } = usePaneNavigate();
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
 
   // Only per-row pins get columns; run defaults live in the defaults strip above.
   const columns = useMemo(() => plan.pinned_params.filter((p) => p.per_row), [plan.pinned_params]);
@@ -238,8 +248,19 @@ export default function ComfyRowsTable({
     return out;
   }, [rows, closedGroups]);
 
+  const draggedIndex = draggingRowId
+    ? items.findIndex((it) => it.kind === "row" && it.row.id === draggingRowId)
+    : -1;
   const rowVirtualizer = useVirtualizer({
     count: items.length,
+    rangeExtractor: (range) => {
+      const out = defaultRangeExtractor(range);
+      if (draggedIndex >= 0 && !out.includes(draggedIndex)) {
+        out.push(draggedIndex);
+        out.sort((a, b) => a - b);
+      }
+      return out;
+    },
     getScrollElement: () => scrollRef.current,
     estimateSize: (i) => (items[i]?.kind === "group" ? 30 : 36),
     getItemKey: (i) => {
@@ -248,6 +269,54 @@ export default function ComfyRowsTable({
     },
     overscan: 10,
   });
+
+  // The body is a drop target of its own: library prompts and other plans' rows dropped
+  // on it land in the folder in view. Being a droppable also lets dnd-kit auto-scroll it.
+  const bodyDrop = useDroppable({ id: dropId.table, data: { kind: "table" } });
+
+  // `.txt` files from the desktop: native events, which dnd-kit (pointer events) never
+  // sees. Gated on "Files" so no internal drag lights it up; a depth counter because
+  // enter/leave fire per child, reset in the capture phase in case a child swallows the
+  // drop (the gallery's upload overlay does the same).
+  const [fileOver, setFileOver] = useState(false);
+  const fileDepth = useRef(0);
+  useEffect(() => {
+    const reset = () => { fileDepth.current = 0; setFileOver(false); };
+    window.addEventListener("drop", reset, true);
+    window.addEventListener("dragend", reset, true);
+    return () => {
+      window.removeEventListener("drop", reset, true);
+      window.removeEventListener("dragend", reset, true);
+    };
+  }, []);
+  const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes("Files");
+  const fileDropProps = {
+    onDragEnter: (e: React.DragEvent) => {
+      if (!hasFiles(e)) return;
+      fileDepth.current += 1;
+      setFileOver(true);
+    },
+    onDragOver: (e: React.DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+    },
+    onDragLeave: (e: React.DragEvent) => {
+      if (!hasFiles(e)) return;
+      fileDepth.current = Math.max(0, fileDepth.current - 1);
+      if (fileDepth.current === 0) setFileOver(false);
+    },
+    onDrop: (e: React.DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      fileDepth.current = 0;
+      setFileOver(false);
+      // By extension: a .txt can report an empty `type` on Windows.
+      const files = Array.from(e.dataTransfer.files).filter((f) => /\.txt$/i.test(f.name));
+      if (files.length === 0) toast.error("Only .txt files import as prompts");
+      else onDropFiles(files);
+    },
+  };
 
   // A generic patch, not a `values` dict: the folder cell and the parameter cells
   // write different fields of the same row.
@@ -413,7 +482,15 @@ export default function ComfyRowsTable({
       </div>
 
       {/* Virtualized body */}
-      <div ref={scrollRef} style={{ height: "52vh", overflowY: "auto", background: "var(--surface-1)" }}>
+      <div
+        ref={(el) => { scrollRef.current = el; bodyDrop.setNodeRef(el); }}
+        data-testid="comfy-rows-body"
+        {...fileDropProps}
+        style={{
+          height: "52vh", overflowY: "auto", background: "var(--surface-1)",
+          ...(bodyDrop.isOver || fileOver ? DROP_RING : null),
+        }}
+      >
         {rows.length === 0 ? (
           <p style={{ fontSize: 12, color: "var(--fg-mute)", padding: 16 }}>
             {totalRows === 0
@@ -430,15 +507,20 @@ export default function ComfyRowsTable({
                 return (
                   // No checkbox, textarea or "(root)"-placeholder input in a header: the
                   // e2e counts those in this table as row cells.
-                  <div
+                  <DndRow
                     key={vi.key}
                     data-index={vi.index}
-                    ref={rowVirtualizer.measureElement}
+                    nodeRef={rowVirtualizer.measureElement}
+                    drop={{ id: dropId.group(item.path), data: { kind: "folder", path: item.path } }}
                     className="comfy-group-h"
                     data-testid="comfy-group"
                     data-folder={item.path}
-                    style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${vi.start}px)` }}
+                    // `top`, not a transform: dnd-kit measures droppables ignoring transforms, so a
+                    // translated item would measure at the top of the body.
+                    style={{ position: "absolute", top: vi.start, left: 0, width: "100%" }}
                   >
+                    {({ isOver }) => (<>
+                    {isOver && <span aria-hidden style={{ position: "absolute", inset: 0, pointerEvents: "none", ...DROP_RING }} />}
                     <button
                       className="comfy-rail-twisty"
                       aria-label={`${open ? "Collapse" : "Expand"} folder ${label}`}
@@ -451,28 +533,38 @@ export default function ComfyRowsTable({
                     <span className="mono" style={{ fontWeight: 500 }}>{label}</span>
                     <span style={{ color: "var(--fg-mute)", fontSize: 11.5 }}>{groupSummary(item.rows)}</span>
                     {item.rows.some((r) => r.blueprint_linked) && <span className="comfy-pill">from blueprint</span>}
-                  </div>
+                    </>)}
+                  </DndRow>
                 );
               }
               const row = item.row;
               const rowBusy = runningJob && row.status === "running";
+              const line = dropIndicator?.rowId === row.id ? dropIndicator.position : null;
               return (
-                <div
+                <DndRow
                   key={vi.key}
                   data-index={vi.index}
-                  ref={rowVirtualizer.measureElement}
+                  nodeRef={rowVirtualizer.measureElement}
+                  drop={{ id: dropId.row(row.id), data: { kind: "row", rowId: row.id, folder: row.subfolder } }}
+                  // No dragging a row while its plan runs: every drop would move it or
+                  // re-file it, which the server refuses mid-run anyway.
+                  drag={runningJob ? null : { id: dragId.row(row.id), data: { kind: "row", rowId: row.id } }}
                   style={{
-                    position: "absolute", top: 0, left: 0, width: "100%",
-                    transform: `translateY(${vi.start}px)`,
+                    position: "absolute", top: vi.start, left: 0, width: "100%",
                     display: "grid", gridTemplateColumns: gridTemplate, gap: 8, alignItems: "center",
                     padding: "4px 10px", borderBottom: "1px solid var(--line-2)",
+                    boxShadow: line === "before" ? "inset 0 2px 0 var(--accent)"
+                      : line === "after" ? "inset 0 -2px 0 var(--accent)" : undefined,
                   }}
                 >
+                  {({ handle }) => (<>
                   <button
+                    {...handle?.props}
+                    ref={handle?.attach}
                     className="comfy-rail-twisty"
                     aria-label="Row actions"
-                    title="Row actions"
-                    style={{ cursor: "grab" }}
+                    title="Drag to move, click for actions"
+                    style={{ cursor: runningJob ? "pointer" : "grab" }}
                     onClick={(e) => {
                       const r = e.currentTarget.getBoundingClientRect();
                       setRowMenu({ row, x: r.left, y: r.bottom + 2 });
@@ -539,7 +631,8 @@ export default function ComfyRowsTable({
                   ) : (
                     <span style={{ color: "var(--fg-dim)", fontSize: 11 }}>—</span>
                   )}
-                </div>
+                  </>)}
+                </DndRow>
               );
             })}
           </div>

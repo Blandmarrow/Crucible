@@ -4,6 +4,8 @@ import ContextMenu, { type ContextMenuAction } from "../common/ContextMenu";
 import type { ComfyRow } from "../../api/comfy";
 import { buildSubfolderTree, type SubfolderNode } from "../../utils/subfolderTree";
 import { BLUEPRINT_FOLDER_REASON, lockedFolderTest, planFolderItems, type FolderFilter } from "./folderTree";
+import DndRow from "./DndRow";
+import { DROP_RING, dragId, dropId } from "./dnd";
 
 interface Props {
   rows: ComfyRow[];
@@ -58,11 +60,17 @@ export default function ComfyFolderTree({
     const locked = isLocked(node.path);
     return (
       <div key={node.path}>
-        <div
+        {/* A drop target for rows, library prompts and other folders; its label is the
+            handle that drags the folder, unless the blueprint owns it or a run is live. */}
+        <DndRow
+          drop={{ id: dropId.folder(node.path), data: { kind: "folder", path: node.path } }}
+          drag={locked || busy ? null : { id: dragId.folder(node.path), data: { kind: "folder", path: node.path } }}
           className={`comfy-rail-item${active ? " active" : ""}`}
           style={{ paddingLeft: node.depth * 14 }}
           onContextMenu={(e) => { e.preventDefault(); openMenu(node, e.clientX, e.clientY); }}
         >
+          {({ handle, isOver }) => (<>
+          {isOver && <span aria-hidden style={{ position: "absolute", inset: 0, borderRadius: "var(--r)", pointerEvents: "none", ...DROP_RING }} />}
           {node.children.length > 0 ? (
             <button
               className="comfy-rail-twisty"
@@ -76,6 +84,8 @@ export default function ComfyFolderTree({
             <span style={{ width: 18, flexShrink: 0 }} />
           )}
           <button
+            {...handle?.props}
+            ref={handle?.attach}
             className="comfy-rail-node"
             aria-current={active ? "true" : undefined}
             title={node.path}
@@ -98,7 +108,8 @@ export default function ComfyFolderTree({
           >
             <MoreHorizontal size={14} />
           </button>
-        </div>
+          </>)}
+        </DndRow>
         {open && node.children.map(renderNode)}
       </div>
     );
@@ -124,10 +135,13 @@ export default function ComfyFolderTree({
           <span className="comfy-rail-count mono">{rows.length}</span>
         </button>
       </div>
-      <div
+      <DndRow
+        drop={{ id: dropId.folder(""), data: { kind: "folder", path: "" } }}
         className={`comfy-rail-item${selected === "" ? " active" : ""}`}
         onContextMenu={(e) => { e.preventDefault(); openMenu(null, e.clientX, e.clientY); }}
       >
+        {({ isOver }) => (<>
+        {isOver && <span aria-hidden style={{ position: "absolute", inset: 0, borderRadius: "var(--r)", pointerEvents: "none", ...DROP_RING }} />}
         <span style={{ width: 18, flexShrink: 0 }} />
         <button
           className="comfy-rail-node"
@@ -139,7 +153,8 @@ export default function ComfyFolderTree({
           <span className="comfy-rail-label">(root)</span>
           <span className="comfy-rail-count mono">{rootCount}</span>
         </button>
-      </div>
+        </>)}
+      </DndRow>
       {tree.map(renderNode)}
 
       {menu && (

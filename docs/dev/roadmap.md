@@ -17,7 +17,7 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-04, after the M6 branch review's fixes)
+## Next session (updated 2026-11-05, after scoping the ComfyUI page rework)
 
 1. M5's five stages merged on 2026-10-30 as PR #101. Only its cleanup is open, and that waits
    a release. See [server-state-plan/README.md](server-state-plan/README.md) for what was
@@ -81,8 +81,12 @@ restates its stages.
      hand against a real ComfyUI: a run whose ComfyUI rejects every row ends `failed` and
      Resume retries it, and a rejected image moved back loses its flag in the gallery and
      the Stats card.
-   - **Next M6 work: the ComfyUI page rework**, so prompts are easier to categorize and
-     the prompt library easier to use. Its scope is not set; plan it with the user first.
+   - **Next M6 work: the ComfyUI page rework, §8**, so prompts are easier to categorize and
+     the prompt library easier to use. Scoped on 2026-11-05 in four sub-stages, with a
+     mockup the user approved
+     ([the plan's § 8](comfy-automation-plan/README.md#8-the-comfyui-page-rework-planned)).
+     Start with §8a, which needs no ruling. Ask the user the plan's open questions 1–3
+     before §8b.
    - Decisions 7–9 and this M6 checklist exist only on that branch until it merges, so
      `main`'s next decision takes number 10. Its migrations `e5c1a9d3f7b2` →
      `b7d2f4a9c1e3` → `d4a8c2e6f1b9` → `f3b9d1a7c5e2` → `c8e4a6b2d0f7` → `a6d2f8c4e0b3` →
@@ -238,9 +242,18 @@ gates are green and it is pushed.
   after a committed fill says so, id lists in the score and caption starts are chunked,
   recipe import refuses an ambiguous provider, and blueprint and export inputs are bounded.
   The M6 docs were audited against the final code.
-- [ ] Rework the ComfyUI page's UI and some of its behaviour, so prompts are easier to
-  categorize and the prompt library is easier to use (the user's call, 2026-11-04: this
-  lands before the merge). Scope not yet set; plan it with the user first.
+- §8, the ComfyUI page rework, so prompts are easier to categorize and the prompt library
+  easier to use (the user's call, 2026-11-04: it lands before the merge). Scoped with the
+  user on 2026-11-05 and the mockup approved; the *what* is
+  [comfy-automation-plan/README.md § 8](comfy-automation-plan/README.md#8-the-comfyui-page-rework-planned).
+  Its open questions 1–3 are ruled before §8b.
+  - [ ] §8a: the sticky header and run bar, Blueprint in two columns with the preview
+    sticky, collapsible editor sections. Frontend only; needs no ruling.
+  - [ ] §8b: the plan rail, the folder tree and rows grouped by folder, plan duplicate,
+    the remembered plan and tab. Needs questions 1 and 2 ruled; one migration.
+  - [ ] §8c: the library side panel with nested categories, and drag and drop with a
+    button route for every drag. Needs §8b and question 3.
+  - [ ] §8d: the Add menu, the selection bar, the paste dialog on `ModalShell`.
 - [ ] Merge: rebase onto `main`, re-parent the first migration onto M4's head if M4 merged
   first, run every gate, open the PR. The ComfyUI docs moved behind a hub on this branch, so
   any doc `main` has added since that names an old path (comfy-prompts.md, comfyui-sync.md, or

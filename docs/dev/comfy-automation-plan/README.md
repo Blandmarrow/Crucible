@@ -18,7 +18,7 @@ no Map row and no word budget. When a stage lands, move its durable rationale in
 named in § Documentation this arc owes and delete the stage from here; delete the folder when
 everything is done.
 
-Stages §1 to §7 are built on this branch; only the ComfyUI page rework and the merge remain. Read `CLAUDE.md`, `docs/dev/comfyui.md`,
+Stages §1 to §7 are built on this branch; only the ComfyUI page rework (§8) and the merge remain. Read `CLAUDE.md`, `docs/dev/comfyui.md`,
 `docs/dev/comfyui/run.md` and `docs/dev/comfyui/prompts.md` before implementing, and prefer the repo's conventions over the
 sketches here.
 
@@ -46,7 +46,7 @@ blueprint rather than once per leaf.
 **Section numbers are stable identities, not an order.** The build order is the roadmap's M6
 checklist alone. In short: the `docs/dev/comfyui.md` split and §7 (both done 2026-11-03), then
 §2a, §2b, Top up (§2c), §3, a rebase after M8 stages 2–3, §4, §5 and §6 (all landed), then
-the ComfyUI page rework and the merge.
+the ComfyUI page rework (§8) and the merge.
 
 **§1 (per-row `subfolder` + `leaf_id`) is ported**, commit 8dee5de on the branch; its rationale
 lives in `docs/dev/comfyui/queue.md` (the columns and endpoints) and `docs/dev/comfyui/run.md` (how a run
@@ -268,6 +268,109 @@ Departures from the sketch that stood here:
   Studio's real port.
 - **A carried-on run's new tail captions only its new passes** (`_tail_rows`), and the
   rewrite's caption reserve counts captions already made.
+
+## 8. The ComfyUI page rework (planned)
+
+Scoped with the user on 2026-11-05, who asked for it to land before the merge. An
+interactive mockup of both screens, which the user approved as the direction, is the
+private artifact https://claude.ai/artifact/5Tukrf24L39JBw3YFmgaP1 (the Rows tab and the
+Blueprint tab, linked by their tabs). It is a sketch of the layout and the gestures, not a
+spec: its data is invented and it saves nothing. Read `docs/dev/comfyui/page.md` first;
+every component named below is described there.
+
+**What the user found wrong:**
+- **Rows are one flat list.** Each row already has a destination folder (`subfolder`), but
+  it shows only as a column, and nothing groups by it. The prompt library's categories are
+  flat too.
+- **Moving prompts between plans is buried** in `PromptLibraryModal`'s *Other plans* tab
+  (dataset → plan → tick → Copy/Move), and a copy carries the prompt text only, dropping the
+  row's folder.
+- **The Blueprint tab scrolls away from its controls.** `ComfyPage` is one scroll
+  container, so the plan bar, the tabs and the run bar leave the screen, and Apply and Top
+  up sit below every editor.
+- **The Rows toolbar** shows eleven buttons in one line whether or not a row is selected.
+
+### §8a — A layout that stays put
+
+- **A sticky header** on every tab: the plan name, the tabs and `ComfyRunBar`. The run bar
+  then shows on Blueprint too, where Top up already uses its Base folder and Prompt as
+  caption read-only.
+- **Blueprint in two columns.** The editors scroll on the left; `BlueprintPreview` sits on
+  the right, sticky with its own scroll, with Apply, Top up and Rewrite at its top. On a
+  narrow window it stacks under the editors and the action buttons pin to the bottom.
+- **Collapsible editor sections** (Axes, Variations, Scenarios), each with a count, jump
+  links and collapse/expand all. The open state is saved per plan.
+
+No backend change. It needs none of the open questions below.
+
+### §8b — A left rail: plans, then the plan's folder tree
+
+- **Plans become a list** instead of the `<select>`, each with its row count and a dot for
+  running or failed. Rename, Duplicate and Delete in a menu. **Duplicate is new**: the
+  workflow, the pins and optionally the rows.
+- **Under it, the selected plan's folder tree**, built from the rows' `subfolder` values
+  plus the plan's empty folders. Click filters the table; a menu creates, renames, moves and
+  deletes. The gallery's sidebar is the model (`docs/dev/gallery/subfolders.md`).
+- **The rows table groups by folder** under collapsible headers with pending, failed and
+  done counts. A text filter and status chips sit above it, and completed rows get a small
+  thumbnail (the row already links its image).
+- **The last plan and tab are remembered** per dataset; today they reset on leaving the
+  page.
+
+Backend: a rename/move of a folder path across a plan's rows (the shape of the gallery's
+`repath_subfolder`, on `comfy_rows`), a per-plan list of empty folders (one JSON column on
+`comfy_plans`, so one migration) and a plan duplicate endpoint.
+
+### §8c — A library side panel, and drag and drop
+
+- **The library becomes a toggled panel** on the right of the Rows tab instead of a modal.
+  Categories nest through `/` paths shown as a tree, with search and **editing a saved
+  prompt's text** (no endpoint does that today). *Other plans* moves into the panel as a
+  browse-and-drag view.
+- **Every drag also has a button or menu route** doing the same thing, as in the gallery:
+  it keeps the page usable without a mouse, and e2e has no drag idiom
+  (`docs/dev/gallery/drag-drop.md` § Dragging a subfolder onto another).
+
+| Drag | Onto | Does |
+|---|---|---|
+| Rows (the whole selection if the row is selected) | a folder in the tree or a group header | set their folder |
+| Rows | another plan in the rail | copy; Shift moves |
+| Rows | a library category | save to the library |
+| Library prompts | the table or a folder | add as rows there |
+| Library prompts | another category | re-file them |
+| A folder | another folder, or *(root)* | re-nest it with its rows |
+| Rows | between rows | reorder (`rows/reorder` exists) |
+| `.txt` files from the desktop | the table | import, one prompt per file |
+| A workflow `.json` from the desktop | *Workflow & Pins* | load it |
+
+Backend: a copy/move endpoint for rows between plans that **keeps the folder** and every
+value whose alias exists in the target plan; `PATCH` for a library prompt's text; and
+`ComfyLibraryPrompt.category` may need widening past 100 characters for nested paths.
+
+### §8d — Toolbar cleanup
+
+- One **Add ▾** menu: Add row, Paste prompts, Import .txt, Generate, Edit prompts.
+- Actions on selected rows move to a bar shown only while rows are selected: move to
+  folder, copy to plan, save to library, run, delete.
+- The paste dialog moves onto `ModalShell`; today it is a hand-built overlay with no Escape
+  or focus handling.
+
+### Open questions (rule before §8b)
+
+The mockup shows each proposal; none is ruled yet.
+
+1. **Is a row's category its output folder?** Proposed: yes — the tree is `subfolder`, so
+   it means what the gallery's tree means. The alternative is a separate grouping label
+   that does not decide where images go.
+2. **Moving a blueprint row.** A row's folder is what its leaf counts against, so moving
+   it drifts the blueprint's kept/short figures; *Set folder* already allows it today.
+   Proposed: a lock mark, and a move asks, then unlinks the row (clears `leaf_id`), with
+   *move hand-made rows only* as the other choice. The alternative is refusing the move.
+3. **Rows dropped on another plan:** proposed copy by default, Shift to move.
+4. **Build order:** proposed §8a → §8b → §8c → §8d (the roadmap holds the order).
+
+Each sub-stage owes `docs/dev/comfyui/page.md` and the user guide `docs/comfyui.md` in the
+same change, and e2e coverage through the button routes in `frontend/e2e/comfy.spec.ts`.
 
 ## Documentation this arc owes
 

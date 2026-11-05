@@ -323,7 +323,10 @@ export default function ComfyRowsTable({
   const updateMutation = useMutation({
     mutationFn: ({ rowId, patch }: { rowId: string; patch: Parameters<typeof comfyApi.updateRow>[1] }) =>
       comfyApi.updateRow(rowId, patch),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["comfy", "rows", plan.id] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["comfy", "rows", plan.id] });
+      qc.invalidateQueries({ queryKey: ["comfy", "plans", plan.dataset_id] });
+    },
     onError: (err: unknown) => {
       toast.error(apiErrorDetail(err, "Failed to save row"));
     },
@@ -563,6 +566,7 @@ export default function ComfyRowsTable({
                     ref={handle?.attach}
                     className="comfy-rail-twisty"
                     aria-label="Row actions"
+                    aria-haspopup="menu"
                     title="Drag to move, click for actions"
                     style={{ cursor: runningJob ? "pointer" : "grab" }}
                     onClick={(e) => {

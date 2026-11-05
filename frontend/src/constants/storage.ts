@@ -57,7 +57,7 @@ export const EXPORT_FILTERS_PREFIX     = "export-filters";
 export const QUALITY_FILTERS_PREFIX    = "quality-filters";
 export const BULK_EDIT_FILTERS_PREFIX  = "bulk-edit-filters";
 export const STATS_FILTERS_PREFIX      = "stats-filters";
-export const COMFY_PAGE_STATE_PREFIX   = "comfy-page"; // {planId, section}: the ComfyUI page's last plan and tab
+export const COMFY_PAGE_STATE_PREFIX   = "comfy-page"; // {planId, section}: the ComfyUI page's last plan and tab, plus libOpen and libTab (the library side panel)
 
 const GALLERY_PAGE_SIZE_DEFAULT = 100;
 

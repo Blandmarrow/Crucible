@@ -43,6 +43,10 @@ export interface DropContext {
   shift: boolean;
   /** Over a row: which half the dragged item's centre is in. */
   position: "before" | "after";
+  /** Each row's folder, to refuse a drop that would change nothing. */
+  rowFolders: Map<string, string>;
+  /** Each library prompt's category, for the same check. */
+  promptCategories: Map<string, string>;
 }
 
 /** A folder or category may land on itself or its own subtree: never. (The gallery's
@@ -66,7 +70,11 @@ export function resolveDrop(drag: DragData, drop: DropData, ctx: DropContext): D
   switch (drag.kind) {
     case "row": {
       const ids = ctx.rowIds;
-      if (drop.kind === "folder") return { type: "set-folder", ids, folder: drop.path };
+      if (drop.kind === "folder") {
+        // Every row already there: nothing to do, so not a drop target.
+        if (ids.length > 0 && ids.every((id) => ctx.rowFolders.get(id) === drop.path)) return null;
+        return { type: "set-folder", ids, folder: drop.path };
+      }
       if (drop.kind === "row") {
         if (ids.includes(drop.rowId)) return null;
         return { type: "place", ids, anchor: drop.rowId, position: ctx.position, folder: drop.folder };
@@ -82,7 +90,10 @@ export function resolveDrop(drag: DragData, drop: DropData, ctx: DropContext): D
       if (drop.kind === "table") return { type: "add-lib", ids: drag.ids, folder: ctx.folderInView };
       if (drop.kind === "folder") return { type: "add-lib", ids: drag.ids, folder: drop.path };
       if (drop.kind === "row") return { type: "add-lib", ids: drag.ids, folder: drop.folder };
-      if (drop.kind === "category" && drop.path) return { type: "move-lib", ids: drag.ids, category: drop.path };
+      if (drop.kind === "category" && drop.path) {
+        if (drag.ids.length > 0 && drag.ids.every((id) => ctx.promptCategories.get(id) === drop.path)) return null;
+        return { type: "move-lib", ids: drag.ids, category: drop.path };
+      }
       return null;
     }
     case "xrows": {

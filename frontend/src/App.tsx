@@ -28,6 +28,7 @@ import PaneContainer from "./components/pane/PaneContainer";
 import ErrorBoundary from "./components/common/ErrorBoundary";
 import ErrorConsole from "./components/common/ErrorConsole";
 import LegacyConflictsDialog from "./components/common/LegacyConflictsDialog";
+import FileDropGuard from "./components/common/FileDropGuard";
 import { usePaneStore } from "./store/paneStore";
 import type { PaneView, PageType } from "./contexts/PaneContext";
 
@@ -110,6 +111,7 @@ export default function App() {
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <RouteSyncer />
+        <FileDropGuard />
         <div style={{ "--sidebar-w": "240px", display: "grid", gridTemplateColumns: "var(--sidebar-w) 1fr", height: "100vh", overflow: "hidden" } as any}>
           <Sidebar />
           <div style={{ display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0, overflow: "hidden" }}>

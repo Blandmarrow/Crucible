@@ -3,6 +3,8 @@ interface Props {
   hasPromptPin: boolean;
   /** A run is live on this plan: folders are locked and nothing else may start. */
   isRunning: boolean;
+  /** A run, a paused Run or a generate/prompts/rewrite job holds this plan: Delete is refused. */
+  planBusy: boolean;
   onSetFolder: () => void;
   onCopyToPlan: () => void;
   onSaveToLibrary: () => void;
@@ -21,7 +23,7 @@ interface Props {
  * new library category all survive.
  */
 export default function ComfyRowsSelectionBar({
-  count, hasPromptPin, isRunning,
+  count, hasPromptPin, isRunning, planBusy,
   onSetFolder, onCopyToPlan, onSaveToLibrary, onRunSelected, onDelete, onClear,
 }: Props) {
   const promptReason = "Mark a pinned parameter as the prompt first";
@@ -58,7 +60,7 @@ export default function ComfyRowsSelectionBar({
             "Save the selected rows' prompts to the prompt library")}
           {act("Run selected", onRunSelected, isRunning ? "This plan is already running" : null,
             "Run only the selected rows, whatever their status")}
-          {act("Delete", onDelete, null, "Delete the selected rows (asks first)", { color: "var(--bad)" })}
+          {act("Delete", onDelete, planBusy ? "Rows can't be deleted while this plan has a run or a job going" : null, "Delete the selected rows (asks first)", { color: "var(--bad)" })}
           <div style={{ flex: 1 }} />
           {act("Clear", onClear, null, "Untick every row")}
         </>

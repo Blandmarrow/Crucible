@@ -297,7 +297,10 @@ export const comfyApi = {
   copyRows: (targetPlanId: string, body: {
     source_plan_id: string; row_ids: string[]; move?: boolean; subfolder?: string | null; linked?: LinkedMode;
   }) =>
-    client.post<{ copied?: number; moved?: number; skipped: number; unlinked: number }>(
+    // `skipped` is the sum of the two reasons, kept for older callers.
+    client.post<{
+      copied?: number; moved?: number; skipped: number; skipped_no_prompt: number; skipped_linked: number; unlinked: number;
+    }>(
       `/comfy/plans/${targetPlanId}/rows/copy`, body).then((r) => r.data),
 
   // ── The folder tree (a plan's row folders plus its declared_folders) ──

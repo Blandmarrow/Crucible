@@ -10,6 +10,8 @@ interface Props {
   activePlanId: string | null;
   /** Plans with a run this page launched and is still tracking. */
   runningPlanIds: Set<string>;
+  /** Plans that refuse a delete now: a live run or a generate/prompts/rewrite job. */
+  busyPlanIds: Set<string>;
   onSelect: (planId: string) => void;
   onCreate: (name: string) => void;
   creating: boolean;
@@ -29,7 +31,7 @@ function planDot(p: ComfyPlanSummary, running: boolean): { color: string; label:
 /** The Rows tab's plan list (M6 §8b): one entry per plan with its row count, a status
  *  dot, and a ⋯ menu for Rename, Duplicate and Delete. *New plan* sits under it. */
 export default function ComfyPlanRail({
-  plans, activePlanId, runningPlanIds, onSelect, onCreate, creating, onRename, renaming, onDuplicate, onDelete,
+  plans, activePlanId, runningPlanIds, busyPlanIds, onSelect, onCreate, creating, onRename, renaming, onDuplicate, onDelete,
 }: Props) {
   const [menu, setMenu] = useState<{ plan: ComfyPlanSummary; x: number; y: number } | null>(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -101,6 +103,7 @@ export default function ComfyPlanRail({
             <button
               className="icon-btn comfy-rail-more"
               aria-label={`Plan actions for ${p.name}`}
+              aria-haspopup="menu"
               onClick={(e) => {
                 const r = e.currentTarget.getBoundingClientRect();
                 setMenu({ plan: p, x: r.left, y: r.bottom + 2 });
@@ -147,7 +150,12 @@ export default function ComfyPlanRail({
               onClick: () => { setRenameId(menu.plan.id); setRenameValue(menu.plan.name); },
             },
             { label: "Duplicate…", onClick: () => onDuplicate(menu.plan) },
-            { label: "Delete…", danger: true, onClick: () => onDelete(menu.plan) },
+            {
+              label: "Delete…", danger: true,
+              disabled: busyPlanIds.has(menu.plan.id),
+              title: busyPlanIds.has(menu.plan.id) ? "Wait for this plan's run or job to finish" : undefined,
+              onClick: () => onDelete(menu.plan),
+            },
           ]}
         />
       )}

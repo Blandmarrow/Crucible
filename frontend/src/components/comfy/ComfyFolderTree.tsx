@@ -34,9 +34,11 @@ export default function ComfyFolderTree({
   const rootCount = rows.filter((r) => r.subfolder === "").length;
 
   function menuActions(node: SubfolderNode | null): ContextMenuAction[] {
-    const busyReason = busy ? "Wait for the run to finish" : undefined;
+    const busyReason = busy ? "Wait for the run or job to finish" : undefined;
     const newAction: ContextMenuAction = {
       label: node ? "New folder inside…" : "New folder…",
+      disabled: busy,
+      title: busyReason,
       onClick: () => onNew(node?.path ?? ""),
     };
     if (!node) return [newAction];
@@ -101,6 +103,7 @@ export default function ComfyFolderTree({
           <button
             className="icon-btn comfy-rail-more"
             aria-label={`Folder actions for ${node.path}`}
+            aria-haspopup="menu"
             onClick={(e) => {
               const r = e.currentTarget.getBoundingClientRect();
               openMenu(node, r.left, r.bottom + 2);
@@ -122,7 +125,8 @@ export default function ComfyFolderTree({
         <button
           className="icon-btn comfy-rail-more"
           aria-label="New folder"
-          title="New folder (inside the selected one)"
+          title={busy ? "Wait for the run or job to finish" : "New folder (inside the selected one)"}
+          disabled={busy}
           onClick={() => onNew(selected ?? "")}
         >
           <Plus size={13} />

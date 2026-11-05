@@ -36,7 +36,11 @@ export function useCopyRowsMutation(onDone?: (vars: CopyRowsVars) => void) {
       qc.invalidateQueries({ queryKey: ["comfy", "plans", v.targetDatasetId] });
       if (v.move) qc.invalidateQueries({ queryKey: ["comfy", "blueprint-preview", v.sourcePlanId] });
       const n = (v.move ? data.moved : data.copied) ?? 0;
-      const extra = data.skipped ? ` (${data.skipped} skipped)` : "";
+      // Same wording as ComfyLibraryPanel's skippedNote: one count per reason.
+      const reasons: string[] = [];
+      if (data.skipped_no_prompt) reasons.push(`${data.skipped_no_prompt} skipped: no prompt`);
+      if (data.skipped_linked) reasons.push(`${data.skipped_linked} left behind: made by the blueprint`);
+      const extra = reasons.length ? ` (${reasons.join("; ")})` : "";
       toast.success(`${v.move ? "Moved" : "Copied"} ${n} row${n !== 1 ? "s" : ""} to "${v.targetName}"${extra}`);
       onDone?.(v);
     },

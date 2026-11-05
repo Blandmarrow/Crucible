@@ -32,6 +32,22 @@ export interface ComfyLibraryPanelProps {
 }
 
 const plural = (n: number, word: string) => `${n} ${word}${n !== 1 ? "s" : ""}`;
+/** " (2 skipped: no prompt; 1 left behind: made by the blueprint)", or "" when nothing was.
+ *  Same wording as copyRows.ts's toast. */
+function skippedNote(noPrompt: number, linked: number): string {
+  const parts = [
+    noPrompt > 0 ? `${noPrompt} skipped: no prompt` : "",
+    linked > 0 ? `${linked} left behind: made by the blueprint` : "",
+  ].filter(Boolean);
+  return parts.length ? ` (${parts.join("; ")})` : "";
+}
+
+const STATUS_BADGE: Record<ComfyRow["status"], string> = {
+  pending: "badge dot",
+  running: "badge dot info",
+  completed: "badge dot good",
+  failed: "badge dot bad",
+};
 const oneLine = (t: string) => t.replace(/\s+/g, " ").trim();
 
 /** The prompt library as a side panel (M6 §8c): a global, categorized store of prompt
@@ -124,15 +140,17 @@ function LibraryTabBody({ datasetId, plan, folders, folderInView }: ComfyLibrary
   // folded category above it, drops it from what Add, Move, Delete and a drag act on (the
   // page's rule: never act on what the user cannot see). Ids a refetch removed fall away
   // here too, without an effect.
-  const selected = useMemo(() => {
+  const visibleIds = useMemo(() => {
     const visible = new Set<string>();
     for (const p of shown) {
       const parts = p.category.split("/");
       const folded = !searching && parts.some((_, i) => closed.includes(parts.slice(0, i + 1).join("/")));
       if (!folded) visible.add(p.id);
     }
-    return [...selectedIds].filter((id) => visible.has(id));
-  }, [selectedIds, shown, closed, searching]);
+    return visible;
+  }, [shown, closed, searching]);
+  const selected = useMemo(() => [...selectedIds].filter((id) => visibleIds.has(id)), [selectedIds, visibleIds]);
+  const allSelected = visibleIds.size > 0 && selected.length === visibleIds.size;
 
   function toggleClosed(path: string) {
     setClosed((prev) => {
@@ -160,6 +178,17 @@ function LibraryTabBody({ datasetId, plan, folders, folderInView }: ComfyLibrary
     window.addEventListener(LIBRARY_REPATH_EVENT, on);
     return () => window.removeEventListener(LIBRARY_REPATH_EVENT, on);
   }, []);
+
+  // A deleted category takes its folds with it, or a later category of the same name
+  // would come back folded.
+  function pruneClosed(path: string) {
+    setClosed((prev) => {
+      const next = prev.filter((p) => p !== path && !p.startsWith(path + "/"));
+      if (next.length === prev.length) return prev;
+      savePersisted(COMFY_LIBRARY_VIEW_KEY, { closed: next });
+      return next;
+    });
+  }
 
   function toggleSelected(id: string) {
     setSelectedIds((prev) => {
@@ -233,8 +262,9 @@ function LibraryTabBody({ datasetId, plan, folders, folderInView }: ComfyLibrary
 
   const deleteCategoryMutation = useMutation({
     mutationFn: (path: string) => comfyApi.libraryDeleteCategory(path),
-    onSuccess: ({ deleted }) => {
+    onSuccess: ({ deleted }, path) => {
       invalidateLibrary();
+      pruneClosed(path);
       setDeleting(null);
       toast.success(`Deleted ${plural(deleted, "prompt")} from the library`);
     },
@@ -247,6 +277,10 @@ function LibraryTabBody({ datasetId, plan, folders, folderInView }: ComfyLibrary
   const hasPromptPin = plan.pinned_params.some((p) => p.is_prompt);
   const folderOptions = folders.includes(folder) || folder === "" ? folders : [...folders, folder];
   const moveTarget = moveTo.trim().replace(/^\/+|\/+$/g, "").replace(/\/+/g, "/");
+
+  // The whole subtree from the full list: a search hides prompts the delete still takes.
+  const subtreeCount = (path: string) =>
+    prompts.filter((p) => p.category === path || p.category.startsWith(path + "/")).length;
 
   function menuActions(node: SubfolderNode): ContextMenuAction[] {
     return [
@@ -294,6 +328,16 @@ function LibraryTabBody({ datasetId, plan, folders, folderInView }: ComfyLibrary
         className="input" type="search" aria-label="Search the library" placeholder="Search prompts and categories"
         style={{ fontSize: 12 }} value={search} onChange={(e) => setSearch(e.target.value)}
       />
+
+      {visibleIds.size > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+          <button className="btn ghost sm"
+            onClick={() => setSelectedIds(allSelected ? new Set() : new Set(visibleIds))}>
+            {allSelected ? "Select none" : "Select all"}
+          </button>
+          <span style={{ color: "var(--fg-mute)" }}>{plural(visibleIds.size, "prompt")} shown</span>
+        </div>
+      )}
 
       {selected.length > 0 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12, padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
@@ -379,7 +423,7 @@ function LibraryTabBody({ datasetId, plan, folders, folderInView }: ComfyLibrary
       {deleting && (
         <ConfirmDialog
           title="Delete category"
-          message={`Delete category ${deleting.path} and its ${plural(deleting.totalCount, "prompt")}? Plans that already use them are unaffected.`}
+          message={`Delete category ${deleting.path} and its ${plural(subtreeCount(deleting.path), "prompt")}? Plans that already use them are unaffected.`}
           confirmLabel="Delete" danger
           onConfirm={() => deleteCategoryMutation.mutate(deleting.path)}
           onCancel={() => setDeleting(null)}
@@ -434,6 +478,7 @@ export function LibraryCategoryRow({ node, open, onToggle, onMenu }: {
       <button
         className="icon-btn comfy-rail-more"
         aria-label={`Category actions for ${node.path}`}
+        aria-haspopup="menu"
         onClick={(e) => {
           const r = e.currentTarget.getBoundingClientRect();
           onMenu(r.left, r.bottom + 2);
@@ -608,7 +653,7 @@ function OtherPlansTabBody({ datasetId, plan }: ComfyLibraryPanelProps) {
       qc.invalidateQueries({ queryKey: ["comfy", "blueprint-preview", srcId] });
       const n = (move ? res.moved : res.copied) ?? 0;
       toast.success(
-        `${move ? "Moved" : "Copied"} ${plural(n, "row")}` + (res.skipped > 0 ? ` (${res.skipped} skipped: no prompt)` : ""),
+        `${move ? "Moved" : "Copied"} ${plural(n, "row")}` + skippedNote(res.skipped_no_prompt, res.skipped_linked),
       );
       setSelectedIds(new Set());
       setAsking(false);
@@ -666,6 +711,8 @@ function OtherPlansTabBody({ datasetId, plan }: ComfyLibraryPanelProps) {
               prompt={prompt}
               folder={row?.subfolder ?? ""}
               linked={!!row?.blueprint_linked}
+              status={row?.status}
+              error={row?.error_msg ?? null}
               checked={selected.includes(prompt.row_id)}
               onToggle={() => toggle(prompt.row_id)}
               sourcePlanId={srcId}
@@ -713,10 +760,13 @@ function OtherPlansTabBody({ datasetId, plan }: ComfyLibraryPanelProps) {
 }
 
 /** One row of another plan, with its folder; a lock marks a row the source blueprint still counts. */
-export function OtherPlanRowCard({ prompt, folder, linked, checked, onToggle, sourcePlanId, sourceDatasetId, dragIds }: {
+export function OtherPlanRowCard({ prompt, folder, linked, status, error, checked, onToggle, sourcePlanId, sourceDatasetId, dragIds }: {
   prompt: PlanPrompt;
   folder: string;
   linked: boolean;
+  /** The row's run status, styled like the rows table's status cell. */
+  status?: ComfyRow["status"];
+  error?: string | null;
   checked: boolean;
   onToggle: () => void;
   sourcePlanId: string;
@@ -754,6 +804,12 @@ export function OtherPlanRowCard({ prompt, folder, linked, checked, onToggle, so
         </span>
         <span style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{prompt.prompt}</span>
       </span>
+      {status && (
+        <span className={STATUS_BADGE[status]} title={error ?? undefined}
+          style={{ flexShrink: 0, fontSize: 10.5, cursor: error ? "help" : undefined }}>
+          {status}
+        </span>
+      )}
       {linked && <Lock size={11} style={{ flexShrink: 0, color: "var(--fg-mute)", marginTop: 2 }} aria-label="From the blueprint" role="img" />}
     </label>
     </>)}

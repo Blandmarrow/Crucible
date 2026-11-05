@@ -69,6 +69,13 @@ const STATUS_CHIPS: { value: StatusFilter; label: string }[] = [
   { value: "completed", label: "Done" },
 ];
 
+const BUSY_JOB_TYPES = ["comfy_generate", "comfy_prompts", "comfy_rewrite"];
+const TERMINAL_STATUSES = ["completed", "failed", "cancelled"];
+
+/** The drag overlay (and the chip inside it) is the one element a drop must see through. */
+const DRAG_OVERLAY_CLASS = "comfy-drag-overlay";
+const DRAG_OVERLAY_SELECTOR = `.${DRAG_OVERLAY_CLASS}`;
+
 const PROMPT_PIN_REASON = "Mark a pinned parameter as the prompt first";
 
 /** The rows a drag of `rowId` moves: the whole selection, in run order, when the row is
@@ -166,6 +173,8 @@ export default function ComfyPage() {
     setLibOpen(saved.libOpen);
     setLibTab(saved.libTab);
     setFolderFilter(null);
+    setTextFilter("");
+    setStatusFilter("all");
     setSelected(new Set());
     setSubfolder("");
     setActiveRuns(new Map());
@@ -185,6 +194,19 @@ export default function ComfyPage() {
   // (`addPlanToList`), so it never waits on a refetch to be known.
   const planKnown = !!planId && (plans.some((p) => p.id === planId) || plansPending);
   const effectivePlanId = (planKnown ? planId : null) ?? plans[0]?.id ?? null;
+
+  // The shown plan changed without selectPlan (the remembered one vanished and the list
+  // fell back to the first): reset what selectPlan does. Adjusting state while rendering,
+  // keyed on the shown plan id, so it runs once per change.
+  const [shownPlanId, setShownPlanId] = useState(effectivePlanId);
+  if (shownPlanId !== effectivePlanId) {
+    setShownPlanId(effectivePlanId);
+    setSelected(new Set());
+    setPromptJobId(null);
+    setFolderFilter(null);
+    setTextFilter("");
+    setStatusFilter("all");
+  }
 
   // Remember the plan and tab. Saved only once the state belongs to this dataset: in
   // the render that switches a pane's dataset, planId is still the old dataset's.
@@ -293,7 +315,7 @@ export default function ComfyPage() {
       setConfirmDeletePlan(null);
       toast.success("Plan deleted");
     },
-    onError: () => toast.error("Failed to delete plan"),
+    onError: (err: unknown) => toast.error(apiErrorDetail(err, "Failed to delete plan")),
   });
 
   const duplicatePlanMutation = useMutation({
@@ -320,16 +342,9 @@ export default function ComfyPage() {
     qc.invalidateQueries({ queryKey: ["comfy", "blueprint-rewrite", pid] });
   }
 
-  // Folding a group drops its rows from the selection: Delete and Run selected must
-  // never act on rows the user cannot see (the same rule as a filter change).
+  // Folding a group drops its rows from the selection through the render-time prune
+  // below (rows in a folded group count as hidden).
   function toggleGroup(path: string) {
-    if (!closedGroups.has(path)) {
-      setSelected((prev) => {
-        const next = new Set(prev);
-        for (const r of rows) if (r.subfolder === path) next.delete(r.id);
-        return next;
-      });
-    }
     toggleRowsView("closedGroups", path);
   }
 
@@ -371,8 +386,11 @@ export default function ComfyPage() {
 
   const addRowMutation = useMutation({
     mutationFn: () => comfyApi.createRow(effectivePlanId!),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["comfy", "rows", effectivePlanId] }),
-    onError: () => toast.error("Failed to add row"),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["comfy", "rows", effectivePlanId] });
+      qc.invalidateQueries({ queryKey: ["comfy", "plans", datasetId] });
+    },
+    onError: (err: unknown) => toast.error(apiErrorDetail(err, "Failed to add row")),
   });
 
   const bulkAddMutation = useMutation({
@@ -406,16 +424,17 @@ export default function ComfyPage() {
       setConfirmDeleteRows(false);
       toast.success(`Deleted ${data.deleted} row${data.deleted !== 1 ? "s" : ""}`);
     },
-    onError: () => toast.error("Failed to delete rows"),
+    onError: (err: unknown) => toast.error(apiErrorDetail(err, "Failed to delete rows")),
   });
 
   const retryFailedMutation = useMutation({
     mutationFn: () => comfyApi.resetRows(effectivePlanId!),
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ["comfy", "rows", effectivePlanId] });
+      qc.invalidateQueries({ queryKey: ["comfy", "plans", datasetId] });
       toast.success(`Reset ${data.reset} failed row${data.reset !== 1 ? "s" : ""} to pending`);
     },
-    onError: () => toast.error("Failed to reset rows"),
+    onError: (err: unknown) => toast.error(apiErrorDetail(err, "Failed to reset rows")),
   });
 
   const placeMutation = useMutation({
@@ -425,16 +444,6 @@ export default function ComfyPage() {
       if (body.subfolder != null) {
         qc.invalidateQueries({ queryKey: ["comfy", "plan", effectivePlanId] });
         qc.invalidateQueries({ queryKey: ["comfy", "blueprint-preview", effectivePlanId] });
-        // Rows re-filed out of the folder in view leave the selection too: Delete, Run
-        // selected and Copy to plan must never act on rows the table no longer shows.
-        const folder = body.subfolder;
-        if (folderFilter !== null && !inFolder({ subfolder: folder } as ComfyRow, folderFilter)) {
-          setSelected((prev) => {
-            const next = new Set(prev);
-            for (const id of body.row_ids) next.delete(id);
-            return next;
-          });
-        }
       }
       setLinkedAsk(null);
     },
@@ -497,7 +506,35 @@ export default function ComfyPage() {
       return prompt.toLowerCase().includes(q) || r.subfolder.toLowerCase().includes(q);
     });
   }, [folderRows, textFilter, statusFilter, promptAlias]);
+  // The selection never holds a row the table does not show, whatever hid it: a filter,
+  // a folder switch, a fold, a move out of view or a deleted row. Pruned while rendering
+  // (React's "adjust state when inputs change"), keyed on the shown ids; it sets state
+  // only when the pruned set differs, so it cannot loop.
+  // The table's own rule (ComfyRowsTable's items): when every shown row is in (root) it
+  // draws them flat, with no header to fold, so a stale "" in closedGroups hides nothing.
+  const visibleKey = useMemo(() => {
+    const flat = shownRows.every((r) => r.subfolder === "");
+    return shownRows.filter((r) => flat || !closedGroups.has(r.subfolder)).map((r) => r.id).join("|");
+  }, [shownRows, closedGroups]);
+  const [prunedKey, setPrunedKey] = useState(visibleKey);
+  if (prunedKey !== visibleKey) {
+    setPrunedKey(visibleKey);
+    const visible = new Set(visibleKey ? visibleKey.split("|") : []);
+    const keep = new Set([...selected].filter((id) => visible.has(id)));
+    if (keep.size !== selected.size) setSelected(keep);
+  }
   const selectedRows = useMemo(() => rows.filter((r) => selected.has(r.id)), [rows, selected]);
+  // A plan the server would refuse to delete rows from or to delete: a run this page
+  // tracks, or a live generate / prompts / rewrite job (GeneratePromptsModal's check). A
+  // paused Run has no job; the server's 409 is its backstop.
+  const busyPlanIds = useMemo(() => {
+    const ids = new Set(activeRuns.values());
+    for (const p of activeJobs.values()) {
+      if (p.plan_id && BUSY_JOB_TYPES.includes(p.job_type) && !TERMINAL_STATUSES.includes(p.status)) ids.add(p.plan_id);
+    }
+    return ids;
+  }, [activeRuns, activeJobs]);
+  const planBusy = isRunning || (!!effectivePlanId && busyPlanIds.has(effectivePlanId));
   const runningPlanIds = useMemo(() => new Set(activeRuns.values()), [activeRuns]);
   // Each folder's rows on show, in run order (the API returns rows in run order), for the
   // row menu's Move entries and their bounds. The rows on show, not all of them: under a
@@ -569,15 +606,24 @@ export default function ComfyPage() {
 
   // The drop context, read by the collision filter through a ref so that callback stays
   // stable across renders; refreshed after each render, before any pointer event.
-  const ctxRef = useRef({ selected, rows, planId: effectivePlanId, folderInView });
+  // The library is read from the panel's own query key and never fetched here
+  // (enabled: false), so a no-op drop onto a prompt's own category is known.
+  const { data: libraryPrompts } = useQuery({
+    queryKey: ["comfy", "library"], queryFn: comfyApi.libraryList, enabled: false,
+  });
+  const rowFolders = useMemo(() => new Map(rows.map((r) => [r.id, r.subfolder])), [rows]);
+  const promptCategories = useMemo(
+    () => new Map((libraryPrompts ?? []).map((p) => [p.id, p.category])), [libraryPrompts]);
+  const ctxRef = useRef({ selected, rows, planId: effectivePlanId, folderInView, rowFolders, promptCategories });
   useLayoutEffect(() => {
-    ctxRef.current = { selected, rows, planId: effectivePlanId, folderInView };
+    ctxRef.current = { selected, rows, planId: effectivePlanId, folderInView, rowFolders, promptCategories };
   });
   const dropContext = useCallback((d: DragData, position: "before" | "after"): DropContext => {
     const c = ctxRef.current;
     return {
       rowIds: d.kind === "row" ? dragRowIds(d.rowId, c.selected, c.rows) : [],
       currentPlanId: c.planId ?? "", folderInView: c.folderInView, shift: shiftRef.current, position,
+      rowFolders: c.rowFolders, promptCategories: c.promptCategories,
     };
   }, []);
 
@@ -586,17 +632,19 @@ export default function ComfyPage() {
   // pointerWithin does not clip a rect to its scroll container, so a category scrolled out
   // of the panel, or an overscan row above the table's header, would still catch a drop:
   // a hit counts only if its node is really under the pointer (elementsFromPoint returns
-  // nothing a scroll container clips away).
+  // nothing a scroll container clips away) and nothing else is painted on top of it there:
+  // the first element under the pointer, past the drag overlay (and its chip), must lie
+  // inside the node, so a row under the sticky header takes no drop.
   const collision: CollisionDetection = useCallback((args) => {
     const d = args.active.data.current as DragData | undefined;
     const pt = args.pointerCoordinates;
     if (!d || !pt) return [];
-    const under = new Set(document.elementsFromPoint(pt.x, pt.y));
+    const top = document.elementsFromPoint(pt.x, pt.y).find((el) => !el.closest(DRAG_OVERLAY_SELECTOR));
     const hits = pointerWithin(args).filter((h) => {
       const c = args.droppableContainers.find((x) => x.id === h.id);
       const data = c?.data.current as DropData | undefined;
       const node = c?.node.current;
-      return !!data && !!node && under.has(node) && resolveDrop(d, data, dropContext(d, "before")) !== null;
+      return !!data && !!node && !!top && node.contains(top) && resolveDrop(d, data, dropContext(d, "before")) !== null;
     });
     const specific = hits.filter((h) => h.id !== dropId.table);
     return specific.length ? specific : hits;
@@ -866,6 +914,7 @@ export default function ComfyPage() {
               plans={plans}
               activePlanId={effectivePlanId}
               runningPlanIds={runningPlanIds}
+              busyPlanIds={busyPlanIds}
               onSelect={selectPlan}
               onCreate={(name) => createPlanMutation.mutate(name)}
               creating={createPlanMutation.isPending}
@@ -882,7 +931,7 @@ export default function ComfyPage() {
                 onSelect={(f) => changeFilter(() => setFolderFilter(f))}
                 closed={closedFolders}
                 onToggle={(path) => toggleRowsView("closedFolders", path)}
-                busy={isRunning}
+                busy={planBusy}
                 onNew={(parent) => setFolderName({ mode: "new", path: parent })}
                 onRename={(node) => setFolderName({ mode: "rename", path: node.path })}
                 onMove={setMovingFolder}
@@ -891,7 +940,7 @@ export default function ComfyPage() {
             )}
           </aside>
           <div style={{ minWidth: 0 }}>
-          {plans.length === 0 && (
+          {plans.length === 0 && !plansPending && (
             <div className="panel">
               <div className="panel-b">
                 <p style={{ fontSize: 13, color: "var(--fg-mute)", margin: 0 }}>
@@ -1006,6 +1055,7 @@ export default function ComfyPage() {
             count={selected.size}
             hasPromptPin={hasPromptPin}
             isRunning={isRunning}
+            planBusy={planBusy}
             onSetFolder={() => setShowSetFolder(true)}
             onCopyToPlan={() => setCopyToPlan({})}
             onSaveToLibrary={() => setShowSaveToLibrary(true)}
@@ -1035,6 +1085,7 @@ export default function ComfyPage() {
           </div>
           {libOpen && plan && section === "rows" && (
             <ComfyLibraryPanel
+              key={datasetId}
               datasetId={datasetId}
               plan={plan}
               folders={planFolders}
@@ -1046,7 +1097,7 @@ export default function ComfyPage() {
           )}
         </div>
         </div>
-        <DragOverlay dropAnimation={null} zIndex={60}>
+        <DragOverlay dropAnimation={null} zIndex={60} className={DRAG_OVERLAY_CLASS}>
           {drag && (
             <div style={{
               display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px", fontSize: 12,

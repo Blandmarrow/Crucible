@@ -18,7 +18,7 @@ user-facing guides are `docs/comfyui.md`, `docs/comfy-structured.md`, `docs/runs
 |---|---|
 | [queue.md](comfyui/queue.md) | The data model (plans, pins, rows, the per-row folder, the prompt library), `comfy_service.py`, ComfyClient, the `comfy` router's queue endpoints, and the gotchas shared by all of it |
 | [run.md](comfyui/run.md) | The `comfy_generate` job behind `POST /comfy/run`: per-row folders and file stems, per-row `refresh_stats`, removing our prompt from ComfyUI's queue, and the fake ComfyUI it is tested against |
-| [page.md](comfyui/page.md) | `ComfyPage` and `frontend/src/components/comfy/`: the Folder cell, `activeRuns`, the prompt library modals, the Blueprint tab and its outline review |
+| [page.md](comfyui/page.md) | `ComfyPage` and `frontend/src/components/comfy/`: the Folder cell, `activeRuns`, the prompt library modals, the Blueprint tab and its outline review, the layout (sticky header, the Blueprint columns, collapsible sections) |
 | [prompts.md](comfyui/prompts.md) | Writing queue prompts with an LLM: the one-shot endpoint, the `comfy_prompts` job, `parse_prompts`, `GeneratePromptsModal` |
 | [structured.md](comfyui/structured.md) | Blueprints and leaves in the DB, fill accounting, orphans and adoption, Apply's guard rails and the plan lock, Top up |
 | [structured-expansion.md](comfyui/structured-expansion.md) | `BlueprintSpec` and the pure `blueprint_expand.py`: combinations, budgets, sampling and sha256 seeds, folder paths, templates and the template walk |
@@ -70,6 +70,7 @@ not a see-also, and says which part of the code it owns.
 | `frontend/src/pages/ComfyPage.tsx` | `docs/dev/comfyui/page.md` § Frontend for routing, the plan bar and `activeRuns`; + `docs/dev/comfyui/prompts.md` § Frontend for the generate-prompts start mutation, which passes `planId` through its variables |
 | `frontend/src/api/comfy.ts` | `docs/dev/comfyui/page.md` § Frontend |
 | `frontend/src/components/comfy/ComfyRowsTable.tsx`, `ComfyDefaultsStrip.tsx`, `ComfyRunBar.tsx`, `SetRowFolderModal.tsx`, `BulkEditRowsModal.tsx` | `docs/dev/comfyui/page.md` § Frontend |
+| `frontend/src/hooks/useStickyOffsets.ts`, `frontend/src/components/comfy/BlueprintSection.tsx`, the `.comfy-head` and `.bp-*` rules in `frontend/src/index.css` | `docs/dev/comfyui/page.md` § The layout |
 | `frontend/src/components/comfy/WorkflowPinPanel.tsx`, `WorkflowScanModal.tsx` | `docs/dev/comfyui/page.md` § Frontend; + `docs/dev/comfyui/sync.md` § Frontend for the *Sync from canvas* button |
 | `frontend/src/components/comfy/SyncCanvasModal.tsx` | `docs/dev/comfyui/sync.md` § Frontend |
 | `frontend/src/components/comfy/PromptLibraryModal.tsx`, `SaveToLibraryModal.tsx` | `docs/dev/comfyui/page.md` § Frontend; the endpoints they call are `docs/dev/comfyui/queue.md` § Backend |

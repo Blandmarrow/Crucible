@@ -19,6 +19,7 @@ A **plan** holds one workflow template, the parameters pinned on it, and a queue
 
 - **+ New plan** creates one; plan names are unique within a dataset. **Rename** and **Delete** act on the selected plan (deleting a plan discards its rows, but never the images it generated).
 - The plan splits into three sections: **Rows** (the queue), **Workflow & Pins** (the template) and **Blueprint** (a way to fill the queue, below).
+- The plan bar, the section tabs and the **Run** bar stay at the top of the page as you scroll, on every section.
 
 ## Loading a workflow
 
@@ -87,10 +88,10 @@ A single library shared across every dataset and plan, so a set of prompts writt
 
 ## Running
 
-The **Run** bar takes a **Base folder** for the generated images — each row's own Folder nests underneath it — and a **Prompt as caption** toggle that writes each row's prompt into its image's caption (and its `.txt` sidecar). Then choose:
+The **Run** bar sits at the top of the page on every section. It takes a **Base folder** for the generated images — each row's own Folder nests underneath it — and a **Prompt as caption** toggle that writes each row's prompt into its image's caption (and its `.txt` sidecar). Then choose:
 
 - **Run pending** — every row still waiting to run. The normal case. Failed rows are *not* included until you **Reset failed**.
-- **Run selected** — only the rows you ticked, whatever their status.
+- **Run selected** — only the rows you ticked, whatever their status. It shows on the **Rows** section only, where you can see what is ticked.
 - **Run all** — every row regardless of status; re-runs completed prompts and generates fresh images.
 
 The whole folder tree appears in the gallery's sidebar as the run starts, before the first image lands, so you can watch it fill in. Cancelling part-way leaves the folders it had not reached empty; delete them from the gallery if you do not want them.

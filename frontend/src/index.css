@@ -401,6 +401,54 @@
   .tab:hover { color: var(--fg); }
   .tab.active { color: var(--fg); border-bottom-color: var(--accent); }
 
+  /* ── ComfyUI page: the sticky header and the Blueprint tab's two columns ──
+     ComfyPage is its own bounded scroller; useStickyOffsets writes --comfy-head-h and
+     --comfy-view-h onto it. See docs/dev/comfyui/page.md § The layout. */
+  .comfy-head {
+    position: sticky; top: 0; z-index: 20; background: var(--bg);
+    margin: 0 -28px 16px; padding: 10px 28px 8px; border-bottom: 1px solid var(--line);
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  /* A container query, not a media query: a split pane is narrow in a wide window. */
+  .bp-wrap { container-type: inline-size; }
+  .bp-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(360px, 40%); gap: 16px; align-items: start; }
+  .bp-jump {
+    position: sticky; top: var(--comfy-head-h, 0px); z-index: 5; background: var(--bg);
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 0; margin-bottom: 4px;
+  }
+  .bp-section { margin-bottom: 12px; }
+  /* The scroller's scroll padding clears the page header; this clears the jump bar under
+     it too (BlueprintPanel measures it into --bp-jump-h), for a jump and for a field that
+     takes focus just below the header. */
+  .bp-wrap :is(.bp-section, input, textarea, select, button) { scroll-margin-top: calc(var(--bp-jump-h, 44px) + 8px); }
+  .bp-section-toggle {
+    display: inline-flex; align-items: center; gap: 8px; background: none; border: 0; padding: 0;
+    color: inherit; font: inherit; cursor: pointer; text-align: left;
+  }
+  .bp-section-toggle .bp-summary { font-size: 12px; font-weight: 400; color: var(--fg-mute); }
+  /* align-items: start above keeps the side column unstretched, or sticky could not move it. */
+  .bp-side {
+    position: sticky; top: calc(var(--comfy-head-h, 0px) + 12px);
+    max-height: calc(var(--comfy-view-h, 100vh) - var(--comfy-head-h, 0px) - 24px);
+    display: flex; flex-direction: column; overflow: auto;
+  }
+  .bp-side > .bp-actions { flex-shrink: 0; border-bottom: 1px solid var(--line); background: var(--surface-1); }
+  /* The body scrolls on its own down to 120px; in a pane too short for that, the whole
+     column scrolls instead, so Apply and Top up can never be clipped out of reach. */
+  .bp-side > .bp-body { overflow: auto; min-height: 120px; }
+  @container (max-width: 880px) {
+    /* Flex, not grid: a sticky grid item is held inside its own grid area, so the action
+       bar could not stay in view while the editors scroll. A flex item is held inside
+       the whole container. */
+    .bp-grid { display: flex; flex-direction: column; align-items: stretch; }
+    .bp-side { display: contents; }
+    .bp-side > .bp-body { order: 1; background: var(--surface-1); border: 1px solid var(--line); border-radius: var(--r-lg); }
+    .bp-side > .bp-actions {
+      order: 2; position: sticky; bottom: 0; z-index: 5;
+      border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow-lg);
+    }
+  }
+
   /* ── Page header ── */
   .page-h { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
   .page-h h1 { margin: 0 0 4px; font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }

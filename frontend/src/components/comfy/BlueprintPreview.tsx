@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { comfyApi, type BlueprintValue } from "../../api/comfy";
@@ -14,6 +15,9 @@ interface Props {
   /** The form as it is right now; the preview and Apply follow it after a short pause. */
   value: BlueprintValue;
   hasPromptPin: boolean;
+  /** A run is live on this plan. The preview sits outside the editors' read-only
+   *  fieldsets, so it disables its own buttons and options. */
+  running: boolean;
   /** The run bar's settings, which Top up runs with (read-only here). */
   subfolder: string;
   setCaption: boolean;
@@ -24,8 +28,10 @@ interface Props {
 const cell = { padding: "4px 8px", textAlign: "left" as const, fontSize: 12 };
 const num = { ...cell, textAlign: "right" as const };
 
-export default function BlueprintPreview({ planId, datasetId, value, hasPromptPin, subfolder, setCaption, onRunStarted }: Props) {
+export default function BlueprintPreview({ planId, datasetId, value, hasPromptPin, running, subfolder, setCaption, onRunStarted }: Props) {
   const qc = useQueryClient();
+  // Folders whose sample prompts are shown, by scenario + "/" + path.
+  const [openLeaves, setOpenLeaves] = useState<Set<string>>(() => new Set());
   const [allowOverCap, setAllowOverCap] = useState(false);
   const [deleteOrphans, setDeleteOrphans] = useState(false);
   const [showRewrite, setShowRewrite] = useState(false);
@@ -127,15 +133,15 @@ export default function BlueprintPreview({ planId, datasetId, value, hasPromptPi
 
   if (isError && !preview) {
     return (
-      <div className="panel" style={{ marginBottom: 12 }}>
-        <div className="panel-h"><h3>Preview</h3></div>
-        <div className="panel-b">
+      <aside className="panel bp-side" aria-label="Preview">
+        <div className="panel-h bp-actions"><h3>Preview</h3></div>
+        <div className="panel-b bp-body">
           <p style={{ color: "var(--bad)", fontSize: 12, margin: "0 0 8px" }}>
             {apiErrorDetail(error, "Could not compute the preview.")}
           </p>
           <button className="btn sm" onClick={() => refetch()}>Retry</button>
         </div>
-      </div>
+      </aside>
     );
   }
 
@@ -148,7 +154,9 @@ export default function BlueprintPreview({ planId, datasetId, value, hasPromptPi
   const errors = preview?.errors ?? [];
   const orphans = preview?.orphans;
   const overCapBlocked = !!preview?.over_cap && !allowOverCap;
-  const blockedReason = !hasPromptPin
+  const blockedReason = running
+    ? "A run is in progress on this plan"
+    : !hasPromptPin
     ? "Mark a pinned parameter as the prompt first (Workflow & Pins)"
     : errors.length > 0 ? "Fix the errors first"
     : overCapBlocked ? "Over the row cap: allow a larger expansion first"
@@ -163,10 +171,15 @@ export default function BlueprintPreview({ planId, datasetId, value, hasPromptPi
   const rewriteRows = estimate?.rows ?? 0;
   const rewriteReason = rewriteRows === 0 ? "Apply first: there are no pending or failed template prompts to rewrite yet" : "";
 
+  // Two blocks: the actions on top, the body below. The side column is sticky with the
+  // body scrolling inside it; in a narrow pane the root becomes `display: contents` and the
+  // actions pin to the bottom of the tab instead (index.css, .bp-side).
   return (
-    <div className="panel" style={{ marginBottom: 12 }} data-testid="blueprint-preview">
-      <div className="panel-h" style={{ flexWrap: "wrap", gap: 8 }}>
-        <h3>Preview</h3>
+    <>
+    <aside className="panel bp-side" aria-label="Preview" data-testid="blueprint-preview">
+      <div className="bp-actions" style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 8 }}>
+        <h3 style={{ margin: 0, fontSize: 13, fontWeight: 600 }}>Preview</h3>
         <span style={{ fontSize: 12, color: "var(--fg-mute)", opacity: stale ? 0.6 : 1 }} data-testid="blueprint-totals">
           {preview
             ? `${preview.leaf_count} folder${preview.leaf_count !== 1 ? "s" : ""} · ${preview.rows_to_add} row${preview.rows_to_add !== 1 ? "s" : ""} to add · ${preview.images_short} image${preview.images_short !== 1 ? "s" : ""} short`
@@ -175,20 +188,16 @@ export default function BlueprintPreview({ planId, datasetId, value, hasPromptPi
             : "Working it out…"}
           {stale && preview ? " (updating…)" : ""}
         </span>
-        <div style={{ flex: 1 }} />
-        <span style={{ fontSize: 12, color: "var(--fg-mute)" }} data-testid="topup-settings">
-          into Base folder: {subfolder ? <span className="mono">{subfolder}</span> : "(dataset root)"}
-          {setCaption ? ", prompt as caption" : ""}
-        </span>
-        {rewriteWanted && (
-          <button
-            className="btn" data-testid="blueprint-rewrite" disabled={rewriteRows === 0}
-            title={rewriteReason || "Rewrite the template prompts into prose with an LLM"}
-            onClick={() => setShowRewrite(true)}
-          >
-            Rewrite {rewriteRows} prompt{rewriteRows !== 1 ? "s" : ""}
-          </button>
-        )}
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+        <button
+          className="btn primary" disabled={!canApply} title={blockedReason || undefined}
+          onClick={() => preview && applyMutation.mutate({
+            body: JSON.parse(debouncedJSON) as BlueprintValue, total: preview.rows_to_add, deleteOrphans: deleteOrphans && orphanPending > 0,
+          })}
+        >
+          {applyMutation.isPending ? "Applying…" : "Apply"}
+        </button>
         <button
           className="btn" disabled={!canTopUp} title={topUpBlocked || "Add the missing rows, reset failed ones and run them"}
           data-testid="blueprint-topup"
@@ -199,16 +208,23 @@ export default function BlueprintPreview({ planId, datasetId, value, hasPromptPi
         >
           {topUpMutation.isPending ? "Topping up…" : "Top up"}
         </button>
-        <button
-          className="btn primary" disabled={!canApply} title={blockedReason || undefined}
-          onClick={() => preview && applyMutation.mutate({
-            body: JSON.parse(debouncedJSON) as BlueprintValue, total: preview.rows_to_add, deleteOrphans: deleteOrphans && orphanPending > 0,
-          })}
-        >
-          {applyMutation.isPending ? "Applying…" : "Apply"}
-        </button>
+        {rewriteWanted && (
+          <button
+            className="btn" data-testid="blueprint-rewrite" disabled={running || rewriteRows === 0}
+            title={running ? "A run is in progress on this plan"
+              : rewriteReason || "Rewrite the template prompts into prose with an LLM"}
+            onClick={() => setShowRewrite(true)}
+          >
+            Rewrite {rewriteRows} prompt{rewriteRows !== 1 ? "s" : ""}
+          </button>
+        )}
       </div>
-      <div className="panel-b" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <span style={{ fontSize: 12, color: "var(--fg-mute)" }} data-testid="topup-settings">
+        Top up runs into Base folder: {subfolder ? <span className="mono">{subfolder}</span> : "(dataset root)"}
+        {setCaption ? ", prompt as caption" : ""}. Change both in the run bar at the top.
+      </span>
+      </div>
+      <div className="bp-body" style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 10 }}>
         {awaitingRewrite > 0 && (
           <p style={{ fontSize: 12, color: "var(--warn, var(--fg-mute))", margin: 0 }} data-testid="blueprint-awaiting-rewrite">
             Applied. {awaitingRewrite} row{awaitingRewrite !== 1 ? "s" : ""} wait{awaitingRewrite === 1 ? "s" : ""} for the rewrite — press Rewrite, then Top up again.
@@ -231,7 +247,7 @@ export default function BlueprintPreview({ planId, datasetId, value, hasPromptPi
         )}
         {preview?.over_cap && (
           <label style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
-            <input type="checkbox" className="checkbox" checked={allowOverCap}
+            <input type="checkbox" className="checkbox" checked={allowOverCap} disabled={running}
               onChange={(e) => setAllowOverCap(e.target.checked)} />
             Allow a larger expansion (up to 20,000 rows)
           </label>
@@ -244,7 +260,7 @@ export default function BlueprintPreview({ planId, datasetId, value, hasPromptPi
             </div>
             <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: orphanPending > 0 ? "pointer" : "default" }}>
               <input type="checkbox" className="checkbox" checked={deleteOrphans && orphanPending > 0}
-                disabled={orphanPending === 0}
+                disabled={running || orphanPending === 0}
                 onChange={(e) => setDeleteOrphans(e.target.checked)} />
               Delete their {orphanPending} pending rows
             </label>
@@ -263,23 +279,47 @@ export default function BlueprintPreview({ planId, datasetId, value, hasPromptPi
                   <th style={num}>Short</th>
                   <th style={num}>Open</th>
                   <th style={num}>To add</th>
-                  <th style={cell}>Sample prompts</th>
                 </tr>
               </thead>
               <tbody>
-                {preview.leaves.map((l) => (
-                  <tr key={l.scenario + "/" + l.path} style={{ borderTop: "1px solid var(--border)", verticalAlign: "top" }}>
-                    <td style={cell} className="mono">{l.path}</td>
-                    <td style={num}>{l.target}</td>
-                    <td style={num}>{l.kept}</td>
-                    <td style={num}>{l.short}</td>
-                    <td style={num}>{l.open}</td>
-                    <td style={num}>{l.to_add}</td>
-                    <td style={{ ...cell, color: "var(--fg-mute)" }}>
-                      {l.samples.map((s, i) => <div key={i}>{s}</div>)}
-                    </td>
-                  </tr>
-                ))}
+                {/* The sample prompts open under their folder on demand: a column of them
+                    made every row tall in the side column (the user's call, 2026-11-05). */}
+                {preview.leaves.map((l) => {
+                  const key = l.scenario + "/" + l.path;
+                  const open = openLeaves.has(key);
+                  const toggle = () => setOpenLeaves((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(key)) next.delete(key); else next.add(key);
+                    return next;
+                  });
+                  return (
+                    <Fragment key={key}>
+                      <tr style={{ borderTop: "1px solid var(--border)", verticalAlign: "top" }}>
+                        <td style={{ ...cell, wordBreak: "break-all" }} className="mono">
+                          {l.samples.length > 0 ? (
+                            <button type="button" className="bp-section-toggle" aria-expanded={open}
+                              title={open ? "Hide the sample prompts" : "Show the sample prompts"} onClick={toggle}>
+                              {open ? <ChevronDown size={12} aria-hidden /> : <ChevronRight size={12} aria-hidden />}
+                              {l.path}
+                            </button>
+                          ) : l.path}
+                        </td>
+                        <td style={num}>{l.target}</td>
+                        <td style={num}>{l.kept}</td>
+                        <td style={num}>{l.short}</td>
+                        <td style={num}>{l.open}</td>
+                        <td style={num}>{l.to_add}</td>
+                      </tr>
+                      {open && (
+                        <tr data-testid="blueprint-leaf-samples">
+                          <td colSpan={6} style={{ ...cell, color: "var(--fg-mute)", paddingLeft: 26 }}>
+                            {l.samples.map((s, i) => <div key={i}>{s}</div>)}
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
               </tbody>
             </table>
             {preview.leaf_count > preview.leaves.length && (
@@ -289,13 +329,16 @@ export default function BlueprintPreview({ planId, datasetId, value, hasPromptPi
             )}
             {preview.leaves.length > 0 && (
               <div style={{ fontSize: 11, color: "var(--fg-mute)", padding: "0 8px" }}>
-                Sample prompts show for the first 20 folders only.
+                Click a folder to see its sample prompts. They show for the first 20 folders only.
               </div>
             )}
           </div>
         )}
       </div>
-      {showRewrite && <RewriteModal planId={planId} onClose={() => setShowRewrite(false)} />}
-    </div>
+    </aside>
+    {/* Outside the aside: a sticky element is its own stacking context, so a dialog inside
+        it would sit under the page's sticky header, z-index 60 or not. */}
+    {showRewrite && <RewriteModal planId={planId} onClose={() => setShowRewrite(false)} />}
+    </>
   );
 }

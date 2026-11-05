@@ -1,5 +1,6 @@
 import type { BlueprintEntity, BlueprintSpec } from "../../api/comfy";
 import BlueprintNameField from "./BlueprintNameField";
+import BlueprintSection, { type SectionControl, type SectionRef } from "./BlueprintSection";
 import { BLUEPRINT_LIMITS, freshName } from "./blueprintKeys";
 
 function newEntityId(): string {
@@ -11,25 +12,29 @@ interface Props {
   onChange: (axes: BlueprintSpec["axes"]) => void;
   /** Rename an axis and every scenario reference to it. */
   onRename: (from: string, to: string) => void;
+  section: SectionControl;
+  ref?: SectionRef;
 }
 
-export default function BlueprintAxesEditor({ axes, onChange, onRename }: Props) {
+export default function BlueprintAxesEditor({ axes, onChange, onRename, section, ref }: Props) {
   const names = Object.keys(axes);
 
   function setEntities(axis: string, entities: BlueprintEntity[]) {
     onChange({ ...axes, [axis]: entities });
   }
 
+  const entityCount = names.reduce((n, a) => n + axes[a].length, 0);
+  const summary = `${names.length} ax${names.length === 1 ? "is" : "es"} · ${entityCount} entit${entityCount === 1 ? "y" : "ies"}`;
+
   return (
-    <div className="panel" style={{ marginBottom: 12 }}>
-      <div className="panel-h">
-        <h3>Axes</h3>
-        <div style={{ flex: 1 }} />
+    <BlueprintSection
+      ref={ref} title="Axes" summary={summary} control={section}
+      action={
         <button className="btn ghost sm" disabled={names.length >= BLUEPRINT_LIMITS.axes}
           title={names.length >= BLUEPRINT_LIMITS.axes ? `A blueprint holds at most ${BLUEPRINT_LIMITS.axes} axes` : undefined}
-          onClick={() => onChange({ ...axes, [freshName(axes, "axis")]: [] })}>+ Add axis</button>
-      </div>
-      <div className="panel-b" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          onClick={() => { section.setOpen(true); onChange({ ...axes, [freshName(axes, "axis")]: [] }); }}>+ Add axis</button>
+      }
+    >
         {names.length === 0 && (
           <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: 0 }}>
             An axis is a kind of thing you vary, such as characters or biomes. Each entity on it
@@ -84,7 +89,6 @@ export default function BlueprintAxesEditor({ axes, onChange, onRename }: Props)
             ))}
           </div>
         ))}
-      </div>
-    </div>
+    </BlueprintSection>
   );
 }

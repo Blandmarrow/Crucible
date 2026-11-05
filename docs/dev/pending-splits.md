@@ -206,3 +206,24 @@ utilities → `docs/dev/shared-utilities.md`.
   it is the index doc for the same material, so anything § Features says that the topic docs
   do not is a fact to move *there* rather than lose. A handful of Features bullets name
   things with no topic doc at all (verify each against the Docs table before cutting).
+
+## docs/dev/comfyui/page.md
+
+- **Moves:** the `**BlueprintPanel**` bullet of § Frontend (the Blueprint tab: saving, the
+  seed, the editors, the outline draft and *Use it*, `BlueprintPreview`, Top up, the
+  rewrite, its e2e) and the Blueprint half of § The layout (the two columns, the narrow
+  `display: contents` rule, the preview's `running` guard, the leaves table,
+  `BlueprintSection`, the jump bar).
+- **New file:** docs/dev/comfyui/blueprint-tab.md (mirrors docs/comfy-structured.md; the
+  name `structured.md` is taken by the backend file in the same folder).
+- **Why here:** the Blueprint tab is a form of its own with its own server state, queries
+  and layout; the rest of page.md is the plan bar, the rows queue and the run bar. It
+  tripped the budget with §8a (2026-11-05), and §8b–§8d will add the plan rail, the folder
+  tree and the library panel to page.md, so split before §8b appends.
+- **Watch for:** the scroller and sticky-header bullets of § The layout stay in page.md, since
+  every tab uses them; the new file points back to them for `--comfy-head-h`. Inbound
+  pointers to repoint: the hub `docs/dev/comfyui.md` (its page.md row and the routing rows
+  for `BlueprintPanel.tsx`…, `OutlineModal.tsx`, `BlueprintSection.tsx`), the
+  `COMFY_BLUEPRINT_SECTIONS_KEY` row in `docs/dev/persistence.md`, the comment above
+  `.comfy-head` in `frontend/src/index.css`, and the §8a notes in `docs/dev/roadmap.md` and
+  the plan's § 8a. A new file in `docs/dev/comfyui/` gets a hub row, not a Map row.

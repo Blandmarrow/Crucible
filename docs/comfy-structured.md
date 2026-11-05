@@ -9,6 +9,20 @@ It lives on the **Blueprint** tab of a plan on the ComfyUI page. The plan itself
 workflow, the pins and running the queue) is described in [ComfyUI Generation](comfyui.md).
 Apply needs a pinned parameter marked as the prompt (★).
 
+## The layout
+
+- **The editors are on the left and the Preview on the right.** The Preview stays in view
+  as you scroll the editors, with Apply, Top up and Rewrite at its top. Its folder list
+  scrolls on its own.
+- **In a narrow window or a split pane** the Preview moves under the editors. Its buttons
+  then stay pinned to the bottom of the page.
+- **The plan bar, the tabs and the Run bar stay at the top** of the page, on this tab too.
+- **Axes, Variations and Scenarios fold away.** Click a section's title to fold or open
+  it. Its *+ Add* button stays visible, and opens the section when you press it.
+- **The bar above the editors** jumps to a section and opens it, folds or opens them all,
+  and holds *Draft from a description*. Which sections are open is remembered for each
+  plan, in this browser.
+
 ## The three parts
 
 **Axes** are the things your dataset varies over, such as *character* or *biome*. Each axis
@@ -76,7 +90,8 @@ The **Preview** updates as you edit. It shows:
 
 - how many folders the blueprint makes, and how many rows Apply would add
 - each folder with its target, the images it already holds (**Kept**), the rows still
-  waiting to run (**Open**), the rows to add, and sample prompts for the first 20 folders
+  waiting to run (**Open**) and the rows to add. Click a folder to see its sample prompts
+  (the first 20 folders have them)
 - **errors** in red, which you must fix before Apply works: an unknown placeholder, two
   scenarios making the same folder, a label with no letters
 - warnings, such as repeating prompts
@@ -129,9 +144,9 @@ again.
 
 Template prompts read like tag lists, which suits tag-based models. Models that read
 sentences can do better with prose. Tick **Rewrite into prose (LLM)** on a scenario, Apply,
-then press **Rewrite N prompts** under the preview. An LLM rewrites each folder's prompts
+then press **Rewrite N prompts** in the Preview. An LLM rewrites each folder's prompts
 into sentences that keep every detail, and describes each character the same way
-throughout. The button sits in the Preview header, and shows only while some prompts
+throughout. The button sits beside Apply and Top up, and shows only while some prompts
 wait for a rewrite. It is greyed out until you have applied, because only rows that exist
 can be rewritten.
 

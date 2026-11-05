@@ -29,7 +29,9 @@ image's generation metadata on its detail page, and a failed row's error tooltip
 *Reset failed*.
 
 - **Plan bar** — plan `<select>` (query `["comfy","plans",datasetId]`), inline create/rename,
-  delete via `ConfirmDialog`; section tabs *Rows* / *Workflow & Pins* / *Blueprint*.
+  delete via `ConfirmDialog`; section tabs *Rows* / *Workflow & Pins* / *Blueprint*. It sits
+  in the sticky header with `ComfyRunBar` (§ The layout below). Its `<select>` must stay the
+  first on the page: the e2e finds it with `locator('select').first()`.
 - **`BlueprintPanel`** (the *Blueprint* tab, keyed by `plan.id`) edits the plan's blueprint.
   What the server does with it is `docs/dev/comfyui/structured.md`.
   - **Saving.** It is server-stored form state on the M5 pattern: `ServerStateGate` on
@@ -113,7 +115,8 @@ image's generation metadata on its detail page, and a failed row's error tooltip
   - **Top up** sits beside Apply, under the same rules. It is also disabled when nothing
     is short, to add, pending or failed ("Every folder is full").
     - It sends Apply's body plus the run bar's **Base folder** and **Prompt as caption**,
-      which live in `ComfyPage` state and are shown read-only beside the button.
+      which live in `ComfyPage` state and are shown read-only under the buttons
+      (`topup-settings`).
     - **The returned job joins `activeRuns`** through `onRunStarted(jobId, planId)`, the
       same as `runMutation`. Tracking, invalidation, the completion toast and the
       `isRunning` gate then apply unchanged.
@@ -129,7 +132,7 @@ image's generation metadata on its detail page, and a failed row's error tooltip
     - **The *Rewrite N prompts* button counts rows that exist now**, from
       `GET …/blueprint/rewrite` at the saved batch size, under
       `["comfy","blueprint-rewrite",planId,batch]`. It does not use the preview's count,
-      which includes rows Apply would add. The button appears in the Preview header only
+      which includes rows Apply would add. The button appears beside Apply and Top up only
       while the preview says some rows need rewriting (`rewrite_rows > 0`). It is
       **disabled, with an "Apply first" tooltip,** while no such row exists yet.
     - `RewriteModal` follows `OutlineModal`: defaults from the saved settings, read only;
@@ -209,22 +212,27 @@ image's generation metadata on its detail page, and a failed row's error tooltip
   (query key `["subfolders", datasetId]`, usually already cached by `ComfyRunBar`); a datalist
   rather than the run bar's closed select, because creating folders that do not exist yet is
   the point. Calls `setRowsSubfolder`, invalidates `["comfy","rows",planId]`, toasts the count.
-- **`ComfyRunBar`** — base-folder select (`["subfolders", datasetId]`; labelled *Base folder*,
+- **`ComfyRunBar`** — a strip in the sticky header, shown on every tab once a plan exists
+  (before §8a it rendered on *Rows* only). *Run selected* shows on *Rows* only
+  (`showRunSelected`): elsewhere the selection it would run is out of sight. Base-folder select (`["subfolders", datasetId]`; labelled *Base folder*,
   since per-row folders nest under it, and folders a run declares appear in the next run's
   options automatically), "Prompt as caption"
   toggle, *Run pending (n)* / *Run selected (n)* / *Run all (n)* (runs every row regardless of
   status — re-runs completed prompts and regenerates images; passes all row ids to `/comfy/run`,
-  which runs explicit `row_ids` regardless of status). The page tracks runs in an
+  which runs explicit `row_ids` regardless of status).
+  - The page tracks runs in an
   `activeRuns: Map<jobId, planId>` (planId captured at **mutate** time, so switching the plan
   select mid-POST can't retag a run); one `JobSSESubscriber` component per entry keeps a
   dedicated `useJobSSE` subscription, and the run bar / `isRunning` gating applies only to the
   plan being viewed — other plans stay interactive and can start their own concurrent runs
-  (the backend 409 is per-plan). While a run is live the page invalidates
+  (the backend 409 is per-plan).
+  - While a run is live the page invalidates
   `["comfy","rows",planId]` (that run's plan, not the viewed one) on each progress event so
   row statuses update in place; on terminal status it also invalidates `["images", datasetId]`,
   `["subfolders", datasetId]`, `["comfy","plans",datasetId]`, and `["datasets"]`, fires the
   completion/failure toast, and drops the run from the map — every tracked run gets its
-  invalidations and toast even if a different plan is selected when it finishes. **Live gallery refresh during a run is driven by TopBar**, not this page:
+  invalidations and toast even if a different plan is selected when it finishes.
+  - **Live gallery refresh during a run is driven by TopBar**, not this page:
   `comfy_generate` is in TopBar's `LIVE_IMAGE_JOB_TYPES`, so TopBar re-invalidates
   `["images", datasetId]` (+ `["subfolders"]`) each time the job's `done` count advances — the
   gallery updates per-row as images import, regardless of which pane is showing it.
@@ -249,3 +257,68 @@ image's generation metadata on its detail page, and a failed row's error tooltip
   *Edit prompts…* (`BulkEditRowsModal`: find/replace, prepend, append, remove + regex toggle,
   scope all/selected → `rows/bulk-edit`), *Library…*, *Save to library (n)*,
   *Set folder (n)*, *Reset failed (n)*, *Delete selected (n)* (`ConfirmDialog`).
+
+### The layout
+
+M6 §8a (`docs/dev/comfy-automation-plan/README.md` § 8a). The CSS is the `.comfy-head` and
+`.bp-*` rules in `frontend/src/index.css`.
+
+- **`ComfyPage` is its own bounded scroller** (`height: 100%; minHeight: 0; overflowY: auto`),
+  in both shells. Outside pane mode `main` used to scroll instead, with no fixed height for a
+  sticky side column to fit. `DatasetsPage` is the precedent.
+  - **No top padding on the scroller.** Sticky `top: 0` counts from inside its padding, so
+    the header stopped 24px down with content showing above it. `.page-h` carries the space.
+  - `scrollPaddingTop` is the header's height, so `scrollIntoView` (the jump bar's, and
+    Playwright's before a click) lands targets below the header, not under it.
+- **The sticky header** (`.comfy-head`, `data-testid="comfy-head"`) holds the plan bar and
+  `ComfyRunBar` on every tab. `z-index` 20, under `.dialog-bg` (60) and the `z-50` overlays.
+- **`hooks/useStickyOffsets.ts`** writes `--comfy-head-h` (the header wraps on a narrow pane,
+  so its height varies) and `--comfy-view-h` (the scroller's `clientHeight`) onto the
+  scroller from a ResizeObserver, never through state. `100vh` would be wrong: a pane is
+  shorter than the window.
+- **Blueprint's two columns** (`.bp-wrap` / `.bp-grid`): the editors on the left, the
+  preview's `<aside class="bp-side">` on the right, sticky, capped at the visible height, with
+  `.bp-body` scrolling inside it.
+  - **A container query, not a media query**, at 880px: a split pane is narrow in a wide
+    window. The e2e viewport gives about 980px, so e2e runs the wide layout only.
+  - **Narrow, the grid becomes a flex column and `.bp-side` becomes `display: contents`**,
+    so `.bp-actions` is a flex item of the whole tab and `position: sticky; bottom: 0` pins
+    it while the editors scroll. Both halves are needed: a sticky grid item is held inside
+    its own grid area, and a sticky child of the aside inside the aside, which is off
+    screen while you edit.
+  - `align-items: start` keeps the wide aside unstretched, or sticky could not move it.
+  - **`.bp-body` scrolls on its own down to 120px, then the whole aside scrolls.** In a
+    wide but short pane (a horizontal split) the header can take most of the height, and a
+    clipped aside hid Apply and Top up out of reach.
+  - **`RewriteModal` renders outside the aside.** A sticky element is its own stacking
+    context, so a dialog inside it sat under the sticky header whatever its z-index, with
+    the tabs and Run pending clickable above the backdrop. Keep any new dialog out of it.
+  - BlueprintPanel measures the jump bar into `--bp-jump-h`, and the `.bp-wrap` rules turn
+    it into `scroll-margin-top`, so a jump or a field taking focus just below the header
+    is not hidden under the jump bar.
+- **The preview has its own `running` guard.** It used to sit inside the editors' disabled
+  `<fieldset>`; outside it, it disables Rewrite and the over-cap and orphan checkboxes
+  itself, and Apply's and Top up's reason reads "A run is in progress on this plan". It
+  gets the real `hasPromptPin`, no longer `hasPromptPin && !running`, whose tooltip blamed a
+  missing prompt pin.
+- **The leaves table** has no Sample prompts column (the user's call, 2026-11-05: it made
+  every row tall in the side column). A folder with samples gets a chevron button
+  (`aria-expanded`) that opens them in a row under it (`blueprint-leaf-samples`). The server
+  sends samples for the first 20 folders only, so the rest get no button.
+- **`BlueprintSection`** is each editor's collapsible `.panel`: an `<h3><button
+  aria-expanded>` toggle with a count summary, and the editor's *+ Add …* button beside it,
+  which opens the section when pressed.
+  - **A collapsed body is hidden, never unmounted.** `PiecesField` in
+    `BlueprintVariationsEditor.tsx` keeps typed text that can differ from what is saved (an
+    over-limit line and its warning), and an unmount would lose it.
+  - **The read-only `<fieldset>` moved inside each section**, around the Add button and the
+    body only, so a section still folds while a run is live. *New sampling seed* takes
+    `disabled={running}` directly.
+  - The section element reaches the jump bar as a React 19 `ref` prop through each editor.
+    A ref inside the `SectionControl` object fails the compiler's `react-hooks/refs` lint.
+  - The open state is `COMFY_BLUEPRINT_SECTIONS_KEY` + `-${planId}`
+    (`docs/dev/persistence.md`), all open by default, which the e2e relies on.
+- **The jump bar** (`.bp-jump`, `blueprint-jump`) is sticky under the header in the left
+  column: one button per section (it opens a folded one, then scrolls to it), *Collapse
+  all*, *Expand all* and *✨ Draft from a description…* (`outline-open`). They are buttons,
+  not `#hash` links: no router hash, and no duplicate ids when two panes show the page.

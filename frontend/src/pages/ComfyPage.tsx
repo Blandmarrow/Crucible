@@ -18,6 +18,9 @@ import PromptLibraryModal from "../components/comfy/PromptLibraryModal";
 import SaveToLibraryModal from "../components/comfy/SaveToLibraryModal";
 import SetRowFolderModal from "../components/comfy/SetRowFolderModal";
 import { apiErrorDetail } from "../utils/apiError";
+import { clearPersisted } from "../utils/persistentState";
+import { COMFY_BLUEPRINT_SECTIONS_KEY } from "../constants/storage";
+import { useStickyOffsets } from "../hooks/useStickyOffsets";
 
 /** Hooks can't run in loops — render one of these per active run to keep a
  *  dedicated SSE subscription per job. */
@@ -59,6 +62,9 @@ export default function ComfyPage() {
   const [showSaveToLibrary, setShowSaveToLibrary] = useState(false);
   const [showSetFolder, setShowSetFolder] = useState(false);
   const txtFilesRef = useRef<HTMLInputElement>(null);
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const headerRef = useRef<HTMLDivElement>(null);
+  useStickyOffsets(scrollerRef, headerRef, !!datasetId);
 
   /** Each .txt file is one prompt (newlines inside a file collapse to spaces);
       every non-empty file becomes a row directly — no review modal. */
@@ -171,6 +177,8 @@ export default function ComfyPage() {
   const deletePlanMutation = useMutation({
     mutationFn: () => comfyApi.deletePlan(effectivePlanId!),
     onSuccess: () => {
+      // Its Blueprint sections' open state goes with it.
+      clearPersisted(`${COMFY_BLUEPRINT_SECTIONS_KEY}-${effectivePlanId}`);
       qc.invalidateQueries({ queryKey: ["comfy", "plans", datasetId] });
       setPlanId(null);
       setConfirmDeletePlan(false);
@@ -289,19 +297,29 @@ export default function ComfyPage() {
   }
 
   return (
-    <div style={{ padding: "24px 28px", overflowY: "auto", flex: 1 }}>
+    // Its own bounded scroller in both shells: outside pane mode `main` would scroll
+    // instead, with no fixed height for the sticky side column to fit. The scroll
+    // padding keeps scrollIntoView (and Playwright's) clear of the sticky header. No top
+    // padding on the scroller: sticky `top: 0` counts from inside it, so the header would
+    // stop 24px down with content showing above it. The title carries that space instead.
+    <div ref={scrollerRef} style={{
+      height: "100%", minHeight: 0, overflowY: "auto", padding: "0 28px 24px",
+      scrollPaddingTop: "calc(var(--comfy-head-h, 0px) + 8px)",
+    }}>
       {[...activeRuns.keys()].map((jobId) => (
         <JobSSESubscriber key={jobId} jobId={jobId} />
       ))}
-      <div className="page-h">
+      <div className="page-h" style={{ paddingTop: 24 }}>
         <div>
           <h1>ComfyUI generation</h1>
           <p>Manage prompt queues, run them on your ComfyUI server, and import the results into this dataset.</p>
         </div>
       </div>
 
-      {/* Plan bar */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+      {/* The sticky header: the plan bar with the tabs, and the run bar on every tab. The
+          plan <select> must stay the first <select> on the page (e2e finds it that way). */}
+      <div className="comfy-head" ref={headerRef} data-testid="comfy-head">
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         {plans.length > 0 && (
           <select
             className="select"
@@ -366,6 +384,25 @@ export default function ComfyPage() {
           </div>
         )}
       </div>
+      {plan && (
+        <ComfyRunBar
+          datasetId={datasetId}
+          pendingCount={pendingCount}
+          selectedCount={selected.size}
+          totalCount={rows.length}
+          subfolder={subfolder}
+          onSubfolderChange={setSubfolder}
+          setCaption={setCaption}
+          onSetCaptionChange={setSetCaption}
+          onRunPending={() => runMutation.mutate({ planId: effectivePlanId! })}
+          onRunSelected={() => runMutation.mutate({ planId: effectivePlanId!, rowIds: [...selected] })}
+          showRunSelected={section === "rows"}
+          onRunAll={() => runMutation.mutate({ planId: effectivePlanId!, rowIds: rows.map((r) => r.id) })}
+          isRunning={isRunning}
+          jobProgress={jobProgress}
+        />
+      )}
+      </div>
 
       {plans.length === 0 && !showCreate && (
         <div className="panel">
@@ -403,22 +440,6 @@ export default function ComfyPage() {
 
       {plan && section === "rows" && (
         <>
-          <ComfyRunBar
-            datasetId={datasetId}
-            pendingCount={pendingCount}
-            selectedCount={selected.size}
-            totalCount={rows.length}
-            subfolder={subfolder}
-            onSubfolderChange={setSubfolder}
-            setCaption={setCaption}
-            onSetCaptionChange={setSetCaption}
-            onRunPending={() => runMutation.mutate({ planId: effectivePlanId! })}
-            onRunSelected={() => runMutation.mutate({ planId: effectivePlanId!, rowIds: [...selected] })}
-            onRunAll={() => runMutation.mutate({ planId: effectivePlanId!, rowIds: rows.map((r) => r.id) })}
-            isRunning={isRunning}
-            jobProgress={jobProgress}
-          />
-
           <ComfyDefaultsStrip
             plan={plan}
             disabled={isRunning || updatePlanMutation.isPending}

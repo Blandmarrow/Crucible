@@ -144,6 +144,44 @@ test('a hand-written blueprint expands into rows with folders, and they run', as
   await scenario.getByLabel('Prompt template').fill('{character}, {camera}')
 
   await expect(page.getByTestId('blueprint-totals')).toHaveText('2 folders · 4 rows to add · 4 images short', { timeout: 15_000 })
+
+  // §8a layout. The run bar sits in the sticky header on this tab too, without Run
+  // selected, whose selection is only visible on Rows.
+  await expect(page.getByTestId('comfy-head').getByRole('button', { name: /^Run pending/ })).toBeVisible()
+  await expect(page.getByTestId('comfy-head').getByRole('button', { name: /^Run selected/ })).toHaveCount(0)
+  // A folder's sample prompts open under it on demand.
+  const leaves = page.getByTestId('blueprint-leaves')
+  await expect(leaves.getByTestId('blueprint-leaf-samples')).toHaveCount(0)
+  await leaves.getByRole('button', { name: 'knights/iron_knight' }).click()
+  await expect(leaves.getByTestId('blueprint-leaf-samples')).toContainText('an iron knight')
+  // A section collapses (hidden, its add button still there) and stays collapsed per plan.
+  const jump = page.getByTestId('blueprint-jump')
+  await page.getByRole('button', { name: /^Axes/, expanded: true }).click()
+  await expect(axis).toBeHidden()
+  await expect(page.getByRole('button', { name: '+ Add axis' })).toBeVisible()
+  await page.getByRole('button', { name: 'Rows', exact: true }).click()
+  await page.getByRole('button', { name: 'Blueprint', exact: true }).click()
+  // Wait for the form itself: while it loads, the axis is trivially hidden.
+  await expect(page.getByRole('button', { name: /^Axes/, expanded: false })).toBeVisible()
+  await expect(page.getByTestId('axis-character')).toBeHidden()
+  await expect(page.getByRole('button', { name: /^Variations/, expanded: true })).toBeVisible()
+  await jump.getByRole('button', { name: 'Expand all' }).click()
+  await expect(page.getByTestId('axis-character')).toBeVisible()
+  // The jump bar scrolls a section in, below the sticky header, which stays at the top.
+  await jump.getByRole('button', { name: 'Scenarios · 1' }).click()
+  await expect(page.getByTestId('scenario-0')).toBeInViewport()
+  // Scrolled to the bottom, the page is its own scroller and the header is pinned to its top.
+  const pinned = await page.getByTestId('comfy-head').evaluate((head) => {
+    const scroller = head.parentElement!
+    scroller.scrollTop = scroller.scrollHeight
+    return {
+      scrolled: scroller.scrollTop > 0,
+      gap: Math.abs(head.getBoundingClientRect().top - scroller.getBoundingClientRect().top),
+    }
+  })
+  expect(pinned.scrolled).toBe(true)
+  expect(pinned.gap).toBeLessThan(1)
+
   const apply = page.getByRole('button', { name: 'Apply', exact: true })
   await expect(apply).toBeEnabled()
   await apply.click()

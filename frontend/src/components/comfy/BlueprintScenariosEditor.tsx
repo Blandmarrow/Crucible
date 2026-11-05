@@ -1,5 +1,6 @@
 import type { BlueprintCombineItem, BlueprintScenario, BlueprintSpec } from "../../api/comfy";
 import NumberField from "../common/NumberField";
+import BlueprintSection, { type SectionControl, type SectionRef } from "./BlueprintSection";
 import { BLUEPRINT_LIMITS, defaultPath, defaultTemplate, freshName } from "./blueprintKeys";
 
 const NEW_SCENARIO: BlueprintScenario = { name: "", combine: [], mode: "full", count: 1, path: "", template: "", rewrite: false };
@@ -21,11 +22,13 @@ function sampleK(mode: string): number | null {
 interface Props {
   spec: BlueprintSpec;
   onChange: (scenarios: BlueprintScenario[]) => void;
+  section: SectionControl;
+  ref?: SectionRef;
 }
 
 const smallLabel = { fontSize: 12, color: "var(--fg-mute)", display: "flex", alignItems: "center", gap: 6 } as const;
 
-export default function BlueprintScenariosEditor({ spec, onChange }: Props) {
+export default function BlueprintScenariosEditor({ spec, onChange, section, ref }: Props) {
   const { scenarios } = spec;
   const axisNames = Object.keys(spec.axes);
   const placeholders = [
@@ -37,17 +40,19 @@ export default function BlueprintScenariosEditor({ spec, onChange }: Props) {
     onChange(scenarios.map((s, j) => (j === i ? { ...s, ...p } : s)));
 
   return (
-    <div className="panel" style={{ marginBottom: 12 }}>
-      <div className="panel-h">
-        <h3>Scenarios</h3>
-        <div style={{ flex: 1 }} />
+    <BlueprintSection
+      ref={ref} title="Scenarios" summary={`${scenarios.length} scenario${scenarios.length === 1 ? "" : "s"}`} control={section}
+      action={
         <button className="btn ghost sm" disabled={scenarios.length >= BLUEPRINT_LIMITS.scenarios}
           title={scenarios.length >= BLUEPRINT_LIMITS.scenarios ? `A blueprint holds at most ${BLUEPRINT_LIMITS.scenarios} scenarios` : undefined}
-          onClick={() => onChange([...scenarios, { ...NEW_SCENARIO, name: freshName(Object.fromEntries(scenarios.map((x) => [x.name, true])), "scenario") }])}>
+          onClick={() => {
+            section.setOpen(true);
+            onChange([...scenarios, { ...NEW_SCENARIO, name: freshName(Object.fromEntries(scenarios.map((x) => [x.name, true])), "scenario") }]);
+          }}>
           + Add scenario
         </button>
-      </div>
-      <div className="panel-b" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      }
+    >
         {scenarios.length === 0 && (
           <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: 0 }}>
             A scenario combines axes into folders: one folder for each combination. It says how many
@@ -154,7 +159,6 @@ export default function BlueprintScenariosEditor({ spec, onChange }: Props) {
             </div>
           );
         })}
-      </div>
-    </div>
+    </BlueprintSection>
   );
 }

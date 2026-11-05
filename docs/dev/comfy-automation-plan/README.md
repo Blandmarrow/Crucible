@@ -292,6 +292,9 @@ every component named below is described there.
 
 ### §8a — A layout that stays put
 
+**Landed 2026-11-05** (`docs/dev/comfyui/page.md` § The layout). The narrow preview table
+shows a folder's sample prompts on demand, not as a column: the user's call that day.
+
 - **A sticky header** on every tab: the plan name, the tabs and `ComfyRunBar`. The run bar
   then shows on Blueprint too, where Top up already uses its Base folder and Prompt as
   caption read-only.

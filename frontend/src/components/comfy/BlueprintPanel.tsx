@@ -1,4 +1,7 @@
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
+import { COMFY_BLUEPRINT_SECTIONS_KEY } from "../../constants/storage";
+import { loadPersisted, savePersisted } from "../../utils/persistentState";
+import type { SectionControl } from "./BlueprintSection";
 import { useQuery } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { apiErrorDetail } from "../../utils/apiError";
@@ -28,6 +31,15 @@ interface Props {
   setCaption: boolean;
   onRunStarted: (jobId: string, planId: string) => void;
 }
+
+type SectionKey = "axes" | "variations" | "scenarios";
+type OpenSections = Record<SectionKey, boolean>;
+// Open by default: a fresh plan shows every editor (and the e2e expects that).
+const ALL_OPEN: OpenSections = { axes: true, variations: true, scenarios: true };
+const ALL_CLOSED: OpenSections = { axes: false, variations: false, scenarios: false };
+const SECTIONS: { key: SectionKey; title: string }[] = [
+  { key: "axes", title: "Axes" }, { key: "variations", title: "Variations" }, { key: "scenarios", title: "Scenarios" },
+];
 
 const MAX_SEED = 2 ** 31 - 1;
 const randomSeed = () => Math.floor(Math.random() * MAX_SEED);
@@ -111,14 +123,52 @@ function BlueprintForm({ planId, datasetId, hasPromptPin, running, subfolder, se
   // A plan with no blueprint starts from a random seed that is only saved with the first edit.
   useDebouncedPersist(planId, value, undefined, (_key, v) => writeToServer(blueprintPath(planId), "PUT", v));
 
+  // Which editor sections are open, per plan, in this browser. The form is keyed by the
+  // plan, so the initializer runs once per plan.
+  const sectionsKey = `${COMFY_BLUEPRINT_SECTIONS_KEY}-${planId}`;
+  const [openSections, setOpenSections] = useState<OpenSections>(() => loadPersisted(sectionsKey, ALL_OPEN));
+  const writeSections = (next: OpenSections) => {
+    setOpenSections(next);
+    savePersisted(sectionsKey, next);
+  };
+  // The jump bar wraps in a narrow pane, so its height is measured, not assumed: index.css
+  // reads --bp-jump-h to keep a jump target or a newly focused field out from under it.
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const jumpBarRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const wrap = wrapRef.current;
+    const bar = jumpBarRef.current;
+    if (!wrap || !bar) return;
+    const update = () => wrap.style.setProperty("--bp-jump-h", `${bar.offsetHeight}px`);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(bar);
+    return () => ro.disconnect();
+  }, []);
+  const axesRef = useRef<HTMLDivElement>(null);
+  const variationsRef = useRef<HTMLDivElement>(null);
+  const scenariosRef = useRef<HTMLDivElement>(null);
+  const control = (k: SectionKey): SectionControl => ({
+    open: openSections[k],
+    setOpen: (open) => writeSections({ ...openSections, [k]: open }),
+    readOnly: running,
+  });
+  function jumpTo(k: SectionKey) {
+    if (!openSections[k]) writeSections({ ...openSections, [k]: true });
+    const el = { axes: axesRef, variations: variationsRef, scenarios: scenariosRef }[k].current;
+    // After the render that opens it, so the scroll lands on its full height.
+    requestAnimationFrame(() => el?.scrollIntoView({ block: "start", behavior: "smooth" }));
+  }
+  const counts: Record<SectionKey, number> = {
+    axes: Object.keys(spec.axes).length,
+    variations: Object.keys(spec.variations).length,
+    scenarios: spec.scenarios.length,
+  };
+
   return (
-    <div data-testid="blueprint-panel">
-      <div style={{ margin: "0 0 12px" }}>
-        <button className="btn sm" disabled={running} data-testid="outline-open" onClick={() => setOutlining(true)}
-          title={running ? "A run is in progress on this plan" : "Have an LLM draft a blueprint from a description"}>
-          ✨ Draft from a description…
-        </button>
-      </div>
+    <div data-testid="blueprint-panel" className="bp-wrap" ref={wrapRef}>
+     <div className="bp-grid">
+      <div style={{ minWidth: 0 }}>
       {draft && (
         // Accent-coloured on purpose: the draft waits here, unused, until the user acts on
         // it, and a quiet grey box was easy to miss after closing the modal.
@@ -154,24 +204,45 @@ function BlueprintForm({ planId, datasetId, hasPromptPin, running, subfolder, se
           A run is in progress on this plan, so the blueprint is read-only until it finishes.
         </p>
       )}
-      <fieldset disabled={running} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
-        <BlueprintAxesEditor axes={spec.axes} onChange={(axes) => setSpec({ ...spec, axes })}
-          onRename={(from, to) => setSpec(renameRefs(spec, "axes", from, to))} />
-        <BlueprintVariationsEditor variations={spec.variations} onChange={(variations) => setSpec({ ...spec, variations })}
-          onRename={(from, to) => setSpec(renameRefs(spec, "variations", from, to))} />
-        <BlueprintScenariosEditor spec={spec} onChange={(scenarios) => setSpec({ ...spec, scenarios })} />
-        <div style={{ margin: "0 0 12px" }}>
-          <button className="btn ghost sm" onClick={() => setSeed(randomSeed())}
-            title="Sample scenarios pick different folders and variation pieces with a new seed">
-            New sampling seed
+      {/* Sticky under the page header. Buttons, not #hash links: no router hash, and no
+          duplicate ids when two panes show this page. */}
+      <div className="bp-jump" data-testid="blueprint-jump" ref={jumpBarRef}>
+        {SECTIONS.map(({ key, title }) => (
+          <button key={key} type="button" className="btn ghost sm" onClick={() => jumpTo(key)}>
+            {title} · {counts[key]}
           </button>
-        </div>
-        <BlueprintPreview
-          planId={planId} datasetId={datasetId} value={value}
-          hasPromptPin={hasPromptPin && !running}
-          subfolder={subfolder} setCaption={setCaption} onRunStarted={onRunStarted}
-        />
-      </fieldset>
+        ))}
+        <div style={{ flex: 1 }} />
+        <button type="button" className="btn ghost sm" onClick={() => writeSections(ALL_CLOSED)}>Collapse all</button>
+        <button type="button" className="btn ghost sm" onClick={() => writeSections(ALL_OPEN)}>Expand all</button>
+        <button className="btn sm" disabled={running} data-testid="outline-open" onClick={() => setOutlining(true)}
+          title={running ? "A run is in progress on this plan" : "Have an LLM draft a blueprint from a description"}>
+          ✨ Draft from a description…
+        </button>
+      </div>
+      {/* Each section carries its own read-only fieldset, so it still collapses mid-run. */}
+      <BlueprintAxesEditor axes={spec.axes} onChange={(axes) => setSpec({ ...spec, axes })}
+        onRename={(from, to) => setSpec(renameRefs(spec, "axes", from, to))}
+        section={control("axes")} ref={axesRef} />
+      <BlueprintVariationsEditor variations={spec.variations} onChange={(variations) => setSpec({ ...spec, variations })}
+        onRename={(from, to) => setSpec(renameRefs(spec, "variations", from, to))}
+        section={control("variations")} ref={variationsRef} />
+      <BlueprintScenariosEditor spec={spec} onChange={(scenarios) => setSpec({ ...spec, scenarios })}
+        section={control("scenarios")} ref={scenariosRef} />
+      <div style={{ margin: "0 0 12px" }}>
+        <button className="btn ghost sm" disabled={running} onClick={() => setSeed(randomSeed())}
+          title="Sample scenarios pick different folders and variation pieces with a new seed">
+          New sampling seed
+        </button>
+      </div>
+      </div>
+      {/* Outside the editors: its own `running` guard replaces the fieldset it sat in. */}
+      <BlueprintPreview
+        planId={planId} datasetId={datasetId} value={value}
+        hasPromptPin={hasPromptPin} running={running}
+        subfolder={subfolder} setCaption={setCaption} onRunStarted={onRunStarted}
+      />
+     </div>
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { BlueprintSpec } from "../../api/comfy";
 import BlueprintNameField from "./BlueprintNameField";
+import BlueprintSection, { type SectionControl, type SectionRef } from "./BlueprintSection";
 import { BLUEPRINT_LIMITS, freshName } from "./blueprintKeys";
 
 const parsePieces = (text: string) => text.split("\n").map((l) => l.trim()).filter(Boolean);
@@ -62,26 +63,30 @@ interface Props {
   onChange: (v: BlueprintSpec["variations"]) => void;
   /** Rename a variation and every template reference to it. */
   onRename: (from: string, to: string) => void;
+  section: SectionControl;
+  ref?: SectionRef;
 }
 
-export default function BlueprintVariationsEditor({ variations, onChange, onRename }: Props) {
+export default function BlueprintVariationsEditor({ variations, onChange, onRename, section, ref }: Props) {
+  const names = Object.keys(variations);
+  const pieceCount = names.reduce((n, v) => n + variations[v].length, 0);
+  const summary = `${names.length} variation${names.length === 1 ? "" : "s"} · ${pieceCount} piece${pieceCount === 1 ? "" : "s"}`;
   return (
-    <div className="panel" style={{ marginBottom: 12 }}>
-      <div className="panel-h">
-        <h3>Variations</h3>
-        <div style={{ flex: 1 }} />
-        <button className="btn ghost sm" disabled={Object.keys(variations).length >= BLUEPRINT_LIMITS.variations}
-          title={Object.keys(variations).length >= BLUEPRINT_LIMITS.variations ? `A blueprint holds at most ${BLUEPRINT_LIMITS.variations} variations` : undefined}
-          onClick={() => onChange({ ...variations, [freshName(variations, "variation")]: [] })}>+ Add variation</button>
-      </div>
-      <div className="panel-b" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        {Object.keys(variations).length === 0 && (
+    <BlueprintSection
+      ref={ref} title="Variations" summary={summary} control={section}
+      action={
+        <button className="btn ghost sm" disabled={names.length >= BLUEPRINT_LIMITS.variations}
+          title={names.length >= BLUEPRINT_LIMITS.variations ? `A blueprint holds at most ${BLUEPRINT_LIMITS.variations} variations` : undefined}
+          onClick={() => { section.setOpen(true); onChange({ ...variations, [freshName(variations, "variation")]: [] }); }}>+ Add variation</button>
+      }
+    >
+        {names.length === 0 && (
           <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: 0 }}>
             A variation is a list of phrases, such as camera angles. Each prompt picks one without
             changing the folder.
           </p>
         )}
-        {Object.keys(variations).map((name) => (
+        {names.map((name) => (
           <div key={name} data-testid={`variation-${name}`}
             style={{ border: "1px solid var(--border)", borderRadius: 6, padding: 10 }}>
             <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
@@ -104,7 +109,6 @@ export default function BlueprintVariationsEditor({ variations, onChange, onRena
             <PiecesField name={name} pieces={variations[name]} onChange={(p) => onChange({ ...variations, [name]: p })} />
           </div>
         ))}
-      </div>
-    </div>
+    </BlueprintSection>
   );
 }

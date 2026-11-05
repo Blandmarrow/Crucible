@@ -330,6 +330,21 @@ Backend: a rename/move of a folder path across a plan's rows (the shape of the g
 
 ### §8c — A library side panel, and drag and drop
 
+**Built 2026-11-05** (`docs/dev/comfyui/library-dnd.md`; the endpoints in
+`docs/dev/comfyui/queue.md` § Backend), under three rulings by the user that day: reorder
+goes across folders too, categories get a menu *and* drag, and library prompts dropped on the
+table land in the folder in view. Two departures from the text below, both deliberate:
+- **A copy carries only the target's per-row values**, not "every value whose alias exists".
+  `patch_workflow` applies any alias in `values`, so a value carried under a run-default pin
+  would silently override it, with no column to show it.
+- **`PATCH` on a library prompt edits text only.** Re-filing stays on `library/move`, so there
+  is one set of merge rules.
+
+It also fixed what it found: a live `comfy_generate` run now locks its plan's folders and rows
+on the server. `rows/delete` had no guard, while the run commits `status` on the rows it loaded
+at start, and the folder lock was the page's alone. An Opus review found no backend bug; its
+five frontend findings were fixed, each pinned by a test where e2e can reach it.
+
 - **The library becomes a toggled panel** on the right of the Rows tab instead of a modal.
   Categories nest through `/` paths shown as a tree, with search and **editing a saved
   prompt's text** (no endpoint does that today). *Other plans* moves into the panel as a

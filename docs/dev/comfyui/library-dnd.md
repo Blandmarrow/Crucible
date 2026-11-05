@@ -37,8 +37,10 @@ it was filling, and moving prompts between plans was buried in it.
   under its own category only, not under ancestors.
 - **Search** matches text and category, case-blind. While searching, every matching category
   is open and the rest hide; a category-name match keeps all its prompts.
-- **Selection** is derived against the current list, so ids that vanish on a refetch drop
-  out without an effect. *Add n to plan* files the rows through `rows/bulk` in the folder its
+- **Selection** is derived against the cards on show, so a search that hides a selected
+  card, or a folded category above it, drops it from what *Add*, *Move to…*, *Delete* and a
+  drag act on: the page's rule that nothing acts on what the user cannot see. Ids a refetch
+  removed fall away the same way, without an effect. *Add n to plan* files the rows through `rows/bulk` in the folder its
   select names, which defaults to the folder in view and follows it as the tree selection
   changes. It is disabled while the plan has no prompt pin. *Move to…* takes a typed or listed
   category path. *Delete* asks first.
@@ -100,6 +102,8 @@ the page usable without a mouse, and e2e drives the buttons.
   order as the anchor.
   - The order comes from `folderOrder` in `ComfyPage`, the plan's rows grouped by folder. The
     API returns rows in run order, so no sort is needed.
+  - It steps between the rows on show: under a text or status filter, *Move up* past a
+    hidden row would look like nothing happened.
   - `rowBounds` disables the moves a row cannot make.
   - Every entry is disabled while the plan runs.
   - It holds buttons only: the e2e counts the table's textareas and `(root)` inputs as row
@@ -130,11 +134,20 @@ panel. Desktop files are native events instead. The pieces:
 - **Collision** is `pointerWithin`, filtered through `resolveDrop`, so a target the drag
   cannot use never lights up. A row, header or folder under the pointer wins over the table
   body around it. The body is a droppable of its own, which also lets dnd-kit auto-scroll it.
-- **Before or after a row** compares the pointer (the drag's start event plus its delta) with
-  the row's middle, not the dragged rect: with a `DragOverlay` that rect is the small chip.
-- **Shift** is read from `keydown`/`keyup` during the drag, since dnd-kit's drag end carries no
-  modifier state. The overlay chip names the drop as it changes ("Copy 2 rows to X · Shift
-  moves").
+  - **A hit counts only if its node is under the pointer** (`document.elementsFromPoint`).
+    `pointerWithin` does not clip a rect to its scroll container, so a category scrolled out
+    of the panel, or an overscan row above the table's header, caught drops it should not. A
+    hidden category catching a prompt would re-file it, and a category move merges.
+- **The live pointer and Shift** are kept in refs by capture-phase `pointermove`,
+  `keydown` and `keyup` listeners during the drag, seeded from the start event.
+  - **Before or after a row** compares that pointer with the row's middle. Not the dragged
+    rect: with a `DragOverlay` that rect is the small chip. And not start + `delta`: dnd-kit's
+    delta includes the scroll since the drag began, while a droppable's rect is in viewport
+    terms, so it drifted a row as soon as the body auto-scrolled.
+  - **Shift** turns a drop on a plan into a move; dnd-kit's drag end carries no modifier
+    state. Seeding it from the start event catches a Shift held before the drag, for which
+    macOS repeats no `keydown`.
+  - The overlay chip names the drop as it changes ("Copy 2 rows to X · Shift moves").
 
 **What each drop does:**
 - **Rows** drag from the grip. A selected row drags the whole selection, in run order;
@@ -143,6 +156,8 @@ panel. Desktop files are native events instead. The pieces:
     anchor, so they land at the end of that folder.
   - Between rows, through `rows/place` with the anchor, re-filing into the anchor's folder.
   - Either asks first (`LinkedAskDialog`) when rows the blueprint counts would move.
+  - Rows re-filed out of the folder in view leave the selection, as a filter change clears
+    it: the toolbar must never act on rows the table no longer shows.
   - Onto another plan in the rail, `rows/copy` copies them, or moves them with Shift. A move
     of linked rows opens `CopyRowsToPlanModal` preset to that plan, to ask.
   - Onto a category, they are saved to the library.
@@ -155,7 +170,8 @@ panel. Desktop files are native events instead. The pieces:
 - **A folder** onto a folder or *(root)* re-nests (`folders/move`). A locked folder, and every
   folder while the plan runs, cannot be dragged.
 - **A category** onto a category or the panel's *Top level* row re-nests (`categories/move`,
-  which merges).
+  which merges). The page then fires `LIBRARY_REPATH_EVENT` on `window`, so the panel
+  re-points its stored folds as its own Rename and Move do.
 - **Desktop files:**
   - `.txt` files onto the table body import into the folder in view
     (`importPromptFiles`). They are matched by extension, since a `.txt` can report an empty
@@ -188,3 +204,9 @@ drags: a row onto a tree folder, a row below another, a library prompt onto the 
 - The file drop dispatches `dragenter`, `dragover` and `drop` with a `DataTransfer` built in
   the page.
 - The drag spec ran 20 of 20 under `--repeat-each=5` when it landed.
+- It also pins two review findings: Shift held *before* the drag still moves, and rows
+  dragged out of the folder in view leave the selection. `comfy-library.spec.ts` pins the
+  panel's search shrinking the selection.
+- **Not covered by any spec:** a drop between rows while the body auto-scrolls, and a drop
+  over a target scrolled out of the panel. Both were found by reading dnd-kit's source and are
+  hand checks.

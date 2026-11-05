@@ -46,6 +46,20 @@ staleness sweep while still recording the seam.
 
 ## Queue
 
+## docs/dev/comfyui/queue.md
+
+- **Moves:** the row endpoints of § Backend that M6 §8b and §8c grew: the folder's exemption
+  and `set-subfolder`, the `linked` modes, "A live run locks its plan's folders and rows",
+  `rows/place`, `rows/copy`, the folder tree's endpoints and plan duplicate.
+- **New file:** docs/dev/comfyui/rows-api.md, with a row in the hub `docs/dev/comfyui.md`;
+  queue.md keeps the data model, `comfy_service.py`, ComfyClient, plan CRUD, the library and
+  the gotchas.
+- **Why here:** §8c took it to 3,141 of 3,500 words (2026-11-05). Every §8 stage added a row
+  endpoint to one section, and §8d's selection bar will add more callers to describe.
+- **Watch for:** `prompt_origin`'s writer table names `rows/copy`; `docs/dev/comfyui/page.md`,
+  `library-dnd.md` and `structured.md` point at `queue.md` § Backend for these endpoints, so
+  grep `queue.md` across docs/dev and repoint each that means a row endpoint.
+
 ## docs/scoring.md
 
 - **Moves:** § Quality flags (162 words) and § Stale scores (320) — only if the file grows

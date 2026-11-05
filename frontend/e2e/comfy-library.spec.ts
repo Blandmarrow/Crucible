@@ -204,3 +204,25 @@ test.describe('the Other plans tab', () => {
     expect(await rowsOf(request, source.id)).toHaveLength(2)
   })
 })
+
+test('a search that hides selected prompts leaves them out of the actions', async ({ page, request }) => {
+  const stamp = `libsel${Date.now()}`
+  const ds = await createDatasetViaApi(request, `e2e-lib-sel-${stamp}`)
+  await createPlanViaApi(request, ds.id, 'sel plan')
+  await request.post('/api/v1/comfy/library', { data: { category: `${stamp}/a`, prompts: [`alpha ${stamp}`] } })
+  await request.post('/api/v1/comfy/library', { data: { category: `${stamp}/b`, prompts: [`beta ${stamp}`] } })
+  try {
+    await page.goto(`/datasets/${ds.id}/comfy`)
+    await page.getByRole('button', { name: 'Library', exact: true }).click()
+    const panel = page.getByTestId('comfy-library-panel')
+    await panel.getByRole('searchbox', { name: 'Search the library' }).fill(stamp)
+    for (const word of ['alpha', 'beta']) {
+      await panel.getByTestId('comfy-lib-prompt').filter({ hasText: word }).getByRole('checkbox').check()
+    }
+    await expect(panel.getByRole('button', { name: 'Add 2 to plan' })).toBeVisible()
+    await panel.getByRole('searchbox', { name: 'Search the library' }).fill(`alpha ${stamp}`)
+    await expect(panel.getByRole('button', { name: 'Add 1 to plan' })).toBeVisible()
+  } finally {
+    await request.post('/api/v1/comfy/library/categories/delete', { data: { path: stamp } })
+  }
+})

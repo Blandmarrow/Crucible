@@ -138,3 +138,47 @@ test('.txt files dropped from the desktop become rows in the folder in view', as
       .map((r: { subfolder: string; values: { prompt: string } }) => [r.values.prompt, r.subfolder]))
     .toEqual([['already here', ''], ['a fox in snow', 'imports']])
 })
+
+// ── Regressions from the §8c review ──────────────────────────────────────────────
+
+test('Shift held before the drag starts makes a drop on a plan a move', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-dnd-shift-${Date.now()}`)
+  const source = await createPlan(request, ds.id, 'a source')
+  const target = await createPlan(request, ds.id, 'b target')
+  await addRows(request, source.id, ['moving row'])
+
+  await page.goto(`/datasets/${ds.id}/comfy`)
+  await page.getByTestId('comfy-plan-rail').getByRole('button', { name: /^a source/ }).click()
+  const grip = page.getByTestId('comfy-rows-table').getByRole('button', { name: 'Row actions' }).first()
+  await page.keyboard.down('Shift')
+  await dragTo(page, grip, page.getByTestId('comfy-plan-rail').getByRole('button', { name: /^b target/ }))
+  await page.keyboard.up('Shift')
+
+  await expect.poll(async () => (await rowsOf(request, target.id)).length).toBe(1)
+  await expect.poll(async () => (await rowsOf(request, source.id)).length).toBe(0)
+})
+
+test('rows dragged out of the folder in view leave the selection', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-dnd-sel-${Date.now()}`)
+  const plan = await createPlan(request, ds.id, 'sel plan')
+  await addRows(request, plan.id, ['one', 'two'])
+  for (const path of ['src', 'dst']) {
+    const r = await request.post(`/api/v1/comfy/plans/${plan.id}/folders`, { data: { path } })
+    expect(r.status(), await r.text()).toBe(200)
+  }
+  const ids = (await rowsOf(request, plan.id)).map((r: { id: string }) => r.id)
+  await request.post(`/api/v1/comfy/plans/${plan.id}/rows/set-subfolder`, { data: { subfolder: 'src', row_ids: ids } })
+
+  await page.goto(`/datasets/${ds.id}/comfy`)
+  const tree = page.getByTestId('comfy-folder-tree')
+  await tree.getByRole('button', { name: /^src/ }).click()
+  const rowsTable = page.getByTestId('comfy-rows-table')
+  await rowsTable.locator('input.checkbox').first().check()
+  await expect(page.getByRole('button', { name: 'Delete selected (2)' })).toBeVisible()
+  await dragTo(page, rowsTable.getByRole('button', { name: 'Row actions' }).first(), tree.getByRole('button', { name: /^dst/ }))
+
+  await expect
+    .poll(async () => (await rowsOf(request, plan.id)).map((r: { subfolder: string }) => r.subfolder))
+    .toEqual(['dst', 'dst'])
+  await expect(page.getByRole('button', { name: 'Delete selected (0)' })).toBeVisible()
+})

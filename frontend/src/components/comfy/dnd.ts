@@ -146,3 +146,7 @@ export const DROP_RING: CSSProperties = {
   boxShadow: "inset 0 0 0 2px var(--accent)",
   background: "var(--accent-glow)",
 };
+
+/** Fired on `window` after a dragged category is re-filed, `detail: {from, to}`, so the
+ *  library panel re-points its stored folds as its own Rename and Move do. */
+export const LIBRARY_REPATH_EVENT = "comfy-library-repath";

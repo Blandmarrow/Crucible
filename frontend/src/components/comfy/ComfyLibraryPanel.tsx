@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { ChevronDown, ChevronRight, Folder, GripVertical, Lock, MoreHorizontal, Pencil, X } from "lucide-react";
@@ -9,7 +9,7 @@ import ContextMenu, { type ContextMenuAction } from "../common/ContextMenu";
 import MoveSubfolderModal from "../gallery/MoveSubfolderModal";
 import FolderNameModal from "./FolderNameModal";
 import DndRow from "./DndRow";
-import { DROP_RING, dragId, dropId } from "./dnd";
+import { DROP_RING, LIBRARY_REPATH_EVENT, dragId, dropId } from "./dnd";
 import { COMFY_LIBRARY_VIEW_KEY } from "../../constants/storage";
 import { apiErrorDetail } from "../../utils/apiError";
 import { loadPersisted, savePersisted } from "../../utils/persistentState";
@@ -120,11 +120,19 @@ function LibraryTabBody({ datasetId, plan, folders, folderInView }: ComfyLibrary
     return withMissingAncestors(own).sort((a, b) => a.path.localeCompare(b.path));
   }, [prompts]);
 
-  // Selected ids that a refetch removed fall away here, without an effect.
+  // The selection acts only on cards on show: a search that hides a selected card, or a
+  // folded category above it, drops it from what Add, Move, Delete and a drag act on (the
+  // page's rule: never act on what the user cannot see). Ids a refetch removed fall away
+  // here too, without an effect.
   const selected = useMemo(() => {
-    const live = new Set(prompts.map((p) => p.id));
-    return [...selectedIds].filter((id) => live.has(id));
-  }, [selectedIds, prompts]);
+    const visible = new Set<string>();
+    for (const p of shown) {
+      const parts = p.category.split("/");
+      const folded = !searching && parts.some((_, i) => closed.includes(parts.slice(0, i + 1).join("/")));
+      if (!folded) visible.add(p.id);
+    }
+    return [...selectedIds].filter((id) => visible.has(id));
+  }, [selectedIds, shown, closed, searching]);
 
   function toggleClosed(path: string) {
     setClosed((prev) => {
@@ -141,6 +149,17 @@ function LibraryTabBody({ datasetId, plan, folders, folderInView }: ComfyLibrary
       return next;
     });
   }
+
+  // A category dragged onto another (handled by ComfyPage's drop) re-points the stored
+  // folds the same way the menu's Rename and Move do.
+  useEffect(() => {
+    const on = (e: Event) => {
+      const { from, to } = (e as CustomEvent<{ from: string; to: string }>).detail;
+      repathClosed(from, to);
+    };
+    window.addEventListener(LIBRARY_REPATH_EVENT, on);
+    return () => window.removeEventListener(LIBRARY_REPATH_EVENT, on);
+  }, []);
 
   function toggleSelected(id: string) {
     setSelectedIds((prev) => {
@@ -302,7 +321,7 @@ function LibraryTabBody({ datasetId, plan, folders, folderInView }: ComfyLibrary
           {showMove ? (
             <div style={{ display: "flex", gap: 6 }}>
               <input
-                className="input" list="comfy-lib-categories" aria-label="Move to category" placeholder="Category" maxLength={100}
+                className="input" list="comfy-lib-categories" aria-label="Move to category" placeholder="Category" maxLength={512}
                 style={{ fontSize: 12, minWidth: 0, flex: 1 }} autoFocus
                 value={moveTo} onChange={(e) => setMoveTo(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Enter" && moveTarget) moveMutation.mutate(moveTarget); }}

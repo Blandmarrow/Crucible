@@ -17,7 +17,7 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-05, before M6 §8c)
+## Next session (updated 2026-11-05, after M6 §8c)
 
 1. M5's five stages merged on 2026-10-30 as PR #101. Only its cleanup is open, and that waits
    a release. See [server-state-plan/README.md](server-state-plan/README.md) for what was
@@ -46,10 +46,11 @@ restates its stages.
    [comfy-automation-plan/README.md](comfy-automation-plan/README.md) as revised by decisions 8
    and 9. **Work on M6 happens on that branch.** What has landed, stage by stage, is the
    § M6 checklist below; this item holds only what is open.
-   - **Next: §8c, the library side panel and drag and drop**
-     ([the plan's § 8c](comfy-automation-plan/README.md#8c--a-library-side-panel-and-drag-and-drop)),
-     then §8d and the merge. Its doc splits are done (2026-11-05): the Rows tab's user guide is
-     now `docs/comfy-queue.md`.
+   - **Next: §8d, the toolbar cleanup**
+     ([the plan's § 8d](comfy-automation-plan/README.md#8d--toolbar-cleanup)), then the merge.
+     §8c landed on 2026-11-05: the library side panel, Copy to plan, the row menu and drag and
+     drop (`docs/dev/comfyui/library-dnd.md`). §8d moves *Copy to plan (n)…* into its
+     selection bar.
    - **Owed by hand, against a real ComfyUI and LM Studio** — the one list; the § M6 ticks do
      not repeat it. The user chose to take §4's checks before §5's.
      - §3: a Stop mid-rewrite, and a hand-edited row left alone by the rewrite.
@@ -61,6 +62,10 @@ restates its stages.
        it; a rejected image moved back loses its flag in the gallery and the Stats card.
      - §8b: the rail's dot turning blue during a run, and a folder rename refused while one
        is live.
+     - §8c: a folder change and a row delete refused while a real run is live; a move to
+       another plan refused while the source runs; a drop between rows while the table
+       auto-scrolls; a drop over a library category scrolled out of the panel (it must not
+       take it); a category migration on a real library with free-text categories.
    - **Found in the §8b review, not fixed there:** the gallery's
      `dataset_service.repath_subfolder` matches a folder's subtree with SQLite's case-blind
      `LIKE`, so renaming `knight` also re-paths `Knight/a`; `filesystem.py`'s
@@ -68,7 +73,7 @@ restates its stages.
    - Decisions 7–9 and this M6 checklist exist only on that branch until it merges, so
      `main`'s next decision takes number 10. Its migrations `e5c1a9d3f7b2` →
      `b7d2f4a9c1e3` → `d4a8c2e6f1b9` → `f3b9d1a7c5e2` → `c8e4a6b2d0f7` → `a6d2f8c4e0b3` →
-     `b2e7c9a4d1f6` → `c4a8e2f6b9d3` → `d5b7f9a1c3e6` follow `main`'s `c2b8e4f6a1d7`;
+     `b2e7c9a4d1f6` → `c4a8e2f6b9d3` → `d5b7f9a1c3e6` → `e7d1c5a9b3f2` follow `main`'s `c2b8e4f6a1d7`;
      rebase at stage boundaries.
 5. M8's follow-ups 8, 9, 10 and 11 can go any time; stage 3 left inpaint and detection crop
    out, so item 8 no longer waits for it. Batch move and copy, in item 9, must wait for M4 to
@@ -178,9 +183,8 @@ gates are green and it is pushed.
   Its open questions were ruled by the user on 2026-11-05.
   - [x] §8a, the layout, and §8b, the plan rail, folder tree and grouped table (2026-11-05).
     What each delivered is the plan's § Landed stages.
-  - [ ] §8c: the library side panel with nested categories, and drag and drop with a
-    button route for every drag. Question 3 is ruled. Its doc splits were done first
-    (2026-11-05): `docs/comfy-queue.md` and this file's restructure.
+  - [x] §8c, the library side panel, Copy to plan, the row menu and drag and drop
+    (2026-11-05). What it delivered is the plan's § 8c.
   - [ ] §8d: the Add menu, the selection bar, the paste dialog on `ModalShell`.
 - [ ] Merge: rebase onto `main`, re-parent the first migration onto M4's head if M4 merged
   first, run every gate, open the PR. The ComfyUI docs moved behind a hub on this branch, so

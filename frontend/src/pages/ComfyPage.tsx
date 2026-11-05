@@ -22,7 +22,7 @@ import ComfyLibraryPanel, { type LibraryTab } from "../components/comfy/ComfyLib
 import CopyRowsToPlanModal from "../components/comfy/CopyRowsToPlanModal";
 import LinkedAskDialog from "../components/comfy/LinkedAskDialog";
 import { useCopyRowsMutation } from "../components/comfy/copyRows";
-import { describeDrop, dropId, resolveDrop, type DragData, type DropAction, type DropContext, type DropData } from "../components/comfy/dnd";
+import { LIBRARY_REPATH_EVENT, describeDrop, dropId, resolveDrop, type DragData, type DropAction, type DropContext, type DropData } from "../components/comfy/dnd";
 import SaveToLibraryModal from "../components/comfy/SaveToLibraryModal";
 import SetRowFolderModal from "../components/comfy/SetRowFolderModal";
 import ComfyPlanRail from "../components/comfy/ComfyPlanRail";
@@ -420,6 +420,16 @@ export default function ComfyPage() {
       if (body.subfolder != null) {
         qc.invalidateQueries({ queryKey: ["comfy", "plan", effectivePlanId] });
         qc.invalidateQueries({ queryKey: ["comfy", "blueprint-preview", effectivePlanId] });
+        // Rows re-filed out of the folder in view leave the selection too: Delete, Run
+        // selected and Copy to plan must never act on rows the table no longer shows.
+        const folder = body.subfolder;
+        if (folderFilter !== null && !inFolder({ subfolder: folder } as ComfyRow, folderFilter)) {
+          setSelected((prev) => {
+            const next = new Set(prev);
+            for (const id of body.row_ids) next.delete(id);
+            return next;
+          });
+        }
       }
       setLinkedAsk(null);
     },
@@ -484,16 +494,17 @@ export default function ComfyPage() {
   }, [folderRows, textFilter, statusFilter, promptAlias]);
   const selectedRows = useMemo(() => rows.filter((r) => selected.has(r.id)), [rows, selected]);
   const runningPlanIds = useMemo(() => new Set(activeRuns.values()), [activeRuns]);
-  // Each folder's rows in run order (the API returns rows in run order), for the row
-  // menu's Move entries and their bounds.
+  // Each folder's rows on show, in run order (the API returns rows in run order), for the
+  // row menu's Move entries and their bounds. The rows on show, not all of them: under a
+  // text or status filter, Move up past a hidden row would look like nothing happened.
   const folderOrder = useMemo(() => {
     const m = new Map<string, string[]>();
-    for (const r of rows) {
+    for (const r of shownRows) {
       const g = m.get(r.subfolder);
       if (g) g.push(r.id); else m.set(r.subfolder, [r.id]);
     }
     return m;
-  }, [rows]);
+  }, [shownRows]);
   const rowBounds = useMemo(() => {
     const b = new Map<string, { first: boolean; last: boolean }>();
     for (const ids of folderOrder.values()) {
@@ -516,20 +527,38 @@ export default function ComfyPage() {
   const [drag, setDrag] = useState<DragData | null>(null);
   const [overAction, setOverAction] = useState<DropAction | null>(null);
   const [dropIndicator, setDropIndicator] = useState<{ rowId: string; position: "before" | "after" } | null>(null);
-  // Shift at drop time turns a copy onto a plan into a move. Tracked from key events
-  // during the drag: dnd-kit's drag end carries no modifier state.
+  // The live pointer and Shift during a drag. Shift at drop time turns a copy onto a plan
+  // into a move; dnd-kit's drag end carries no modifier state. The pointer decides before
+  // or after a row: dnd-kit's `delta` includes the scroll since the drag began, while a
+  // droppable's rect is in viewport terms, so start + delta drifts as soon as anything
+  // auto-scrolls. Seeded from the start event (Shift may already be held: macOS repeats no
+  // keydown for it), then kept by capture-phase listeners, which run before dnd-kit's own
+  // handlers read them.
   const [shift, setShift] = useState(false);
   const shiftRef = useRef(false);
+  const pointerRef = useRef<{ x: number; y: number } | null>(null);
+  function noteShift(on: boolean) {
+    if (shiftRef.current === on) return;
+    shiftRef.current = on;
+    setShift(on);
+  }
   useEffect(() => {
     if (!drag) return;
-    const onKey = (e: KeyboardEvent) => { shiftRef.current = e.shiftKey; setShift(e.shiftKey); };
-    window.addEventListener("keydown", onKey);
-    window.addEventListener("keyup", onKey);
+    const onKey = (e: KeyboardEvent) => noteShift(e.shiftKey);
+    const onMove = (e: PointerEvent) => {
+      pointerRef.current = { x: e.clientX, y: e.clientY };
+      noteShift(e.shiftKey);
+    };
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("keyup", onKey, true);
+    window.addEventListener("pointermove", onMove, true);
     return () => {
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("keyup", onKey);
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("keyup", onKey, true);
+      window.removeEventListener("pointermove", onMove, true);
       shiftRef.current = false;
       setShift(false);
+      pointerRef.current = null;
     };
   }, [drag]);
 
@@ -549,24 +578,32 @@ export default function ComfyPage() {
 
   // pointerWithin, keeping only targets the drop matrix accepts, so an invalid target
   // never lights up; a row or folder under the pointer wins over the table body around it.
+  // pointerWithin does not clip a rect to its scroll container, so a category scrolled out
+  // of the panel, or an overscan row above the table's header, would still catch a drop:
+  // a hit counts only if its node is really under the pointer (elementsFromPoint returns
+  // nothing a scroll container clips away).
   const collision: CollisionDetection = useCallback((args) => {
     const d = args.active.data.current as DragData | undefined;
-    if (!d) return [];
+    const pt = args.pointerCoordinates;
+    if (!d || !pt) return [];
+    const under = new Set(document.elementsFromPoint(pt.x, pt.y));
     const hits = pointerWithin(args).filter((h) => {
-      const data = args.droppableContainers.find((c) => c.id === h.id)?.data.current as DropData | undefined;
-      return !!data && resolveDrop(d, data, dropContext(d, "before")) !== null;
+      const c = args.droppableContainers.find((x) => x.id === h.id);
+      const data = c?.data.current as DropData | undefined;
+      const node = c?.node.current;
+      return !!data && !!node && under.has(node) && resolveDrop(d, data, dropContext(d, "before")) !== null;
     });
     const specific = hits.filter((h) => h.id !== dropId.table);
     return specific.length ? specific : hits;
   }, [dropContext]);
 
-  // Before or after a row: the pointer against the row's middle. The pointer, not the
-  // dragged rect: with a DragOverlay that rect is the small chip, not the row.
+  // Before or after a row: the live pointer against the row's middle. Not the dragged
+  // rect (with a DragOverlay that is the small chip), and not start + delta (see above).
   function dropPosition(e: DragMoveEvent | DragEndEvent): "before" | "after" {
     const o = e.over?.rect;
-    const start = e.activatorEvent as PointerEvent | null;
-    if (!o || !start || typeof start.clientY !== "number") return "before";
-    return start.clientY + e.delta.y < o.top + o.height / 2 ? "before" : "after";
+    const y = pointerRef.current?.y;
+    if (!o || y === undefined) return "before";
+    return y < o.top + o.height / 2 ? "before" : "after";
   }
 
   function actionFor(e: DragMoveEvent | DragEndEvent): DropAction | null {
@@ -639,7 +676,7 @@ export default function ComfyPage() {
       case "add-lib": {
         const lib = qc.getQueryData<LibraryPrompt[]>(["comfy", "library"]) ?? [];
         const byId = new Map(lib.map((p) => [p.id, p.text]));
-        const lines = a.ids.map((id) => byId.get(id)).filter((t): t is string => !!t);
+        const lines = a.ids.map((id) => byId.get(id)?.replace(/\s+/g, " ").trim()).filter((t): t is string => !!t);
         if (lines.length) bulkAddMutation.mutate({ lines, source: "library", subfolder: a.folder });
         return;
       }
@@ -656,7 +693,11 @@ export default function ComfyPage() {
       case "move-folder":
         return moveFolderMutation.mutate({ planId: effectivePlanId!, from: a.path, to: a.newPath });
       case "move-category":
-        return libraryCall(() => comfyApi.libraryMoveCategory(a.path, a.newPath),
+        return libraryCall(async () => {
+          const r = await comfyApi.libraryMoveCategory(a.path, a.newPath);
+          window.dispatchEvent(new CustomEvent(LIBRARY_REPATH_EVENT, { detail: { from: a.path, to: a.newPath } }));
+          return r;
+        },
           (r) => `Moved the category to ${a.newPath}${r.merged ? `, ${r.merged} merged` : ""}`,
           "Failed to move the category");
     }
@@ -806,7 +847,12 @@ export default function ComfyPage() {
           collisionDetection={collision}
           // Rows scroll inside the virtualizer, so rects measured at drag start go stale.
           measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
-          onDragStart={(e: DragStartEvent) => setDrag((e.active.data.current as DragData | undefined) ?? null)}
+          onDragStart={(e: DragStartEvent) => {
+            const start = e.activatorEvent as PointerEvent | null;
+            if (start && typeof start.clientY === "number") pointerRef.current = { x: start.clientX, y: start.clientY };
+            noteShift(!!start?.shiftKey);
+            setDrag((e.active.data.current as DragData | undefined) ?? null);
+          }}
           onDragMove={onDragMove}
           onDragEnd={onDragEnd}
           onDragCancel={endDrag}

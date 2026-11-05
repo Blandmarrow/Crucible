@@ -107,6 +107,60 @@ test('a failed row shows ComfyUI\'s error and can be reset', async ({ page, requ
   expect(images).toHaveLength(1)
 })
 
+test('Reset failed clears the failed dot beside the plan in the rail', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-comfy-faildot-${Date.now()}`)
+  await createPlanViaApi(request, ds.id, 'dot plan')
+
+  await page.goto(`/datasets/${ds.id}/comfy`)
+  await pastePrompts(page, [`this one breaks ${FAIL_MARKER}`])
+  await page.getByRole('button', { name: 'Run pending (1)' }).click()
+
+  const dot = page.getByTestId('comfy-plan-rail').getByRole('img', { name: '1 failed' })
+  await expect(dot).toBeVisible({ timeout: 30_000 })
+  await page.getByRole('button', { name: 'Reset failed (1)' }).click()
+  await expect(page.getByTestId('comfy-rows-table').getByText('pending', { exact: true })).toHaveCount(1)
+  await expect(dot).toHaveCount(0)
+})
+
+test('while a run is live, the rail Delete and the bar Delete are off, and come back after', async ({ page, request }) => {
+  // The fake answers one poll a second per row, so eight rows keep the run live for
+  // several seconds: long enough to open both menus and read them.
+  test.setTimeout(120_000)
+  const ds = await createDatasetViaApi(request, `e2e-comfy-livedel-${Date.now()}`)
+  const plan = await createPlanViaApi(request, ds.id, 'live plan')
+  const added = await request.post(`/api/v1/comfy/plans/${plan.id}/rows/bulk`, {
+    data: { lines: Array.from({ length: 8 }, (_, i) => `live row ${i}`) },
+  })
+  expect(added.status(), await added.text()).toBe(200)
+
+  await page.goto(`/datasets/${ds.id}/comfy`)
+  const rowsTable = page.getByTestId('comfy-rows-table')
+  await expect(rowsTable.locator('textarea')).toHaveCount(8)
+  await rowsTable.locator('input.checkbox').nth(8).check()
+  const barDelete = page.getByTestId('comfy-selection-bar').getByRole('button', { name: 'Delete', exact: true })
+  await expect(barDelete).not.toHaveAttribute('aria-disabled', 'true')
+
+  await page.getByRole('button', { name: 'Run pending (8)' }).click()
+  await expect(barDelete).toHaveAttribute('aria-disabled', 'true')
+  await expect(barDelete).toHaveAttribute('title', /run or a job/)
+
+  await page.getByTestId('comfy-plan-rail').getByRole('button', { name: 'Plan actions for live plan' }).click()
+  const railDelete = page.getByRole('menuitem', { name: 'Delete…' })
+  await expect(railDelete).toHaveAttribute('aria-disabled', 'true')
+  await expect(railDelete).toHaveAttribute('title', /Wait for this plan/)
+  await page.keyboard.press('Escape')
+
+  // The server agrees with the page.
+  const refused = await request.delete(`/api/v1/comfy/plans/${plan.id}`)
+  expect(refused.status()).toBe(409)
+
+  // Once the run ends both come back.
+  await expect(page.getByRole('button', { name: 'Run pending (0)' })).toBeVisible({ timeout: 90_000 })
+  await expect(barDelete).not.toHaveAttribute('aria-disabled', 'true')
+  await page.getByTestId('comfy-plan-rail').getByRole('button', { name: 'Plan actions for live plan' }).click()
+  await expect(page.getByRole('menuitem', { name: 'Delete…' })).not.toHaveAttribute('aria-disabled', 'true')
+})
+
 // M6 §8d: Run selected moved out of the sticky run bar into the selection bar.
 test('Run selected in the selection bar runs only the ticked rows', async ({ page, request }) => {
   const ds = await createDatasetViaApi(request, `e2e-comfy-runsel-${Date.now()}`)

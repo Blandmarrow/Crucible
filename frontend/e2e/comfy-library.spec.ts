@@ -131,10 +131,11 @@ test.describe('the prompt library side panel', () => {
     const plan = await createPlanViaApi(request, ds.id, 'add plan')
     const folderRes = await request.post(`/api/v1/comfy/plans/${plan.id}/folders`, { data: { path: 'knights' } })
     expect(folderRes.status(), await folderRes.text()).toBe(200)
-    await seedLibrary(request, `${prefix}/studio`, ['a knight in a fen', 'a monk on a ridge'])
+    await seedLibrary(request, `${prefix}/studio`, [`a knight in a fen ${stamp}`, `a monk on a ridge ${stamp}`])
 
     const panel = await openLibrary(page, ds.id)
-    const cards = panel.getByTestId('comfy-lib-prompt')
+    // The library is global: count only the cards this test seeded.
+    const cards = panel.getByTestId('comfy-lib-prompt').filter({ hasText: stamp })
     await expect(cards).toHaveCount(2)
     await cards.nth(0).getByRole('checkbox', { name: 'Select prompt' }).check()
     await cards.nth(1).getByRole('checkbox', { name: 'Select prompt' }).check()
@@ -170,6 +171,76 @@ test.describe('the prompt library side panel', () => {
       })
       .toEqual({ categories: [`${prefix}/studio`], texts: ['shared text', 'studio light', 'window light'] })
     await expect(page.getByText(/merged/).first()).toBeVisible()
+  })
+})
+
+test.describe('library button routes', () => {
+  let stamp: string
+  let prefix: string
+
+  test.beforeEach(() => {
+    stamp = `${Date.now()}${Math.floor(Math.random() * 1000)}`
+    prefix = `routes-${stamp}`
+  })
+
+  test.afterEach(async ({ request }) => {
+    await request.post('/api/v1/comfy/library/categories/delete', { data: { path: prefix } })
+  })
+
+  const placed = async (request: APIRequestContext) =>
+    (await libraryOf(request, prefix)).map((p) => `${p.category}|${p.text}`).sort()
+
+  test('a ticked prompt moves to another category with Move to', async ({ page, request }) => {
+    const ds = await createDatasetViaApi(request, `e2e-lib-pmove-${stamp}`)
+    await createPlanViaApi(request, ds.id, 'pmove plan')
+    await seedLibrary(request, `${prefix}/a`, [`stay ${stamp}`, `go ${stamp}`])
+
+    const panel = await openLibrary(page, ds.id)
+    await panel.getByTestId('comfy-lib-prompt').filter({ hasText: `go ${stamp}` }).getByRole('checkbox', { name: 'Select prompt' }).check()
+    await panel.getByRole('button', { name: 'Move to…' }).click()
+    await panel.getByLabel('Move to category').fill(`${prefix}/b`)
+    await panel.getByRole('button', { name: 'Move', exact: true }).click()
+
+    await expect.poll(() => placed(request)).toEqual([
+      `${prefix}/a|stay ${stamp}`,
+      `${prefix}/b|go ${stamp}`,
+    ])
+  })
+
+  test('a category moves under another from its menu', async ({ page, request }) => {
+    const ds = await createDatasetViaApi(request, `e2e-lib-cmove-${stamp}`)
+    await createPlanViaApi(request, ds.id, 'cmove plan')
+    await seedLibrary(request, `${prefix}/outdoor`, [`window light ${stamp}`])
+    await seedLibrary(request, `${prefix}/studio`, [`softbox ${stamp}`])
+
+    const panel = await openLibrary(page, ds.id)
+    await panel.getByRole('button', { name: `Category actions for ${prefix}/outdoor` }).click()
+    await page.getByRole('menuitem', { name: 'Move to…' }).click()
+    const dialog = page.getByRole('dialog', { name: new RegExp(`Move subfolder ${prefix}/outdoor`) })
+    await dialog.getByTitle(`${prefix}/studio`, { exact: true }).click()
+    await dialog.getByRole('button', { name: 'Move', exact: true }).click()
+
+    await expect.poll(() => placed(request)).toEqual([
+      `${prefix}/studio/outdoor|window light ${stamp}`,
+      `${prefix}/studio|softbox ${stamp}`,
+    ])
+  })
+
+  test('deleting a category counts its whole subtree even under a search', async ({ page, request }) => {
+    const ds = await createDatasetViaApi(request, `e2e-lib-cdel-${stamp}`)
+    await createPlanViaApi(request, ds.id, 'cdel plan')
+    await seedLibrary(request, `${prefix}/studio`, [`alpha ${stamp}`, `beta ${stamp}`, `gamma ${stamp}`])
+
+    const panel = await openLibrary(page, ds.id)
+    // The search leaves one of the three on show; the delete still takes all of them.
+    await panel.getByRole('searchbox', { name: 'Search the library' }).fill(`alpha ${stamp}`)
+    await expect(panel.getByTestId('comfy-lib-prompt')).toHaveCount(1)
+    await panel.getByRole('button', { name: `Category actions for ${prefix}/studio` }).click()
+    await page.getByRole('menuitem', { name: 'Delete…' }).click()
+    await expect(page.getByText(/and its 3 prompts/)).toBeVisible()
+    await page.getByRole('button', { name: 'Delete', exact: true }).click()
+
+    await expect.poll(() => placed(request)).toEqual([])
   })
 })
 

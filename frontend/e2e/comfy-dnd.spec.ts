@@ -2,9 +2,13 @@ import { test, expect } from '@playwright/test'
 import type { APIRequestContext, Locator, Page } from '@playwright/test'
 import { createDatasetViaApi } from './helpers'
 
-// M6 §8c: the drags themselves. Every one has a button route covered in comfy.spec.ts and
-// comfy-library.spec.ts; these check the gestures. dnd-kit listens to pointer events and
-// starts a drag only after 8px of travel, so `dragTo` moves in steps, not one jump.
+// M6 §8c: the drags themselves. Each has a button route covered elsewhere; these check the
+// gestures. Row to folder: Set folder… (comfy.spec.ts). Row order: the row menu
+// (comfy.spec.ts). Row to plan: Copy to plan… (comfy.spec.ts). Library prompt to table:
+// Add N to plan (comfy-library.spec.ts). Desktop .txt: Import .txt… (comfy.spec.ts). The
+// folder-to-folder and category-to-category drags have Move to… routes in comfy.spec.ts
+// and comfy-library.spec.ts, though no test here drags them. dnd-kit listens to pointer
+// events and starts a drag only after 8px of travel, so `dragTo` moves in steps, not one jump.
 
 const WORKFLOW = {
   '6': { class_type: 'CLIPTextEncode', inputs: { text: 'template prompt' } },

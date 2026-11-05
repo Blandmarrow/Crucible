@@ -32,6 +32,13 @@ from backend.models.comfy import ComfyBlueprint, ComfyLeaf, ComfyLibraryPrompt, 
 from backend.schemas.app_data import ComfyGenSettings
 from backend.schemas.comfy_blueprint import BlueprintSpec
 from backend.services import blueprint_rewrite, blueprint_service
+from backend.services.comfy_library import (
+    CATEGORY_MAX_LEN,
+    dedupe_key,
+    in_category,
+    normalize_category,
+    plan_category_move,
+)
 from backend.services.comfy_service import (
     MAX_CONSECUTIVE_CONNECT_ERRORS,
     PER_ROW_TIMEOUT_S,
@@ -175,17 +182,30 @@ class SetSubfolderRequest(BaseModel):
 
 
 class LibraryAddRequest(BaseModel):
-    category: str = Field(max_length=100)
+    category: str = Field(max_length=CATEGORY_MAX_LEN)
     prompts: list[str]
 
 
 class LibraryMoveRequest(BaseModel):
     ids: list[str]
-    category: str = Field(max_length=100)
+    category: str = Field(max_length=CATEGORY_MAX_LEN)
 
 
 class LibraryIdsRequest(BaseModel):
     ids: list[str]
+
+
+class LibraryPromptUpdate(BaseModel):
+    text: str
+
+
+class LibraryCategoryRequest(BaseModel):
+    path: str = Field(max_length=CATEGORY_MAX_LEN)
+
+
+class LibraryCategoryMoveRequest(BaseModel):
+    path: str = Field(max_length=CATEGORY_MAX_LEN)
+    new_path: str = Field(max_length=CATEGORY_MAX_LEN)
 
 
 class GeneratePromptsRequest(BaseModel):
@@ -695,11 +715,39 @@ async def load_workflow_file(path: str):
 
 
 # ── Prompt library ────────────────────────────────────────────────────────────
-# Global (no dataset/plan FK): saved prompt texts grouped by free-text category,
-# reusable across plans and datasets.
+# Global (no dataset/plan FK): saved prompt texts grouped by category, reusable across
+# plans and datasets. A category is a `/` path shown as a tree (M6 §8c), normalized by
+# `services.comfy_library.normalize_category`; texts are unique per category by
+# `dedupe_key`, a rule every write here upholds.
 
-def _dedupe_key(text: str) -> str:
-    return " ".join(text.split()).lower()
+def _category_or_400(raw: str) -> str:
+    category = normalize_category(raw)
+    if not category:
+        raise HTTPException(400, "Category must not be empty")
+    return category
+
+
+def _category_subtree_clause(path: str):
+    """SQL twin of `comfy_library.in_category`: the category or anything below it. A
+    prefix compare, never LIKE, which ignores ASCII case (see `_descendant_clause`)."""
+    return (ComfyLibraryPrompt.category == path) | (
+        func.substr(ComfyLibraryPrompt.category, 1, len(path) + 1) == path + "/"
+    )
+
+
+def _library_out(p: ComfyLibraryPrompt) -> dict:
+    # created_at is naive UTC (repo-wide convention) — currently ordering-only;
+    # if it is ever displayed, treat it as UTC at the display point.
+    return {"id": p.id, "category": p.category, "text": p.text, "created_at": p.created_at.isoformat()}
+
+
+async def _library_by_ids(db: AsyncSession, ids: list[str]) -> list[ComfyLibraryPrompt]:
+    out: list[ComfyLibraryPrompt] = []
+    for chunk in chunked(list(dict.fromkeys(ids))):
+        out.extend((await db.execute(
+            select(ComfyLibraryPrompt).where(ComfyLibraryPrompt.id.in_(chunk))
+        )).scalars().all())
+    return out
 
 
 @router.get("/library")
@@ -711,34 +759,25 @@ async def list_library_prompts(db: AsyncSession = Depends(get_db)):
             )
         )
     ).scalars().all()
-    return {
-        # created_at is naive UTC (repo-wide convention) — currently ordering-only;
-        # if it is ever displayed, treat it as UTC at the display point.
-        "prompts": [
-            {"id": p.id, "category": p.category, "text": p.text, "created_at": p.created_at.isoformat()}
-            for p in prompts
-        ]
-    }
+    return {"prompts": [_library_out(p) for p in prompts]}
 
 
 @router.post("/library")
 async def add_library_prompts(body: LibraryAddRequest, db: AsyncSession = Depends(get_db)):
     """Add prompts to a category; case/whitespace-insensitive duplicates are skipped."""
-    category = body.category.strip()
-    if not category:
-        raise HTTPException(400, "Category must not be empty")
+    category = _category_or_400(body.category)
     existing = (
         await db.execute(
             select(ComfyLibraryPrompt.text).where(ComfyLibraryPrompt.category == category)
         )
     ).scalars().all()
-    seen = {_dedupe_key(t) for t in existing}
+    seen = {dedupe_key(t) for t in existing}
     created = skipped = 0
     for raw in body.prompts:
         text = raw.strip()
         if not text:
             continue
-        key = _dedupe_key(text)
+        key = dedupe_key(text)
         if key in seen:
             skipped += 1
             continue
@@ -749,35 +788,57 @@ async def add_library_prompts(body: LibraryAddRequest, db: AsyncSession = Depend
     return {"created": created, "skipped": skipped}
 
 
+@router.patch("/library/{prompt_id}")
+async def update_library_prompt(
+    prompt_id: str, body: LibraryPromptUpdate, db: AsyncSession = Depends(get_db)
+):
+    """Edit a saved prompt's text. Text only: re-filing is `library/move`, so there is one
+    set of merge rules. An edit that would duplicate another prompt in the same category
+    is refused (409) rather than merged — the user is typing, not filing."""
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(400, "Prompt text must not be empty")
+    prompt = await db.get(ComfyLibraryPrompt, prompt_id)
+    if prompt is None:
+        raise HTTPException(404, "Library prompt not found")
+    key = dedupe_key(text)
+    others = (await db.execute(
+        select(ComfyLibraryPrompt.text).where(
+            ComfyLibraryPrompt.category == prompt.category, ComfyLibraryPrompt.id != prompt.id
+        )
+    )).scalars().all()
+    if any(dedupe_key(t) == key for t in others):
+        raise HTTPException(409, "That prompt is already in this category")
+    prompt.text = text
+    await db.commit()
+    return _library_out(prompt)
+
+
 @router.post("/library/move")
 async def move_library_prompts(body: LibraryMoveRequest, db: AsyncSession = Depends(get_db)):
     """Re-categorize prompts, upholding the same per-category uniqueness as the add
     path: a moved prompt whose text already exists in the target category (or arrives
     twice in one batch) is deleted instead — merged, since it exists there either way."""
-    category = body.category.strip()
-    if not category:
-        raise HTTPException(400, "Category must not be empty")
-    prompts = (
-        await db.execute(select(ComfyLibraryPrompt).where(ComfyLibraryPrompt.id.in_(body.ids)))
-    ).scalars().all()
-    target_texts = (
+    category = _category_or_400(body.category)
+    prompts = await _library_by_ids(db, body.ids)
+    moving = {p.id for p in prompts}
+    target = (
         await db.execute(
-            select(ComfyLibraryPrompt.text).where(
-                ComfyLibraryPrompt.category == category,
-                ComfyLibraryPrompt.id.notin_(body.ids),
+            select(ComfyLibraryPrompt.id, ComfyLibraryPrompt.text).where(
+                ComfyLibraryPrompt.category == category
             )
         )
-    ).scalars().all()
-    seen = {_dedupe_key(t) for t in target_texts}
+    ).all()
+    seen = {dedupe_key(t) for pid, t in target if pid not in moving}
     # Selected prompts already in the target stay put and occupy their keys.
     for p in prompts:
         if p.category == category:
-            seen.add(_dedupe_key(p.text))
+            seen.add(dedupe_key(p.text))
     moved = merged = 0
     for p in prompts:
         if p.category == category:
             continue
-        key = _dedupe_key(p.text)
+        key = dedupe_key(p.text)
         if key in seen:
             await db.delete(p)
             merged += 1
@@ -791,13 +852,58 @@ async def move_library_prompts(body: LibraryMoveRequest, db: AsyncSession = Depe
 
 @router.post("/library/delete")
 async def delete_library_prompts(body: LibraryIdsRequest, db: AsyncSession = Depends(get_db)):
-    prompts = (
-        await db.execute(select(ComfyLibraryPrompt).where(ComfyLibraryPrompt.id.in_(body.ids)))
-    ).scalars().all()
+    prompts = await _library_by_ids(db, body.ids)
     for p in prompts:
         await db.delete(p)
     await db.commit()
     return {"deleted": len(prompts)}
+
+
+@router.post("/library/categories/move")
+async def move_library_category(
+    body: LibraryCategoryMoveRequest, db: AsyncSession = Depends(get_db)
+):
+    """Rename or re-nest a category with everything below it. Landing on a category
+    that already exists **merges** into it (a duplicate text is deleted, as in
+    `library/move`), where a folder move 409s: a category is only a label on prompts, so
+    there is no second thing to collide with. The UI says it merges."""
+    path = _category_or_400(body.path)
+    new_path = _category_or_400(body.new_path)
+    if new_path == path:
+        return {"moved": 0, "merged": 0}
+    if in_category(new_path, path):
+        raise HTTPException(400, "A category cannot move inside itself")
+    prompts = (await db.execute(
+        select(ComfyLibraryPrompt)
+        .where(_category_subtree_clause(path) | _category_subtree_clause(new_path))
+        .order_by(ComfyLibraryPrompt.created_at, ComfyLibraryPrompt.id)
+    )).scalars().all()
+    if not any(in_category(p.category, path) for p in prompts):
+        raise HTTPException(404, "No such category")
+    moves, merges = plan_category_move(
+        ((p.id, p.category, p.text) for p in prompts), path, new_path
+    )
+    merge_ids = set(merges)
+    for p in prompts:
+        if p.id in merge_ids:
+            await db.delete(p)
+        elif p.id in moves:
+            p.category = moves[p.id]
+    await db.commit()
+    return {"moved": len(moves), "merged": len(merges)}
+
+
+@router.post("/library/categories/delete")
+async def delete_library_category(
+    body: LibraryCategoryRequest, db: AsyncSession = Depends(get_db)
+):
+    """Delete every prompt in a category and below it."""
+    path = _category_or_400(body.path)
+    result = await db.execute(
+        sa_delete(ComfyLibraryPrompt).where(_category_subtree_clause(path))
+    )
+    await db.commit()
+    return {"deleted": result.rowcount or 0}
 
 
 # ── Plan CRUD ─────────────────────────────────────────────────────────────────

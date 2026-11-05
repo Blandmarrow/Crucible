@@ -140,7 +140,7 @@ class ComfyLibraryPrompt(Base):
     __tablename__ = "comfy_library_prompts"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    category: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    category: Mapped[str] = mapped_column(String(512), nullable=False, index=True)
     text: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 

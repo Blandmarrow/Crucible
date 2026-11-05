@@ -2,7 +2,7 @@
 
 Per-dataset prompt/parameter queues run against a remote ComfyUI server via its native HTTP
 API, with outputs auto-imported into the dataset. Covers the data model (plans, rows, the
-prompt library), `comfy_service.py` and the `comfy` router's endpoints, and the gotchas shared
+prompt library and its nested categories), `comfy_service.py` and the `comfy` router's endpoints, and the gotchas shared
 by all of it. The `comfy_generate` job that `POST /comfy/run` queues is
 `docs/dev/comfyui/run.md`, and `ComfyPage` is `docs/dev/comfyui/page.md`.
 
@@ -183,14 +183,37 @@ So is an invalid replacement template (`\9`), which only fails on a match, insid
 that `regex_error` used to escape the route as a 500.
 
 Prompt library: `comfy_library_prompts` (`ComfyLibraryPrompt`) is a **global** store of
-prompt texts grouped by a free-text `category` (≤100 chars, indexed) — deliberately no
-dataset/plan FK, so prompts are reusable everywhere without duplicating plans.
-`GET /comfy/library` (all prompts, ordered category → created_at; client groups),
-`POST /comfy/library` (`{category, prompts[]}` — blanks dropped, case/whitespace-insensitive
-dedupe against the target category → `{created, skipped}`), `POST /comfy/library/move`
-(`{ids, category}` re-categorize; upholds the same per-category uniqueness — a moved
-prompt whose text already exists in the target is deleted instead → `{moved, merged}`),
-`POST /comfy/library/delete` (`{ids}`).
+prompt texts grouped by `category` — deliberately no dataset/plan FK, so prompts are reusable
+everywhere without duplicating plans. Since M6 §8c a category is a `/` path shown as a tree.
+
+- **A category is normalized on every write** by `services/comfy_library.py`'s
+  `normalize_category`: `\` folds to `/`, every segment is trimmed, blank and `.` segments
+  drop. Not `normalize_subfolder`, on purpose: a category is a label, so a trailing space
+  must not make a twin, and `..` means nothing. Empty after normalizing is a 400. The
+  request models cap it at 512 (`CATEGORY_MAX_LEN`); SQLite never enforced the column's
+  width, so Pydantic is the real limit. Migration `e7d1c5a9b3f2` widened the column and
+  normalized the categories saved before, merging the duplicates that made.
+- **Texts are unique per category** by `dedupe_key` (case- and whitespace-insensitive), and
+  every write upholds it:
+  - `POST /comfy/library` `{category, prompts[]}` drops blanks and skips duplicates →
+    `{created, skipped}`.
+  - `POST /comfy/library/move` `{ids, category}` re-files prompts; one whose text is
+    already in the target is deleted instead → `{moved, merged}`.
+  - `PATCH /comfy/library/{id}` `{text}` edits the text only, and **409s** on a duplicate
+    rather than merging: the user is typing, not filing. Re-filing stays on `move`, so
+    there is one set of merge rules.
+  - `POST /comfy/library/categories/move` `{path, new_path}` re-files a category with its
+    subtree, oldest prompt winning a collision (`plan_category_move`) → `{moved, merged}`.
+    Landing on an existing category **merges**, where a folder move 409s: a category is only
+    a label, with nothing else to collide. Into its own subtree is a 400, onto itself a
+    no-op, an unknown `path` a 404. Un-nesting sends the last segment as `new_path`.
+- `POST /comfy/library/categories/delete` `{path}` deletes the subtree's prompts →
+  `{deleted}`; `POST /comfy/library/delete` `{ids}` deletes prompts.
+- **Subtree tests are exact, case-sensitive prefix compares**: `in_category` in Python,
+  `_category_subtree_clause` in SQL. Never `LIKE`, which ignores ASCII case (the §8b folder
+  delete bug, see `_descendant_clause`).
+- `GET /comfy/library` returns every prompt, ordered category → created_at; the client
+  builds the tree. Id lists are read through `chunked`.
 
 Workflow sync: `GET /comfy/canvas-workflow` pulls the current workflow from ComfyUI (bridge
 snapshot, else last-queued history entry) — `docs/dev/comfyui/sync.md`.

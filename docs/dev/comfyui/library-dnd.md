@@ -40,7 +40,8 @@ it was filling, and moving prompts between plans was buried in it.
 - **Selection** is derived against the cards on show, so a search that hides a selected
   card, or a folded category above it, drops it from what *Add*, *Move to…*, *Delete* and a
   drag act on: the page's rule that nothing acts on what the user cannot see. Ids a refetch
-  removed fall away the same way, without an effect. *Add n to plan* files the rows through `rows/bulk` in the folder its
+  removed fall away the same way, without an effect. *Select all / Select none* over the
+  cards on show sits above the list, as on the Other plans tab. *Add n to plan* files the rows through `rows/bulk` in the folder its
   select names, which defaults to the folder in view and follows it as the tree selection
   changes. It is disabled while the plan has no prompt pin. *Move to…* takes a typed or listed
   category path. *Delete* asks first.
@@ -51,7 +52,11 @@ it was filling, and moving prompts between plans was buried in it.
   - *Rename…* uses `FolderNameModal` with `noun="category"`, which changes only its wording;
   - *Move to…* uses the gallery's `MoveSubfolderModal` over the category paths, (root)
     included;
-  - *Delete…* states the subtree's prompt count.
+  - *Delete…* states the subtree's prompt count, counted over the **whole** library
+    (`subtreeCount`), not the search's matches: the server deletes the subtree whatever the
+    search shows, so a filtered count undersold the delete. A delete also prunes the path and
+    its descendants from the stored closed paths (`pruneClosed`), so a new category reusing the
+    name starts open.
   - Rename and Move go through `categories/move` and re-point the stored closed paths.
   - **A known mismatch:** `MoveSubfolderModal` refuses a destination where the name already
     exists, as it does for gallery folders, though the server would merge. Rename onto an
@@ -61,11 +66,15 @@ it was filling, and moving prompts between plans was buried in it.
 
 Pick any dataset, then any plan but this one, and the list joins two reads by row id:
 `GET …/prompts` for the effective prompt (rows whose prompt is empty are absent there) and
-`GET …/rows` for each row's folder and `blueprint_linked`.
+`GET …/rows` for each row's folder, status (the table's badge, error as its tooltip) and
+`blueprint_linked`. The panel is keyed by the page's dataset, so a pane switching datasets
+starts the tab again on *(this dataset)*.
 - *Copy here* and *Move here* call `rows/copy` with `subfolder: null`, so each row keeps its own
   folder.
 - A move with linked rows selected first shows the same three choices as Set folder
   (`comfy-linked-confirm`); otherwise it sends `"refuse"`.
+- The toast names each skip reason from `skipped_no_prompt` and `skipped_linked`, worded as in
+  `copyRows.ts`.
 - Both refresh the target's rows, prompts and plan list, and the source's rows, prompts, plan,
   plan list (by the source's dataset, since the tab spans datasets) and blueprint preview.
 
@@ -138,6 +147,17 @@ panel. Desktop files are native events instead. The pieces:
     `pointerWithin` does not clip a rect to its scroll container, so a category scrolled out
     of the panel, or an overscan row above the table's header, caught drops it should not. A
     hidden category catching a prompt would re-file it, and a category move merges.
+  - **And only if it is the topmost thing there.** `elementsFromPoint` returns the whole
+    stack, so a row or category painted *under* the sticky `.comfy-head` still matched. The
+    filter takes the first element not inside the overlay (`.comfy-drag-overlay`, the class
+    on `DragOverlay`, which takes no data attributes) and accepts a node only if it contains
+    that element.
+- **A drop that changes nothing is refused**: `resolveDrop` returns null for rows dropped on
+  the folder every one of them is already in, and for prompts dropped on their own category
+  (`DropContext.rowFolders`, `promptCategories`). Before, the first sent `rows/place` with no
+  anchor, which moved the rows to the end of their folder, and the second toasted "Filed 0
+  prompts". The page reads the library for that lookup from the panel's cache
+  (`["comfy","library"]`, `enabled: false`), never fetching it itself.
 - **The live pointer and Shift** are kept in refs by capture-phase `pointermove`,
   `keydown` and `keyup` listeners during the drag, seeded from the start event.
   - **Before or after a row** compares that pointer with the row's middle. Not the dragged
@@ -186,16 +206,24 @@ panel. Desktop files are native events instead. The pieces:
 
 `frontend/e2e/comfy-library.spec.ts` drives the panel: the nested tree and collapse, a text
 edit and a refused duplicate, *Add n to plan* into a chosen folder, a category rename that
-merges, and *Copy here* keeping folders.
+merges, and *Copy here* keeping folders. The 2026-11-05 review added the button routes it
+lacked: a ticked prompt's *Move to…*, a category's *Move to…*, and a category *Delete…* under a
+search quoting the whole subtree's count.
 - **The library is global.** It survives across tests in the shared e2e database, so each test
   seeds categories under its own timestamped prefix and deletes them in `afterEach`.
 
 `frontend/e2e/comfy.spec.ts` covers the rest:
 - *Copy to plan* keeps folders, and Move empties the source;
 - the row menu reorders, and its bounds disable *Move down* on the last row;
-- the panel stays open across a reload.
+- the panel stays open across a reload;
+- since the review, the selection bar's *Save to library…*, the tree's *Move to…* and *Load
+  .json file*, Set folder dropping moved rows from the selection, a desktop file dropped
+  outside any zone refused (`FileDropGuard`), and keyboard use of `ContextMenu`: a row
+  reordered through its grip menu, and focus back on the rail's ⋯ after its dialog's Escape.
 
-`frontend/e2e/comfy-dnd.spec.ts` drives the gestures themselves, the repo's first committed
+`frontend/e2e/comfy-dnd.spec.ts` drives the gestures themselves (its header maps each drag to
+the button route that has the e2e; folder-onto-folder and category-onto-category drags have
+only their *Move to…* routes tested), the repo's first committed
 drags: a row onto a tree folder, a row below another, a library prompt onto the table, and
 `.txt` files dropped from the desktop.
 - `dragTo` presses, travels 12px to pass the 8px activation, then moves to the target in

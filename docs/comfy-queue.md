@@ -22,16 +22,18 @@ Under the toolbar, the **selection bar** acts on the rows you have ticked. It al
 - **Copy to plan…** — copy the selected rows into another plan of this dataset, or move them there. See [Copying rows between plans](#copying-rows-between-plans).
 - **Save to library…** — store their prompts in the prompt library (see below).
 - **Run selected** — run only these rows, whatever their status.
-- **Delete** — remove them, after asking. Images already imported are kept.
+- **Delete** — remove them, after asking. Images already imported are kept. Delete is off while the plan is running, or while an automated run on it is running or paused.
 - **Clear** — untick them all.
 
-The **Blueprint** tab is not a toolbar button but its own section of the plan. Describe the whole dataset once (characters, places, camera angles, alone and in pairs) and it expands into rows, each already filed in its folder → [details](comfy-structured.md). To take those rows on through scoring, captioning and export in one press, see [Automated Runs](runs.md).
+The **Blueprint** is its own tab of the plan. Describe the whole dataset once (characters, places, camera angles, alone and in pairs) and it expands into rows, each already filed in its folder → [details](comfy-structured.md). To take those rows on through scoring, captioning and export in one press, see [Automated Runs](runs.md).
 
 ## Folders
 
 Each row has its own **Folder**, the leftmost column, which decides where that row's images are filed — so one run can produce a whole folder structure instead of a single pile. Type a path like `salt-fen/iron-knight` into the cell, or tick several rows and use **Set folder** to give them all the same one. Blank means the run's base folder. Nested paths are written with `/`, folders that do not exist yet are created as the run starts, and the images are named after the folder rather than the plan.
 
-**Folders** are listed under the plans, with a row count each. Click one to show only its rows (and its subfolders' rows), or **All rows** to show them all. The table groups rows under a header per folder, which you can fold. Above it, a filter box matches prompt text and folder names, and the status buttons show only pending, running, failed or done rows. Changing what is shown clears the selection, so an action never touches rows you cannot see.
+**Folders** are listed under the plans, with a row count each. Click one to show only its rows (and its subfolders' rows), or **All rows** to show them all. The table groups rows under a header per folder, which shows how many of its rows are pending, failed and done, and a *from blueprint* tag when the blueprint made some of them. Fold a header with its arrow; the page remembers which folders you folded, for each plan. Above the table, a filter box matches prompt text and folder names, and the status buttons show only pending, running, failed or done rows. A finished row shows a small picture of its image (with *+n* when it made several); click it to open the image.
+
+A row that leaves what is shown also leaves the selection, whatever moved it: a filter, a fold, **Set folder** or **Reset failed**. So an action never touches rows you cannot see.
 
 A folder's **⋯** menu (or a right-click) makes a **New folder inside…**, or does **Rename…**, **Move to…** and **Delete…**. A new folder stays in the list while it is still empty. Rename and Move take the folder's rows with them. Delete removes the folder's rows, but the images they made stay in the gallery. None of these works while the plan is running.
 
@@ -54,7 +56,9 @@ Everything the toolbar and menus do with rows and prompts also works by dragging
 - Drag a folder onto another folder, or onto *(root)*, to move it with its rows. Drag a category onto another category, or onto *Top level*, to move it.
 - Drop `.txt` files from your computer onto the table to import them, one prompt per file. Drop a workflow `.json` onto the **Workflow template** box to load it.
 
-A chip next to the pointer says what the drop will do. Moving rows the blueprint made asks first.
+A chip next to the pointer says what the drop will do. Moving rows the blueprint made asks first. Dropping rows on the folder they are already in, or prompts on their own category, does nothing. Rows cannot be dragged while the plan is running, and a folder the blueprint made cannot be dragged at all.
+
+A file dropped anywhere else on the page is ignored, rather than opening in the browser tab.
 
 ## Prompt library
 
@@ -80,4 +84,4 @@ Two routes, both of which keep each row's folder:
 
 A copied row carries its prompt, and every other value that the receiving plan also has as a per-row column. Values for anything else are left behind, and the receiving plan's own settings apply. The new row starts as pending, even if the original had already run.
 
-Moving rows the blueprint made asks first, as **Set folder** does: the blueprint then counts their folder as short, and the next **Top up** refills it. A move is refused while the plan it takes rows from is running, or while one of its rows is.
+Moving rows the blueprint made asks first, as **Set folder** does: the blueprint then counts their folder as short, and the next **Top up** refills it. A move is refused while the plan it takes rows from is running, or while one of its rows is. Adding rows to a plan whose automated run is running or paused is refused too, by any route (Add row, copy, paste, import or a library drop), since the run would take the new rows as its own: finish or cancel the run on the Runs page first.

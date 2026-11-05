@@ -12,7 +12,7 @@ The order images travel through the app:
 | 1 | Browse, filter, select and sort a dataset's images | [Gallery](gallery.md) |
 | 1 | File images into subfolders; rename and re-nest them | [Subfolders](subfolders.md) |
 | 1 | Generate images with your own ComfyUI workflow | [ComfyUI Generation](comfyui.md) |
-| 1 | Fill a ComfyUI queue: paste, import or generate prompts, file each row in a folder, reuse prompts from a shared library | [ComfyUI Queue](comfy-queue.md) |
+| 1 | Fill a ComfyUI queue: paste, import or generate prompts, file each row in a folder, reuse prompts from a shared library, duplicate plans and copy rows between them, by menu or drag and drop | [ComfyUI Queue](comfy-queue.md) |
 | 1 | Describe a whole foldered dataset once and expand it into a ComfyUI queue | [ComfyUI Blueprints](comfy-structured.md) |
 | 1–7 | Run a plan end to end in one press: fill, generate, score, caption, export, repeating until every folder holds enough images that pass a quality gate; check it first with a dry run, and keep its settings as shareable recipes | [Automated Runs](runs.md) · [Setting up a run](run-setup.md) · [Repeating a run](repeating-runs.md) |
 | 1 | Hold videos as sources for frame extraction | [Videos](video.md) |

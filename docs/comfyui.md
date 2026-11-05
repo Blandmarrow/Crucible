@@ -17,8 +17,8 @@ Optionally, install the **CrucibleBridge** extension into ComfyUI so **Sync from
 
 A **plan** holds one workflow template, the parameters pinned on it, and a queue of rows. A dataset can have as many plans as you like — typically one per workflow, or one per experiment.
 
-- Plans are listed on the left of the **Rows** section, each with its row count. A blue dot means it is running, a red one that some rows failed. Click a plan to open it.
-- **New plan** creates one; plan names are unique within a dataset. A plan's **⋯** menu has **Rename…**, **Duplicate…** and **Delete…**. Deleting a plan discards its rows, but never the images it generated.
+- Plans are listed on the left of the **Rows** section, each with its row count. A blue dot means it is running, a red one that some rows failed. Click a plan to open it. The list shows on the Rows tab only, so go back to Rows to switch plans.
+- **New plan** creates one; plan names are unique within a dataset. A plan's **⋯** menu has **Rename…**, **Duplicate…** and **Delete…**. Deleting a plan discards its rows, but never the images it generated. **Delete…** is off while the plan is running or generating prompts, and refused while an automated run on it is running or paused.
 - **Duplicate…** copies the workflow, the pins, the folders and the blueprint into a new plan, and its rows too if you leave **Include rows** ticked. Copied rows start again as pending. Runs and images are not copied.
 - The plan splits into three sections: **Rows** (the queue), **Workflow & Pins** (the template) and **Blueprint** (a way to fill the queue, below).
 - The plan's name, the section tabs and the **Run** bar stay at the top of the page as you scroll, on every section.

@@ -55,7 +55,8 @@ staleness sweep while still recording the seam.
   queue.md keeps the data model, `comfy_service.py`, ComfyClient, plan CRUD, the library and
   the gotchas.
 - **Why here:** §8c took it to 3,141 of 3,500 words (2026-11-05). Every §8 stage added a row
-  endpoint to one section, and §8d's selection bar will add more callers to describe.
+  endpoint to one section; §8d added none, and the 2026-11-05 review fixes' guards took it
+  over budget, to ~3,530.
 - **Watch for:** `prompt_origin`'s writer table names `rows/copy`; `docs/dev/comfyui/page.md`,
   `library-dnd.md` and `structured.md` point at `queue.md` § Backend for these endpoints, so
   grep `queue.md` across docs/dev and repoint each that means a row endpoint.
@@ -220,3 +221,19 @@ utilities → `docs/dev/shared-utilities.md`.
   it is the index doc for the same material, so anything § Features says that the topic docs
   do not is a fact to move *there* rather than lose. A handful of Features bullets name
   things with no topic doc at all (verify each against the Docs table before cutting).
+
+## docs/dev/comfyui/page.md
+
+- **Moves:** § The plan rail, the folder tree and the grouped table, plus the Rows toolbar,
+  `ComfyRowsSelectionBar` and the selection-prune bullets out of § Frontend
+- **New file:** docs/dev/comfyui/rows-tab.md (mirrors docs/comfy-queue.md, the Rows tab's user guide)
+- **Why here:** the §8 review fixes took it to ~3,520 of 3,500 words (2026-11-05). § Frontend
+  is ~2,200 words of which about half is the Rows tab (toolbar, selection bar, table,
+  selection and busy rules); the rest is the page shell (routing, header, `WorkflowPinPanel`,
+  the defaults strip, the run bar, `activeRuns`) and § The layout. The Rows-tab half is one
+  subsystem with its own user doc, so it splits cleanly and leaves both near 60%.
+- **Watch for:** `library-dnd.md`, `blueprint-tab.md`, `persistence.md` (the
+  `COMFY_ROWS_VIEW_KEY` row) and the hub's routing table point at `page.md` § The plan rail,
+  the folder tree and the grouped table; `styling.md` points at `page.md` for the rail and
+  tree's `ContextMenu`. The `planBusy` bullet sits inside the run-bar bullet but belongs with
+  the Rows tab's controls.

@@ -47,6 +47,7 @@ not a see-also, and says which part of the code it owns.
 | `backend/services/comfy_service.py` (`ComfyClient`, `patch_workflow`, `extract_output_images`, `workflow_format`) | `docs/dev/comfyui/queue.md` § Backend; + `docs/dev/comfyui/run.md` § Removing our prompt for `cancel_prompt`; + `docs/dev/comfyui/sync.md` § Backend for `bridge_snapshot`, `last_history_entry` and `history_entry_workflow` |
 | `backend/routers/comfy.py` (plans, rows, library, bulk-edit, `/ping`, workflow-file scan) | `docs/dev/comfyui/queue.md` § Backend; + `docs/dev/comfyui/sync.md` § Backend for `GET /comfy/canvas-workflow` |
 | `backend/services/comfy_library.py` (`normalize_category`, `plan_category_move`), migration `e7d1c5a9b3f2` | `docs/dev/comfyui/queue.md` § Backend, the prompt library's nested categories |
+| `backend/services/comfy_rows.py` (`place_rows`) | `docs/dev/comfyui/queue.md` § Backend (`rows/place`) |
 | `backend/routers/comfy.py` (`POST /comfy/run`, `_run_preflight`, `_start_run`, `_run_with_stats`) | `docs/dev/comfyui/run.md` § The `comfy_generate` job; + `docs/dev/comfyui/structured.md` § Top up for `_start_run`'s second caller; + `docs/dev/comfyui/run-stages.md` § The stages for its run keywords |
 | `backend/routers/comfy.py` (`generate-prompts` and the `comfy_prompts` job) | `docs/dev/comfyui/prompts.md` § Generating and § The `comfy_prompts` job |
 | `backend/routers/comfy.py` (blueprint GET/PUT/preview/apply/top-up, `fill_blueprint`, `_plan_lock`, `_plan_job_active`) | `docs/dev/comfyui/structured.md` § Endpoints and Apply's guard rails and § Top up; + `docs/dev/comfyui/run.md` § The `comfy_generate` job for the `_plan_lock` that `run_plan` shares |
@@ -70,9 +71,9 @@ not a see-also, and says which part of the code it owns.
 
 | Editing… | Read |
 |---|---|
-| `frontend/src/pages/ComfyPage.tsx` | `docs/dev/comfyui/page.md` § Frontend for routing, the plan bar and `activeRuns`; + `docs/dev/comfyui/prompts.md` § Frontend for the generate-prompts start mutation, which passes `planId` through its variables |
+| `frontend/src/pages/ComfyPage.tsx` | `docs/dev/comfyui/page.md` § Frontend for routing, the header, the plan rail and `activeRuns`; + `docs/dev/comfyui/prompts.md` § Frontend for the generate-prompts start mutation, which passes `planId` through its variables |
 | `frontend/src/api/comfy.ts` | `docs/dev/comfyui/page.md` § Frontend |
-| `frontend/src/components/comfy/ComfyRowsTable.tsx`, `ComfyDefaultsStrip.tsx`, `ComfyRunBar.tsx`, `SetRowFolderModal.tsx`, `BulkEditRowsModal.tsx` | `docs/dev/comfyui/page.md` § Frontend |
+| `frontend/src/components/comfy/ComfyRowsTable.tsx`, `ComfyRowsSelectionBar.tsx`, `ComfyDefaultsStrip.tsx`, `ComfyRunBar.tsx`, `SetRowFolderModal.tsx`, `BulkEditRowsModal.tsx` | `docs/dev/comfyui/page.md` § Frontend |
 | `frontend/src/components/comfy/ComfyPlanRail.tsx`, `ComfyFolderTree.tsx`, `folderTree.ts`, `rowsView.ts`, `DuplicatePlanModal.tsx`, `FolderNameModal.tsx` | `docs/dev/comfyui/page.md` § The plan rail, the folder tree and the grouped table; the endpoints behind them are `docs/dev/comfyui/queue.md` § Backend |
 | `frontend/src/hooks/useStickyOffsets.ts`, the `.comfy-head` and `.comfy-rail*`/`.comfy-rows-*` rules in `frontend/src/index.css` | `docs/dev/comfyui/page.md` § The layout |
 | `frontend/src/components/comfy/BlueprintSection.tsx`, the `.bp-*` rules in `frontend/src/index.css` | `docs/dev/comfyui/blueprint-tab.md` § The layout |
@@ -96,7 +97,7 @@ not a see-also, and says which part of the code it owns.
 |---|---|
 | `backend/tests/fake_comfy.py`, `backend/tests/test_comfy_run_body.py`, `backend/tests/test_comfy_queue_cleanup.py`, `frontend/e2e/serve-comfy.mjs` | `docs/dev/comfyui/run.md` § Testing the run |
 | `backend/tests/test_comfy_cancel_stats.py`, `backend/tests/test_comfy_subfolder.py` | `docs/dev/comfyui/run.md` § The `comfy_generate` job (the per-row stats refresh; the per-row folder and stem) |
-| `backend/services/comfy_rows.py` (`place_rows`), `backend/tests/test_comfy_rows_place.py`, `test_comfy_rows_copy.py` | `docs/dev/comfyui/queue.md` § Backend (`rows/place`, `rows/copy`, and the live run's folder lock) |
+| `backend/tests/test_comfy_rows_place.py`, `test_comfy_rows_copy.py`, `test_comfy_plan_duplicate.py` | `docs/dev/comfyui/queue.md` § Backend (`rows/place`, `rows/copy`, plan duplicate, and the live run's locks) |
 | `backend/tests/test_comfy_library_http.py`, `test_comfy_library_service.py`, `test_migration_nest_library_categories.py` | `docs/dev/comfyui/queue.md` § Backend (the prompt library) |
 | `backend/tests/test_comfy_bulk_edit_regex_http.py` | `docs/dev/comfyui/queue.md` § Backend (the `rows/bulk-edit` regex handling) |
 | `backend/tests/test_parse_prompts.py`, `backend/tests/test_conflict_paths_http.py` | `docs/dev/comfyui/prompts.md` § Generating (the parser) and § The `comfy_prompts` job (the per-plan 409s) |

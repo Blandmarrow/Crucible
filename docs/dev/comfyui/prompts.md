@@ -122,7 +122,7 @@ queue prompts + textarea lines as diverge-from context); *Generate until N* = th
 `comfy_prompts` job, which writes rows itself.
 
 - **The queue's existing prompts come from `GET /comfy/plans/{id}/prompts`** (`listPlanPrompts`,
-  keyed `["comfy","prompts",planId]` as in `PromptLibraryModal`), never derived from rows in the
+  keyed `["comfy","prompts",planId]` as in `ComfyLibraryPanel`), never derived from rows in the
   client. They feed both the diverge-from context and the "N in queue" count that gates
   *Generate until*. **Invariant: the number shown here and the server's `existing >=
   target_count` gate must be the same number.** They were not — the client counted only rows

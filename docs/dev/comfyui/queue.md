@@ -37,7 +37,7 @@ A **row** (`comfy_rows`) holds `values` (`{alias: json-native value}`; absent/bl
 value), `status` (`pending|running|completed|failed`), `error_msg`, `sort_order`, `prompt_id`
 (last ComfyUI prompt id), and output links: `image_id` (FK → images, `SET NULL`, first output)
 plus `image_ids` (JSON list — multi-SaveImage workflows produce several images per row).
-Plan names are unique per dataset (`uq_comfy_plan_dataset_name`).
+Plan names are unique per dataset (`uq_comfy_plan_dataset_name`). Create, rename and duplicate check the name first (400); create and duplicate also map an `IntegrityError` to the same 400 (`_commit_plan_unique`), at the commit and, in duplicate, at the first flush of the new plan, where the index actually fires, so two clicks at once cannot slip past the check into a 500.
 
 Two more row columns (migration `e5c1a9d3f7b2`) give each row its own destination:
 
@@ -109,7 +109,7 @@ non-empty line into the `is_prompt` alias, filed in an optional `subfolder` (M6 
 failed→pending, `GET …/rows` — full rows; `GET /comfy/plans/{id}/prompts` returns
 `{prompts: [{row_id, prompt, status}]}` — the **effective** prompt (row→default→template) of
 each non-empty row, used to browse/reuse prompts across plans and datasets (the
-`PromptLibraryModal`), `…/rows/set-value` set/clear one pinned alias on **every** row of the plan —
+library panel's *Other plans* tab, `SaveToLibraryModal` and `GeneratePromptsModal`), `…/rows/set-value` set/clear one pinned alias on **every** row of the plan —
 `{alias, value}`, `value: null|""` clears back to the default/template), and `POST /comfy/run`. Editing a
 completed/failed row's `values` via `PATCH /comfy/rows/{id}` (or touching it via
 `rows/set-value`) resets it to `pending` and clears `error_msg`/`prompt_id` (image links are
@@ -139,7 +139,11 @@ returns each row's `blueprint_linked`; the `PATCH` response does not, so the pag
 row by the `subfolder` of the row object it loaded at start, and commits `status` on each in
 turn. So while one is queued or running, `_refuse_folder_change_during_run` 409s every folder
 change — `PATCH` (a real change, not a no-op), `rows/set-subfolder` and `rows/place` — and
-`rows/delete` 409s outright. Before §8c only the page enforced this, and its `isRunning` knew
+`rows/delete` 409s outright. Since the 2026-11-05 review, `rows/delete` and
+`DELETE /comfy/plans/{id}` take `_plan_write_guard` (below), so they also refuse a running or
+paused automated Run and a live prompt or rewrite job: deleting rows under a rewrite wasted its
+paid calls, and a plan delete under a run cascaded its rows away mid-job (the run's next
+`status` commit then raised). Before §8c only the page enforced this, and its `isRunning` knew
 only the runs that tab had started. Each check runs under `_plan_lock`, which `_start_run`
 takes too, so no run starts between the check and the commit. For that reason the PATCH folder
 branch and `set-subfolder` take the lock in every `linked` mode now, not only `"unlink"`.
@@ -180,10 +184,21 @@ dropped the folder.
 - **A move deletes the source rows**, so it takes the source's folder-write checks inline:
   `_refuse_live_run`, a 409 while a `_ROW_JOB_TYPES` job is live, a 409 on any `running` row,
   and `linked` for rows the source's blueprint counts (refuse 409s; skip leaves them). Inline,
-  not `_folder_write_guard`, because the endpoint already holds both plans' locks, taken once
+  not `_plan_write_guard`, because the endpoint already holds both plans' locks, taken once
   each in id order, and `asyncio.Lock` is not re-entrant.
-- A copy has no guard on the target, like `rows/bulk`. A live automated run's next pass will
-  pick the new pending rows up.
+- **The target refuses a live automated Run**: `_refuse_live_run(target)`, inside the two
+  locks. `rows/bulk` (paste, *Import .txt*, a library drop or *Add n to plan*) and
+  `POST …/rows` (*Add row*) take `_plan_lock` and do the same. That lock is not the one an
+  automated Run is created under (`run_service.start_run` holds the dataset lock), so a Run
+  starting between the check and the insert is not excluded: the window Apply has too. A running or paused Run's next pass takes every pending row
+  of its plan, so rows added under it would be counted as the Run's own and filed outside its
+  budget: the harm `_refuse_live_run` already stops for Apply. The user's ruling on 2026-11-05;
+  before it, both routes added rows to a live Run's plan unguarded. A live generate *job* on the
+  target is not refused, since it runs only the rows it loaded at start.
+- The response is `{copied | moved, skipped, skipped_no_prompt, skipped_linked, unlinked}`.
+  `skipped` is the sum of the two reasons: a row with an empty effective prompt, and, on a
+  move under `linked: "skip"`, a row the source's blueprint counts. `unlinked` counts only the
+  linked rows actually moved.
 - 400s: the source is the target, the target has no prompt pin, or an id is not the source's.
 
 **The folder tree's endpoints** (M6 §8b, migration `d5b7f9a1c3e6`). A plan's folders are its
@@ -200,11 +215,19 @@ NULL, `'[]'`): folders made by hand, kept while empty. Every `_plan_out` returns
 - `POST …/folders/delete` (`{path}` → `{deleted}`) deletes the subtree's rows and drops it
   from the list (`utils.drop_declared_paths`). Images are never touched.
 - Move and delete 409 when the subtree holds a `blueprint_linked` row ("This folder comes
-  from the blueprint…"). All three share `_folder_write_guard`: `_plan_lock`, then
-  `_refuse_live_run`, then a 409 while a `_ROW_JOB_TYPES` job is queued or running for the
-  plan. The 400 checks run first, outside the lock; the 404 and the 409s run inside it. `set-subfolder` keeps its old,
-  unguarded behaviour for moves, but an unlink (on it or on `PATCH /rows/{id}`) takes the
-  plan lock and refuses a live automated run, as Apply does.
+  from the blueprint…"). All three share `_plan_write_guard` (named `_folder_write_guard`
+  until the 2026-11-05 review gave it the deletes too): `_plan_lock`, then `_refuse_live_run`,
+  then a 409 while a `_ROW_JOB_TYPES` job is queued or running for the plan. The 400 checks
+  run first, outside the lock; the 404 and the 409s run inside it. `set-subfolder` and the
+  `PATCH` folder branch take the plan lock in every `linked` mode and the run guard above;
+  an unlink also refuses a live automated run, as Apply does.
+- **A move cannot make a path over 512 characters** (`utils.SUBFOLDER_MAX_LEN`). The request
+  caps `new_path` alone, so after the collision 409 the route works out the longest path the
+  move would write over the subtree, `len(new_path) + len(p) - len(path)`, and 400s past the
+  cap. Without it a row's folder could grow past 512, and every later `folders/move` or
+  `folders/delete` on it failed validation (422), leaving the tree no way to reach it.
+  `library/categories/move` does the same with `CATEGORY_MAX_LEN`, and `blueprint_expand`'s
+  leaf-path check uses the constant.
 - **Not `LIKE`.** SQLite's `LIKE` ignores ASCII case, so `knight/%` also matched `Knight/a`,
   and deleting one folder deleted another's rows (the §8b review). The gallery's
   `dataset_service.repath_subfolder` still uses `LIKE` and has the same flaw, left for its
@@ -255,7 +278,7 @@ everywhere without duplicating plans. Since M6 §8c a category is a `/` path sho
     rather than merging: the user is typing, not filing. Re-filing stays on `move`, so
     there is one set of merge rules.
   - `POST /comfy/library/categories/move` `{path, new_path}` re-files a category with its
-    subtree, oldest prompt winning a collision (`plan_category_move`) → `{moved, merged}`.
+    subtree; on a collision a prompt already in the destination wins, then the oldest moved one (`plan_category_move`) → `{moved, merged}`.
     Landing on an existing category **merges**, where a folder move 409s: a category is only
     a label, with nothing else to collide. Into its own subtree is a 400, onto itself a
     no-op, an unknown `path` a 404. Un-nesting sends the last segment as `new_path`.

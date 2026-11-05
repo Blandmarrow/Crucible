@@ -18,7 +18,7 @@ no Map row and no word budget. When a stage lands, move its durable rationale in
 named in § Documentation this arc owes and delete the stage from here; delete the folder when
 everything is done.
 
-Stages §1 to §7 are built on this branch; only the ComfyUI page rework (§8) and the merge remain. Read `CLAUDE.md`, `docs/dev/comfyui.md`,
+Stages §1 to §8 are built on this branch; only the merge remains. Read `CLAUDE.md`, `docs/dev/comfyui.md`,
 `docs/dev/comfyui/run.md` and `docs/dev/comfyui/prompts.md` before implementing, and prefer the repo's conventions over the
 sketches here.
 
@@ -46,7 +46,7 @@ blueprint rather than once per leaf.
 **Section numbers are stable identities, not an order.** The build order is the roadmap's M6
 checklist alone. In short: the `docs/dev/comfyui.md` split and §7 (both done 2026-11-03), then
 §2a, §2b, Top up (§2c), §3, a rebase after M8 stages 2–3, §4, §5 and §6 (all landed), then
-the ComfyUI page rework (§8) and the merge.
+the ComfyUI page rework (§8, landed), then the merge.
 
 **§1 (per-row `subfolder` + `leaf_id`) is ported**, commit 8dee5de on the branch; its rationale
 lives in `docs/dev/comfyui/queue.md` (the columns and endpoints) and `docs/dev/comfyui/run.md` (how a run
@@ -269,7 +269,7 @@ Departures from the sketch that stood here:
 - **A carried-on run's new tail captions only its new passes** (`_tail_rows`), and the
   rewrite's caption reserve counts captions already made.
 
-## 8. The ComfyUI page rework (planned)
+## 8. The ComfyUI page rework (landed)
 
 Scoped with the user on 2026-11-05, who asked for it to land before the merge. An
 interactive mockup of both screens, which the user approved as the direction, is the
@@ -333,12 +333,14 @@ Backend: a rename/move of a folder path across a plan's rows (the shape of the g
 **Built 2026-11-05** (`docs/dev/comfyui/library-dnd.md`; the endpoints in
 `docs/dev/comfyui/queue.md` § Backend), under three rulings by the user that day: reorder
 goes across folders too, categories get a menu *and* drag, and library prompts dropped on the
-table land in the folder in view. Two departures from the text below, both deliberate:
+table land in the folder in view. Three departures from the text below, all deliberate:
 - **A copy carries only the target's per-row values**, not "every value whose alias exists".
   `patch_workflow` applies any alias in `values`, so a value carried under a run-default pin
   would silently override it, with no column to show it.
 - **`PATCH` on a library prompt edits text only.** Re-filing stays on `library/move`, so there
   is one set of merge rules.
+- **A drop between rows uses `rows/place`, not `rows/reorder`.** A drop can also change the
+  row's folder, which `rows/reorder` cannot do, so one call places and re-files.
 
 It also fixed what it found: a live `comfy_generate` run now locks its plan's folders and rows
 on the server. `rows/delete` had no guard, while the run commits `status` on the rows it loaded
@@ -386,8 +388,8 @@ into the toolbar's line, which pays for the slot. *Reset failed* stays in the to
 is not a selection action. The menu is a new shared `MenuButton`.
 
 - One **Add ▾** menu: Add row, Paste prompts, Import .txt, Generate, Edit prompts.
-- Actions on selected rows move to a bar shown only while rows are selected: move to
-  folder, copy to plan, save to library, run, delete.
+- Actions on selected rows move to a selection bar in a fixed slot (a hint while nothing is
+  ticked): move to folder, copy to plan, save to library, run, delete.
 - The paste dialog moves onto `ModalShell`; today it is a hand-built overlay with no Escape
   or focus handling.
 
@@ -418,6 +420,33 @@ All four were ruled by the user on 2026-11-05, approving the §8b plan's recomme
 Each sub-stage owes `docs/dev/comfyui/page.md` and the user guide (the Rows tab's half is
 `docs/comfy-queue.md` since the 2026-11-05 split, the rest `docs/comfyui.md`) in the
 same change, and e2e coverage through the button routes in `frontend/e2e/comfy.spec.ts`.
+
+### Review fixes, 2026-11-05
+
+A review of all of §8 (three Opus reviewers and a doc audit) found no high-severity bug.
+It fixed what it found, under four rulings by the user that day:
+1. **One lock for deletes.** `DELETE /comfy/plans/{id}` and `rows/delete` refuse whatever
+   folder delete refuses: a live generate, prompt or rewrite job, or a running or paused
+   automated Run. Plan delete had no guard at all. The page disables both Deletes then.
+2. **A live Run's plan takes no new rows.** `rows/copy`, `rows/bulk` and `POST …/rows` refuse
+   a target whose automated Run is running or paused, as Apply does. This reverses §8c's "a copy has no
+   guard on the target".
+3. **The selection is pruned to the rows on show**, whatever hid them, not only on a filter
+   change.
+4. **One app-wide guard** stops a desktop file dropped outside a drop zone from opening in
+   the tab (`FileDropGuard`).
+
+Also fixed:
+- A folder or category move that would write a path over 512 characters is refused.
+- A category delete under a search now quotes the whole subtree's count.
+- Drops that change nothing are refused, and so are drop targets covered by the sticky header.
+- `ContextMenu` gained keyboard focus.
+- The copy response names its two skip reasons.
+- The rail's counts refresh after a cell edit, *Add row* and *Reset failed*.
+- The Library tab got back *Select all*, and the Other plans tab got back each row's status.
+
+Where each lives: `docs/dev/comfyui/queue.md` § Backend, `docs/dev/comfyui/page.md`,
+`docs/dev/comfyui/library-dnd.md`, `docs/dev/styling.md` and `docs/dev/frontend-core.md`.
 
 ## Landed stages
 

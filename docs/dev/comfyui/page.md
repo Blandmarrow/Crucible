@@ -2,7 +2,7 @@
 
 The frontend of the ComfyUI queue: how `ComfyPage` is routed and registered, what its e2e spec
 covers, the header line, `WorkflowPinPanel` and the workflow scan, the run-default strip, the rows
-table and its Folder column, the run bar and how the page tracks concurrent runs, the prompt
+table and its Folder column, the run bar and how the page tracks concurrent runs, the
 Rows toolbar and selection bar (M6 §8d), and the Rows tab's plan rail, folder tree and grouped table (M6 §8b). The library
 panel, Copy to plan, the row menu and drag and drop (M6 §8c) are `docs/dev/comfyui/library-dnd.md`. The Blueprint tab is `docs/dev/comfyui/blueprint-tab.md`. The data model and endpoints it calls are in
 `docs/dev/comfyui/queue.md`; what a run does server-side is `docs/dev/comfyui/run.md`; *Generate
@@ -17,19 +17,30 @@ the one job type whose live branch also invalidates `["dataset", id]`, because i
 whose worker refreshes the stored counters per row (see `docs/dev/job-invalidation.md`). API module
 `frontend/src/api/comfy.ts` (`comfyApi`).
 
-`frontend/e2e/comfy.spec.ts` covers the journeys that need no ComfyUI server: the empty
-state → create a plan (which selects it and jumps to *Workflow & Pins*), *Paste prompts…*
-→ rows, and per-row folders (typed into a cell, then bulk-set over the top, cross-checked
-through `GET …/rows`). §8b added four, all through buttons and menus rather than drags: a
-plan duplicated from the rail, a folder made and renamed from the tree and then picked to
-filter the table, the plan and tab coming back after a reload, and Set folder asking before
-it moves a blueprint row. Its textarea-count assertion is scoped to
-`data-testid="comfy-rows-table"` on purpose — the prompt cells must be the only textareas in
-the table, so it fails if the single-line Folder cell is ever rebuilt as one. It never starts
-a run. The journeys that press *Run* are `frontend/e2e/comfy-run.spec.ts`, against the fake
-ComfyUI in `docs/dev/comfyui/run.md` § Testing the run: rows filed under their folders with the
-image's generation metadata on its detail page, and a failed row's error tooltip and
-*Reset failed*.
+`frontend/e2e/comfy.spec.ts` covers the journeys that need no ComfyUI server, and never starts
+a run:
+- The first ones: the empty state → create a plan (which selects it and jumps to *Workflow &
+  Pins*), *Paste prompts…* → rows, and per-row folders (typed into a cell, then bulk-set over
+  the top, cross-checked through `GET …/rows`). Its textarea-count assertion is scoped to
+  `data-testid="comfy-rows-table"` on purpose — the prompt cells must be the only textareas in
+  the table, so it fails if the single-line Folder cell is ever rebuilt as one.
+- §8b added four, all through buttons and menus rather than drags: a plan duplicated from the
+  rail, a folder made and renamed from the tree and then picked to filter the table, the plan
+  and tab coming back after a reload, and Set folder asking before it moves a blueprint row.
+- §8c added Copy to plan (folders kept, Move takes them out), the row menu's move within a
+  folder and the library panel staying open across a reload; the rest of §8c's journeys are
+  `docs/dev/comfyui/library-dnd.md` § Testing.
+- §8d added the *Add ▾* menu's disabled reasons and Escape, the paste dialog as a real dialog,
+  the selection bar's fixed slot, and Import .txt and Edit prompts from the menu.
+
+The journeys that press *Run* are `frontend/e2e/comfy-run.spec.ts`, against the fake ComfyUI in
+`docs/dev/comfyui/run.md` § Testing the run: rows filed under their folders with the image's
+generation metadata on its detail page, a failed row's error tooltip and *Reset failed*, and
+*Run selected* in the selection bar running only the ticked rows. The 2026-11-05 review added
+*Reset failed* clearing the rail's failed dot, and a live run (eight rows, about a second each
+against the fake) holding the rail's and the bar's *Delete* off, with a direct
+`DELETE /comfy/plans/{id}` answering 409, until it ends. A paused Run refusing a delete stays a
+hand check: the fake has no pause.
 
 - **The header line** shows the plan's name (`comfy-plan-name`) and the section tabs *Rows* /
   *Workflow & Pins* / *Blueprint*, in the sticky header with `ComfyRunBar` (§ The layout).
@@ -122,6 +133,14 @@ image's generation metadata on its detail page, and a failed row's error tooltip
   dedicated `useJobSSE` subscription, and the run bar / `isRunning` gating applies only to the
   plan being viewed — other plans stay interactive and can start their own concurrent runs
   (the backend 409 is per-plan).
+  - **`planBusy` is wider than `isRunning`.** `busyPlanIds` adds every plan with a
+    non-terminal `comfy_generate`, `comfy_prompts` or `comfy_rewrite` entry in the job store's
+    `activeJobs` (`BUSY_JOB_TYPES`), so a run started in another tab, or a prompt or rewrite
+    job, counts too. That needs `plan_id` on the job's events: the prompt and rewrite jobs
+    always sent it, and the generate job's progress events carry it since the review. It disables the selection bar's *Delete*, the tree's folder writes
+    (*New folder…* and its header + included) and the rail's *Delete…*. A paused automated
+    Run has no job, so for that case the server's 409 is the only lock, and the page shows its
+    text through `apiErrorDetail` (`docs/dev/comfyui/queue.md` § Backend has the guards).
   - While a run is live the page invalidates
   `["comfy","rows",planId]` (that run's plan, not the viewed one) and `["comfy","plans",datasetId]`
   on each progress event, so row statuses and the rail's dot update in place; on terminal status it also invalidates `["images", datasetId]`,
@@ -166,7 +185,7 @@ image's generation metadata on its detail page, and a failed row's error tooltip
   comparing the table's `boundingBox().y` before and after. Each button opens the dialog the
   old toolbar button did; the mockup's drop-downs were rejected because they would lose Set
   folder's blueprint ask, Copy's Move and a new library category. *Set folder…* and *Run
-  selected* are disabled while the plan runs, and *Save to library…* without a prompt pin —
+  selected* are disabled while the plan runs, *Delete* while it is `planBusy` (above), and *Save to library…* without a prompt pin —
   through `aria-disabled` with the reason in `title`, because `.btn:disabled` sets
   `pointer-events: none` and would hide it. `scrollbar-width: thin` keeps Firefox's
   scrollbar from eating the 24px buttons' height in a narrow column.
@@ -196,8 +215,17 @@ another tab means going back to Rows.
   - **Clicking a folder filters the table to its subtree** (`inFolder`); *(root)* shows the
     rows with no folder. The filter lives in `ComfyPage` with a text filter (prompt text and
     folder, case-blind) and status chips above the table. None is persisted, a plan switch
-    resets all three, and **any filter change clears the selection**, since Set folder and
-    Delete would act on rows the view hides.
+    resets all three, as do a pane's dataset switch and a fallback to the first plan when the
+    shown one vanished (`shownPlanId`, adjusted during render). **Any filter change clears the
+    selection**, since Set folder and Delete would act on rows the view hides.
+  - **The selection is pruned to the rows on show, whatever hid them**: a filter, a fold, a
+    *Set folder…*, an inline folder edit, *Reset failed* under the Failed chip, a drop into a
+    folded group. `visibleKey` (the shown rows' ids minus folded groups, except when every
+    shown row is in *(root)*, which the table draws flat with no header to fold) is compared with its
+    previous value during render, and the selection is cut to it then, not in an effect: the
+    repo's `react-hooks/set-state-in-effect` rule, and no frame with stale ids. It only ever
+    shrinks the set, so it cannot loop. Every consumer (*Delete*, *Run selected*, *Copy to
+    plan*, *Save to library*, *Edit prompts*, a drag, the bar's count) reads the pruned set.
   - **The menu** (⋯ or right-click): *New folder inside…*, *Rename…*, *Move to…* and
     *Delete…*; on *(root)* only *New folder…*. The header's + makes one inside the selected
     folder. `FolderNameModal` takes one segment (a slash is refused; Move nests), and
@@ -218,8 +246,7 @@ another tab means going back to Rows.
     running, failed and done counts, and a *from blueprint* pill. It holds **no checkbox,
     textarea or `(root)`-placeholder input**, which the e2e counts as row cells. Select-all
     in the column header covers the rows on show, leaving out folded groups, and folding a
-    group drops its rows from the selection (`toggleGroup`), for the same reason a filter
-    change clears it.
+    group drops its rows from the selection through the prune above.
   - The ✎ "set on all rows" dialog counts the plan's rows, not the shown ones, and says it
     ignores the filter: `rows/set-value` writes every row.
   - A plan whose rows all sit in *(root)* gets no header: one group adds nothing.

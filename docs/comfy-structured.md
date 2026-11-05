@@ -16,7 +16,7 @@ Apply needs a pinned parameter marked as the prompt (★).
   scrolls on its own.
 - **In a narrow window or a split pane** the Preview moves under the editors. Its buttons
   then stay pinned to the bottom of the page.
-- **The plan bar, the tabs and the Run bar stay at the top** of the page, on this tab too.
+- **The plan's name, the tabs and the Run bar stay at the top** of the page, on this tab too.
 - **Axes, Variations and Scenarios fold away.** Click a section's title to fold or open
   it. Its *+ Add* button stays visible, and opens the section when you press it.
 - **The bar above the editors** jumps to a section and opens it, folds or opens them all,

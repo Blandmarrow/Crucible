@@ -17,7 +17,7 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-05, after M6 §8d)
+## Next session (updated 2026-11-05, after the M6 §8 review fixes)
 
 1. M5's five stages merged on 2026-10-30 as PR #101. Only its cleanup is open, and that waits
    a release. See [server-state-plan/README.md](server-state-plan/README.md) for what was
@@ -65,12 +65,21 @@ restates its stages.
        another plan refused while the source runs; a drop between rows while the table
        auto-scrolls; a drop over a library category scrolled out of the panel (it must not
        take it); a category migration on a real library with free-text categories.
+     - §8 review fixes: a paused automated Run refusing plan delete and a paste into its plan;
+       a drop released over the sticky header taking nothing; `ContextMenu`'s keyboard focus and
+       the ⋯ toggle in Firefox (e2e runs Chromium only); a `.txt` dropped beside the table
+       staying on the page.
      - §8d: the selection bar in Firefox with the library panel open (its buttons must not be
        clipped by the scrollbar; e2e runs Chromium only).
    - **Found in the §8b review, not fixed there:** the gallery's
      `dataset_service.repath_subfolder` matches a folder's subtree with SQLite's case-blind
      `LIKE`, so renaming `knight` also re-paths `Knight/a`; `filesystem.py`'s
      `startswith(autoescape=True)` has the same shape. A fix for `main`, not this branch.
+   - **Found in the §8 review, left open on purpose:** `utils.normalize_subfolder` keeps
+     whitespace inside a segment, so a hand-typed `knight ` (or `knight /  `) is a folder of its
+     own, which blueprint leaf `knight` (whose segments are stripped) never adopts or locks.
+     It predates §8, and stripping now would re-read stored rows, so it wants a ruling and a
+     data migration rather than a quiet change.
    - Decisions 7–9 and this M6 checklist exist only on that branch until it merges, so
      `main`'s next decision takes number 10. Its migrations `e5c1a9d3f7b2` →
      `b7d2f4a9c1e3` → `d4a8c2e6f1b9` → `f3b9d1a7c5e2` → `c8e4a6b2d0f7` → `a6d2f8c4e0b3` →
@@ -180,7 +189,7 @@ gates are green and it is pushed.
 - §8, the ComfyUI page rework, so prompts are easier to categorize and the prompt library
   easier to use (the user's call, 2026-11-04: it lands before the merge). Scoped with the
   user on 2026-11-05 and the mockup approved; the *what* is
-  [comfy-automation-plan/README.md § 8](comfy-automation-plan/README.md#8-the-comfyui-page-rework-planned).
+  [comfy-automation-plan/README.md § 8](comfy-automation-plan/README.md#8-the-comfyui-page-rework-landed).
   Its open questions were ruled by the user on 2026-11-05.
   - [x] §8a, the layout, and §8b, the plan rail, folder tree and grouped table (2026-11-05).
     What each delivered is the plan's § Landed stages.
@@ -188,6 +197,8 @@ gates are green and it is pushed.
     (2026-11-05). What it delivered is the plan's § 8c.
   - [x] §8d: the Add menu, the selection bar, the paste dialog on `ModalShell`
     (2026-11-05). What it delivered is the plan's § 8d.
+  - [x] §8 review fixes (2026-11-05), under four rulings by the user that day: the plan's
+    [§ Review fixes](comfy-automation-plan/README.md#review-fixes-2026-11-05).
 - [ ] Merge: rebase onto `main`, re-parent the first migration onto M4's head if M4 merged
   first, run every gate, open the PR. The ComfyUI docs moved behind a hub on this branch, so
   any doc `main` has added since that names an old path (comfy-prompts.md, comfyui-sync.md, or

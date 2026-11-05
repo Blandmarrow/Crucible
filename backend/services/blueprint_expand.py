@@ -18,7 +18,7 @@ import re
 from dataclasses import dataclass, field
 
 from backend.schemas.comfy_blueprint import BlueprintSpec, CombineItem, Entity, Scenario
-from backend.utils import slugify_filename
+from backend.utils import SUBFOLDER_MAX_LEN, slugify_filename
 
 # Rows one Apply may add: the default, and the most an explicit override allows.
 DEFAULT_ROW_CAP = 2_000
@@ -307,8 +307,8 @@ def _build(spec: BlueprintSpec, p: _Prepared, seed: int, axis_slugs, out: Expans
         slugs = {axis: _SLUG_JOIN.join(axis_slugs[axis][e.id] for e in group) for axis, group in ents.items()}
         path = _PLACEHOLDER_RE.sub(lambda m: slugs[m.group(1)], p.raw_path)
         path = "/".join(seg.strip() for seg in path.replace("\\", "/").split("/"))
-        if len(path) > 512:
-            out.errors.append(f"Scenario '{label}' makes folder '{path[:60]}…', longer than 512 characters")
+        if len(path) > SUBFOLDER_MAX_LEN:
+            out.errors.append(f"Scenario '{label}' makes folder '{path[:60]}…', longer than {SUBFOLDER_MAX_LEN} characters")
             return None
         leaves.append(Leaf(
             scenario=sc.name,

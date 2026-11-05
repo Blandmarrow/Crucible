@@ -271,6 +271,9 @@ def _subfolder_parts(s: str) -> list[str]:
     return [p for p in s.replace("\\", "/").split("/") if p and p != "."]
 
 
+SUBFOLDER_MAX_LEN = 512  # the longest subfolder path a blueprint leaf or a folder move may make
+
+
 def normalize_subfolder(s: str) -> str:
     """Normalize a subfolder path: strip leading/trailing slashes, reject '..' segments.
 

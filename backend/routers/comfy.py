@@ -23,6 +23,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import String, delete as sa_delete, func, literal, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
@@ -39,6 +40,7 @@ from backend.services.comfy_library import (
     in_category,
     normalize_category,
     plan_category_move,
+    remap_category,
 )
 from backend.services.comfy_service import (
     MAX_CONSECUTIVE_CONNECT_ERRORS,
@@ -57,6 +59,7 @@ from backend.services.threshold_service import get_thresholds
 from backend.utils import (
     chunked,
     REGEX_TIMEOUT_SECONDS,
+    SUBFOLDER_MAX_LEN,
     compile_user_regex,
     drop_declared_paths,
     join_subfolder,
@@ -411,14 +414,29 @@ async def _folder_state(db: AsyncSession, plan: ComfyPlan) -> tuple[set[str], li
 
 
 @contextlib.asynccontextmanager
-async def _folder_write_guard(db: AsyncSession, plan_id: str):
-    """Apply's guard, for a folder write: under the plan lock, refuse while an automated
-    run is live or a row job (run, prompt generation, rewrite) is queued or running."""
+async def _plan_write_guard(db: AsyncSession, plan_id: str):
+    """Apply's guard, for a folder write or a delete: under the plan lock, refuse while an
+    automated run is live or a row job (run, prompt generation, rewrite) is queued or
+    running. Not re-entrant: never take `_plan_lock` for the same plan inside it."""
     async with _plan_lock(plan_id):
         await _refuse_live_run(db, plan_id)
         if await _plan_job_active(db, plan_id, _ROW_JOB_TYPES):
             raise HTTPException(409, "A run, prompt-generation or rewrite job for this plan is queued or running — wait for it to finish")
         yield
+
+
+async def _commit_plan_unique(db: AsyncSession, name: str, *, flush: bool = False) -> None:
+    """Commit (or, with `flush`, only flush), turning a lost race on the plan-name unique
+    index into the pre-check's 400. The index fires at the *first* flush of the new plan, so
+    a route that flushes before its commit (`duplicate_plan`) must guard that flush too."""
+    try:
+        if flush:
+            await db.flush()
+        else:
+            await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(400, f"Plan '{name}' already exists in this dataset")
 
 
 def _plan_summary(plan: ComfyPlan, status_counts: dict[str, int]) -> dict:
@@ -902,6 +920,12 @@ async def move_library_category(
     moves, merges = plan_category_move(
         ((p.id, p.category, p.text) for p in prompts), path, new_path
     )
+    longest = max(
+        (len(remap_category(p.category, path, new_path)) for p in prompts if in_category(p.category, path)),
+        default=0,
+    )
+    if longest > CATEGORY_MAX_LEN:
+        raise HTTPException(400, f"Moving it makes a category path longer than {CATEGORY_MAX_LEN} characters")
     merge_ids = set(merges)
     for p in prompts:
         if p.id in merge_ids:
@@ -976,7 +1000,7 @@ async def create_plan(body: PlanCreate, db: AsyncSession = Depends(get_db)):
         output_is_synthetic=body.output_is_synthetic,
     )
     db.add(plan)
-    await db.commit()
+    await _commit_plan_unique(db, body.name)
     return _plan_out(plan)
 
 
@@ -1034,9 +1058,12 @@ async def update_plan(plan_id: str, body: PlanUpdate, db: AsyncSession = Depends
 
 @router.delete("/plans/{plan_id}", status_code=204)
 async def delete_plan(plan_id: str, db: AsyncSession = Depends(get_db)):
+    """Refused whenever a folder write is: a live run/prompt/rewrite job, or a running or
+    paused automated Run."""
     plan = await _get_plan(db, plan_id)
-    await db.delete(plan)
-    await db.commit()
+    async with _plan_write_guard(db, plan_id):
+        await db.delete(plan)
+        await db.commit()
 
 
 @router.post("/plans/{plan_id}/duplicate")
@@ -1061,7 +1088,7 @@ async def duplicate_plan(plan_id: str, body: PlanDuplicateRequest, db: AsyncSess
         declared_folders=list(src.declared_folders or []),
     )
     db.add(plan)
-    await db.flush()
+    await _commit_plan_unique(db, body.name, flush=True)
     leaf_map: dict[str, str] = {}
     src_bp = (await db.execute(select(ComfyBlueprint).where(ComfyBlueprint.plan_id == plan_id))).scalars().first()
     if src_bp:
@@ -1100,7 +1127,7 @@ async def duplicate_plan(plan_id: str, body: PlanDuplicateRequest, db: AsyncSess
             ))
         if rows:
             counts["pending"] = len(rows)
-    await db.commit()
+    await _commit_plan_unique(db, body.name)
     return _plan_summary(plan, counts)
 
 
@@ -1110,7 +1137,7 @@ async def create_folder(plan_id: str, body: FolderPathRequest, db: AsyncSession 
     path = normalize_subfolder(body.path)
     if not path:
         raise HTTPException(400, "Folder name is required")
-    async with _folder_write_guard(db, plan_id):
+    async with _plan_write_guard(db, plan_id):
         # Loaded before the lock: re-read, or two writes racing on it lose one's folders.
         await db.refresh(plan, ["declared_folders"])
         existing, declared = await _folder_state(db, plan)
@@ -1131,13 +1158,19 @@ async def move_folder(plan_id: str, body: FolderMoveRequest, db: AsyncSession = 
         raise HTTPException(400, "Folder path and new path are required")
     if new_path == path or new_path.startswith(path + "/"):
         raise HTTPException(400, "A folder cannot be moved onto itself or into itself")
-    async with _folder_write_guard(db, plan_id):
+    async with _plan_write_guard(db, plan_id):
         await db.refresh(plan, ["declared_folders"])
         existing, declared = await _folder_state(db, plan)
         if path not in existing:
             raise HTTPException(404, f"Folder '{path}' not found")
         if new_path in existing:
             raise HTTPException(409, f"Folder '{new_path}' already exists")
+        longest = max(
+            len(new_path) + len(p) - len(path)
+            for p in existing if p == path or p.startswith(path + "/")
+        )
+        if longest > SUBFOLDER_MAX_LEN:
+            raise HTTPException(400, f"Moving it makes a folder path longer than {SUBFOLDER_MAX_LEN} characters")
         await _refuse_linked_subtree(db, plan_id, path)
         exact = await db.execute(
             update(ComfyRow).where(ComfyRow.plan_id == plan_id, ComfyRow.subfolder == path).values(subfolder=new_path)
@@ -1160,7 +1193,7 @@ async def delete_folder(plan_id: str, body: FolderPathRequest, db: AsyncSession 
     path = normalize_subfolder(body.path)
     if not path:
         raise HTTPException(400, "Folder path is required")
-    async with _folder_write_guard(db, plan_id):
+    async with _plan_write_guard(db, plan_id):
         await db.refresh(plan, ["declared_folders"])
         existing, declared = await _folder_state(db, plan)
         if path not in existing:
@@ -1282,7 +1315,6 @@ async def _refuse_during_rewrite(db: AsyncSession, plan_id: str) -> None:
 
 
 _RUN_LIVE_FOLDER_MSG = "This plan is running — change folders when the run finishes"
-_RUN_LIVE_DELETE_MSG = "This plan is running — delete rows when the run finishes"
 
 
 async def _refuse_folder_change_during_run(db: AsyncSession, plan_id: str) -> None:
@@ -1309,10 +1341,14 @@ async def _next_sort_order(db: AsyncSession, plan_id: str) -> int:
 
 @router.post("/plans/{plan_id}/rows")
 async def create_row(plan_id: str, body: RowCreate, db: AsyncSession = Depends(get_db)):
+    """Add one row. Refused under a live automated Run, as `rows/bulk` and `rows/copy` are:
+    its next pass would take the row as its own."""
     await _get_plan(db, plan_id)
-    row = ComfyRow(plan_id=plan_id, sort_order=await _next_sort_order(db, plan_id), values=body.values)
-    db.add(row)
-    await db.commit()
+    async with _plan_lock(plan_id):
+        await _refuse_live_run(db, plan_id)
+        row = ComfyRow(plan_id=plan_id, sort_order=await _next_sort_order(db, plan_id), values=body.values)
+        db.add(row)
+        await db.commit()
     return _row_out(row)
 
 
@@ -1324,13 +1360,18 @@ async def bulk_add_rows(plan_id: str, body: BulkLinesRequest, db: AsyncSession =
         raise HTTPException(400, NO_PROMPT_PIN_MSG)
     subfolder = normalize_subfolder(body.subfolder)
     lines = [ln.strip() for ln in body.lines if ln.strip()]
-    order = await _next_sort_order(db, plan_id)
-    for i, line in enumerate(lines):
-        db.add(ComfyRow(
-            plan_id=plan_id, sort_order=order + i, subfolder=subfolder,
-            values={prompt_alias: line},
-        ))
-    await db.commit()
+    # Under the plan lock, so the check and the insert are one step for this route. An
+    # automated Run is created by `run_service.start_run` under the dataset lock, not this
+    # one, so a Run starting in that gap is not excluded: the same window Apply has.
+    async with _plan_lock(plan_id):
+        await _refuse_live_run(db, plan_id)
+        order = await _next_sort_order(db, plan_id)
+        for i, line in enumerate(lines):
+            db.add(ComfyRow(
+                plan_id=plan_id, sort_order=order + i, subfolder=subfolder,
+                values={prompt_alias: line},
+            ))
+        await db.commit()
     return {"created": len(lines)}
 
 
@@ -1383,12 +1424,11 @@ async def update_row(row_id: str, body: RowUpdate, db: AsyncSession = Depends(ge
 
 @router.post("/plans/{plan_id}/rows/delete")
 async def delete_rows(plan_id: str, body: RowIdsRequest, db: AsyncSession = Depends(get_db)):
-    """Refused while a `comfy_generate` job is live: the run holds the rows it loaded at
+    """Refused whenever a folder write is (`_plan_write_guard`): a live run, prompt or
+    rewrite job, or a running or paused automated Run. A run holds the rows it loaded at
     start and commits `status` on each in turn, so deleting one under it fails the job."""
     await _get_plan(db, plan_id)
-    async with _plan_lock(plan_id):
-        if await _plan_job_active(db, plan_id, ("comfy_generate",)):
-            raise HTTPException(409, _RUN_LIVE_DELETE_MSG)
+    async with _plan_write_guard(db, plan_id):
         rows: list[ComfyRow] = []
         for chunk in chunked(list(dict.fromkeys(body.row_ids))):
             rows.extend((await db.execute(
@@ -1423,7 +1463,7 @@ async def place_rows_endpoint(plan_id: str, body: RowPlaceRequest, db: AsyncSess
 
     A folder change takes `set_rows_subfolder`'s rules — the run guard, and `linked` for
     rows the blueprint counts; a skipped row neither moves folder nor changes place. The
-    plan lock is taken once; never nest `_folder_write_guard` in it (not re-entrant).
+    plan lock is taken once; never nest `_plan_write_guard` in it (not re-entrant).
     """
     await _get_plan(db, plan_id)
     subfolder = normalize_subfolder(body.subfolder) if body.subfolder is not None else None
@@ -1497,7 +1537,8 @@ async def copy_rows(plan_id: str, body: RowCopyRequest, db: AsyncSession = Depen
 
     A move also deletes the source rows, so it takes the source's folder-write checks
     inline: no automated run, no row job, no running row, and `linked` for rows the
-    source's blueprint counts. A copy has no guard on the target, like `rows/bulk`.
+    source's blueprint counts. Either way the **target** refuses while it has a running or
+    paused automated Run, like Apply and `rows/bulk`; copying *from* such a plan is fine.
     Each plan's lock is taken once, in id order: `asyncio.Lock` is not re-entrant.
     """
     if body.source_plan_id == plan_id:
@@ -1522,7 +1563,9 @@ async def copy_rows(plan_id: str, body: RowCopyRequest, db: AsyncSession = Depen
         if len(rows) != len(wanted):
             raise HTTPException(400, "row_ids must belong to the source plan")
         rows.sort(key=lambda r: (r.sort_order, r.created_at))
-        skipped = unlinked = 0
+        await _refuse_live_run(db, target.id)
+        skipped_linked = skipped_no_prompt = unlinked = 0
+        linked_moved: set[str] = set()
         if body.move:
             await _refuse_live_run(db, source.id)
             if await _plan_job_active(db, source.id, _ROW_JOB_TYPES):
@@ -1534,10 +1577,10 @@ async def copy_rows(plan_id: str, body: RowCopyRequest, db: AsyncSession = Depen
             if n_linked and body.linked == "refuse":
                 raise HTTPException(409, _linked_refusal(n_linked))
             if body.linked == "skip":
-                skipped = n_linked
+                skipped_linked = n_linked
                 rows = [r for r in rows if r.leaf_id not in linked_ids]
             else:
-                unlinked = n_linked
+                linked_moved = {r.id for r in rows if r.leaf_id in linked_ids}
         workflow = source.workflow_json or {}
         pinned = source.pinned_params or []
         order = await _next_sort_order(db, plan_id)
@@ -1545,7 +1588,7 @@ async def copy_rows(plan_id: str, body: RowCopyRequest, db: AsyncSession = Depen
         for r in rows:
             prompt = (effective_prompt(workflow, pinned, r.values or {}) or "").strip()
             if not prompt:
-                skipped += 1
+                skipped_no_prompt += 1
                 continue
             values = {a: copy.deepcopy(v) for a, v in (r.values or {}).items() if a in carried}
             values[target_prompt] = prompt
@@ -1556,9 +1599,17 @@ async def copy_rows(plan_id: str, body: RowCopyRequest, db: AsyncSession = Depen
             ))
             done += 1
             if body.move:
+                if r.id in linked_moved:
+                    unlinked += 1
                 await db.delete(r)
         await db.commit()
-    return {"moved" if body.move else "copied": done, "skipped": skipped, "unlinked": unlinked}
+    return {
+        "moved" if body.move else "copied": done,
+        "skipped": skipped_no_prompt + skipped_linked,
+        "skipped_no_prompt": skipped_no_prompt,
+        "skipped_linked": skipped_linked,
+        "unlinked": unlinked,
+    }
 
 
 @router.post("/plans/{plan_id}/rows/set-value")
@@ -2756,6 +2807,9 @@ async def _start_run(
                     "current_item": current,
                     "message": message,
                     "dataset_id": ds.id,
+                    # The page's busy set keys on it, so a run it did not start (another
+                    # tab, a reload, an automated Run's stage) still locks its controls.
+                    "plan_id": plan_id,
                 })
 
             for i, row in enumerate(run_rows):

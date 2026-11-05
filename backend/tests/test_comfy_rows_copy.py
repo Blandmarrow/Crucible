@@ -85,7 +85,8 @@ def test_copy_keeps_folder_and_only_meaningful_values(tmp_path):
 
             r = await _copy(env, target, source_plan_id=source, row_ids=[r2, empty, r1])
             assert r.status_code == 200, r.text
-            assert r.json() == {"copied": 2, "skipped": 1, "unlinked": 0}
+            assert r.json() == {"copied": 2, "skipped": 1, "skipped_no_prompt": 1,
+                                "skipped_linked": 0, "unlinked": 0}
 
             rows = await _rows(env, target)
             assert [x["values"] for x in rows] == [
@@ -142,7 +143,8 @@ def test_move_deletes_the_source_rows_and_takes_its_guards(tmp_path):
                 (await db.get(BackgroundJob, job_id)).status = "completed"
                 await db.commit()
             r = await _copy(env, target, source_plan_id=source, row_ids=[go_row], move=True)
-            assert r.json() == {"moved": 1, "skipped": 0, "unlinked": 0}
+            assert r.json() == {"moved": 1, "skipped": 0, "skipped_no_prompt": 0,
+                                "skipped_linked": 0, "unlinked": 0}
             assert {x["id"] for x in await _rows(env, source)} == {keep, busy}
             assert [(x["values"]["prompt"], x["subfolder"]) for x in await _rows(env, target)] == [
                 ("keep", ""), ("go", "a"),
@@ -163,10 +165,12 @@ def test_move_applies_linked_modes_to_source_blueprint_rows(tmp_path):
             r = await _copy(env, target, **body)
             assert r.status_code == 409 and "1 of these rows" in r.json()["detail"]
             r = await _copy(env, target, **body, linked="skip")
-            assert r.json() == {"moved": 1, "skipped": 1, "unlinked": 0}
+            assert r.json() == {"moved": 1, "skipped": 1, "skipped_no_prompt": 0,
+                                "skipped_linked": 1, "unlinked": 0}
             assert [x["id"] for x in await _rows(env, source)] == [linked, again]
             r = await _copy(env, target, **{**body, "row_ids": [linked]}, linked="unlink")
-            assert r.json() == {"moved": 1, "skipped": 0, "unlinked": 1}
+            assert r.json() == {"moved": 1, "skipped": 0, "skipped_no_prompt": 0,
+                                "skipped_linked": 0, "unlinked": 1}
             assert [x["id"] for x in await _rows(env, source)] == [again]
             # A copy never asks: the source keeps its row and its link.
             r = await _copy(env, target, source_plan_id=source, row_ids=[again])

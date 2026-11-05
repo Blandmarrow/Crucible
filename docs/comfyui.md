@@ -17,9 +17,12 @@ Optionally, install the **CrucibleBridge** extension into ComfyUI so **Sync from
 
 A **plan** holds one workflow template, the parameters pinned on it, and a queue of rows. A dataset can have as many plans as you like — typically one per workflow, or one per experiment.
 
-- **+ New plan** creates one; plan names are unique within a dataset. **Rename** and **Delete** act on the selected plan (deleting a plan discards its rows, but never the images it generated).
+- Plans are listed on the left of the **Rows** section, each with its row count. A blue dot means it is running, a red one that some rows failed. Click a plan to open it.
+- **New plan** creates one; plan names are unique within a dataset. A plan's **⋯** menu has **Rename…**, **Duplicate…** and **Delete…**. Deleting a plan discards its rows, but never the images it generated.
+- **Duplicate…** copies the workflow, the pins, the folders and the blueprint into a new plan, and its rows too if you leave **Include rows** ticked. Copied rows start again as pending. Runs and images are not copied.
 - The plan splits into three sections: **Rows** (the queue), **Workflow & Pins** (the template) and **Blueprint** (a way to fill the queue, below).
-- The plan bar, the section tabs and the **Run** bar stay at the top of the page as you scroll, on every section.
+- The plan's name, the section tabs and the **Run** bar stay at the top of the page as you scroll, on every section.
+- The page remembers the plan and section you had open in each dataset.
 
 ## Loading a workflow
 
@@ -74,6 +77,12 @@ From the **Rows** toolbar:
 The **Blueprint** tab is not a toolbar button but its own section of the plan. Describe the whole dataset once (characters, places, camera angles, alone and in pairs) and it expands into rows, each already filed in its folder → [details](comfy-structured.md). To take those rows on through scoring, captioning and export in one press, see [Automated Runs](runs.md).
 
 Each row has its own **Folder**, the leftmost column, which decides where that row's images are filed — so one run can produce a whole folder structure instead of a single pile. Type a path like `salt-fen/iron-knight` into the cell, or tick several rows and use **Set folder** to give them all the same one. Blank means the run's base folder. Nested paths are written with `/`, folders that do not exist yet are created as the run starts, and the images are named after the folder rather than the plan.
+
+**Folders** are listed under the plans, with a row count each. Click one to show only its rows (and its subfolders' rows), or **All rows** to show them all. The table groups rows under a header per folder, which you can fold. Above it, a filter box matches prompt text and folder names, and the status buttons show only pending, running, failed or done rows. Changing what is shown clears the selection, so an action never touches rows you cannot see.
+
+A folder's **⋯** menu (or a right-click) makes a **New folder inside…**, or does **Rename…**, **Move to…** and **Delete…**. A new folder stays in the list while it is still empty. Rename and Move take the folder's rows with them. Delete removes the folder's rows, but the images they made stay in the gallery. None of these works while the plan is running.
+
+**Rows made by the blueprint** carry a lock in their Folder cell. The blueprint counts the images in each of its folders, so moving one of those rows takes it out of the blueprint. **Set folder** asks first, and offers **Move and unlink** (the blueprint then sees its old folder as short, and the next Top up refills it), **Move hand-made rows only**, or **Cancel**. A folder holding blueprint rows cannot be renamed, moved or deleted from the list: rename it in the **Blueprint** tab instead.
 
 Cells edit in place. Editing a row's parameters after it has run resets it to pending, so it will be picked up by the next run — **changing a folder does not**, since it only affects where the *next* image goes, and a finished row keeps its image. To set one parameter column across the whole queue at once, use the ✎ in that column's header — including clearing it back to the default.
 

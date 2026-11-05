@@ -3,16 +3,42 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { apiErrorDetail } from "../../utils/apiError";
+import { ChevronDown, ChevronRight, Folder, Lock } from "lucide-react";
 import { comfyApi, coerceCellValue, type ComfyPlan, type ComfyRow, type PinnedParam } from "../../api/comfy";
+import { imagesApi } from "../../api/images";
 import { usePaneNavigate } from "../../hooks/usePaneNavigate";
+import { compareFolders } from "./folderTree";
 
 interface Props {
   plan: ComfyPlan;
+  /** The rows to show: the plan's rows after the folder, text and status filters. */
   rows: ComfyRow[];
+  /** The plan's row count before filtering, to tell "no rows yet" from "none match". */
+  totalRows: number;
   selected: Set<string>;
   onToggle: (id: string) => void;
   onToggleAll: (ids: string[], select: boolean) => void;
   runningJob: boolean;
+  /** Folder groups collapsed under their header (persisted per plan). */
+  closedGroups: Set<string>;
+  onToggleGroup: (path: string) => void;
+}
+
+type Item =
+  | { kind: "group"; path: string; rows: ComfyRow[] }
+  | { kind: "row"; row: ComfyRow };
+
+/** Group header counts: pending · running · failed · done, leaving out zeros. */
+function groupSummary(rows: ComfyRow[]): string {
+  const n = { pending: 0, running: 0, failed: 0, completed: 0 };
+  for (const r of rows) n[r.status]++;
+  const parts = [
+    n.pending && `${n.pending} pending`,
+    n.running && `${n.running} running`,
+    n.failed && `${n.failed} failed`,
+    n.completed && `${n.completed} done`,
+  ].filter(Boolean);
+  return parts.join(" · ");
 }
 
 const STATUS_BADGE: Record<ComfyRow["status"], string> = {
@@ -132,6 +158,21 @@ function FolderCell({ row, disabled, onCommit }: {
 }) {
   const value = row.subfolder ?? "";
   const [draft, setDraft] = useState<string | null>(null);
+  // A row the blueprint still counts is locked here: moving it must unlink it, which
+  // only Set folder asks about (docs/dev/comfyui/structured.md § Moving a blueprint row).
+  if (row.blueprint_linked) {
+    return (
+      <span style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
+        <Lock size={12} style={{ flexShrink: 0, color: "var(--fg-mute)" }} role="img" aria-label="From the blueprint" />
+        <input
+          className="input"
+          style={{ flex: 1, minWidth: 0, fontSize: 12, height: 26, padding: "0 6px" }}
+          type="text" value={value} placeholder="(root)" readOnly
+          title="Made by the blueprint, which counts this folder. Use Set folder to move it out."
+        />
+      </span>
+    );
+  }
   return (
     <input
       className="input"
@@ -154,7 +195,9 @@ function FolderCell({ row, disabled, onCommit }: {
   );
 }
 
-export default function ComfyRowsTable({ plan, rows, selected, onToggle, onToggleAll, runningJob }: Props) {
+export default function ComfyRowsTable({
+  plan, rows, totalRows, selected, onToggle, onToggleAll, runningJob, closedGroups, onToggleGroup,
+}: Props) {
   const qc = useQueryClient();
   const { go } = usePaneNavigate();
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -167,10 +210,33 @@ export default function ComfyRowsTable({ plan, rows, selected, onToggle, onToggl
     return m;
   }, [plan, columns]);
 
+  // Rows grouped by folder, in tree order, with a header per group. A plan whose rows
+  // all sit in (root) shows no header: one group adds nothing.
+  const items = useMemo<Item[]>(() => {
+    const groups = new Map<string, ComfyRow[]>();
+    for (const r of rows) {
+      const g = groups.get(r.subfolder);
+      if (g) g.push(r); else groups.set(r.subfolder, [r]);
+    }
+    const paths = [...groups.keys()].sort(compareFolders);
+    if (paths.length === 1 && paths[0] === "") return rows.map((row) => ({ kind: "row", row }));
+    const out: Item[] = [];
+    for (const path of paths) {
+      const g = groups.get(path)!;
+      out.push({ kind: "group", path, rows: g });
+      if (!closedGroups.has(path)) for (const row of g) out.push({ kind: "row", row });
+    }
+    return out;
+  }, [rows, closedGroups]);
+
   const rowVirtualizer = useVirtualizer({
-    count: rows.length,
+    count: items.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => 36,
+    estimateSize: (i) => (items[i]?.kind === "group" ? 30 : 36),
+    getItemKey: (i) => {
+      const it = items[i];
+      return it.kind === "group" ? `g:${it.path}` : it.row.id;
+    },
     overscan: 10,
   });
 
@@ -229,7 +295,9 @@ export default function ComfyRowsTable({ plan, rows, selected, onToggle, onToggl
     setAllMutation.mutate({ alias: bulkPin.alias, value });
   }
 
-  const allSelected = rows.length > 0 && rows.every((r) => selected.has(r.id));
+  // Select-all covers the rows on show: those in a folded group are left out.
+  const shownIds = items.flatMap((it) => (it.kind === "row" ? [it.row.id] : []));
+  const allSelected = shownIds.length > 0 && shownIds.every((id) => selected.has(id));
   // Grid: checkbox | folder | per-row columns (prompt wider) | status | image.
   // The folder sits leftmost because it is row identity rather than a parameter: it
   // stays put as pins are added and removed. Built once and consumed by the header
@@ -264,7 +332,7 @@ export default function ComfyRowsTable({ plan, rows, selected, onToggle, onToggl
       }}>
         <input
           type="checkbox" className="checkbox" checked={allSelected}
-          onChange={(e) => onToggleAll(rows.map((r) => r.id), e.target.checked)}
+          onChange={(e) => onToggleAll(shownIds, e.target.checked)}
         />
         <span
           style={{ textTransform: "uppercase", letterSpacing: ".06em" }}
@@ -318,16 +386,49 @@ export default function ComfyRowsTable({ plan, rows, selected, onToggle, onToggl
       <div ref={scrollRef} style={{ height: "52vh", overflowY: "auto", background: "var(--surface-1)" }}>
         {rows.length === 0 ? (
           <p style={{ fontSize: 12, color: "var(--fg-mute)", padding: 16 }}>
-            No rows yet — add one, or paste a list of prompts.
+            {totalRows === 0
+              ? "No rows yet — add one, or paste a list of prompts."
+              : "No rows match. Clear the filter, or pick another folder."}
           </p>
         ) : (
           <div style={{ height: rowVirtualizer.getTotalSize(), position: "relative" }}>
             {rowVirtualizer.getVirtualItems().map((vi) => {
-              const row = rows[vi.index];
+              const item = items[vi.index];
+              if (item.kind === "group") {
+                const open = !closedGroups.has(item.path);
+                const label = item.path || "(root)";
+                return (
+                  // No checkbox, textarea or "(root)"-placeholder input in a header: the
+                  // e2e counts those in this table as row cells.
+                  <div
+                    key={vi.key}
+                    data-index={vi.index}
+                    ref={rowVirtualizer.measureElement}
+                    className="comfy-group-h"
+                    data-testid="comfy-group"
+                    data-folder={item.path}
+                    style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${vi.start}px)` }}
+                  >
+                    <button
+                      className="comfy-rail-twisty"
+                      aria-label={`${open ? "Collapse" : "Expand"} folder ${label}`}
+                      aria-expanded={open}
+                      onClick={() => onToggleGroup(item.path)}
+                    >
+                      {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                    </button>
+                    <Folder size={13} style={{ flexShrink: 0, color: item.path ? "var(--accent)" : "var(--fg-mute)" }} />
+                    <span className="mono" style={{ fontWeight: 500 }}>{label}</span>
+                    <span style={{ color: "var(--fg-mute)", fontSize: 11.5 }}>{groupSummary(item.rows)}</span>
+                    {item.rows.some((r) => r.blueprint_linked) && <span className="comfy-pill">from blueprint</span>}
+                  </div>
+                );
+              }
+              const row = item.row;
               const rowBusy = runningJob && row.status === "running";
               return (
                 <div
-                  key={row.id}
+                  key={vi.key}
                   data-index={vi.index}
                   ref={rowVirtualizer.measureElement}
                   style={{
@@ -378,7 +479,8 @@ export default function ComfyRowsTable({ plan, rows, selected, onToggle, onToggl
                   {row.image_id ? (
                     <button
                       className="btn ghost sm"
-                      style={{ fontSize: 11, padding: "1px 8px" }}
+                      aria-label={row.image_ids.length > 1 ? `View (${row.image_ids.length})` : "View"}
+                      style={{ fontSize: 11, padding: "1px 4px", gap: 4, display: "inline-flex", alignItems: "center" }}
                       title={row.image_ids.length > 1 ? `${row.image_ids.length} images — opens the first` : "Open image"}
                       onClick={() =>
                         go(`/datasets/${plan.dataset_id}/image/${row.image_id}`, {
@@ -386,7 +488,11 @@ export default function ComfyRowsTable({ plan, rows, selected, onToggle, onToggl
                         })
                       }
                     >
-                      View{row.image_ids.length > 1 ? ` (${row.image_ids.length})` : ""}
+                      <img
+                        src={imagesApi.thumbnailUrl(row.image_id)} alt="" loading="lazy"
+                        style={{ width: 24, height: 24, objectFit: "cover", borderRadius: 3, flexShrink: 0 }}
+                      />
+                      {row.image_ids.length > 1 ? `+${row.image_ids.length - 1}` : ""}
                     </button>
                   ) : (
                     <span style={{ color: "var(--fg-dim)", fontSize: 11 }}>—</span>
@@ -408,7 +514,7 @@ export default function ComfyRowsTable({ plan, rows, selected, onToggle, onToggl
             <div className="panel-h"><h3>Set “{bulkPin.alias}” on all rows</h3></div>
             <div className="panel-b">
               <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "0 0 8px" }}>
-                Applies to all {rows.length} row{rows.length !== 1 ? "s" : ""} of{" "}
+                Applies to all {totalRows} row{totalRows !== 1 ? "s" : ""} of the plan, whatever the filter shows, for{" "}
                 <span className="mono">#{bulkPin.node_id} {plan.workflow_json[bulkPin.node_id]?.class_type ?? "?"} · {bulkPin.input}</span>.
                 Completed and failed rows whose value changes reset to pending. Blank cells currently
                 fall back to: <span className="mono">{fallbackLabel(plan, bulkPin) || "—"}</span>

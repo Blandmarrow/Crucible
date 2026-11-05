@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
 import { useJobSSE } from "../hooks/useSSE";
 import { useJobStore } from "../store/jobStore";
-import { comfyApi } from "../api/comfy";
+import { comfyApi, type ComfyPlanSummary, type ComfyRow } from "../api/comfy";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import BlueprintPanel from "../components/comfy/BlueprintPanel";
 import WorkflowPinPanel from "../components/comfy/WorkflowPinPanel";
@@ -17,10 +17,43 @@ import BulkEditRowsModal from "../components/comfy/BulkEditRowsModal";
 import PromptLibraryModal from "../components/comfy/PromptLibraryModal";
 import SaveToLibraryModal from "../components/comfy/SaveToLibraryModal";
 import SetRowFolderModal from "../components/comfy/SetRowFolderModal";
+import ComfyPlanRail from "../components/comfy/ComfyPlanRail";
+import ComfyFolderTree from "../components/comfy/ComfyFolderTree";
+import { inFolder, planFolderItems, type FolderFilter } from "../components/comfy/folderTree";
+import FolderNameModal from "../components/comfy/FolderNameModal";
+import DuplicatePlanModal from "../components/comfy/DuplicatePlanModal";
+import MoveSubfolderModal from "../components/gallery/MoveSubfolderModal";
+import { rowsViewKey, usePlanRowsView } from "../components/comfy/rowsView";
 import { apiErrorDetail } from "../utils/apiError";
-import { clearPersisted } from "../utils/persistentState";
-import { COMFY_BLUEPRINT_SECTIONS_KEY } from "../constants/storage";
+import { clearPersisted, datasetScopedKey, loadPersisted, savePersisted } from "../utils/persistentState";
+import { COMFY_BLUEPRINT_SECTIONS_KEY, COMFY_PAGE_STATE_PREFIX } from "../constants/storage";
 import { useStickyOffsets } from "../hooks/useStickyOffsets";
+import type { SubfolderNode } from "../utils/subfolderTree";
+
+type Section = "rows" | "workflow" | "blueprint";
+type StatusFilter = "all" | ComfyRow["status"];
+
+/** The last plan and tab, per dataset. The plan id is checked against the plan list
+ *  before use, so a deleted plan falls back to the first. */
+interface PageState { planId: string | null; section: Section }
+const PAGE_DEFAULTS: PageState = { planId: null, section: "rows" };
+
+function loadPageState(datasetId: string | undefined): PageState {
+  if (!datasetId) return { ...PAGE_DEFAULTS };
+  const v = loadPersisted(datasetScopedKey(COMFY_PAGE_STATE_PREFIX, datasetId), PAGE_DEFAULTS);
+  return {
+    planId: typeof v.planId === "string" ? v.planId : null,
+    section: v.section === "workflow" || v.section === "blueprint" ? v.section : "rows",
+  };
+}
+
+const STATUS_CHIPS: { value: StatusFilter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "pending", label: "Pending" },
+  { value: "running", label: "Running" },
+  { value: "failed", label: "Failed" },
+  { value: "completed", label: "Done" },
+];
 
 /** Hooks can't run in loops — render one of these per active run to keep a
  *  dedicated SSE subscription per job. */
@@ -33,8 +66,15 @@ export default function ComfyPage() {
   const datasetId = usePaneDatasetId();
   const qc = useQueryClient();
 
-  const [planId, setPlanId] = useState<string | null>(null);
-  const [section, setSection] = useState<"rows" | "workflow" | "blueprint">("rows");
+  const [planId, setPlanId] = useState<string | null>(() => loadPageState(datasetId).planId);
+  const [section, setSection] = useState<Section>(() => loadPageState(datasetId).section);
+  // The dataset planId and section were loaded for (see the save effect below).
+  const [stateDataset, setStateDataset] = useState(datasetId);
+  // The Rows tab's filters: the folder picked in the tree, a text match and a status.
+  // Not persisted; a plan switch resets them.
+  const [folderFilter, setFolderFilter] = useState<FolderFilter>(null);
+  const [textFilter, setTextFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [subfolder, setSubfolder] = useState("");
   const [setCaption, setSetCaption] = useState(true);
@@ -44,12 +84,12 @@ export default function ComfyPage() {
   // currently selected.
   const [activeRuns, setActiveRuns] = useState<Map<string, string>>(new Map());
 
-  // Modals / inline forms
-  const [showCreate, setShowCreate] = useState(false);
-  const [newPlanName, setNewPlanName] = useState("");
-  const [renaming, setRenaming] = useState(false);
-  const [renameValue, setRenameValue] = useState("");
-  const [confirmDeletePlan, setConfirmDeletePlan] = useState(false);
+  // Modals
+  const [confirmDeletePlan, setConfirmDeletePlan] = useState<ComfyPlanSummary | null>(null);
+  const [duplicating, setDuplicating] = useState<ComfyPlanSummary | null>(null);
+  const [folderName, setFolderName] = useState<{ mode: "new" | "rename"; path: string } | null>(null);
+  const [movingFolder, setMovingFolder] = useState<SubfolderNode | null>(null);
+  const [deletingFolder, setDeletingFolder] = useState<SubfolderNode | null>(null);
   const [confirmDeleteRows, setConfirmDeleteRows] = useState(false);
   const [showPaste, setShowPaste] = useState(false);
   const [pasteText, setPasteText] = useState("");
@@ -90,20 +130,41 @@ export default function ComfyPage() {
   useEffect(() => {
     if (datasetId === prevDatasetId.current) return;
     prevDatasetId.current = datasetId;
-    setPlanId(null);
+    const saved = loadPageState(datasetId);
+    setStateDataset(datasetId);
+    setPlanId(saved.planId);
+    setSection(saved.section);
+    setFolderFilter(null);
     setSelected(new Set());
     setSubfolder("");
     setActiveRuns(new Map());
     setPromptJobId(null);
   }, [datasetId]);
 
-  const { data: plans = [] } = useQuery({
+  const { data: plans = [], isPending: plansPending } = useQuery({
     queryKey: ["comfy", "plans", datasetId],
     queryFn: () => comfyApi.listPlans(datasetId!),
     enabled: !!datasetId,
   });
 
-  const effectivePlanId = planId ?? plans[0]?.id ?? null;
+  // A remembered plan is trusted only until the list first loads; after that a list
+  // without it (a plan deleted here, in another pane or before a reload) falls back to
+  // the first. Trusting it on every refetch flipped the page back to the deleted plan
+  // each time the list refreshed. A plan made here is put into the cached list at once
+  // (`addPlanToList`), so it never waits on a refetch to be known.
+  const planKnown = !!planId && (plans.some((p) => p.id === planId) || plansPending);
+  const effectivePlanId = (planKnown ? planId : null) ?? plans[0]?.id ?? null;
+
+  // Remember the plan and tab. Saved only once the state belongs to this dataset: in
+  // the render that switches a pane's dataset, planId is still the old dataset's.
+  useEffect(() => {
+    if (!datasetId || stateDataset !== datasetId) return;
+    savePersisted(datasetScopedKey(COMFY_PAGE_STATE_PREFIX, datasetId), { planId: effectivePlanId, section });
+  }, [datasetId, stateDataset, effectivePlanId, section]);
+
+  const { view: rowsView, toggle: toggleRowsView, repath: repathRowsView } = usePlanRowsView(effectivePlanId);
+  const closedFolders = useMemo(() => new Set(rowsView.closedFolders), [rowsView.closedFolders]);
+  const closedGroups = useMemo(() => new Set(rowsView.closedGroups), [rowsView.closedGroups]);
 
   const { data: plan } = useQuery({
     queryKey: ["comfy", "plan", effectivePlanId],
@@ -124,8 +185,10 @@ export default function ComfyPage() {
       const progress = activeJobs.get(jobId);
       if (!progress) continue;
       if (progress.status === "running") {
-        // Refresh row statuses as the run progresses (cheap list query, ~1 refetch/row).
+        // Refresh row statuses as the run progresses (cheap list query, ~1 refetch/row),
+        // and the plan list, whose status counts drive the rail's dot.
         qc.invalidateQueries({ queryKey: ["comfy", "rows", planId] });
+        qc.invalidateQueries({ queryKey: ["comfy", "plans", datasetId] });
       }
       if (["completed", "failed", "cancelled"].includes(progress.status)) {
         qc.invalidateQueries({ queryKey: ["comfy", "rows", planId] });
@@ -149,13 +212,17 @@ export default function ComfyPage() {
 
   // ── Mutations ──────────────────────────────────────────────────────────────
 
+  function addPlanToList(p: ComfyPlanSummary) {
+    qc.setQueryData<ComfyPlanSummary[]>(["comfy", "plans", datasetId], (old) =>
+      old && !old.some((x) => x.id === p.id) ? [...old, p] : old);
+  }
+
   const createPlanMutation = useMutation({
     mutationFn: (name: string) => comfyApi.createPlan({ dataset_id: datasetId!, name }),
     onSuccess: (p) => {
+      addPlanToList({ id: p.id, dataset_id: p.dataset_id, name: p.name, row_count: 0, status_counts: {} });
       qc.invalidateQueries({ queryKey: ["comfy", "plans", datasetId] });
-      setPlanId(p.id);
-      setShowCreate(false);
-      setNewPlanName("");
+      selectPlan(p.id);
       setSection("workflow");
       toast.success(`Plan "${p.name}" created — paste a workflow to get started`);
     },
@@ -168,23 +235,107 @@ export default function ComfyPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["comfy", "plan", effectivePlanId] });
       qc.invalidateQueries({ queryKey: ["comfy", "plans", datasetId] });
-      setRenaming(false);
       toast.success("Plan saved");
     },
     onError: (err: unknown) => toast.error(apiErrorDetail(err, "Failed to save plan")),
   });
 
-  const deletePlanMutation = useMutation({
-    mutationFn: () => comfyApi.deletePlan(effectivePlanId!),
-    onSuccess: () => {
-      // Its Blueprint sections' open state goes with it.
-      clearPersisted(`${COMFY_BLUEPRINT_SECTIONS_KEY}-${effectivePlanId}`);
+  // Rename from the rail, which may name a plan other than the one shown.
+  const renamePlanMutation = useMutation({
+    mutationFn: (vars: { planId: string; name: string }) => comfyApi.updatePlan(vars.planId, { name: vars.name }),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: ["comfy", "plan", vars.planId] });
       qc.invalidateQueries({ queryKey: ["comfy", "plans", datasetId] });
-      setPlanId(null);
-      setConfirmDeletePlan(false);
+      toast.success("Plan renamed");
+    },
+    onError: (err: unknown) => toast.error(apiErrorDetail(err, "Failed to rename plan")),
+  });
+
+  const deletePlanMutation = useMutation({
+    mutationFn: (id: string) => comfyApi.deletePlan(id),
+    onSuccess: (_data, id) => {
+      // Its Blueprint sections' open state and its rows view go with it.
+      clearPersisted(`${COMFY_BLUEPRINT_SECTIONS_KEY}-${id}`);
+      clearPersisted(rowsViewKey(id));
+      qc.invalidateQueries({ queryKey: ["comfy", "plans", datasetId] });
+      if (id === effectivePlanId) selectPlan(null);
+      setConfirmDeletePlan(null);
       toast.success("Plan deleted");
     },
     onError: () => toast.error("Failed to delete plan"),
+  });
+
+  const duplicatePlanMutation = useMutation({
+    mutationFn: (vars: { planId: string; name: string; include_rows: boolean }) =>
+      comfyApi.duplicatePlan(vars.planId, { name: vars.name, include_rows: vars.include_rows }),
+    onSuccess: (p) => {
+      addPlanToList(p);
+      qc.invalidateQueries({ queryKey: ["comfy", "plans", datasetId] });
+      setDuplicating(null);
+      selectPlan(p.id);
+      toast.success(`Duplicated as "${p.name}"`);
+    },
+    onError: (err: unknown) => toast.error(apiErrorDetail(err, "Failed to duplicate plan")),
+  });
+
+  // ── Folder tree writes. Every one is refused (409) mid-run, and a rename, move or
+  // delete of a folder the blueprint counts is refused too; the toast says why.
+  function invalidateFolders(pid: string) {
+    qc.invalidateQueries({ queryKey: ["comfy", "rows", pid] });
+    qc.invalidateQueries({ queryKey: ["comfy", "plan", pid] });
+    qc.invalidateQueries({ queryKey: ["comfy", "plans", datasetId] });
+    qc.invalidateQueries({ queryKey: ["comfy", "prompts", pid] });
+    qc.invalidateQueries({ queryKey: ["comfy", "blueprint-preview", pid] });
+    qc.invalidateQueries({ queryKey: ["comfy", "blueprint-rewrite", pid] });
+  }
+
+  // Folding a group drops its rows from the selection: Delete and Run selected must
+  // never act on rows the user cannot see (the same rule as a filter change).
+  function toggleGroup(path: string) {
+    if (!closedGroups.has(path)) {
+      setSelected((prev) => {
+        const next = new Set(prev);
+        for (const r of rows) if (r.subfolder === path) next.delete(r.id);
+        return next;
+      });
+    }
+    toggleRowsView("closedGroups", path);
+  }
+
+  const createFolderMutation = useMutation({
+    mutationFn: (vars: { planId: string; path: string }) => comfyApi.createFolder(vars.planId, vars.path),
+    onSuccess: (_data, vars) => {
+      invalidateFolders(vars.planId);
+      setFolderName(null);
+      toast.success(`Folder "${vars.path}" created`);
+    },
+    onError: (err: unknown) => toast.error(apiErrorDetail(err, "Failed to create the folder")),
+  });
+
+  const moveFolderMutation = useMutation({
+    mutationFn: (vars: { planId: string; from: string; to: string }) =>
+      comfyApi.moveFolder(vars.planId, vars.from, vars.to),
+    onSuccess: ({ updated }, vars) => {
+      invalidateFolders(vars.planId);
+      repathRowsView(vars.from, vars.to);
+      setFolderFilter((f) => (f !== null && inFolder({ subfolder: f } as ComfyRow, vars.from) ? vars.to + f.slice(vars.from.length) : f));
+      setFolderName(null);
+      setMovingFolder(null);
+      toast.success(`Moved "${vars.from}" to "${vars.to}" with ${updated} row${updated !== 1 ? "s" : ""}`);
+    },
+    onError: (err: unknown) => toast.error(apiErrorDetail(err, "Failed to move the folder")),
+  });
+
+  const deleteFolderMutation = useMutation({
+    mutationFn: (vars: { planId: string; path: string }) => comfyApi.deleteFolder(vars.planId, vars.path),
+    onSuccess: ({ deleted }, vars) => {
+      invalidateFolders(vars.planId);
+      setFolderFilter((f) => (f !== null && inFolder({ subfolder: f } as ComfyRow, vars.path) ? null : f));
+      setSelected(new Set());
+      setDeletingFolder(null);
+      toast.success(`Deleted "${vars.path}" and ${deleted} row${deleted !== 1 ? "s" : ""}`);
+    },
+    onError: (err: unknown) => toast.error(apiErrorDetail(err, "Failed to delete the folder")),
   });
 
   const addRowMutation = useMutation({
@@ -280,6 +431,37 @@ export default function ComfyPage() {
   const isRunning = runMutation.isPending || !!viewingJobId;
   const hasPromptPin = plan?.pinned_params.some((p) => p.is_prompt) ?? false;
 
+  const promptAlias = plan?.pinned_params.find((p) => p.is_prompt)?.alias;
+  const folderRows = useMemo(() => rows.filter((r) => inFolder(r, folderFilter)), [rows, folderFilter]);
+  const shownRows = useMemo(() => {
+    const q = textFilter.trim().toLowerCase();
+    return folderRows.filter((r) => {
+      if (statusFilter !== "all" && r.status !== statusFilter) return false;
+      if (!q) return true;
+      const prompt = promptAlias ? String(r.values[promptAlias] ?? "") : "";
+      return prompt.toLowerCase().includes(q) || r.subfolder.toLowerCase().includes(q);
+    });
+  }, [folderRows, textFilter, statusFilter, promptAlias]);
+  const selectedRows = useMemo(() => rows.filter((r) => selected.has(r.id)), [rows, selected]);
+  const runningPlanIds = useMemo(() => new Set(activeRuns.values()), [activeRuns]);
+
+  /** Switch plans: a new plan starts with no selection, no filter and no attached job. */
+  function selectPlan(id: string | null) {
+    setPlanId(id);
+    setSelected(new Set());
+    setPromptJobId(null);
+    setFolderFilter(null);
+    setTextFilter("");
+    setStatusFilter("all");
+  }
+
+  // A selection the filters hide would still be acted on by Set folder and Delete, so
+  // narrowing the view clears it.
+  function changeFilter(apply: () => void) {
+    apply();
+    setSelected(new Set());
+  }
+
   function toggleRow(id: string) {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -316,74 +498,19 @@ export default function ComfyPage() {
         </div>
       </div>
 
-      {/* The sticky header: the plan bar with the tabs, and the run bar on every tab. The
-          plan <select> must stay the first <select> on the page (e2e finds it that way). */}
+      {/* The sticky header: the plan's name with the tabs, and the run bar on every tab.
+          Plans are picked, made, renamed and deleted in the Rows tab's rail. */}
       <div className="comfy-head" ref={headerRef} data-testid="comfy-head">
-      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        {plans.length > 0 && (
-          <select
-            className="select"
-            value={effectivePlanId ?? ""}
-            onChange={(e) => { setPlanId(e.target.value); setSelected(new Set()); setPromptJobId(null); }}
-            style={{ minWidth: 220 }}
-          >
-            {plans.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name} ({p.row_count} row{p.row_count !== 1 ? "s" : ""})
-              </option>
-            ))}
-          </select>
-        )}
-        {showCreate ? (
-          <>
-            <input
-              className="input" autoFocus placeholder="Plan name" value={newPlanName}
-              onChange={(e) => setNewPlanName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && newPlanName.trim()) createPlanMutation.mutate(newPlanName.trim());
-                if (e.key === "Escape") { setShowCreate(false); setNewPlanName(""); }
-              }}
-              style={{ width: 200 }}
-            />
-            <button className="btn primary sm" disabled={!newPlanName.trim() || createPlanMutation.isPending}
-              onClick={() => createPlanMutation.mutate(newPlanName.trim())}>Create</button>
-            <button className="btn ghost sm" onClick={() => { setShowCreate(false); setNewPlanName(""); }}>Cancel</button>
-          </>
-        ) : (
-          <button className="btn ghost sm" onClick={() => setShowCreate(true)}>+ New plan</button>
-        )}
-        {plan && !showCreate && (
-          renaming ? (
-            <>
-              <input
-                className="input" autoFocus value={renameValue}
-                onChange={(e) => setRenameValue(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && renameValue.trim()) updatePlanMutation.mutate({ name: renameValue.trim() });
-                  if (e.key === "Escape") setRenaming(false);
-                }}
-                style={{ width: 200 }}
-              />
-              <button className="btn primary sm" disabled={!renameValue.trim() || updatePlanMutation.isPending}
-                onClick={() => updatePlanMutation.mutate({ name: renameValue.trim() })}>Save</button>
-              <button className="btn ghost sm" onClick={() => setRenaming(false)}>Cancel</button>
-            </>
-          ) : (
-            <>
-              <button className="btn ghost sm" onClick={() => { setRenameValue(plan.name); setRenaming(true); }}>Rename</button>
-              <button className="btn ghost sm" style={{ color: "var(--bad)" }} onClick={() => setConfirmDeletePlan(true)}>Delete</button>
-            </>
-          )
-        )}
-        <div style={{ flex: 1 }} />
-        {plan && (
+      {plan && (
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <span data-testid="comfy-plan-name" style={{ fontSize: 13, fontWeight: 600 }}>{plan.name}</span>
           <div className="tabs" style={{ marginBottom: 0 }}>
             <button className={`tab${section === "rows" ? " active" : ""}`} onClick={() => setSection("rows")}>Rows</button>
             <button className={`tab${section === "workflow" ? " active" : ""}`} onClick={() => setSection("workflow")}>Workflow &amp; Pins</button>
             <button className={`tab${section === "blueprint" ? " active" : ""}`} onClick={() => setSection("blueprint")}>Blueprint</button>
           </div>
-        )}
-      </div>
+        </div>
+      )}
       {plan && (
         <ComfyRunBar
           datasetId={datasetId}
@@ -404,17 +531,6 @@ export default function ComfyPage() {
       )}
       </div>
 
-      {plans.length === 0 && !showCreate && (
-        <div className="panel">
-          <div className="panel-b">
-            <p style={{ fontSize: 13, color: "var(--fg-mute)", margin: 0 }}>
-              No plans yet. A plan pairs a ComfyUI workflow (API-format export) with a queue of prompt/parameter
-              rows. Create one to get started — and set your ComfyUI server URL in Settings → ComfyUI if you
-              haven't yet.
-            </p>
-          </div>
-        </div>
-      )}
 
       {plan && section === "workflow" && (
         <WorkflowPinPanel
@@ -438,16 +554,60 @@ export default function ComfyPage() {
         />
       )}
 
-      {plan && section === "rows" && (
-        <>
+      {(section === "rows" || plans.length === 0) && (
+        <div className="comfy-rows-wrap">
+        <div className="comfy-rows-grid">
+          <aside className="comfy-rail">
+            <ComfyPlanRail
+              plans={plans}
+              activePlanId={effectivePlanId}
+              runningPlanIds={runningPlanIds}
+              onSelect={selectPlan}
+              onCreate={(name) => createPlanMutation.mutate(name)}
+              creating={createPlanMutation.isPending}
+              onRename={(id, name) => renamePlanMutation.mutate({ planId: id, name })}
+              renaming={renamePlanMutation.isPending}
+              onDuplicate={setDuplicating}
+              onDelete={setConfirmDeletePlan}
+            />
+            {plan && (
+              <ComfyFolderTree
+                rows={rows}
+                declared={plan.declared_folders ?? []}
+                selected={folderFilter}
+                onSelect={(f) => changeFilter(() => setFolderFilter(f))}
+                closed={closedFolders}
+                onToggle={(path) => toggleRowsView("closedFolders", path)}
+                busy={isRunning}
+                onNew={(parent) => setFolderName({ mode: "new", path: parent })}
+                onRename={(node) => setFolderName({ mode: "rename", path: node.path })}
+                onMove={setMovingFolder}
+                onDelete={setDeletingFolder}
+              />
+            )}
+          </aside>
+          <div style={{ minWidth: 0 }}>
+          {plans.length === 0 && (
+            <div className="panel">
+              <div className="panel-b">
+                <p style={{ fontSize: 13, color: "var(--fg-mute)", margin: 0 }}>
+                  No plans yet. A plan pairs a ComfyUI workflow (API-format export) with a queue of prompt/parameter
+                  rows. Create one to get started — and set your ComfyUI server URL in Settings → ComfyUI if you
+                  haven't yet.
+                </p>
+              </div>
+            </div>
+          )}
+          {plan && section === "rows" && (
+          <>
           <ComfyDefaultsStrip
             plan={plan}
             disabled={isRunning || updatePlanMutation.isPending}
             onSavePins={(pins) => updatePlanMutation.mutate({ pinned_params: pins })}
           />
 
-          {/* Rows toolbar */}
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+          {/* Rows toolbar. It wraps: beside the rail it no longer fits one line (§8d trims it). */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
             <button className="btn ghost sm" onClick={() => addRowMutation.mutate()} disabled={plan.pinned_params.length === 0}>+ Add row</button>
             <button className="btn ghost sm" onClick={() => setShowPaste(true)}
               disabled={!hasPromptPin}
@@ -500,15 +660,53 @@ export default function ComfyPage() {
             </button>
           </div>
 
+          {/* Filters: outside the rows table, whose inputs the e2e counts as row cells. */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+            <input
+              className="input" aria-label="Filter prompts" placeholder="Filter prompts and folders…"
+              style={{ width: 240, height: 28, fontSize: 12 }}
+              value={textFilter}
+              onChange={(e) => { const v = e.target.value; changeFilter(() => setTextFilter(v)); }}
+            />
+            <div role="group" aria-label="Status" style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+              {STATUS_CHIPS.map((c) => {
+                const n = c.value === "all" ? folderRows.length : folderRows.filter((r) => r.status === c.value).length;
+                const on = statusFilter === c.value;
+                return (
+                  <button
+                    key={c.value}
+                    className={`btn sm ${on ? "primary" : "ghost"}`}
+                    aria-pressed={on}
+                    onClick={() => changeFilter(() => setStatusFilter(c.value))}
+                  >
+                    {c.label} <span className="mono" style={{ opacity: 0.7 }}>{n}</span>
+                  </button>
+                );
+              })}
+            </div>
+            {folderFilter !== null && (
+              <span style={{ fontSize: 12, color: "var(--fg-mute)" }}>
+                in <span className="mono">{folderFilter || "(root)"}</span>
+              </span>
+            )}
+          </div>
+
           <ComfyRowsTable
             plan={plan}
-            rows={rows}
+            rows={shownRows}
+            totalRows={rows.length}
             selected={selected}
             onToggle={toggleRow}
             onToggleAll={toggleAll}
             runningJob={isRunning}
+            closedGroups={closedGroups}
+            onToggleGroup={toggleGroup}
           />
-        </>
+          </>
+          )}
+          </div>
+        </div>
+        </div>
       )}
 
       {/* Paste prompts modal */}
@@ -594,21 +792,68 @@ export default function ComfyPage() {
         <SetRowFolderModal
           planId={plan.id}
           datasetId={plan.dataset_id}
-          rowIds={[...selected]}
+          rows={selectedRows}
           onClose={() => setShowSetFolder(false)}
         />
       )}
 
-      {confirmDeletePlan && plan && (
+      {confirmDeletePlan && (
         <ConfirmDialog
           title="Delete plan"
-          message={`Delete plan "${plan.name}" and its ${rows.length} row${rows.length !== 1 ? "s" : ""}? Generated images already imported into the dataset are kept.`}
+          message={`Delete plan "${confirmDeletePlan.name}" and its ${confirmDeletePlan.row_count} row${confirmDeletePlan.row_count !== 1 ? "s" : ""}? Generated images already imported into the dataset are kept.`}
           confirmLabel="Delete"
           danger
-          onConfirm={() => deletePlanMutation.mutate()}
-          onCancel={() => setConfirmDeletePlan(false)}
+          onConfirm={() => deletePlanMutation.mutate(confirmDeletePlan.id)}
+          onCancel={() => setConfirmDeletePlan(null)}
         />
       )}
+
+      {duplicating && (
+        <DuplicatePlanModal
+          plan={duplicating}
+          takenNames={plans.map((p) => p.name)}
+          isPending={duplicatePlanMutation.isPending}
+          onConfirm={(body) => duplicatePlanMutation.mutate({ planId: duplicating.id, ...body })}
+          onClose={() => setDuplicating(null)}
+        />
+      )}
+
+      {folderName && plan && (
+        <FolderNameModal
+          mode={folderName.mode}
+          path={folderName.path}
+          isPending={createFolderMutation.isPending || moveFolderMutation.isPending}
+          onConfirm={(newPath) => {
+            if (folderName.mode === "new") createFolderMutation.mutate({ planId: plan.id, path: newPath });
+            else moveFolderMutation.mutate({ planId: plan.id, from: folderName.path, to: newPath });
+          }}
+          onClose={() => setFolderName(null)}
+        />
+      )}
+
+      {movingFolder && plan && (
+        <MoveSubfolderModal
+          node={movingFolder}
+          subfolders={planFolderItems(rows, plan.declared_folders ?? [])}
+          isPending={moveFolderMutation.isPending}
+          onConfirm={(newPath) => moveFolderMutation.mutate({ planId: plan.id, from: movingFolder.path, to: newPath })}
+          onClose={() => setMovingFolder(null)}
+        />
+      )}
+
+      {deletingFolder && plan && (() => {
+        const n = rows.filter((r) => inFolder(r, deletingFolder.path)).length;
+        return (
+          <ConfirmDialog
+            title="Delete folder"
+            message={`Delete "${deletingFolder.path}", its subfolders and ${n} row${n !== 1 ? "s" : ""}? Images already made stay in the gallery.`}
+            confirmLabel="Delete"
+            danger
+            onConfirm={() => deleteFolderMutation.mutate({ planId: plan.id, path: deletingFolder.path })}
+            onCancel={() => setDeletingFolder(null)}
+          />
+        );
+      })()}
 
       {confirmDeleteRows && (
         <ConfirmDialog

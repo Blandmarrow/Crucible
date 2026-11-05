@@ -138,7 +138,7 @@ Two departures from the sketch that stood here:
 Built on 2026-11-03. The review panel arrived with §2a, and it is reachable without an LLM,
 which is how the e2e journey reaches it. The outline call is the `comfy_outline` job; it saves
 a draft on the blueprint for *Use it* / *Discard*. Both are documented in
-`docs/dev/comfyui/structured-llm.md` § The outline call and `docs/dev/comfyui/page.md`.
+`docs/dev/comfyui/structured-llm.md` § The outline call and `docs/dev/comfyui/blueprint-tab.md`.
 
 Grouping rows by leaf in `ComfyRowsTable` was optional and is not built: the Folder column
 already shows each row's leaf path.
@@ -292,7 +292,7 @@ every component named below is described there.
 
 ### §8a — A layout that stays put
 
-**Landed 2026-11-05** (`docs/dev/comfyui/page.md` § The layout). The narrow preview table
+**Landed 2026-11-05** (`docs/dev/comfyui/page.md` § The layout, and the Blueprint tab's half in `docs/dev/comfyui/blueprint-tab.md` § The layout). The narrow preview table
 shows a folder's sample prompts on demand, not as a column: the user's call that day.
 
 - **A sticky header** on every tab: the plan name, the tabs and `ComfyRunBar`. The run bar
@@ -307,6 +307,10 @@ shows a folder's sample prompts on demand, not as a column: the user's call that
 No backend change. It needs none of the open questions below.
 
 ### §8b — A left rail: plans, then the plan's folder tree
+
+**Built 2026-11-05** (`docs/dev/comfyui/page.md` § The plan rail, the folder tree and the
+grouped table), under the rulings below. One departure from the mockup: a blueprint folder
+cannot be renamed, moved or deleted from the tree (question 2's ruling).
 
 - **Plans become a list** instead of the `<select>`, each with its row count and a dot for
   running or failed. Rename, Duplicate and Delete in a menu. **Duplicate is new**: the
@@ -358,19 +362,29 @@ value whose alias exists in the target plan; `PATCH` for a library prompt's text
 - The paste dialog moves onto `ModalShell`; today it is a hand-built overlay with no Escape
   or focus handling.
 
-### Open questions (rule before §8b)
+### The open questions, ruled
 
-The mockup shows each proposal; none is ruled yet.
+All four were ruled by the user on 2026-11-05, approving the §8b plan's recommendations.
 
-1. **Is a row's category its output folder?** Proposed: yes — the tree is `subfolder`, so
-   it means what the gallery's tree means. The alternative is a separate grouping label
-   that does not decide where images go.
-2. **Moving a blueprint row.** A row's folder is what its leaf counts against, so moving
-   it drifts the blueprint's kept/short figures; *Set folder* already allows it today.
-   Proposed: a lock mark, and a move asks, then unlinks the row (clears `leaf_id`), with
-   *move hand-made rows only* as the other choice. The alternative is refusing the move.
-3. **Rows dropped on another plan:** proposed copy by default, Shift to move.
-4. **Build order:** proposed §8a → §8b → §8c → §8d (the roadmap holds the order).
+1. **A row's category is its output folder.** The tree is `subfolder`, so it means what the
+   gallery's tree means. A separate grouping label was rejected: two trees that disagree.
+2. **Moving a blueprint row asks, then unlinks it; a blueprint folder is locked.**
+   - *The premise needed a fix.* A leaf counts its rows by `leaf_id`, not by folder
+     (`blueprint_service._compute`, `prepare_top_up`). So a moved row kept counting toward
+     its leaf while its images went elsewhere, and Top up re-ran it into the new folder.
+     Clearing `leaf_id` is the only move that keeps the figures honest.
+   - "Linked" means `leaf_id` names a *current* leaf. Orphans keep their `leaf_id` as
+     provenance and move freely.
+   - Set folder offers *Move and unlink*, *Move hand-made rows only* and *Cancel*; the
+     server refuses a linked move by default (`linked: "refuse"`, a 409).
+   - A folder whose subtree holds linked rows cannot be renamed, moved or deleted from the
+     tree (409, "rename it in the Blueprint tab"). The mockup unlinked them instead, but
+     that leaves the leaf's path in place, so the next Apply would quietly queue a full
+     target into the old folder name.
+3. **Rows dropped on another plan: copy by default, Shift to move.** A copy keeps the
+   folder, resets the row to pending and clears `leaf_id`; a move also refuses running
+   rows. Built in §8c.
+4. **Build order: §8a → §8b → §8c → §8d** (the roadmap holds the order).
 
 Each sub-stage owes `docs/dev/comfyui/page.md` and the user guide `docs/comfyui.md` in the
 same change, and e2e coverage through the button routes in `frontend/e2e/comfy.spec.ts`.

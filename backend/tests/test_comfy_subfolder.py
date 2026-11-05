@@ -388,3 +388,219 @@ def test_filename_stem_follows_the_normalized_folder(tmp_path, monkeypatch):
             assert by_folder["fen/knight/squire"].startswith("squire"), images
 
     run(scenario())
+
+
+# ── Plan folders: create, move, delete (M6 §8b) ───────────────────────────────
+
+def _f(plan_id, op=""):
+    return f"{API}/comfy/plans/{plan_id}/folders{op}"
+
+
+def test_folder_create_adds_ancestors_and_refuses_an_existing_one(tmp_path, monkeypatch):
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            _, plan_id = await _plan(env)
+            r = await env.client.post(_f(plan_id), json={"path": "/a/b/c/"})
+            assert r.status_code == 200, r.text
+            assert r.json()["declared_folders"] == ["a", "a/b", "a/b/c"]
+            assert (await env.client.post(_f(plan_id), json={"path": "a/b"})).status_code == 409
+            assert (await env.client.post(_f(plan_id), json={"path": ""})).status_code == 400
+            assert (await env.client.post(_f(plan_id), json={"path": "../x"})).status_code == 400
+            # A folder implied by a row exists too, ancestors included.
+            await _add_row(env, plan_id, subfolder="r/s")
+            assert (await env.client.post(_f(plan_id), json={"path": "r"})).status_code == 409
+            assert (await env.client.post(_f(plan_id), json={"path": "r/s"})).status_code == 409
+            got = (await env.client.get(f"{API}/comfy/plans/{plan_id}")).json()
+            assert got["declared_folders"] == ["a", "a/b", "a/b/c"]
+    run(scenario())
+
+
+def test_folder_move_errors_and_effects(tmp_path, monkeypatch):
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            _, plan_id = await _plan(env)
+            r_exact = await _add_row(env, plan_id, subfolder="a_b")
+            r_desc = await _add_row(env, plan_id, subfolder="a_b/deep")
+            r_other = await _add_row(env, plan_id, subfolder="axb")
+            r_root = await _add_row(env, plan_id)
+            await env.client.post(_f(plan_id), json={"path": "a_b/empty"})
+            await env.client.post(_f(plan_id), json={"path": "taken"})
+
+            def move(p, n):
+                return env.client.post(_f(plan_id, "/move"), json={"path": p, "new_path": n})
+
+            assert (await move("", "x")).status_code == 400
+            assert (await move("a_b", "")).status_code == 400
+            assert (await move("a_b", "a_b")).status_code == 400
+            assert (await move("a_b", "a_b/inner")).status_code == 400
+            assert (await move("nope", "x")).status_code == 404
+            assert (await move("a_b", "taken")).status_code == 409
+            r = await move("a_b", "z/q")
+            assert r.status_code == 200, r.text
+            assert r.json() == {"updated": 2}
+            by_id = {x["id"]: x["subfolder"] for x in await _rows(env, plan_id)}
+            assert by_id[r_exact["id"]] == "z/q"
+            assert by_id[r_desc["id"]] == "z/q/deep"
+            assert by_id[r_other["id"]] == "axb"  # the LIKE wildcard did not match
+            assert by_id[r_root["id"]] == ""
+            declared = (await env.client.get(f"{API}/comfy/plans/{plan_id}")).json()["declared_folders"]
+            assert "z/q/empty" in declared and "z" in declared and "a_b/empty" not in declared
+            assert "taken" in declared
+    run(scenario())
+
+
+def test_folder_delete_removes_rows_and_prunes_declared(tmp_path, monkeypatch):
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            _, plan_id = await _plan(env)
+            await _add_row(env, plan_id, subfolder="a_b")
+            await _add_row(env, plan_id, subfolder="a_b/deep")
+            keep = await _add_row(env, plan_id, subfolder="axb")
+            await env.client.post(_f(plan_id), json={"path": "a_b/empty"})
+
+            def dele(p):
+                return env.client.post(_f(plan_id, "/delete"), json={"path": p})
+
+            assert (await dele("")).status_code == 400
+            assert (await dele("nope")).status_code == 404
+            r = await dele("a_b")
+            assert r.status_code == 200 and r.json() == {"deleted": 2}
+            assert [x["id"] for x in await _rows(env, plan_id)] == [keep["id"]]
+            assert (await env.client.get(f"{API}/comfy/plans/{plan_id}")).json()["declared_folders"] == []
+    run(scenario())
+
+
+def test_folder_writes_refuse_while_a_job_or_run_is_live(tmp_path, monkeypatch):
+    from backend.models import BackgroundJob, Run
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds, plan_id = await _plan(env)
+            await _add_row(env, plan_id, subfolder="a")
+            async with env.Session() as db:
+                job = BackgroundJob(job_type="comfy_generate", status="pending", config={"plan_id": plan_id})
+                db.add(job)
+                await db.commit()
+                job_id = job.id
+            bodies = [("", {"path": "n"}), ("/move", {"path": "a", "new_path": "b"}), ("/delete", {"path": "a"})]
+            for op, body in bodies:
+                assert (await env.client.post(_f(plan_id, op), json=body)).status_code == 409
+            async with env.Session() as db:
+                (await db.get(BackgroundJob, job_id)).status = "completed"
+                db.add(Run(dataset_id=ds["id"], plan_id=plan_id, name="x", recipe={}, stages=[],
+                           context={}, status="running"))
+                await db.commit()
+            for op, body in bodies:
+                r = await env.client.post(_f(plan_id, op), json=body)
+                assert r.status_code == 409 and "automated run" in r.json()["detail"]
+    run(scenario())
+
+
+async def _link_row(env, plan_id, row_id, path="L"):
+    from backend.models.comfy import ComfyBlueprint, ComfyLeaf, ComfyRow
+
+    async with env.Session() as db:
+        bp = ComfyBlueprint(plan_id=plan_id, spec={}, seed=1)
+        db.add(bp)
+        await db.flush()
+        leaf = ComfyLeaf(blueprint_id=bp.id, scenario="s", path=path, target=2)
+        db.add(leaf)
+        await db.flush()
+        (await db.get(ComfyRow, row_id)).leaf_id = leaf.id
+        await db.commit()
+
+
+def test_set_subfolder_linked_modes(tmp_path, monkeypatch):
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            _, plan_id = await _plan(env)
+            linked = await _add_row(env, plan_id, subfolder="L")
+            free = await _add_row(env, plan_id, subfolder="L")
+            await _link_row(env, plan_id, linked["id"])
+            rows = {x["id"]: x for x in await _rows(env, plan_id)}
+            assert rows[linked["id"]]["blueprint_linked"] is True
+            assert rows[free["id"]]["blueprint_linked"] is False
+            url = f"{API}/comfy/plans/{plan_id}/rows/set-subfolder"
+            # refuse is the default and moves nothing, not even the free row
+            r = await env.client.post(url, json={"subfolder": "M"})
+            assert r.status_code == 409 and "1 of these rows came from the blueprint" in r.json()["detail"]
+            assert {x["subfolder"] for x in await _rows(env, plan_id)} == {"L"}
+            # skip leaves the linked row
+            r = await env.client.post(url, json={"subfolder": "M", "linked": "skip"})
+            assert r.json() == {"updated": 1}
+            rows = {x["id"]: x for x in await _rows(env, plan_id)}
+            assert rows[linked["id"]]["subfolder"] == "L" and rows[linked["id"]]["blueprint_linked"]
+            assert rows[free["id"]]["subfolder"] == "M"
+            # a no-op target never counts as a change, so it is never refused
+            r = await env.client.post(url, json={"subfolder": "L", "row_ids": [linked["id"]]})
+            assert r.status_code == 200 and r.json() == {"updated": 0}
+            # unlink moves it and cuts the link
+            r = await env.client.post(url, json={"subfolder": "M", "linked": "unlink"})
+            assert r.json() == {"updated": 1}
+            rows = {x["id"]: x for x in await _rows(env, plan_id)}
+            assert rows[linked["id"]]["subfolder"] == "M"
+            assert rows[linked["id"]]["leaf_id"] is None and not rows[linked["id"]]["blueprint_linked"]
+    run(scenario())
+
+
+def test_patch_row_linked_modes(tmp_path, monkeypatch):
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            _, plan_id = await _plan(env)
+            row = await _add_row(env, plan_id, subfolder="L")
+            await _link_row(env, plan_id, row["id"])
+            url = f"{API}/comfy/rows/{row['id']}"
+            assert (await env.client.patch(url, json={"subfolder": "M"})).status_code == 409
+            r = await env.client.patch(url, json={"subfolder": "M", "linked": "skip"})
+            assert r.status_code == 200 and r.json()["subfolder"] == "L"
+            r = await env.client.patch(url, json={"subfolder": "L"})  # unchanged: fine
+            assert r.status_code == 200
+            r = await env.client.patch(url, json={"subfolder": "M", "linked": "unlink"})
+            assert r.json()["subfolder"] == "M" and r.json()["leaf_id"] is None
+    run(scenario())
+
+
+def test_folder_writes_match_the_subtree_case_sensitively(tmp_path, monkeypatch):
+    """SQLite's LIKE ignores ASCII case, so a LIKE prefix for `knight/` also took
+    `Knight/a`: a delete of one folder deleted another folder's rows (review, §8b)."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            _, plan_id = await _plan(env)
+            lower = await _add_row(env, plan_id, subfolder="knight/b")
+            upper = await _add_row(env, plan_id, subfolder="Knight/a")
+            r = await env.client.post(_f(plan_id, "/move"), json={"path": "knight", "new_path": "monk"})
+            assert r.status_code == 200 and r.json() == {"updated": 1}
+            by_id = {x["id"]: x["subfolder"] for x in await _rows(env, plan_id)}
+            assert by_id == {lower["id"]: "monk/b", upper["id"]: "Knight/a"}
+            r = await env.client.post(_f(plan_id, "/delete"), json={"path": "monk"})
+            assert r.status_code == 200 and r.json() == {"deleted": 1}
+            assert [x["id"] for x in await _rows(env, plan_id)] == [upper["id"]]
+    run(scenario())
+
+
+def test_an_unlink_is_refused_while_an_automated_run_is_live(tmp_path, monkeypatch):
+    """An unlink leaves its leaf short, and a running or paused run would refill it on
+    its next pass, as Apply's own refusal exists to stop. Refuse and skip are unaffected."""
+    from backend.models import Run
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds, plan_id = await _plan(env)
+            linked = await _add_row(env, plan_id, subfolder="L")
+            free = await _add_row(env, plan_id, subfolder="L")
+            await _link_row(env, plan_id, linked["id"])
+            async with env.Session() as db:
+                db.add(Run(dataset_id=ds["id"], plan_id=plan_id, name="x", recipe={}, stages=[],
+                           context={}, status="paused"))
+                await db.commit()
+            url = f"{API}/comfy/plans/{plan_id}/rows/set-subfolder"
+            r = await env.client.post(url, json={"subfolder": "M", "linked": "unlink"})
+            assert r.status_code == 409 and "automated run" in r.json()["detail"]
+            r = await env.client.patch(f"{API}/comfy/rows/{linked['id']}", json={"subfolder": "M", "linked": "unlink"})
+            assert r.status_code == 409 and "automated run" in r.json()["detail"]
+            # Moving only hand-made rows still works mid-run.
+            r = await env.client.post(url, json={"subfolder": "M", "linked": "skip"})
+            assert r.status_code == 200 and r.json() == {"updated": 1}
+            rows = {x["id"]: x for x in await _rows(env, plan_id)}
+            assert rows[linked["id"]]["blueprint_linked"] and rows[free["id"]]["subfolder"] == "M"
+    run(scenario())

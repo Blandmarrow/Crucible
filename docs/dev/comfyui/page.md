@@ -1,10 +1,10 @@
 # ComfyUI page (ComfyPage)
 
 The frontend of the ComfyUI queue: how `ComfyPage` is routed and registered, what its e2e spec
-covers, the plan bar, `WorkflowPinPanel` and the workflow scan, the run-default strip, the rows
+covers, the header line, `WorkflowPinPanel` and the workflow scan, the run-default strip, the rows
 table and its Folder column, the run bar and how the page tracks concurrent runs, the prompt
-library modals, the Rows toolbar and the Blueprint tab (`BlueprintPanel`, the draft dialog,
-Preview, Top up and the rewrite). The data model and endpoints it calls are in
+library modals, the Rows toolbar, and the Rows tab's plan rail, folder tree and grouped table
+(M6 §8b). The Blueprint tab is `docs/dev/comfyui/blueprint-tab.md`. The data model and endpoints it calls are in
 `docs/dev/comfyui/queue.md`; what a run does server-side is `docs/dev/comfyui/run.md`; *Generate
 prompts* is `docs/dev/comfyui/prompts.md` and *Sync from canvas* `docs/dev/comfyui/sync.md`.
 
@@ -17,10 +17,13 @@ the one job type whose live branch also invalidates `["dataset", id]`, because i
 whose worker refreshes the stored counters per row (see `docs/dev/job-invalidation.md`). API module
 `frontend/src/api/comfy.ts` (`comfyApi`).
 
-`frontend/e2e/comfy.spec.ts` covers the three journeys that need no ComfyUI server: the empty
+`frontend/e2e/comfy.spec.ts` covers the journeys that need no ComfyUI server: the empty
 state → create a plan (which selects it and jumps to *Workflow & Pins*), *Paste prompts…*
 → rows, and per-row folders (typed into a cell, then bulk-set over the top, cross-checked
-through `GET …/rows`). Its textarea-count assertion is scoped to
+through `GET …/rows`). §8b added four, all through buttons and menus rather than drags: a
+plan duplicated from the rail, a folder made and renamed from the tree and then picked to
+filter the table, the plan and tab coming back after a reload, and Set folder asking before
+it moves a blueprint row. Its textarea-count assertion is scoped to
 `data-testid="comfy-rows-table"` on purpose — the prompt cells must be the only textareas in
 the table, so it fails if the single-line Folder cell is ever rebuilt as one. It never starts
 a run. The journeys that press *Run* are `frontend/e2e/comfy-run.spec.ts`, against the fake
@@ -28,132 +31,13 @@ ComfyUI in `docs/dev/comfyui/run.md` § Testing the run: rows filed under their 
 image's generation metadata on its detail page, and a failed row's error tooltip and
 *Reset failed*.
 
-- **Plan bar** — plan `<select>` (query `["comfy","plans",datasetId]`), inline create/rename,
-  delete via `ConfirmDialog`; section tabs *Rows* / *Workflow & Pins* / *Blueprint*. It sits
-  in the sticky header with `ComfyRunBar` (§ The layout below). Its `<select>` must stay the
-  first on the page: the e2e finds it with `locator('select').first()`.
-- **`BlueprintPanel`** (the *Blueprint* tab, keyed by `plan.id`) edits the plan's blueprint.
-  What the server does with it is `docs/dev/comfyui/structured.md`.
-  - **Saving.** It is server-stored form state on the M5 pattern: `ServerStateGate` on
-    `["comfy","blueprint",planId]`, autosaved through `useDebouncedPersist` +
-    `writeToServer(blueprintPath, "PUT")` (`docs/dev/app-stored-data.md`).
-  - **The seed.** A plan with no blueprint gets a random seed, saved only with the first
-    edit. *New sampling seed* rerolls it.
-    - That changes which combinations a `sample:K` scenario picks, and so which folders
-      exist (the preview shows the orphans).
-    - It also changes every leaf's template walk, so rows added later may repeat prompts
-      that existing rows already used.
-  - **The editors.** `BlueprintAxesEditor`, `BlueprintVariationsEditor` and
-    `BlueprintScenariosEditor` hold the three parts. `BlueprintNameField` renames an axis or
-    variation on blur, through `blueprintKeys.renameRefs`. That also rewrites every
-    scenario's `combine`, path and template references (`{name}`, `{name.label}`); renaming
-    only the key would turn each reference into an error. Entity ids are generated
-    client-side and never shown. The numeric
-    fields clamp to the schema's bounds (take ≤ 4, count ≤ 10,000), because past them both
-    the save and the preview 422. The text inputs carry a `maxLength` for the same reason,
-    from `BLUEPRINT_LIMITS` in `blueprintKeys.ts`, which mirrors `schemas/comfy_blueprint.py`
-    (name 40, scenario name 100, path 400, template 4000, label 200, descriptor 2000, piece
-    300). The same const holds the list sizes (8 axes, 200 entities an axis, 12 variations,
-    100 pieces a variation, 50 scenarios, 6 combined axes): each *+ Add* button disables at
-    its cap. The pieces box cannot be stopped by `maxLength`, so it saves the first 100
-    lines, each cut to 300 characters, and shows a warning for what it left out.
-  - **Read-only while the plan runs.** A disabled `<fieldset>`, since Apply would 409 anyway.
-  - **The outline draft.** *✨ Draft from a description…* opens `OutlineModal`, which queues
-    the `comfy_outline` job (`docs/dev/comfyui/structured-llm.md` § The outline call).
-    - Like `GeneratePromptsModal`, it derives its job from `jobStore` and adds no
-      `useJobSSE`. Its provider and model default to the plan's saved "Generate prompts"
-      settings, read only.
-    - **On start it seeds `jobStore` with the job's `plan_id`.** The queue's pending event
-      carries none, so a job queued behind a long run was invisible to the plan scan
-      until `_run` began. A reopened modal then offered *Draft* again, only to get a 409.
-    - TopBar's `comfy_outline` branch toasts the outcome once per job (`outlineTerminalRef`)
-      and invalidates the draft.
-    - **The draft has its own query, `["comfy","blueprint-draft",planId]`.** The gate
-      latches its first value and never refetches into the form, so it cannot show a draft
-      that lands while the tab is open.
-    - **While a draft exists, the modal is its review** (`DraftReview`), not the brief
-      form, so a draft that lands with the modal open is shown there. The banner's
-      *Review…* opens the same view, and *Draft again…* goes back to the brief, where
-      *Back to the draft* returns to the review. The review's *Decide later* just closes
-      the modal and keeps the draft. The review's
-      expansion is the ordinary preview endpoint with the draft in the body, on its own key
-      (`["comfy","blueprint-draft-preview",…]`); that endpoint writes nothing, so the saved
-      spec stays as it was until *Use it*. A failure of the job this modal started shows
-      inline as well as in the toast.
-    - **A new *Draft* blanks the cached draft first**, with `setQueryData`. The old one
-      would otherwise show in the review between the job's end and the refetch TopBar
-      triggers. A failed job leaves the old draft saved, and that refetch brings it back.
-  - **The draft's *Use it* (banner or review) clears the draft only after the spec holding
-    it is saved.** In order:
-    1. Await `serverWritesSettled`, so no older autosave can land on top.
-    2. Save the draft with an awaited `comfyApi.putBlueprint`.
-    3. Set the form to the draft.
-    4. `DELETE …/draft`.
-    - Not `writeToServer`: it drops a 4xx write, and `serverWritesSettled` then resolves,
-      which would clear a draft whose save never landed.
-    - A non-empty spec asks before it is replaced: the banner with a `ConfirmDialog`, the
-      review with its button relabelled *Replace my blueprint* and a warning line, since a
-      dialog over the modal would stack two. *Discard* just deletes the draft.
-    - `applyDraft` resolves true on success, and the review closes on it.
-  - **`BlueprintPreview`** is a `useQuery` on
-    `["comfy","blueprint-preview",planId,debouncedJSON,allowOverCap]` (350 ms via
-    `hooks/useDebouncedValue.ts`, `keepPreviousData`).
-    - **Apply sends the debounced spec the shown preview came from**, never the live form,
-      with `confirm_total` = that preview's `rows_to_add`.
-    - It is disabled while the form lags the preview, while fetching or on placeholder data,
-      on errors, over the cap without the override, and with no prompt pin.
-    - A 409 toasts the server's reason and refetches. Success invalidates rows, plans,
-      prompts and the preview.
-    - **It also refetches on window focus and every 20 s.** Kept and short change outside
-      the tab: an image deleted in the gallery makes its folder short. Without a refetch the
-      panel sat on "0 short" with Top up disabled. A finished run in `activeRuns`
-      invalidates it too.
-    - **A background refetch is not "stale".** The buttons wait only for a spec still
-      debouncing or placeholder data for a new key, never for `isFetching`. Counting it
-      disabled both buttons every 20 s and dropped clicks; `confirm_total` already 409s if
-      the rows moved meanwhile.
-  - **Top up** sits beside Apply, under the same rules. It is also disabled when nothing
-    is short, to add, pending or failed ("Every folder is full").
-    - It sends Apply's body plus the run bar's **Base folder** and **Prompt as caption**,
-      which live in `ComfyPage` state and are shown read-only under the buttons
-      (`topup-settings`).
-    - **The returned job joins `activeRuns`** through `onRunStarted(jobId, planId)`, the
-      same as `runMutation`. Tracking, invalidation, the completion toast and the
-      `isRunning` gate then apply unchanged.
-    - `job_id: null` toasts "Every folder is full".
-    - **`awaiting_rewrite > 0` is not a run.** The reply's rows were applied but nothing ran,
-      so it skips `onRunStarted` and shows the `blueprint-awaiting-rewrite` notice, which the
-      next Apply or Top up clears.
-  - **The rewrite** (`docs/dev/comfyui/structured-llm.md` § The rewrite pass).
-    - Each scenario has a *Rewrite into prose (LLM)* checkbox (`BlueprintScenario.rewrite`).
-      The TS field is what keeps the autosave from dropping it.
-    - The totals line adds "N to rewrite · ≤ B LLM calls" from the preview's `rewrite_*`
-      figures.
-    - **The *Rewrite N prompts* button counts rows that exist now**, from
-      `GET …/blueprint/rewrite` at the saved batch size, under
-      `["comfy","blueprint-rewrite",planId,batch]`. It does not use the preview's count,
-      which includes rows Apply would add. The button appears beside Apply and Top up only
-      while the preview says some rows need rewriting (`rewrite_rows > 0`). It is
-      **disabled, with an "Apply first" tooltip,** while no such row exists yet.
-    - `RewriteModal` follows `OutlineModal`: defaults from the saved settings, read only;
-      its job derived from `jobStore`, seeded with `plan_id` on start. It sends the shown
-      estimate's `budget` as `confirm_budget`, and a 409 refetches the estimate.
-    - **TopBar's `comfy_rewrite` branch** refreshes the rows as each batch lands
-      (`rewriteDoneRef`), as the `comfy_prompts` branch does, and the estimate and the
-      preview with them. Both count the rows still waiting, so refreshed only at the end
-      they sat on the starting count for the whole run (2026-11-04).
-      - It toasts once per job (`rewriteTerminalRef`), reading `result_data` through
-        `jobsApi.get`, since neither the terminal event nor a reconciled one carries it. It
-        then invalidates rows, prompts, the preview and the estimate.
-      - **A completed run that stopped early, or left prompts behind, gets a warning
-        toast**, not a green one. It names the reason and how many prompts still wait,
-        since Top up will refuse while they do.
-      - The job is in neither image job-type set: it changes rows, never images.
-  - **The e2e.** `comfy-run.spec.ts` authors a blueprint by hand, applies it, checks the rows'
-    folders and `leaf_id`s, and runs them. Another ticks the rewrite, checks the
-    totals line and Top up's notice, and opens `RewriteModal`, all without an LLM. Two more
-    cover the draft: the Blueprint tab opens the draft-from-a-description dialog, and a
-    waiting draft can be reviewed, with its expansion, before *Use it*.
+- **The header line** shows the plan's name (`comfy-plan-name`) and the section tabs *Rows* /
+  *Workflow & Pins* / *Blueprint*, in the sticky header with `ComfyRunBar` (§ The layout).
+  Plans are picked, made, renamed, duplicated and deleted in the Rows tab's rail
+  (§ The plan rail, the folder tree and the grouped table). Until §8b this was a plan
+  `<select>` the e2e found as the page's first; nothing depends on select order now.
+- **`BlueprintPanel`** (the *Blueprint* tab) is its own file:
+  `docs/dev/comfyui/blueprint-tab.md`.
 - **`WorkflowPinPanel`** — paste textarea + `.json` file loader + *Scan folder…* button
   (opens `WorkflowScanModal`) + *Sync from canvas* button (`canvas-workflow` →
   `SyncCanvasModal`, see `docs/dev/comfyui/sync.md`); validates API-format client-side; warns (non-blocking) when no
@@ -194,8 +78,7 @@ image's generation metadata on its detail page, and a failed row's error tooltip
   View button → image detail via `usePaneNavigate`. Cell edits PATCH on blur.
 - **The Folder column** (`FolderCell`, in the same file) sits between the checkbox and the
   pinned columns — leftmost because it is
-  row identity rather than a parameter, so it stays put as pins come and go (and it is where a
-  future group-by-leaf lands). Its `FolderCell` is modelled on `EditableCell` (commit on blur,
+  row identity rather than a parameter, so it stays put as pins come and go. Its `FolderCell` is modelled on `EditableCell` (commit on blur,
   Enter blurs, `placeholder="(root)"`) but is an `<input>`, never a `<textarea>` — see the e2e
   note above. It does **not** route through `commitCell`, which builds a `values` dict: the
   shared `updateMutation` takes a generic patch object, so `commitCell` passes `{ values }` and
@@ -207,11 +90,21 @@ image's generation metadata on its detail page, and a failed row's error tooltip
   would show a folder its image never went to, and a finished row keeps it. The
   `columns.length === 0` early return still hides the whole table for a plan with no per-row
   pins, folder column included — accepted, since such a plan cannot run anyway.
+  - **A row the blueprint still counts is locked** (`blueprint_linked`): a lock icon and a
+    read-only input, keeping `placeholder="(root)"` so the e2e's cell count holds. Moving it
+    unlinks it from its leaf, and only Set folder asks about that.
 - **`SetRowFolderModal`** (Rows toolbar *Set folder (n)*, needs a selection, disabled while
   that plan is running) — a text input with a `<datalist>` of the dataset's existing folders
   (query key `["subfolders", datasetId]`, usually already cached by `ComfyRunBar`); a datalist
   rather than the run bar's closed select, because creating folders that do not exist yet is
   the point. Calls `setRowsSubfolder`, invalidates `["comfy","rows",planId]`, toasts the count.
+  - It takes the selected **rows**, not ids, to know which are `blueprint_linked`. When the
+    typed folder would move any of them (compared on the server's slash-folded spelling, so a
+    no-op never asks), Apply shows the three choices of the plan's ruling in place of its
+    buttons (`comfy-linked-confirm`): *Move and unlink* (`linked: "unlink"`, which also
+    invalidates the blueprint preview, since the leaf reads short), *Move hand-made rows
+    only* (`"skip"`) and *Cancel*. Otherwise it sends `"refuse"`, the server's default, which
+    409s if the client was wrong about a row.
 - **`ComfyRunBar`** — a strip in the sticky header, shown on every tab once a plan exists
   (before §8a it rendered on *Rows* only). *Run selected* shows on *Rows* only
   (`showRunSelected`): elsewhere the selection it would run is out of sight. Base-folder select (`["subfolders", datasetId]`; labelled *Base folder*,
@@ -227,8 +120,8 @@ image's generation metadata on its detail page, and a failed row's error tooltip
   plan being viewed — other plans stay interactive and can start their own concurrent runs
   (the backend 409 is per-plan).
   - While a run is live the page invalidates
-  `["comfy","rows",planId]` (that run's plan, not the viewed one) on each progress event so
-  row statuses update in place; on terminal status it also invalidates `["images", datasetId]`,
+  `["comfy","rows",planId]` (that run's plan, not the viewed one) and `["comfy","plans",datasetId]`
+  on each progress event, so row statuses and the rail's dot update in place; on terminal status it also invalidates `["images", datasetId]`,
   `["subfolders", datasetId]`, `["comfy","plans",datasetId]`, and `["datasets"]`, fires the
   completion/failure toast, and drops the run from the map — every tracked run gets its
   invalidations and toast even if a different plan is selected when it finishes.
@@ -258,6 +151,73 @@ image's generation metadata on its detail page, and a failed row's error tooltip
   scope all/selected → `rows/bulk-edit`), *Library…*, *Save to library (n)*,
   *Set folder (n)*, *Reset failed (n)*, *Delete selected (n)* (`ConfirmDialog`).
 
+### The plan rail, the folder tree and the grouped table
+
+M6 §8b (`docs/dev/comfy-automation-plan/README.md` § 8b, which records the rulings). The rail
+is the Rows tab's left column, and it also shows when there are no plans, so the empty state
+can make one. The approved mockup put it on the Rows tab only, so switching plans from
+another tab means going back to Rows.
+
+- **`ComfyPlanRail`** lists `GET /comfy/plans` with each plan's `row_count` and a dot. The dot
+  is *running* when `status_counts.running` is set or the plan is in `activeRuns` (which
+  knows a run started from this page before its first row moves), else *failed* when
+  `status_counts.failed` is set. Its ⋯ button opens `ContextMenu` at the button: *Rename…*
+  (inline input, Enter or blur saves), *Duplicate…* and *Delete…*. *New plan* sits under the
+  list.
+  - Rename and delete take the plan's id from the menu, not `effectivePlanId`: a menu can
+    name a plan other than the one shown. Deleting the shown plan falls back to the first.
+  - **`DuplicatePlanModal`** (on `ModalShell`) proposes a free name ("X (copy)", then
+    "(copy 2)" and on) and an *Include rows* checkbox, on by default. The copy is selected
+    on success. What the server copies is `docs/dev/comfyui/queue.md` § Backend.
+- **`ComfyFolderTree`** is built with the gallery's `buildSubfolderTree` from
+  `planFolderItems(rows, plan.declared_folders)`: every row folder, every declared folder,
+  and the ancestors neither lists (`withMissingAncestors`). Counts are rows, each folder's
+  `totalCount` including its subtree. *All rows* and *(root)* head the list.
+  - **Clicking a folder filters the table to its subtree** (`inFolder`); *(root)* shows the
+    rows with no folder. The filter lives in `ComfyPage` with a text filter (prompt text and
+    folder, case-blind) and status chips above the table. None is persisted, a plan switch
+    resets all three, and **any filter change clears the selection**, since Set folder and
+    Delete would act on rows the view hides.
+  - **The menu** (⋯ or right-click): *New folder inside…*, *Rename…*, *Move to…* and
+    *Delete…*; on *(root)* only *New folder…*. The header's + makes one inside the selected
+    folder. `FolderNameModal` takes one segment (a slash is refused; Move nests), and
+    *Move to…* reuses the gallery's `MoveSubfolderModal`, fed the plan's folders.
+  - **Locked folders.** A folder whose subtree holds a `blueprint_linked` row
+    (`lockedFolderTest`) shows a lock, and its Rename, Move and Delete are disabled with the
+    reason as the tooltip. The server refuses them anyway (409). While the plan runs every
+    folder write is disabled the same way.
+  - `ContextMenu` gained `disabled` and `title` for this: `aria-disabled` rather than
+    `disabled`, since a disabled button shows no tooltip (`docs/dev/styling.md`).
+  - A rename or move re-points the stored collapsed paths (`repath`) and the folder filter;
+    a delete clears a filter inside it. Every folder write invalidates rows, the plan, the
+    plan list, prompts and the blueprint preview.
+- **`ComfyRowsTable` groups the rows it is given by folder**, in tree order (`compareFolders`:
+  *(root)* first, then segment by segment). The virtualizer runs over a flat item list of
+  group headers and rows, keyed `g:<path>` and by row id, so a header measures like a row.
+  - A header (`comfy-group`, `data-folder`) has a collapse chevron, the folder, its pending,
+    running, failed and done counts, and a *from blueprint* pill. It holds **no checkbox,
+    textarea or `(root)`-placeholder input**, which the e2e counts as row cells. Select-all
+    in the column header covers the rows on show, leaving out folded groups, and folding a
+    group drops its rows from the selection (`toggleGroup`), for the same reason a filter
+    change clears it.
+  - The ✎ "set on all rows" dialog counts the plan's rows, not the shown ones, and says it
+    ignores the filter: `rows/set-value` writes every row.
+  - A plan whose rows all sit in *(root)* gets no header: one group adds nothing.
+  - A completed row's View button shows a 24px thumbnail, with `aria-label` "View" (or
+    "View (n)") so `comfy-run.spec.ts` still finds it by name.
+  - "No rows yet" shows only for a plan with no rows; a filter that hides everything says
+    "No rows match".
+- **Persistence** (`docs/dev/persistence.md`). The last plan and tab are
+  `COMFY_PAGE_STATE_PREFIX` per dataset. The saved plan id is trusted only until the plan list
+  first loads (`isPending`); after that a list without it falls back to the first. Trusting
+  it on every refetch flipped a pane back to a plan deleted in another pane each time the
+  list refreshed. A plan created or duplicated here goes into the cached list at once
+  (`addPlanToList`), so selecting it never waits on a refetch. The save waits until the state was
+  loaded for the current dataset (`stateDataset`): in the render where a pane switches
+  datasets, `planId` is still the old one's. The tree's and the table's collapsed folders
+  are `COMFY_ROWS_VIEW_KEY` per plan, through `usePlanRowsView` (`components/comfy/rowsView.ts`),
+  stored as *closed* paths so a new folder is open; deleting a plan clears it.
+
 ### The layout
 
 M6 §8a (`docs/dev/comfy-automation-plan/README.md` § 8a). The CSS is the `.comfy-head` and
@@ -270,55 +230,15 @@ M6 §8a (`docs/dev/comfy-automation-plan/README.md` § 8a). The CSS is the `.com
     the header stopped 24px down with content showing above it. `.page-h` carries the space.
   - `scrollPaddingTop` is the header's height, so `scrollIntoView` (the jump bar's, and
     Playwright's before a click) lands targets below the header, not under it.
-- **The sticky header** (`.comfy-head`, `data-testid="comfy-head"`) holds the plan bar and
-  `ComfyRunBar` on every tab. `z-index` 20, under `.dialog-bg` (60) and the `z-50` overlays.
+- **The sticky header** (`.comfy-head`, `data-testid="comfy-head"`) holds the plan's name, the
+  tabs and `ComfyRunBar` on every tab. `z-index` 20, under `.dialog-bg` (60) and the `z-50` overlays.
 - **`hooks/useStickyOffsets.ts`** writes `--comfy-head-h` (the header wraps on a narrow pane,
   so its height varies) and `--comfy-view-h` (the scroller's `clientHeight`) onto the
   scroller from a ResizeObserver, never through state. `100vh` would be wrong: a pane is
   shorter than the window.
-- **Blueprint's two columns** (`.bp-wrap` / `.bp-grid`): the editors on the left, the
-  preview's `<aside class="bp-side">` on the right, sticky, capped at the visible height, with
-  `.bp-body` scrolling inside it.
-  - **A container query, not a media query**, at 880px: a split pane is narrow in a wide
-    window. The e2e viewport gives about 980px, so e2e runs the wide layout only.
-  - **Narrow, the grid becomes a flex column and `.bp-side` becomes `display: contents`**,
-    so `.bp-actions` is a flex item of the whole tab and `position: sticky; bottom: 0` pins
-    it while the editors scroll. Both halves are needed: a sticky grid item is held inside
-    its own grid area, and a sticky child of the aside inside the aside, which is off
-    screen while you edit.
-  - `align-items: start` keeps the wide aside unstretched, or sticky could not move it.
-  - **`.bp-body` scrolls on its own down to 120px, then the whole aside scrolls.** In a
-    wide but short pane (a horizontal split) the header can take most of the height, and a
-    clipped aside hid Apply and Top up out of reach.
-  - **`RewriteModal` renders outside the aside.** A sticky element is its own stacking
-    context, so a dialog inside it sat under the sticky header whatever its z-index, with
-    the tabs and Run pending clickable above the backdrop. Keep any new dialog out of it.
-  - BlueprintPanel measures the jump bar into `--bp-jump-h`, and the `.bp-wrap` rules turn
-    it into `scroll-margin-top`, so a jump or a field taking focus just below the header
-    is not hidden under the jump bar.
-- **The preview has its own `running` guard.** It used to sit inside the editors' disabled
-  `<fieldset>`; outside it, it disables Rewrite and the over-cap and orphan checkboxes
-  itself, and Apply's and Top up's reason reads "A run is in progress on this plan". It
-  gets the real `hasPromptPin`, no longer `hasPromptPin && !running`, whose tooltip blamed a
-  missing prompt pin.
-- **The leaves table** has no Sample prompts column (the user's call, 2026-11-05: it made
-  every row tall in the side column). A folder with samples gets a chevron button
-  (`aria-expanded`) that opens them in a row under it (`blueprint-leaf-samples`). The server
-  sends samples for the first 20 folders only, so the rest get no button.
-- **`BlueprintSection`** is each editor's collapsible `.panel`: an `<h3><button
-  aria-expanded>` toggle with a count summary, and the editor's *+ Add …* button beside it,
-  which opens the section when pressed.
-  - **A collapsed body is hidden, never unmounted.** `PiecesField` in
-    `BlueprintVariationsEditor.tsx` keeps typed text that can differ from what is saved (an
-    over-limit line and its warning), and an unmount would lose it.
-  - **The read-only `<fieldset>` moved inside each section**, around the Add button and the
-    body only, so a section still folds while a run is live. *New sampling seed* takes
-    `disabled={running}` directly.
-  - The section element reaches the jump bar as a React 19 `ref` prop through each editor.
-    A ref inside the `SectionControl` object fails the compiler's `react-hooks/refs` lint.
-  - The open state is `COMFY_BLUEPRINT_SECTIONS_KEY` + `-${planId}`
-    (`docs/dev/persistence.md`), all open by default, which the e2e relies on.
-- **The jump bar** (`.bp-jump`, `blueprint-jump`) is sticky under the header in the left
-  column: one button per section (it opens a folded one, then scrolls to it), *Collapse
-  all*, *Expand all* and *✨ Draft from a description…* (`outline-open`). They are buttons,
-  not `#hash` links: no router hash, and no duplicate ids when two panes show the page.
+- **The Blueprint tab's two columns**, its jump bar and its collapsible sections are in
+  `docs/dev/comfyui/blueprint-tab.md` § The layout.
+- **The Rows tab's rail** (`.comfy-rows-wrap` / `.comfy-rows-grid`, M6 §8b): a 240px
+  `<aside class="comfy-rail">` beside the table, sticky and capped at the visible height
+  like the Blueprint side column, with its own scroll. A container query at 760px stacks it
+  above the table and drops the sticky, as the mockup's wrapping rail did.

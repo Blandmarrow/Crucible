@@ -407,7 +407,7 @@ def test_row_edits_wait_for_a_live_rewrite(tmp_path, monkeypatch):
                                       json={"operation": "append", "text": "!"})
             assert r.status_code == 409, r.text
             # A folder change writes no values, so it goes ahead.
-            r = await env.client.patch(f"{API}/comfy/rows/{row['id']}", json={"subfolder": "elsewhere"})
+            r = await env.client.patch(f"{API}/comfy/rows/{row['id']}", json={"subfolder": "elsewhere", "linked": "unlink"})
             assert r.status_code == 200, r.text
             assert (await _rows(env, plan_id))[row["id"]]["values"] == row["values"]
     run(go())

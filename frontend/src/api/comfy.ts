@@ -47,6 +47,8 @@ export interface ComfyPlan {
   output_node_ids: string[];
   /** True = stamp imported images as self-created (synthetic/ComfyUI); false = inherit the dataset's provenance defaults. */
   output_is_synthetic: boolean;
+  /** Folders made by hand in the folder tree, kept even while no row is filed there. */
+  declared_folders: string[];
   created_at: string;
   updated_at: string;
 }
@@ -57,8 +59,12 @@ export interface ComfyRow {
   sort_order: number;
   /** Destination folder for this row's outputs, nested under the run's base folder. */
   subfolder: string;
-  /** The blueprint leaf that minted this row. Read-only until structured generation lands. */
+  /** The blueprint leaf that minted this row. Never set by the client; a move with
+   *  `linked: "unlink"` clears it. */
   leaf_id: string | null;
+  /** `leaf_id` names a leaf the plan's blueprint still makes: its folder is what the
+   *  blueprint counts, so moving it needs `linked` (docs/dev/comfyui/structured.md). */
+  blueprint_linked: boolean;
   values: Record<string, unknown>;
   status: "pending" | "running" | "completed" | "failed";
   error_msg: string | null;
@@ -68,6 +74,10 @@ export interface ComfyRow {
   /** "template" | "rewritten" | "manual"; null on rows that predate the field. */
   prompt_origin: string | null;
 }
+
+/** How a folder move treats rows the blueprint still counts: `refuse` (409, the
+ *  default), `unlink` them as they move, or `skip` them. */
+export type LinkedMode = "refuse" | "unlink" | "skip";
 
 export interface PlanPrompt {
   row_id: string;
@@ -259,7 +269,7 @@ export const comfyApi = {
     client.post<ComfyRow>(`/comfy/plans/${planId}/rows`, { values }).then((r) => r.data),
   bulkAddRows: (planId: string, lines: string[]) =>
     client.post<{ created: number }>(`/comfy/plans/${planId}/rows/bulk`, { lines }).then((r) => r.data),
-  updateRow: (rowId: string, data: { values?: Record<string, unknown>; sort_order?: number; subfolder?: string }) =>
+  updateRow: (rowId: string, data: { values?: Record<string, unknown>; sort_order?: number; subfolder?: string; linked?: LinkedMode }) =>
     client.patch<ComfyRow>(`/comfy/rows/${rowId}`, data).then((r) => r.data),
   deleteRows: (planId: string, rowIds: string[]) =>
     client.post<{ deleted: number }>(`/comfy/plans/${planId}/rows/delete`, { row_ids: rowIds }).then((r) => r.data),
@@ -270,8 +280,20 @@ export const comfyApi = {
   /** Set the destination folder on a selection of rows (omit `rowIds` for every row).
    *  Its own endpoint, not a `set-value` branch: a folder is not a pinned parameter,
    *  and unlike a value edit it never resets a completed row. */
-  setRowsSubfolder: (planId: string, subfolder: string, rowIds?: string[]) =>
-    client.post<{ updated: number }>(`/comfy/plans/${planId}/rows/set-subfolder`, { subfolder, row_ids: rowIds }).then((r) => r.data),
+  setRowsSubfolder: (planId: string, subfolder: string, rowIds?: string[], linked: LinkedMode = "refuse") =>
+    client.post<{ updated: number }>(`/comfy/plans/${planId}/rows/set-subfolder`, { subfolder, row_ids: rowIds, linked }).then((r) => r.data),
+
+  // ── The folder tree (a plan's row folders plus its declared_folders) ──
+  createFolder: (planId: string, path: string) =>
+    client.post<ComfyPlan>(`/comfy/plans/${planId}/folders`, { path }).then((r) => r.data),
+  /** Rename or re-nest a folder with its rows. A 409 when its subtree is the blueprint's. */
+  moveFolder: (planId: string, path: string, newPath: string) =>
+    client.post<{ updated: number }>(`/comfy/plans/${planId}/folders/move`, { path, new_path: newPath }).then((r) => r.data),
+  /** Deletes the subtree's rows; their images stay in the gallery. */
+  deleteFolder: (planId: string, path: string) =>
+    client.post<{ deleted: number }>(`/comfy/plans/${planId}/folders/delete`, { path }).then((r) => r.data),
+  duplicatePlan: (planId: string, body: { name: string; include_rows: boolean }) =>
+    client.post<ComfyPlanSummary>(`/comfy/plans/${planId}/duplicate`, body).then((r) => r.data),
 
   /** One batch, synchronously. `signal` lets the caller abandon a call that can run
    *  for the provider's full timeout (120 s) — without it the UI has to sit on it. */

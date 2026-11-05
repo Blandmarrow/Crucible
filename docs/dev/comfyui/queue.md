@@ -128,6 +128,46 @@ a folder is not a pinned parameter. It also deliberately declares nothing on the
 edit is plan intent, and declaring per commit would fill `Dataset.declared_subfolders` with
 typos. `leaf_id` is not settable through either endpoint.
 
+**Both take `linked: "refuse" | "unlink" | "skip"`** (default `"refuse"`, M6 §8b), for rows
+the blueprint still counts. Only rows whose folder would change count; `"refuse"` 409s and
+moves nothing, `"unlink"` also clears `leaf_id`, `"skip"` moves the rest. Why, and what
+*linked* means, is `docs/dev/comfyui/structured.md` § Moving a blueprint row. `GET …/rows`
+returns each row's `blueprint_linked`; the `PATCH` response does not, so the page refetches.
+
+**The folder tree's endpoints** (M6 §8b, migration `d5b7f9a1c3e6`). A plan's folders are its
+rows' `subfolder` values, their ancestors, and `comfy_plans.declared_folders` (JSON list, NOT
+NULL, `'[]'`): folders made by hand, kept while empty. Every `_plan_out` returns it.
+- `POST …/folders` (`{path}` → the plan) declares a folder and its ancestors. 400 empty, 409
+  if it exists in either source.
+- `POST …/folders/move` (`{path, new_path}` → `{updated}`) renames or re-nests a folder with
+  its rows: an exact match plus a prefix compare on `comfy_rows.subfolder`
+  (`substr(subfolder, 1, len+1) = path + '/'`, `_descendant_clause`), then
+  `utils.remap_declared_paths` on the list, the helper the gallery's `repath_subfolder` uses.
+  400 for an empty path, the same path or a move into itself; 404 missing; 409 if the
+  destination exists.
+- `POST …/folders/delete` (`{path}` → `{deleted}`) deletes the subtree's rows and drops it
+  from the list (`utils.drop_declared_paths`). Images are never touched.
+- Move and delete 409 when the subtree holds a `blueprint_linked` row ("This folder comes
+  from the blueprint…"). All three share `_folder_write_guard`: `_plan_lock`, then
+  `_refuse_live_run`, then a 409 while a `_ROW_JOB_TYPES` job is queued or running for the
+  plan. The 400 checks run first, outside the lock; the 404 and the 409s run inside it. `set-subfolder` keeps its old,
+  unguarded behaviour for moves, but an unlink (on it or on `PATCH /rows/{id}`) takes the
+  plan lock and refuses a live automated run, as Apply does.
+- **Not `LIKE`.** SQLite's `LIKE` ignores ASCII case, so `knight/%` also matched `Knight/a`,
+  and deleting one folder deleted another's rows (the §8b review). The gallery's
+  `dataset_service.repath_subfolder` still uses `LIKE` and has the same flaw, left for its
+  own fix.
+
+**`POST /comfy/plans/{id}/duplicate`** (`{name, include_rows}` → the plan-list element shape,
+`{id, dataset_id, name, row_count, status_counts}`). 400 on a taken name, as create does. It
+deep-copies the workflow, pins, output nodes, the synthetic flag, `gen_settings` and
+`declared_folders`, and the blueprint's spec, seed and brief, never its draft. With
+`include_rows` it copies the leaves under fresh ids and the rows reset to pending
+(`error_msg`, `prompt_id`, `image_id` cleared, `image_ids` `[]`), keeping folder, values,
+order and `prompt_origin`, with `leaf_id` remapped onto the new leaves (an orphan's becomes
+NULL). Without it there are no leaves, and the next Apply builds them. Runs, jobs and images
+are never copied.
+
 Prompt tooling — `POST /comfy/generate-prompts` (one LLM batch call),
 `POST /comfy/plans/{id}/generate-prompts` (the durable `comfy_prompts` job), the output
 parser and `GeneratePromptsModal`: `docs/dev/comfyui/prompts.md`.

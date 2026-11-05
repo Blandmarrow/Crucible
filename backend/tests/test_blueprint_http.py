@@ -358,3 +358,64 @@ def test_apply_continues_the_plans_sort_order(tmp_path):
             assert len(made) == 6 and min(made) > max(hand)
             assert len(set(hand + made)) == 8
     run(go())
+
+
+def test_an_unlinked_completed_row_leaves_its_leaf_short_in_preview(tmp_path):
+    async def go():
+        async with api_env(tmp_path) as env:
+            ds_id, plan_id = await _plan(env)
+            spec = _spec(count=2, labels=("Knight",))
+            assert (await _apply(env, plan_id, spec, 2)).status_code == 200
+            r1, r2 = await _rows(env, plan_id)
+            img1 = await upload_image(env, ds_id)
+            img2 = await upload_image(env, ds_id, name="b.png")
+            await _complete(env, r1["id"], [img1["id"]])
+            await _complete(env, r2["id"], [img2["id"]])
+            pv = await _preview(env, plan_id, spec)
+            assert (pv["leaves"][0]["kept"], pv["leaves"][0]["to_add"]) == (2, 0)
+            r = await env.client.patch(
+                f"{API}/comfy/rows/{r1['id']}", json={"subfolder": "elsewhere", "linked": "unlink"})
+            assert r.status_code == 200, r.text
+            leaf = (await _preview(env, plan_id, spec))["leaves"][0]
+            assert leaf["kept"] == 1 and leaf["to_add"] == 1
+    run(go())
+
+
+def test_a_folder_move_on_a_blueprint_folder_is_409(tmp_path):
+    async def go():
+        async with api_env(tmp_path) as env:
+            _, plan_id = await _plan(env)
+            assert (await _apply(env, plan_id, _spec(count=1, labels=("Knight",)), 1)).status_code == 200
+            f = f"{API}/comfy/plans/{plan_id}/folders"
+            for op, body in (("/move", {"path": "salt_fen", "new_path": "other"}), ("/delete", {"path": "salt_fen"})):
+                r = await env.client.post(f + op, json=body)
+                assert r.status_code == 409
+                assert r.json()["detail"] == "This folder comes from the blueprint. Rename it in the Blueprint tab."
+            assert len(await _rows(env, plan_id)) == 1
+    run(go())
+
+
+def test_an_orphan_moved_into_a_later_leafs_folder_is_adopted(tmp_path):
+    async def go():
+        async with api_env(tmp_path) as env:
+            _, plan_id = await _plan(env)
+            assert (await _apply(env, plan_id, _spec(count=1, labels=("Knight",)), 1)).status_code == 200
+            (row,) = await _rows(env, plan_id)
+            # Replace the knight with a monk: the knight's leaf is deleted, its row orphaned.
+            monk = _spec(count=1, labels=("Monk",))
+            assert (await _apply(env, plan_id, monk, 1)).status_code == 200
+            orphan = next(r for r in await _rows(env, plan_id) if r["id"] == row["id"])
+            assert orphan["blueprint_linked"] is False  # orphans are never "linked"
+            # Moving an orphan needs no linked mode.
+            r = await env.client.post(f"{API}/comfy/plans/{plan_id}/rows/set-subfolder",
+                                      json={"subfolder": "salt_fen/iron_knight", "row_ids": [row["id"]]})
+            assert r.status_code == 200 and r.json() == {"updated": 1}
+            # A later leaf makes that folder and adopts the moved row instead of adding one.
+            both = _spec(count=1, labels=("Iron Knight", "Monk"))
+            assert (await _preview(env, plan_id, both))["rows_to_add"] == 0
+            assert (await _apply(env, plan_id, both, 0)).status_code == 200
+            async with env.Session() as db:
+                leaf = (await db.execute(select(ComfyLeaf).where(ComfyLeaf.path == "salt_fen/iron_knight"))).scalars().one()
+            adopted = next(r for r in await _rows(env, plan_id) if r["id"] == row["id"])
+            assert adopted["leaf_id"] == leaf.id and adopted["blueprint_linked"] is True
+    run(go())

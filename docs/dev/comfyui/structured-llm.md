@@ -6,7 +6,7 @@ brief into a draft blueprint (the `comfy_outline` job), and the optional rewrite
 its `json_schema`-then-plain fallback and the PM-004/PM-005 outcome rules with prompt
 generation (`docs/dev/comfyui/prompts.md`). What a draft must hold is
 `docs/dev/comfyui/structured-expansion.md` § The spec; the blueprint, Apply and Top up are
-`docs/dev/comfyui/structured.md`; the review panel is `docs/dev/comfyui/page.md`. The
+`docs/dev/comfyui/structured.md`; the review panel is `docs/dev/comfyui/blueprint-tab.md`. The
 family's hub is `docs/dev/comfyui.md`.
 
 ## The outline call
@@ -77,7 +77,7 @@ outline once put them last, so an instruction such as "one prompt per line" coul
 
 **Using or discarding the draft.** `DELETE …/blueprint/draft` clears it (idempotent) for
 both *Use it* and *Discard*. *Use it* clears it only after the spec holding it is saved
-(`docs/dev/comfyui/page.md`), so a failed save never loses the draft.
+(`docs/dev/comfyui/blueprint-tab.md`), so a failed save never loses the draft.
 
 There is no LLM in CI. `backend/tests/test_blueprint_outline_http.py` replaces
 `generate_outline` (imported lazily in `_run`, so patching the module attribute reaches

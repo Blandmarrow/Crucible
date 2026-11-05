@@ -17,7 +17,7 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-05, after M6 §8a)
+## Next session (updated 2026-11-05, after M6 §8b)
 
 1. M5's five stages merged on 2026-10-30 as PR #101. Only its cleanup is open, and that waits
    a release. See [server-state-plan/README.md](server-state-plan/README.md) for what was
@@ -86,12 +86,24 @@ restates its stages.
      mockup the user approved
      ([the plan's § 8](comfy-automation-plan/README.md#8-the-comfyui-page-rework-planned)).
      **§8a, the layout, landed on 2026-11-05** with every frontend gate green and the wide
-     and narrow layouts checked by screenshot. Next is §8b: ask the user the plan's open
-     questions 1–3 first.
+     and narrow layouts checked by screenshot. **§8b, the plan rail, the folder tree, the
+     grouped table and plan Duplicate, was built on 2026-11-05** (migration `d5b7f9a1c3e6`,
+     `comfy_plans.declared_folders`), after the user ruled all four open questions by
+     approving the recommendations (the plan's § The open questions, ruled). An Opus review's
+     findings were fixed, among them a case-blind `LIKE` that let a folder delete take
+     another folder's rows. Next is §8c. **Its first action is the split of
+     `docs/comfyui.md`** queued in [pending-splits.md](pending-splits.md): §8b left it at
+     2,498 of 2,500 words, and §8c rewrites the two sections that move.
+   - Still owed by hand for §8b, against a real ComfyUI: the rail's dot turning blue during a
+     run, and a folder rename refused while one is live.
+   - **Found in the §8b review, not fixed there:** the gallery's
+     `dataset_service.repath_subfolder` matches a folder's subtree with SQLite's case-blind
+     `LIKE`, so renaming `knight` also re-paths `Knight/a`; `filesystem.py`'s
+     `startswith(autoescape=True)` has the same shape. A fix for `main`, not this branch.
    - Decisions 7–9 and this M6 checklist exist only on that branch until it merges, so
      `main`'s next decision takes number 10. Its migrations `e5c1a9d3f7b2` →
      `b7d2f4a9c1e3` → `d4a8c2e6f1b9` → `f3b9d1a7c5e2` → `c8e4a6b2d0f7` → `a6d2f8c4e0b3` →
-     `b2e7c9a4d1f6` → `c4a8e2f6b9d3` follow `main`'s `c2b8e4f6a1d7`;
+     `b2e7c9a4d1f6` → `c4a8e2f6b9d3` → `d5b7f9a1c3e6` follow `main`'s `c2b8e4f6a1d7`;
      rebase at stage boundaries.
 5. M8's follow-ups 8, 9, 10 and 11 can go any time; stage 3 left inpaint and detection crop
    out, so item 8 no longer waits for it. Batch move and copy, in item 9, must wait for M4 to
@@ -247,16 +259,20 @@ gates are green and it is pushed.
   easier to use (the user's call, 2026-11-04: it lands before the merge). Scoped with the
   user on 2026-11-05 and the mockup approved; the *what* is
   [comfy-automation-plan/README.md § 8](comfy-automation-plan/README.md#8-the-comfyui-page-rework-planned).
-  Its open questions 1–3 are ruled before §8b.
+  Its open questions were ruled by the user on 2026-11-05.
   - [x] §8a: the sticky header and run bar, Blueprint in two columns with the preview
     sticky, collapsible editor sections. Done 2026-11-05, frontend only: the page is its own
     bounded scroller, a container query stacks the columns in a narrow pane, and the
     preview's sample prompts open per folder (the user's call). See
-    `docs/dev/comfyui/page.md` § The layout.
-  - [ ] §8b: the plan rail, the folder tree and rows grouped by folder, plan duplicate,
-    the remembered plan and tab. Needs questions 1 and 2 ruled; one migration.
+    `docs/dev/comfyui/page.md` § The layout and `docs/dev/comfyui/blueprint-tab.md` § The layout.
+  - [x] §8b: the plan rail, the folder tree and rows grouped by folder, plan duplicate,
+    the remembered plan and tab. Done 2026-11-05: migration `d5b7f9a1c3e6`
+    (`comfy_plans.declared_folders`), the folder and duplicate endpoints, the `linked` mode
+    on folder moves, and `docs/dev/comfyui/page.md` § The plan rail, the folder tree and the
+    grouped table. `page.md` was split first, as queued: the Blueprint tab is now
+    `docs/dev/comfyui/blueprint-tab.md`. Not yet checked by hand against a real ComfyUI.
   - [ ] §8c: the library side panel with nested categories, and drag and drop with a
-    button route for every drag. Needs §8b and question 3.
+    button route for every drag. Question 3 is ruled; split `docs/comfyui.md` first.
   - [ ] §8d: the Add menu, the selection bar, the paste dialog on `ModalShell`.
 - [ ] Merge: rebase onto `main`, re-parent the first migration onto M4's head if M4 merged
   first, run every gate, open the PR. The ComfyUI docs moved behind a hub on this branch, so

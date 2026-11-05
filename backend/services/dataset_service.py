@@ -32,6 +32,7 @@ from backend.utils import (
     copy_with_sidecar,
     poster_path_for,
     read_caption_sidecar,
+    remap_declared_paths,
     require_free_space,
     thumbnail_path_for,
     unique_filename_with_thumb,
@@ -641,24 +642,9 @@ async def repath_subfolder(
 
     ds = await db.get(Dataset, dataset_id)
     if ds:
-        rebuilt: list[str] = []
-        for p in (ds.declared_subfolders or []):
-            if p == path:
-                rebuilt.append(new_path)
-            elif p.startswith(path + "/"):
-                rebuilt.append(new_path + p[len(path):])
-            else:
-                rebuilt.append(p)
-        # Mirror declare_subfolder: the destination's ancestors have to exist, or an
-        # empty folder moved under a merely-declared parent vanishes from the sidebar.
-        parts = new_path.split("/")
-        for i in range(1, len(parts)):
-            rebuilt.append("/".join(parts[:i]))
-        seen: set[str] = set()
-        deduped = [p for p in rebuilt if not (p in seen or seen.add(p))]
         # Reassign, never mutate in place: SQLAlchemy compares JSON columns by
         # equality, so an in-place edit is a silently skipped UPDATE.
-        ds.declared_subfolders = deduped
+        ds.declared_subfolders = remap_declared_paths(ds.declared_subfolders, path, new_path)
 
     await db.commit()
     return updated

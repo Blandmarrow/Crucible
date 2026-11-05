@@ -251,7 +251,7 @@ def test_set_subfolder_chunks_its_id_list(tmp_path, monkeypatch):
             rows = (await env.client.get(f"{API}/comfy/plans/{plan_id}/rows")).json()
             ids = [r["id"] for r in rows]
             r = await env.client.post(f"{API}/comfy/plans/{plan_id}/rows/set-subfolder",
-                                      json={"subfolder": "moved", "row_ids": ids[:3] + ids[:1]})
+                                      json={"subfolder": "moved", "row_ids": ids[:3] + ids[:1], "linked": "unlink"})
             assert r.status_code == 200, r.text
             assert r.json() == {"updated": 3}
             # Three distinct ids in chunks of 2: the set-subfolder call made two queries.

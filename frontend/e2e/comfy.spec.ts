@@ -134,12 +134,12 @@ test.describe('saved Generate prompts settings', () => {
 
     await page.getByRole('button', { name: '×' }).click()
     await page.getByRole('button', { name: 'Generate prompts…' }).click()
-    await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeVisible({ timeout: 15_000 })
     await expect(page.getByPlaceholder(INSTRUCTIONS_PLACEHOLDER)).toHaveCount(0)
 
     await page.unroute('**/gen-settings')
     await expect.poll(async () => (await savedGenSettings(request, plan.id))?.instructions, { timeout: 15_000 }).toBe('must not be lost')
-    await page.getByRole('button', { name: 'Retry' }).click()
+    await page.getByRole('button', { name: 'Retry', exact: true }).click()
     await expect(page.getByPlaceholder(INSTRUCTIONS_PLACEHOLDER)).toHaveValue('must not be lost')
   })
 
@@ -166,11 +166,11 @@ test.describe('saved Generate prompts settings', () => {
     await page.route('**/gen-settings', (route) => route.fulfill({ status: 500, body: '{}' }))
     await page.goto(`/datasets/${ds.id}/comfy`)
     await page.getByRole('button', { name: 'Generate prompts…' }).click()
-    await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeVisible({ timeout: 15_000 })
     await expect(page.getByPlaceholder(INSTRUCTIONS_PLACEHOLDER)).toHaveCount(0)
 
     await page.unroute('**/gen-settings')
-    await page.getByRole('button', { name: 'Retry' }).click()
+    await page.getByRole('button', { name: 'Retry', exact: true }).click()
     await expect(page.getByPlaceholder(INSTRUCTIONS_PLACEHOLDER)).toHaveValue('keep me')
   })
 
@@ -194,7 +194,7 @@ test('comfy page shows its empty state and creates a plan', async ({ page, reque
   await expect(page.getByRole('heading', { name: 'ComfyUI generation' })).toBeVisible()
   await expect(page.getByText('No plans yet.', { exact: false })).toBeVisible()
 
-  await page.getByRole('button', { name: '+ New plan' }).click()
+  await page.getByTestId('comfy-plan-rail').getByRole('button', { name: 'New plan' }).click()
   await page.getByPlaceholder('Plan name').fill('smoke plan')
   await page.getByRole('button', { name: 'Create', exact: true }).click()
 
@@ -202,7 +202,7 @@ test('comfy page shows its empty state and creates a plan', async ({ page, reque
   // no workflow, so that is the only useful next step.
   await expect(page.getByRole('heading', { name: 'Workflow template' })).toBeVisible()
   await expect(page.getByText('No plans yet.', { exact: false })).toHaveCount(0)
-  await expect(page.locator('select').first()).toContainText('smoke plan (0 rows)')
+  await expect(page.getByTestId('comfy-plan-name')).toHaveText('smoke plan')
 })
 
 test('pasted prompts become queue rows', async ({ page, request }) => {
@@ -229,7 +229,8 @@ test('pasted prompts become queue rows', async ({ page, request }) => {
   await expect(promptCells).toHaveCount(2)
   await expect(promptCells.nth(0)).toHaveValue('a cat on a windowsill')
   await expect(promptCells.nth(1)).toHaveValue('a dog on a beach')
-  await expect(page.locator('select').first()).toContainText('paste plan (2 rows)')
+  // The rail lists the plan with its row count.
+  await expect(page.getByTestId('comfy-plan-rail').getByRole('button', { name: /^paste plan/ })).toContainText('2')
 
   // Cross-check through the API: the rows carry the pinned alias, not just text
   // rendered client-side.
@@ -257,10 +258,11 @@ test('rows carry a per-row folder, typed in a cell or set in bulk', async ({ pag
   const folderCells = rowsTable.locator('input[placeholder="(root)"]')
   await expect(folderCells).toHaveCount(2)
 
-  // Typing in one cell commits on blur, and only touches that row.
+  // Typing in one cell commits on blur, and only touches that row. The table then
+  // groups the rows by folder, (root) first, so the row moves under its own header.
   await folderCells.nth(0).fill('salt-fen')
   await folderCells.nth(0).blur()
-  await expect(folderCells.nth(0)).toHaveValue('salt-fen')
+  await expect(rowsTable.locator('[data-testid="comfy-group"][data-folder="salt-fen"]')).toBeVisible()
 
   const rowsUrl = `/api/v1/comfy/plans/${plan.id}/rows`
   await expect
@@ -278,4 +280,131 @@ test('rows carry a per-row folder, typed in a cell or set in bulk', async ({ pag
   await expect
     .poll(async () => (await (await request.get(rowsUrl)).json()).map((r: { subfolder: string }) => r.subfolder))
     .toEqual(['ridge/knight', 'ridge/knight'])
+})
+
+// ── M6 §8b: the plan rail, the folder tree and the grouped table ──────────────────
+
+async function addRowsViaApi(request: APIRequestContext, planId: string, lines: string[]) {
+  const r = await request.post(`/api/v1/comfy/plans/${planId}/rows/bulk`, { data: { lines } })
+  expect(r.status(), await r.text()).toBe(200)
+}
+
+async function rowsOf(request: APIRequestContext, planId: string) {
+  return (await request.get(`/api/v1/comfy/plans/${planId}/rows`)).json()
+}
+
+test('a plan duplicates from the rail, rows reset to pending', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-comfy-dup-${Date.now()}`)
+  const plan = await createPlanViaApi(request, ds.id, 'dup plan')
+  await addRowsViaApi(request, plan.id, ['a fox in snow', 'a hare in snow'])
+
+  await page.goto(`/datasets/${ds.id}/comfy`)
+  const rail = page.getByTestId('comfy-plan-rail')
+  await rail.getByRole('button', { name: 'Plan actions for dup plan' }).click()
+  await page.getByRole('menuitem', { name: 'Duplicate…' }).click()
+  await expect(page.getByRole('heading', { name: 'Duplicate plan' })).toBeVisible()
+  await expect(page.getByRole('textbox', { name: 'Name' })).toHaveValue('dup plan (copy)')
+  await page.getByRole('button', { name: 'Duplicate', exact: true }).click()
+
+  // The copy is selected, and its rows came with it.
+  await expect(page.getByTestId('comfy-plan-name')).toHaveText('dup plan (copy)')
+  await expect(page.getByTestId('comfy-rows-table').locator('textarea')).toHaveCount(2)
+  const plans = await (await request.get('/api/v1/comfy/plans', { params: { dataset_id: ds.id } })).json()
+  const copy = plans.find((p: { name: string }) => p.name === 'dup plan (copy)')
+  const rows = await rowsOf(request, copy.id)
+  expect(rows.map((r: { status: string }) => r.status)).toEqual(['pending', 'pending'])
+})
+
+test('folders are made, renamed and picked in the tree', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-comfy-tree-${Date.now()}`)
+  const plan = await createPlanViaApi(request, ds.id, 'tree plan')
+  await addRowsViaApi(request, plan.id, ['a knight in a fen', 'a monk on a ridge'])
+  const ids = (await rowsOf(request, plan.id)).map((r: { id: string }) => r.id)
+  const set = await request.post(`/api/v1/comfy/plans/${plan.id}/rows/set-subfolder`, {
+    data: { subfolder: 'fen', row_ids: [ids[0]] },
+  })
+  expect(set.status(), await set.text()).toBe(200)
+
+  await page.goto(`/datasets/${ds.id}/comfy`)
+  const tree = page.getByTestId('comfy-folder-tree')
+
+  // A new, empty folder stays in the tree.
+  await tree.getByRole('button', { name: 'New folder' }).click()
+  await page.getByRole('textbox', { name: 'Folder name' }).fill('ridge')
+  await page.getByRole('button', { name: 'Create', exact: true }).click()
+  await expect(tree.getByRole('button', { name: /^ridge/ })).toBeVisible()
+
+  // Rename "fen" from its menu: its row moves with it.
+  await tree.getByRole('button', { name: 'Folder actions for fen' }).click()
+  await page.getByRole('menuitem', { name: 'Rename…' }).click()
+  await page.getByRole('textbox', { name: 'Folder name' }).fill('salt-fen')
+  await page.getByRole('button', { name: 'Rename', exact: true }).click()
+  await expect
+    .poll(async () => (await rowsOf(request, plan.id)).map((r: { subfolder: string }) => r.subfolder))
+    .toEqual(['salt-fen', ''])
+
+  // Picking a folder narrows the table to it.
+  const rowsTable = page.getByTestId('comfy-rows-table')
+  await expect(rowsTable.locator('textarea')).toHaveCount(2)
+  await tree.getByRole('button', { name: /^salt-fen/ }).click()
+  await expect(rowsTable.locator('textarea')).toHaveCount(1)
+  await expect(rowsTable.locator('textarea').first()).toHaveValue('a knight in a fen')
+  await tree.getByRole('button', { name: /^All rows/ }).click()
+  await expect(rowsTable.locator('textarea')).toHaveCount(2)
+})
+
+test('the page remembers the plan and tab per dataset', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-comfy-remember-${Date.now()}`)
+  await createPlanViaApi(request, ds.id, 'first plan')
+  await createPlanViaApi(request, ds.id, 'second plan')
+
+  await page.goto(`/datasets/${ds.id}/comfy`)
+  await page.getByTestId('comfy-plan-rail').getByRole('button', { name: /^second plan/ }).click()
+  await expect(page.getByTestId('comfy-plan-name')).toHaveText('second plan')
+  await page.getByRole('button', { name: 'Workflow & Pins' }).click()
+  await expect(page.getByRole('heading', { name: 'Workflow template' })).toBeVisible()
+
+  await page.reload()
+  await expect(page.getByTestId('comfy-plan-name')).toHaveText('second plan')
+  await expect(page.getByRole('heading', { name: 'Workflow template' })).toBeVisible()
+})
+
+test('Set folder asks before moving rows the blueprint counts', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-comfy-linked-${Date.now()}`)
+  const plan = await createPlanViaApi(request, ds.id, 'bp plan')
+  const spec = {
+    axes: { character: [{ id: 'c0', label: 'Knight', descriptor: 'a knight' }] },
+    variations: {},
+    scenarios: [{ name: 'solo', combine: ['character'], count: 1, path: '{character}', template: '{character}' }],
+  }
+  const pv = await (await request.post(`/api/v1/comfy/plans/${plan.id}/blueprint/preview`, {
+    data: { spec, seed: 5 },
+  })).json()
+  const applied = await request.post(`/api/v1/comfy/plans/${plan.id}/blueprint/apply`, {
+    data: { spec, seed: 5, confirm_total: pv.rows_to_add },
+  })
+  expect(applied.status(), await applied.text()).toBe(200)
+  await addRowsViaApi(request, plan.id, ['a hand-made prompt'])
+  const before = await rowsOf(request, plan.id)
+  const linked = before.find((r: { blueprint_linked: boolean }) => r.blueprint_linked)
+  expect(linked).toBeTruthy()
+
+  await page.goto(`/datasets/${ds.id}/comfy`)
+  const rowsTable = page.getByTestId('comfy-rows-table')
+  await rowsTable.locator('input.checkbox').first().check()
+  await page.getByRole('button', { name: 'Set folder (2)' }).click()
+  await page.getByPlaceholder('e.g. salt-fen/iron-knight').fill('elsewhere')
+  await page.getByRole('button', { name: 'Apply' }).click()
+  await expect(page.getByTestId('comfy-linked-confirm')).toContainText('1 of these 2 rows came from the blueprint')
+  await page.getByRole('button', { name: 'Move hand-made rows only' }).click()
+  await expect(page.getByRole('heading', { name: 'Set folder' })).toHaveCount(0)
+
+  // The blueprint's row stayed in its folder and stayed linked; the hand-made one moved.
+  await expect
+    .poll(async () => {
+      const rows = await rowsOf(request, plan.id)
+      return rows.map((r: { subfolder: string; blueprint_linked: boolean }) => [r.blueprint_linked, r.subfolder])
+    })
+    .toEqual(before.map((r: { subfolder: string; blueprint_linked: boolean }) =>
+      [r.blueprint_linked, r.blueprint_linked ? r.subfolder : 'elsewhere']))
 })

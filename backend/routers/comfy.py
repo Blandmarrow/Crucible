@@ -17,17 +17,18 @@ import time
 from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, ValidationError
-from sqlalchemy import delete as sa_delete, func, select, update
+from sqlalchemy import String, delete as sa_delete, func, literal, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
 from backend.licenses import FIELD_MAX_LEN
 from backend.models import BackgroundJob, Dataset, Image
-from backend.models.comfy import ComfyLibraryPrompt, ComfyPlan, ComfyRow
+from backend.models.comfy import ComfyBlueprint, ComfyLeaf, ComfyLibraryPrompt, ComfyPlan, ComfyRow
 from backend.schemas.app_data import ComfyGenSettings
 from backend.schemas.comfy_blueprint import BlueprintSpec
 from backend.services import blueprint_rewrite, blueprint_service
@@ -49,12 +50,15 @@ from backend.utils import (
     chunked,
     REGEX_TIMEOUT_SECONDS,
     compile_user_regex,
+    drop_declared_paths,
     join_subfolder,
     normalize_subfolder,
+    remap_declared_paths,
     regex_error,
     regex_sub_deadline,
     sanitize_abs_path,
     slugify_filename,
+    subfolder_ancestors,
     thumbnail_path_for,
     unique_filename_with_thumb,
 )
@@ -116,12 +120,33 @@ class RowCreate(BaseModel):
     values: dict = Field(default_factory=dict)
 
 
+# What a folder write does with rows that came from the blueprint (they have a current
+# leaf): refuse the whole write, move them and cut the link, or leave them where they are.
+LinkedMode = Literal["refuse", "unlink", "skip"]
+
+
+class FolderPathRequest(BaseModel):
+    path: str = Field(max_length=512)
+
+
+class FolderMoveRequest(BaseModel):
+    path: str = Field(max_length=512)
+    new_path: str = Field(max_length=512)
+
+
+class PlanDuplicateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    include_rows: bool = False
+
+
 class RowUpdate(BaseModel):
     values: dict | None = None
     sort_order: int | None = None
     # Per-row destination folder, nested under the run's base folder. `leaf_id` is
     # deliberately not settable — it is written by structured generation, not by hand.
     subfolder: str | None = Field(default=None, max_length=512)
+    # What to do if this row came from the blueprint and the folder changes.
+    linked: LinkedMode = "refuse"
 
 
 class BulkLinesRequest(BaseModel):
@@ -146,6 +171,7 @@ class SetSubfolderRequest(BaseModel):
     # "" files the selected rows straight into the run's base folder.
     subfolder: str = Field(default="", max_length=512)
     row_ids: list[str] | None = None  # None = every row of the plan; [] = none
+    linked: LinkedMode = "refuse"
 
 
 class LibraryAddRequest(BaseModel):
@@ -285,6 +311,87 @@ class RewriteRequest(BaseModel):
 _ROW_JOB_TYPES = ("comfy_generate", "comfy_prompts", "comfy_rewrite")
 
 
+async def _current_leaf_ids(db: AsyncSession, plan_id: str) -> set[str]:
+    """Ids of the plan's CURRENT blueprint leaves. A row whose `leaf_id` is not in this
+    set is either hand-made (NULL) or an orphan of a deleted leaf; neither is "linked"."""
+    return set((await db.execute(
+        select(ComfyLeaf.id)
+        .join(ComfyBlueprint, ComfyLeaf.blueprint_id == ComfyBlueprint.id)
+        .where(ComfyBlueprint.plan_id == plan_id)
+    )).scalars().all())
+
+
+async def _refuse_linked_subtree(db: AsyncSession, plan_id: str, path: str) -> None:
+    """409 if any row in the folder's subtree came from the blueprint."""
+    linked = await _current_leaf_ids(db, plan_id)
+    if linked and (await db.execute(
+        select(ComfyRow.id).where(
+            ComfyRow.plan_id == plan_id, ComfyRow.leaf_id.in_(linked), _subtree_clause(path)
+        ).limit(1)
+    )).first():
+        raise HTTPException(409, BLUEPRINT_FOLDER_MSG)
+
+
+def _linked_refusal(n: int) -> str:
+    return f"{n} of these rows came from the blueprint. Moving them unlinks them from it."
+
+
+BLUEPRINT_FOLDER_MSG = "This folder comes from the blueprint. Rename it in the Blueprint tab."
+
+
+def _descendant_clause(path: str):
+    """Rows strictly below `path`. A prefix compare, not a LIKE: SQLite's LIKE ignores
+    ASCII case, so `knight/%` also matched `Knight/a`, and a delete of `knight` took the
+    other folder's rows with it. `=` compares case-sensitively and needs no escaping."""
+    return func.substr(ComfyRow.subfolder, 1, len(path) + 1) == path + "/"
+
+
+def _subtree_clause(path: str):
+    return (ComfyRow.subfolder == path) | _descendant_clause(path)
+
+
+def _unlink_lock(plan_id: str, linked: str):
+    """An unlink clears `leaf_id`, which is what fill accounting counts, so it takes
+    Apply's lock (against adoption re-linking a row mid-move); other modes need none."""
+    return _plan_lock(plan_id) if linked == "unlink" else contextlib.nullcontext()
+
+
+async def _folder_state(db: AsyncSession, plan: ComfyPlan) -> tuple[set[str], list[str]]:
+    """(every folder that exists, declared list). A folder exists if a row sits in it or
+    below it, or the plan declares it or something below it."""
+    subs = (await db.execute(
+        select(ComfyRow.subfolder).where(ComfyRow.plan_id == plan.id).distinct()
+    )).scalars().all()
+    declared = list(plan.declared_folders or [])
+    found: set[str] = set()
+    for p in [*subs, *declared]:
+        if p:
+            found.add(p)
+            found.update(subfolder_ancestors(p))
+    return found, declared
+
+
+@contextlib.asynccontextmanager
+async def _folder_write_guard(db: AsyncSession, plan_id: str):
+    """Apply's guard, for a folder write: under the plan lock, refuse while an automated
+    run is live or a row job (run, prompt generation, rewrite) is queued or running."""
+    async with _plan_lock(plan_id):
+        await _refuse_live_run(db, plan_id)
+        if await _plan_job_active(db, plan_id, _ROW_JOB_TYPES):
+            raise HTTPException(409, "A run, prompt-generation or rewrite job for this plan is queued or running — wait for it to finish")
+        yield
+
+
+def _plan_summary(plan: ComfyPlan, status_counts: dict[str, int]) -> dict:
+    return {
+        "id": plan.id,
+        "dataset_id": plan.dataset_id,
+        "name": plan.name,
+        "row_count": sum(status_counts.values()),
+        "status_counts": status_counts,
+    }
+
+
 def _plan_out(plan: ComfyPlan) -> dict:
     return {
         "id": plan.id,
@@ -294,6 +401,7 @@ def _plan_out(plan: ComfyPlan) -> dict:
         "pinned_params": plan.pinned_params or [],
         "output_node_ids": plan.output_node_ids or [],
         "output_is_synthetic": bool(plan.output_is_synthetic),
+        "declared_folders": list(plan.declared_folders or []),
         "created_at": plan.created_at,
         "updated_at": plan.updated_at,
     }
@@ -806,6 +914,141 @@ async def delete_plan(plan_id: str, db: AsyncSession = Depends(get_db)):
     await db.commit()
 
 
+@router.post("/plans/{plan_id}/duplicate")
+async def duplicate_plan(plan_id: str, body: PlanDuplicateRequest, db: AsyncSession = Depends(get_db)):
+    """Copy a plan: workflow, pins, outputs, settings, folders and the blueprint's spec
+    (not its draft). With `include_rows`, also the leaves and the rows, reset to pending.
+    Never runs, jobs or images."""
+    src = await _get_plan(db, plan_id)
+    dup = await db.execute(
+        select(ComfyPlan.id).where(ComfyPlan.dataset_id == src.dataset_id, ComfyPlan.name == body.name)
+    )
+    if dup.first():
+        raise HTTPException(400, f"Plan '{body.name}' already exists in this dataset")
+    plan = ComfyPlan(
+        dataset_id=src.dataset_id,
+        name=body.name,
+        workflow_json=copy.deepcopy(src.workflow_json or {}),
+        pinned_params=copy.deepcopy(src.pinned_params or []),
+        output_node_ids=list(src.output_node_ids or []),
+        output_is_synthetic=bool(src.output_is_synthetic),
+        gen_settings=copy.deepcopy(src.gen_settings),
+        declared_folders=list(src.declared_folders or []),
+    )
+    db.add(plan)
+    await db.flush()
+    leaf_map: dict[str, str] = {}
+    src_bp = (await db.execute(select(ComfyBlueprint).where(ComfyBlueprint.plan_id == plan_id))).scalars().first()
+    if src_bp:
+        bp = ComfyBlueprint(
+            plan_id=plan.id, spec=copy.deepcopy(src_bp.spec or {}), seed=src_bp.seed, brief=src_bp.brief,
+        )
+        db.add(bp)
+        await db.flush()
+        if body.include_rows:
+            leaves = (await db.execute(
+                select(ComfyLeaf).where(ComfyLeaf.blueprint_id == src_bp.id).order_by(ComfyLeaf.sort_order)
+            )).scalars().all()
+            new_leaves: list[tuple[str, ComfyLeaf]] = []
+            for lf in leaves:
+                new = ComfyLeaf(
+                    blueprint_id=bp.id, scenario=lf.scenario, path=lf.path, target=lf.target,
+                    entity_ids=copy.deepcopy(lf.entity_ids or {}), cursor=lf.cursor, sort_order=lf.sort_order,
+                )
+                db.add(new)
+                new_leaves.append((lf.id, new))
+            await db.flush()  # ids are minted at flush
+            leaf_map = {old_id: lf.id for old_id, lf in new_leaves}
+    counts: dict[str, int] = {}
+    if body.include_rows:
+        rows = (await db.execute(
+            select(ComfyRow).where(ComfyRow.plan_id == plan_id).order_by(ComfyRow.sort_order, ComfyRow.created_at)
+        )).scalars().all()
+        # Renumbered in the source's (sort_order, created_at) order: the copies all get a
+        # fresh created_at, so tied sort_orders would otherwise come back in any order.
+        for i, r in enumerate(rows):
+            db.add(ComfyRow(
+                plan_id=plan.id, sort_order=i, subfolder=r.subfolder or "",
+                leaf_id=leaf_map.get(r.leaf_id) if r.leaf_id else None,
+                prompt_origin=r.prompt_origin, values=copy.deepcopy(r.values or {}),
+                status="pending", error_msg=None, image_id=None, image_ids=[], prompt_id=None,
+            ))
+        if rows:
+            counts["pending"] = len(rows)
+    await db.commit()
+    return _plan_summary(plan, counts)
+
+
+@router.post("/plans/{plan_id}/folders")
+async def create_folder(plan_id: str, body: FolderPathRequest, db: AsyncSession = Depends(get_db)):
+    plan = await _get_plan(db, plan_id)
+    path = normalize_subfolder(body.path)
+    if not path:
+        raise HTTPException(400, "Folder name is required")
+    async with _folder_write_guard(db, plan_id):
+        # Loaded before the lock: re-read, or two writes racing on it lose one's folders.
+        await db.refresh(plan, ["declared_folders"])
+        existing, declared = await _folder_state(db, plan)
+        if path in existing:
+            raise HTTPException(409, f"Folder '{path}' already exists")
+        plan.declared_folders = list(dict.fromkeys([*declared, *subfolder_ancestors(path), path]))
+        await db.commit()
+    return _plan_out(plan)
+
+
+@router.post("/plans/{plan_id}/folders/move")
+async def move_folder(plan_id: str, body: FolderMoveRequest, db: AsyncSession = Depends(get_db)):
+    """Re-path a folder and its subtree: rows, and the declared list. A label change only."""
+    plan = await _get_plan(db, plan_id)
+    path = normalize_subfolder(body.path)
+    new_path = normalize_subfolder(body.new_path)
+    if not path or not new_path:
+        raise HTTPException(400, "Folder path and new path are required")
+    if new_path == path or new_path.startswith(path + "/"):
+        raise HTTPException(400, "A folder cannot be moved onto itself or into itself")
+    async with _folder_write_guard(db, plan_id):
+        await db.refresh(plan, ["declared_folders"])
+        existing, declared = await _folder_state(db, plan)
+        if path not in existing:
+            raise HTTPException(404, f"Folder '{path}' not found")
+        if new_path in existing:
+            raise HTTPException(409, f"Folder '{new_path}' already exists")
+        await _refuse_linked_subtree(db, plan_id, path)
+        exact = await db.execute(
+            update(ComfyRow).where(ComfyRow.plan_id == plan_id, ComfyRow.subfolder == path).values(subfolder=new_path)
+        )
+        desc = await db.execute(
+            update(ComfyRow)
+            .where(ComfyRow.plan_id == plan_id)
+            .where(_descendant_clause(path))
+            .values(subfolder=literal(new_path, type_=String) + func.substr(ComfyRow.subfolder, len(path) + 1))
+        )
+        plan.declared_folders = remap_declared_paths(declared, path, new_path)
+        await db.commit()
+    return {"updated": (exact.rowcount or 0) + (desc.rowcount or 0)}
+
+
+@router.post("/plans/{plan_id}/folders/delete")
+async def delete_folder(plan_id: str, body: FolderPathRequest, db: AsyncSession = Depends(get_db)):
+    """Delete a folder's rows and forget it and its subfolders. Images are never touched."""
+    plan = await _get_plan(db, plan_id)
+    path = normalize_subfolder(body.path)
+    if not path:
+        raise HTTPException(400, "Folder path is required")
+    async with _folder_write_guard(db, plan_id):
+        await db.refresh(plan, ["declared_folders"])
+        existing, declared = await _folder_state(db, plan)
+        if path not in existing:
+            raise HTTPException(404, f"Folder '{path}' not found")
+        await _refuse_linked_subtree(db, plan_id, path)
+        res = await db.execute(
+            sa_delete(ComfyRow).where(ComfyRow.plan_id == plan_id, _subtree_clause(path))
+        )
+        plan.declared_folders = drop_declared_paths(declared, path)
+        await db.commit()
+    return {"deleted": res.rowcount or 0}
+
+
 # ── Row CRUD ──────────────────────────────────────────────────────────────────
 
 @router.get("/plans/{plan_id}/rows")
@@ -816,7 +1059,8 @@ async def list_rows(plan_id: str, db: AsyncSession = Depends(get_db)):
             select(ComfyRow).where(ComfyRow.plan_id == plan_id).order_by(ComfyRow.sort_order, ComfyRow.created_at)
         )
     ).scalars().all()
-    return [_row_out(r) for r in rows]
+    linked = await _current_leaf_ids(db, plan_id)
+    return [{**_row_out(r), "blueprint_linked": r.leaf_id in linked} for r in rows]
 
 
 def _plan_prompt_texts(plan: ComfyPlan, rows: Iterable[ComfyRow]) -> list[tuple[ComfyRow, str]]:
@@ -964,15 +1208,30 @@ async def update_row(row_id: str, body: RowUpdate, db: AsyncSession = Depends(ge
             row.status = "pending"
             row.error_msg = None
             row.prompt_id = None
-    if body.subfolder is not None:
-        # Deliberately NOT a reset, unlike a `values` edit: a folder change does not
-        # change the image that would be produced, only where the next one is filed.
-        # Resetting would make the next run regenerate an image that is already correct.
-        # Placed after the `values` branch so a combined PATCH still resets.
-        row.subfolder = normalize_subfolder(body.subfolder)
-    if body.sort_order is not None:
-        row.sort_order = body.sort_order
-    await db.commit()
+    async with _unlink_lock(row.plan_id, body.linked):
+        if body.subfolder is not None:
+            # Deliberately NOT a reset, unlike a `values` edit: a folder change does not
+            # change the image that would be produced, only where the next one is filed.
+            # Resetting would make the next run regenerate an image that is already correct.
+            # Placed after the `values` branch so a combined PATCH still resets.
+            new_folder = normalize_subfolder(body.subfolder)
+            if new_folder != (row.subfolder or ""):
+                linked_ids = await _current_leaf_ids(db, row.plan_id)
+                if row.leaf_id in linked_ids:
+                    if body.linked == "refuse":
+                        raise HTTPException(409, _linked_refusal(1))
+                    if body.linked == "unlink":
+                        # A paused or running automated run would read the leaf short
+                        # on its next pass and queue refills; Apply refuses it too.
+                        await _refuse_live_run(db, row.plan_id)
+                        row.subfolder = new_folder
+                        row.leaf_id = None
+                    # "skip": leave the row where it is.
+                else:
+                    row.subfolder = new_folder
+        if body.sort_order is not None:
+            row.sort_order = body.sort_order
+        await db.commit()
     return _row_out(row)
 
 
@@ -1061,19 +1320,30 @@ async def set_rows_subfolder(
     await _get_plan(db, plan_id)
     subfolder = normalize_subfolder(body.subfolder)
     stmt = select(ComfyRow).where(ComfyRow.plan_id == plan_id)
-    if body.row_ids is not None:
-        rows = []
-        for chunk in chunked(list(dict.fromkeys(body.row_ids))):
-            rows.extend((await db.execute(stmt.where(ComfyRow.id.in_(chunk)))).scalars().all())
-    else:
-        rows = (await db.execute(stmt)).scalars().all()
-    updated = 0
-    for r in rows:
-        if (r.subfolder or "") == subfolder:
-            continue
-        r.subfolder = subfolder
-        updated += 1
-    await db.commit()
+    async with _unlink_lock(plan_id, body.linked):
+        if body.row_ids is not None:
+            rows = []
+            for chunk in chunked(list(dict.fromkeys(body.row_ids))):
+                rows.extend((await db.execute(stmt.where(ComfyRow.id.in_(chunk)))).scalars().all())
+        else:
+            rows = (await db.execute(stmt)).scalars().all()
+        linked_ids = await _current_leaf_ids(db, plan_id)
+        changing = [r for r in rows if (r.subfolder or "") != subfolder]
+        n_linked = sum(1 for r in changing if r.leaf_id in linked_ids)
+        if n_linked and body.linked == "refuse":
+            raise HTTPException(409, _linked_refusal(n_linked))
+        if n_linked and body.linked == "unlink":
+            # As in update_row: a live automated run would refill the leaves this empties.
+            await _refuse_live_run(db, plan_id)
+        updated = 0
+        for r in changing:
+            if r.leaf_id in linked_ids:
+                if body.linked == "skip":
+                    continue
+                r.leaf_id = None  # "unlink"
+            r.subfolder = subfolder
+            updated += 1
+        await db.commit()
     return {"updated": updated}
 
 

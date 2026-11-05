@@ -6,6 +6,7 @@ export const SUBFOLDER_RENAME_KEY = "subfolder-auto-rename"; // "on" | "off"
 export const GALLERY_CHECKBOX_SIZE_KEY = "gallery-checkbox-size"; // px, 14..32
 export const VIDEO_STRIP_COLLAPSED_KEY = "gallery-videos-collapsed"; // prefix; append `-${datasetId}` for the full key
 export const COMFY_BLUEPRINT_SECTIONS_KEY = "comfy-blueprint-sections"; // prefix; append `-${planId}`. JSON {axes, variations, scenarios}: which Blueprint editor sections are open
+export const COMFY_ROWS_VIEW_KEY = "comfy-rows-view"; // prefix; append `-${planId}`. JSON {closedFolders, closedGroups}: the folder tree's and the grouped Rows table's collapsed folders
 export const DECLARED_CATEGORIES_KEY = "crucible-declared-categories"; // string[]. Moved to the server; only the one-time browser import reads this
 export const LEGACY_IMPORT_MARKER_KEY = "crucible-legacy-import-v1"; // JSON: what this browser has copied to the server
 
@@ -55,6 +56,7 @@ export const EXPORT_FILTERS_PREFIX     = "export-filters";
 export const QUALITY_FILTERS_PREFIX    = "quality-filters";
 export const BULK_EDIT_FILTERS_PREFIX  = "bulk-edit-filters";
 export const STATS_FILTERS_PREFIX      = "stats-filters";
+export const COMFY_PAGE_STATE_PREFIX   = "comfy-page"; // {planId, section}: the ComfyUI page's last plan and tab
 
 const GALLERY_PAGE_SIZE_DEFAULT = 100;
 

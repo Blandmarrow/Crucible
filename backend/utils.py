@@ -7,7 +7,7 @@ import re
 import shutil
 import stat
 import time
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -301,6 +301,37 @@ def join_subfolder(*fragments: str) -> str:
     for fragment in fragments:
         parts.extend(p for p in _subfolder_parts(fragment or "") if p != "..")
     return "/".join(parts)
+
+
+def subfolder_ancestors(path: str) -> list[str]:
+    """Every proper ancestor of a normalized subfolder path: `a/b/c` -> `["a", "a/b"]`."""
+    parts = path.split("/")
+    return ["/".join(parts[:i]) for i in range(1, len(parts))]
+
+
+def remap_declared_paths(declared: Iterable[str] | None, path: str, new_path: str) -> list[str]:
+    """Rewrite a declared-folder list for a re-path of `path` to `new_path`. Pure.
+
+    `path` and its descendants take the new prefix, `new_path`'s ancestors are added
+    (an empty folder moved under a merely-declared parent must not vanish), and the
+    result is de-duplicated in order. Returns a NEW list; callers reassign it to the
+    JSON column rather than mutating the loaded one (SQLAlchemy compares by equality).
+    """
+    rebuilt: list[str] = []
+    for p in (declared or []):
+        if p == path:
+            rebuilt.append(new_path)
+        elif p.startswith(path + "/"):
+            rebuilt.append(new_path + p[len(path):])
+        else:
+            rebuilt.append(p)
+    rebuilt.extend(subfolder_ancestors(new_path))
+    return list(dict.fromkeys(rebuilt))
+
+
+def drop_declared_paths(declared: Iterable[str] | None, path: str) -> list[str]:
+    """A NEW declared-folder list without `path` or any of its descendants. Pure."""
+    return [p for p in (declared or []) if p != path and not p.startswith(path + "/")]
 
 
 def _is_unsafe_url_char(c: str) -> bool:

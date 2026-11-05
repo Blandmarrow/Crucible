@@ -37,6 +37,11 @@ class ComfyPlan(Base):
     output_is_synthetic: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default=sa.true()
     )
+    # Folders the user made on the plan's Folders tab, so an empty one survives (rows
+    # only imply the folders they sit in). Reassign, never mutate in place.
+    declared_folders: Mapped[list] = mapped_column(
+        JSON, nullable=False, default=list, server_default="[]"
+    )
     # The "Generate prompts" form (schemas/app_data.ComfyGenSettings). NULL means never
     # saved, which the browser import relies on; none_as_null keeps None from being
     # stored as JSON `null`.

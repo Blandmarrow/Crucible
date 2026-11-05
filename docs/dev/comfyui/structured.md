@@ -7,7 +7,7 @@ templates, the template walk) are `docs/dev/comfyui/structured-expansion.md`; th
 call that drafts a spec with an LLM is `docs/dev/comfyui/structured-llm.md`. The queue
 itself (plans, pins, rows and the row's `subfolder`/`leaf_id` columns) is
 `docs/dev/comfyui/queue.md`; how a run files each row is `docs/dev/comfyui/run.md`; the
-page is `docs/dev/comfyui/page.md`. The arc's remaining stages are in
+page is `docs/dev/comfyui/page.md`, and its Blueprint tab `docs/dev/comfyui/blueprint-tab.md`. The arc's remaining stages are in
 `docs/dev/comfy-automation-plan/README.md`, and the rulings behind it are decision 8
 (`docs/dev/decisions/08-templates-first-filed-by-folder.md`).
 
@@ -101,6 +101,34 @@ would see.
 Apply takes `delete_orphan_pending`, which deletes only their **pending** rows. Completed
 rows and their images are never touched, and the user removes them by hand if wanted.
 This was the user's ruling on the plan's open question about edit-then-top-up.
+
+## Moving a blueprint row
+
+M6 §8b, the user's ruling of 2026-11-05 (`docs/dev/comfy-automation-plan/README.md` § The
+open questions, ruled). **A leaf counts its rows by `leaf_id`, never by folder**, so a row
+whose folder changes while it keeps its `leaf_id` breaks "a leaf is its folder". The leaf
+went on counting the row's images as kept, and Top up re-ran it into the new folder.
+
+- **A row is *linked* when its `leaf_id` is a current leaf** of the plan's blueprint. `GET
+  …/rows` returns it as `blueprint_linked`. Orphans are not linked: they keep their
+  `leaf_id` as provenance and move freely, and a moved orphan stays adoptable by a leaf whose
+  path is its new folder.
+- **A folder change on a linked row takes `linked`**, on `set-subfolder` and on the
+  `subfolder` branch of `PATCH /rows/{id}`.
+  - `"refuse"` is the default, a 409.
+  - `"unlink"` moves the row and clears `leaf_id`. A completed unlinked row's images then
+    stop counting, so the leaf reads short and the next Apply or Top up refills its folder.
+    That is the intent, and the Set folder prompt says so. It runs under `_plan_lock`, so
+    Apply's adoption cannot re-link the row mid-move, and refuses (409) while an automated
+    run is running or paused, whose next pass would refill the leaf, possibly with paid
+    calls.
+  - `"skip"` leaves linked rows where they are and moves the rest.
+- **A folder whose subtree holds linked rows is locked** for the tree's rename, move and
+  delete (409). Unlinking a whole folder would leave the leaf's path in place, so the next
+  Apply would queue a full new target into the old name. A blueprint folder is renamed in
+  the blueprint, by its entity's label.
+- `leaf_id` is still never client-settable. `"unlink"` is the one write of `NULL`, beside
+  Apply's adoption and row creation.
 
 ## Endpoints and Apply's guard rails (`backend/routers/comfy.py`)
 

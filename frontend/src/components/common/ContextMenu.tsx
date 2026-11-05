@@ -7,6 +7,10 @@ export interface ContextMenuAction {
   icon?: React.ReactNode;
   onClick: () => void;
   danger?: boolean;
+  /** Shown but not clickable; `title` should then say why. */
+  disabled?: boolean;
+  /** Tooltip, e.g. the reason an entry is disabled. */
+  title?: string;
 }
 
 export interface ContextMenuProps {
@@ -89,15 +93,20 @@ export default function ContextMenu({ x, y, actions, onClose }: ContextMenuProps
         <button
           key={a.label}
           role="menuitem"
-          onClick={() => { a.onClick(); onClose(); }}
+          // aria-disabled, not `disabled`: a disabled button shows no tooltip, and
+          // `title` is where the reason lives.
+          aria-disabled={a.disabled || undefined}
+          title={a.title}
+          onClick={() => { if (a.disabled) return; a.onClick(); onClose(); }}
           style={{
             display: "flex", alignItems: "center", gap: 8,
             width: "100%", padding: "7px 14px",
             fontSize: 13, background: "none", border: "none",
             color: a.danger ? "var(--bad)" : "var(--fg)",
-            cursor: "pointer", textAlign: "left",
+            cursor: a.disabled ? "default" : "pointer", textAlign: "left",
+            opacity: a.disabled ? 0.45 : 1,
           }}
-          onMouseEnter={(e) => (e.currentTarget.style.background = "var(--surface-3)")}
+          onMouseEnter={(e) => { if (!a.disabled) e.currentTarget.style.background = "var(--surface-3)"; }}
           onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
         >
           {a.icon && <span style={{ opacity: 0.7 }}>{a.icon}</span>}

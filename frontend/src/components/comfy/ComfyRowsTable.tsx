@@ -3,11 +3,12 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { apiErrorDetail } from "../../utils/apiError";
-import { ChevronDown, ChevronRight, Folder, Lock } from "lucide-react";
+import { ChevronDown, ChevronRight, Folder, GripVertical, Lock } from "lucide-react";
 import { comfyApi, coerceCellValue, type ComfyPlan, type ComfyRow, type PinnedParam } from "../../api/comfy";
 import { imagesApi } from "../../api/images";
 import { usePaneNavigate } from "../../hooks/usePaneNavigate";
 import { compareFolders } from "./folderTree";
+import ContextMenu, { type ContextMenuAction } from "../common/ContextMenu";
 
 interface Props {
   plan: ComfyPlan;
@@ -22,7 +23,14 @@ interface Props {
   /** Folder groups collapsed under their header (persisted per plan). */
   closedGroups: Set<string>;
   onToggleGroup: (path: string) => void;
+  /** Where a row sits in its folder's run order, for the row menu's Move entries. */
+  rowBounds: Map<string, { first: boolean; last: boolean }>;
+  onMoveRow: (row: ComfyRow, where: RowMove) => void;
 }
+
+/** The row menu's moves, all within the row's folder (M6 §8c). Across folders is Set
+ *  folder, or a drag. */
+export type RowMove = "top" | "up" | "down" | "bottom";
 
 type Item =
   | { kind: "group"; path: string; rows: ComfyRow[] }
@@ -197,6 +205,7 @@ function FolderCell({ row, disabled, onCommit }: {
 
 export default function ComfyRowsTable({
   plan, rows, totalRows, selected, onToggle, onToggleAll, runningJob, closedGroups, onToggleGroup,
+  rowBounds, onMoveRow,
 }: Props) {
   const qc = useQueryClient();
   const { go } = usePaneNavigate();
@@ -295,6 +304,25 @@ export default function ComfyRowsTable({
     setAllMutation.mutate({ alias: bulkPin.alias, value });
   }
 
+  // The row menu, opened from the grip at the row's start (a drag handle from §8c's
+  // stage 6). Buttons only: the e2e counts textareas and "(root)" inputs as row cells.
+  const [rowMenu, setRowMenu] = useState<{ row: ComfyRow; x: number; y: number } | null>(null);
+  function rowMenuActions(row: ComfyRow): ContextMenuAction[] {
+    const b = rowBounds.get(row.id) ?? { first: true, last: true };
+    const why = runningJob ? "Wait for the run to finish" : undefined;
+    const move = (where: RowMove, label: string, blocked: boolean): ContextMenuAction => ({
+      label, onClick: () => onMoveRow(row, where),
+      disabled: runningJob || blocked,
+      title: why ?? (blocked ? "Already there" : undefined),
+    });
+    return [
+      move("top", "Move to top of folder", b.first),
+      move("up", "Move up", b.first),
+      move("down", "Move down", b.last),
+      move("bottom", "Move to bottom of folder", b.last),
+    ];
+  }
+
   // Select-all covers the rows on show: those in a folded group are left out.
   const shownIds = items.flatMap((it) => (it.kind === "row" ? [it.row.id] : []));
   const allSelected = shownIds.length > 0 && shownIds.every((id) => selected.has(id));
@@ -303,6 +331,7 @@ export default function ComfyRowsTable({
   // stays put as pins are added and removed. Built once and consumed by the header
   // and every body row, so header/body cells must go in matching positions.
   const gridTemplate = [
+    "18px",
     "28px",
     "minmax(120px, 1fr)",
     ...columns.map((p) => (p.is_prompt ? "minmax(240px, 3fr)" : "minmax(110px, 1fr)")),
@@ -330,6 +359,7 @@ export default function ComfyRowsTable({
         padding: "6px 10px", background: "var(--surface-2)", borderBottom: "1px solid var(--line)",
         fontSize: 11, color: "var(--fg-mute)",
       }}>
+        <span />
         <input
           type="checkbox" className="checkbox" checked={allSelected}
           onChange={(e) => onToggleAll(shownIds, e.target.checked)}
@@ -438,6 +468,18 @@ export default function ComfyRowsTable({
                     padding: "4px 10px", borderBottom: "1px solid var(--line-2)",
                   }}
                 >
+                  <button
+                    className="comfy-rail-twisty"
+                    aria-label="Row actions"
+                    title="Row actions"
+                    style={{ cursor: "grab" }}
+                    onClick={(e) => {
+                      const r = e.currentTarget.getBoundingClientRect();
+                      setRowMenu({ row, x: r.left, y: r.bottom + 2 });
+                    }}
+                  >
+                    <GripVertical size={13} />
+                  </button>
                   <input
                     type="checkbox" className="checkbox" checked={selected.has(row.id)}
                     onChange={() => onToggle(row.id)}
@@ -503,6 +545,14 @@ export default function ComfyRowsTable({
           </div>
         )}
       </div>
+
+      {rowMenu && (
+        <ContextMenu
+          x={rowMenu.x} y={rowMenu.y}
+          actions={rowMenuActions(rowMenu.row)}
+          onClose={() => setRowMenu(null)}
+        />
+      )}
 
       {/* Bulk column edit */}
       {bulkPin && (

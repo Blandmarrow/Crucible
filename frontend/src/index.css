@@ -493,8 +493,22 @@
   .comfy-pill {
     font-size: 11px; color: var(--fg-mute); border: 1px solid var(--line-2); border-radius: 999px; padding: 1px 8px;
   }
+  /* M6 §8c: the library panel, a third column while it is open. Sticky with its own
+     scroll like the rail, and z-index 6 for the same reason (the menus it opens). In a
+     container too narrow for three columns it spans the top instead, above the rail and
+     the table, with a capped height: the panel was opened to be used, so it stays in view. */
+  .comfy-rows-grid.lib-open { grid-template-columns: 240px minmax(0, 1fr) 300px; }
+  .comfy-lib {
+    position: sticky; top: calc(var(--comfy-head-h, 0px) + 12px); z-index: 6;
+    max-height: calc(var(--comfy-view-h, 100vh) - var(--comfy-head-h, 0px) - 24px);
+    display: flex; flex-direction: column; gap: 8px; overflow: auto; min-width: 0;
+  }
+  @container (max-width: 1040px) {
+    .comfy-rows-grid.lib-open { grid-template-columns: 240px minmax(0, 1fr); }
+    .comfy-rows-grid.lib-open .comfy-lib { grid-column: 1 / -1; grid-row: 1; position: static; max-height: 380px; }
+  }
   @container (max-width: 760px) {
-    .comfy-rows-grid { grid-template-columns: minmax(0, 1fr); }
+    .comfy-rows-grid, .comfy-rows-grid.lib-open { grid-template-columns: minmax(0, 1fr); }
     .comfy-rail { position: static; max-height: none; }
   }
 

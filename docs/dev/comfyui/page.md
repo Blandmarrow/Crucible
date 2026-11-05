@@ -3,8 +3,8 @@
 The frontend of the ComfyUI queue: how `ComfyPage` is routed and registered, what its e2e spec
 covers, the header line, `WorkflowPinPanel` and the workflow scan, the run-default strip, the rows
 table and its Folder column, the run bar and how the page tracks concurrent runs, the prompt
-library modals, the Rows toolbar, and the Rows tab's plan rail, folder tree and grouped table
-(M6 §8b). The Blueprint tab is `docs/dev/comfyui/blueprint-tab.md`. The data model and endpoints it calls are in
+Rows toolbar, and the Rows tab's plan rail, folder tree and grouped table (M6 §8b). The library
+panel, Copy to plan, the row menu and drag and drop (M6 §8c) are `docs/dev/comfyui/library-dnd.md`. The Blueprint tab is `docs/dev/comfyui/blueprint-tab.md`. The data model and endpoints it calls are in
 `docs/dev/comfyui/queue.md`; what a run does server-side is `docs/dev/comfyui/run.md`; *Generate
 prompts* is `docs/dev/comfyui/prompts.md` and *Sync from canvas* `docs/dev/comfyui/sync.md`.
 
@@ -131,27 +131,22 @@ image's generation metadata on its detail page, and a failed row's error tooltip
   `comfy_generate` is in TopBar's `LIVE_IMAGE_JOB_TYPES`, so TopBar re-invalidates
   `["images", datasetId]` (+ `["subfolders"]`) each time the job's `done` count advances — the
   gallery updates per-row as images import, regardless of which pane is showing it.
-- **`PromptLibraryModal`** (Rows toolbar *Library…*, disabled until a pin is marked as
-  prompt) — two tabs. **Library**: the global prompt library (`GET /comfy/library`), category
-  sidebar (derived client-side, "All" + per-category counts), checkbox prompt list; *Add n to
-  plan* → `rows/bulk`, *Move to…* (existing category or new) → `library/move`, *Delete* →
-  `library/delete` behind `ConfirmDialog`. **Other plans**: reuse prompts across
-  plans/datasets — pick any dataset → one of its plans (self excluded) → checkbox-list its
-  prompts (`GET /comfy/plans/{id}/prompts`) → *Copy* (adds them to the current plan via
-  `rows/bulk`) or *Move* (also `rows/delete`s them from the source). Both tabs carry only
-  prompt **text** (lands in the current plan's prompt column; other params use this plan's
-  defaults/template). Query key `["comfy","library"]`.
+- **The prompt library** is a side panel since M6 §8c, toggled by the Rows toolbar's
+  *Library* (`ComfyLibraryPanel`), with *Other plans* as its second tab: see
+  `docs/dev/comfyui/library-dnd.md`. `PromptLibraryModal` is gone. Query key `["comfy","library"]`.
 - **`SaveToLibraryModal`** (Rows toolbar *Save to library (n)*, needs a selection) — category
-  input with a `<datalist>` of existing categories; saves the selected rows' **effective**
+  input (a `/` path, ≤512) with a `<datalist>` of every category path and its ancestors; saves the selected rows' **effective**
   prompts (via `GET /comfy/plans/{id}/prompts`, backend-authoritative) through
   `POST /comfy/library`; toast reports created/skipped-duplicates.
 - Rows toolbar: *+ Add row*, *Paste prompts…* (modal, one prompt per line → `rows/bulk`;
   disabled until a pin is marked as prompt), *Import .txt* (browser file picker, no modal —
-  **one file = one prompt**, inner newlines collapsed to spaces, straight to `rows/bulk`),
+  **one file = one prompt**, inner newlines collapsed to spaces, straight to `rows/bulk`, filed
+  in the folder in view since §8c),
   *✨ Generate prompts…* (`GeneratePromptsModal` — `docs/dev/comfyui/prompts.md`),
   *Edit prompts…* (`BulkEditRowsModal`: find/replace, prepend, append, remove + regex toggle,
-  scope all/selected → `rows/bulk-edit`), *Library…*, *Save to library (n)*,
-  *Set folder (n)*, *Reset failed (n)*, *Delete selected (n)* (`ConfirmDialog`).
+  scope all/selected → `rows/bulk-edit`), *Library* (the panel toggle), *Save to library (n)*,
+  *Set folder (n)*, *Copy to plan (n)…*, *Reset failed (n)*, *Delete selected (n)*
+  (`ConfirmDialog`).
 
 ### The plan rail, the folder tree and the grouped table
 

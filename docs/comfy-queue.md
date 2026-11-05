@@ -8,12 +8,13 @@ From the **Rows** toolbar:
 
 - **+ Add row** — one empty row.
 - **Paste prompts…** — one row per line of pasted text.
-- **Import .txt** — one row per selected file; each file becomes a single prompt (internal line breaks collapse to spaces).
+- **Import .txt** — one row per selected file; each file becomes a single prompt (internal line breaks collapse to spaces). The rows go into the folder you have picked in the folder list, or the base folder when **All rows** is shown.
 - **✨ Generate prompts…** — write prompts with an LLM using any provider configured under Settings → LLM Providers → [details](settings.md). Two fields do different jobs: **Instructions** describe *how* prompts should be written and are saved with the plan in the app, so they are the same in every browser, while **Request** describes *what* to generate this time. Instructions saved before this change are copied over the first time each browser opens the updated app. If a second browser holds a different copy, you are asked which to keep. The model is told which prompts already exist so it diverges from them, and duplicates are dropped. There are two ways to run it:
   - **Generate N more** makes one batch and puts it in the review box, where you edit or delete lines before clicking **Add N rows**.
   - **Generate until N** runs in the background until the queue holds N prompts, adding rows batch by batch **without a review step**. You can close the window, leave the page, or reload — it keeps going, shows up in the progress bar at the top, and can be stopped from either place. Rows already added are always kept when it stops. Because nothing is reviewed by eye first, glance over the new rows before running them.
 - **Edit prompts…** — find/replace, prepend, append, or remove across every row's prompt or just the selected ones, with an optional regex mode.
 - **Set folder** — give every selected row the same destination folder (see below).
+- **Copy to plan…** — copy the selected rows into another plan of this dataset, or move them there. See [Copying rows between plans](#copying-rows-between-plans).
 - **Delete selected** removes rows; **Reset failed** puts failed rows back to pending.
 
 The **Blueprint** tab is not a toolbar button but its own section of the plan. Describe the whole dataset once (characters, places, camera angles, alone and in pairs) and it expands into rows, each already filed in its folder → [details](comfy-structured.md). To take those rows on through scoring, captioning and export in one press, see [Automated Runs](runs.md).
@@ -30,13 +31,32 @@ A folder's **⋯** menu (or a right-click) makes a **New folder inside…**, or 
 
 ## Editing rows
 
+Each row starts with a ⋮⋮ handle. Click it for **Move to top of folder**, **Move up**, **Move down** and **Move to bottom of folder**. Rows run in this order, so it decides which run first. To move a row into another folder, use **Set folder**.
+
 Cells edit in place. Editing a row's parameters after it has run resets it to pending, so it will be picked up by the next run — **changing a folder does not**, since it only affects where the *next* image goes, and a finished row keeps its image. To set one parameter column across the whole queue at once, use the ✎ in that column's header — including clearing it back to the default.
 
 ## Prompt library
 
-A single library shared across every dataset and plan, so a set of prompts written once is reusable everywhere. Open it with **Library…**:
+A single library shared across every dataset and plan, so a set of prompts written once is reusable everywhere. Click **Library** in the toolbar to open it as a panel beside the queue; click it again, or the ✕, to close it. The page remembers whether it was open.
 
-- **Library** tab — prompts grouped into free-text categories you name. Select any and add them to the current plan, move them between categories, or delete them.
-- **Other plans** tab — browse the prompts in any other plan, in any dataset, and copy or move them into this one.
+- **Categories nest.** Write a category as a path, like `portraits/studio`, and it shows as a tree: `portraits` with `studio` inside it. Each category shows how many prompts it and its subcategories hold. Fold a category with its arrow.
+- **Search** the box at the top to find prompts by their text or their category.
+- **Edit a prompt** with its ✎. A prompt that is already in that category is refused.
+- **Tick prompts** to act on them:
+  - **Add to plan** puts them in the current plan as new rows, in the folder you choose. It starts on the folder you have picked in the folder list.
+  - **Move to…** files them under another category. A prompt already in that category is merged into it rather than stored twice.
+  - **Delete** removes them from the library.
+- **A category's ⋯ menu** (or a right-click) renames it, moves it inside another category, or deletes it with every prompt in it. Renaming a category to the name of one that exists merges the two.
 
-**Save to library** stores the selected rows' prompts under a category. Both directions carry prompt *text* only — the rest of a row's parameters come from the plan you add them to. Duplicates within a category are skipped.
+**Save to library** stores the selected rows' prompts under a category, which can be a new path. It saves the prompt *text* only — the rest of a row's parameters come from the plan you add them to later. Duplicates within a category are skipped.
+
+## Copying rows between plans
+
+Two routes, both of which keep each row's folder:
+
+- **Copy to plan…** in the toolbar copies the selected rows into another plan in this dataset. Choose **Move** to take them out of this plan instead.
+- The library panel's **Other plans** tab browses the rows of any plan, in any dataset, with each row's folder shown. Tick some and use **Copy here** or **Move here**.
+
+A copied row carries its prompt, and every other value that the receiving plan also has as a per-row column. Values for anything else are left behind, and the receiving plan's own settings apply. The new row starts as pending, even if the original had already run.
+
+Moving rows the blueprint made asks first, as **Set folder** does: the blueprint then counts their folder as short, and the next **Top up** refills it. A move is refused while the plan it takes rows from is running, or while one of its rows is.

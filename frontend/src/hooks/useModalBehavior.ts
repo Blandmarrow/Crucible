@@ -139,7 +139,7 @@ export function useModalBehavior({ onClose, label, closeOnBackdrop = false, auto
     const atEdge = e.shiftKey ? nodes[0] : nodes[nodes.length - 1];
     if (active === atEdge || active === panel || !panel.contains(active)) {
       e.preventDefault();
-      // A dialog nested inside another (ConfirmDialog inside PromptLibraryModal)
+      // A dialog nested inside another (a ConfirmDialog opened from a modal)
       // has already wrapped within itself — don't let the outer one wrap again.
       e.stopPropagation();
       (e.shiftKey ? nodes[nodes.length - 1] : nodes[0]).focus();

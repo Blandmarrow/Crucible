@@ -8,7 +8,7 @@ steps from filling a blueprint through generating, scoring, captioning and expor
 pass after pass until every folder is full, its settings kept as recipes. This file is the family's
 entry point: the tables below route from a code path to whichever file in
 `docs/dev/comfyui/` owns it. LLM providers themselves are `docs/dev/llm-providers.md`; the
-user-facing guides are `docs/comfyui.md`, `docs/comfy-structured.md`, `docs/runs.md`,
+user-facing guides are `docs/comfyui.md`, `docs/comfy-queue.md`, `docs/comfy-structured.md`, `docs/runs.md`,
 `docs/run-setup.md` and `docs/repeating-runs.md`. M6's plan is
 `docs/dev/comfy-automation-plan/README.md`.
 
@@ -18,7 +18,8 @@ user-facing guides are `docs/comfyui.md`, `docs/comfy-structured.md`, `docs/runs
 |---|---|
 | [queue.md](comfyui/queue.md) | The data model (plans, pins, rows, the per-row folder, the prompt library), `comfy_service.py`, ComfyClient, the `comfy` router's queue endpoints, and the gotchas shared by all of it |
 | [run.md](comfyui/run.md) | The `comfy_generate` job behind `POST /comfy/run`: per-row folders and file stems, per-row `refresh_stats`, removing our prompt from ComfyUI's queue, and the fake ComfyUI it is tested against |
-| [page.md](comfyui/page.md) | `ComfyPage` and `frontend/src/components/comfy/`: the plan rail, the folder tree, the grouped rows table and the Folder cell's lock, `activeRuns`, the prompt library modals, the remembered plan and tab, the layout (scroller, sticky header, the Rows tab's rail) |
+| [page.md](comfyui/page.md) | `ComfyPage` and `frontend/src/components/comfy/`: the plan rail, the folder tree, the grouped rows table and the Folder cell's lock, `activeRuns`, the remembered plan and tab, the layout (scroller, sticky header, the Rows tab's rail) |
+| [library-dnd.md](comfyui/library-dnd.md) | The Rows tab's library side panel (`ComfyLibraryPanel`: the category tree, prompt edits, *Other plans*), Copy to plan, the row menu, and drag and drop with the button route behind every drag |
 | [blueprint-tab.md](comfyui/blueprint-tab.md) | `BlueprintPanel`: saving, the seed, the editors, the outline draft and its review, `BlueprintPreview`, Apply and Top up, the rewrite button, their e2e, and the tab's two columns, jump bar and collapsible sections |
 | [prompts.md](comfyui/prompts.md) | Writing queue prompts with an LLM: the one-shot endpoint, the `comfy_prompts` job, `parse_prompts`, `GeneratePromptsModal` |
 | [structured.md](comfyui/structured.md) | Blueprints and leaves in the DB, fill accounting, orphans and adoption, Apply's guard rails and the plan lock, Top up |
@@ -77,7 +78,8 @@ not a see-also, and says which part of the code it owns.
 | `frontend/src/components/comfy/BlueprintSection.tsx`, the `.bp-*` rules in `frontend/src/index.css` | `docs/dev/comfyui/blueprint-tab.md` § The layout |
 | `frontend/src/components/comfy/WorkflowPinPanel.tsx`, `WorkflowScanModal.tsx` | `docs/dev/comfyui/page.md` § Frontend; + `docs/dev/comfyui/sync.md` § Frontend for the *Sync from canvas* button |
 | `frontend/src/components/comfy/SyncCanvasModal.tsx` | `docs/dev/comfyui/sync.md` § Frontend |
-| `frontend/src/components/comfy/PromptLibraryModal.tsx`, `SaveToLibraryModal.tsx` | `docs/dev/comfyui/page.md` § Frontend; the endpoints they call are `docs/dev/comfyui/queue.md` § Backend |
+| `frontend/src/components/comfy/ComfyLibraryPanel.tsx`, `CopyRowsToPlanModal.tsx`, `copyRows.ts`, the row menu in `ComfyRowsTable.tsx`, `frontend/e2e/comfy-library.spec.ts` | `docs/dev/comfyui/library-dnd.md`; the endpoints they call are `docs/dev/comfyui/queue.md` § Backend |
+| `frontend/src/components/comfy/SaveToLibraryModal.tsx` | `docs/dev/comfyui/page.md` § Frontend |
 | `frontend/src/components/comfy/GeneratePromptsModal.tsx` | `docs/dev/comfyui/prompts.md` § Frontend |
 | `frontend/src/components/comfy/BlueprintPanel.tsx`, `BlueprintPreview.tsx`, `BlueprintAxesEditor.tsx`, `BlueprintVariationsEditor.tsx`, `BlueprintScenariosEditor.tsx`, `BlueprintNameField.tsx`, `blueprintKeys.ts` | `docs/dev/comfyui/blueprint-tab.md` § The panel; + `docs/dev/comfyui/structured.md` § Endpoints and Apply's guard rails for what Apply and Top up send and the server guards behind the buttons; + `docs/dev/comfyui/structured-expansion.md` § Expansion for the `defaultPath`/`defaultTemplate` mirrors |
 | `frontend/src/components/comfy/OutlineModal.tsx`, `DraftReview.tsx` | `docs/dev/comfyui/structured-llm.md` § The outline call for the job; + `docs/dev/comfyui/blueprint-tab.md` § The panel for the modal, the draft review, the draft query and *Use it* |

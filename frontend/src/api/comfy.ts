@@ -267,8 +267,10 @@ export const comfyApi = {
     client.get<{ prompts: PlanPrompt[] }>(`/comfy/plans/${planId}/prompts`).then((r) => r.data.prompts),
   createRow: (planId: string, values: Record<string, unknown> = {}) =>
     client.post<ComfyRow>(`/comfy/plans/${planId}/rows`, { values }).then((r) => r.data),
-  bulkAddRows: (planId: string, lines: string[]) =>
-    client.post<{ created: number }>(`/comfy/plans/${planId}/rows/bulk`, { lines }).then((r) => r.data),
+  /** One row per non-empty line, into the prompt alias, filed in `subfolder` ("" = the
+   *  run's base folder). */
+  bulkAddRows: (planId: string, lines: string[], subfolder = "") =>
+    client.post<{ created: number }>(`/comfy/plans/${planId}/rows/bulk`, { lines, subfolder }).then((r) => r.data),
   updateRow: (rowId: string, data: { values?: Record<string, unknown>; sort_order?: number; subfolder?: string; linked?: LinkedMode }) =>
     client.patch<ComfyRow>(`/comfy/rows/${rowId}`, data).then((r) => r.data),
   deleteRows: (planId: string, rowIds: string[]) =>
@@ -282,6 +284,21 @@ export const comfyApi = {
    *  and unlike a value edit it never resets a completed row. */
   setRowsSubfolder: (planId: string, subfolder: string, rowIds?: string[], linked: LinkedMode = "refuse") =>
     client.post<{ updated: number }>(`/comfy/plans/${planId}/rows/set-subfolder`, { subfolder, row_ids: rowIds, linked }).then((r) => r.data),
+
+  /** Move rows to a spot in the run order, re-filing them when `subfolder` is given.
+   *  The server computes the order; an anchor must not be one of the moving rows. */
+  placeRows: (planId: string, body: {
+    row_ids: string[]; anchor_row_id?: string | null; position?: "before" | "after";
+    subfolder?: string | null; linked?: LinkedMode;
+  }) =>
+    client.post<{ placed: number; unlinked: number; skipped: number }>(`/comfy/plans/${planId}/rows/place`, body).then((r) => r.data),
+  /** Copy (or move) rows from another plan, in any dataset, into `targetPlanId`, keeping
+   *  each row's folder unless `subfolder` overrides it (docs/dev/comfyui/queue.md). */
+  copyRows: (targetPlanId: string, body: {
+    source_plan_id: string; row_ids: string[]; move?: boolean; subfolder?: string | null; linked?: LinkedMode;
+  }) =>
+    client.post<{ copied?: number; moved?: number; skipped: number; unlinked: number }>(
+      `/comfy/plans/${targetPlanId}/rows/copy`, body).then((r) => r.data),
 
   // ── The folder tree (a plan's row folders plus its declared_folders) ──
   createFolder: (planId: string, path: string) =>
@@ -316,7 +333,8 @@ export const comfyApi = {
   }) =>
     client.post<{ affected: number; skipped: number }>(`/comfy/plans/${planId}/rows/bulk-edit`, body).then((r) => r.data),
 
-  /** Global prompt library (not dataset-scoped), grouped by free-text category. */
+  /** Global prompt library (not dataset-scoped). A category is a `/` path the server
+   *  normalizes (segments trimmed); the client builds the tree. */
   libraryList: () =>
     client.get<{ prompts: LibraryPrompt[] }>("/comfy/library").then((r) => r.data.prompts),
   libraryAdd: (category: string, prompts: string[]) =>
@@ -326,6 +344,14 @@ export const comfyApi = {
     client.post<{ moved: number; merged: number }>("/comfy/library/move", { ids, category }).then((r) => r.data),
   libraryDelete: (ids: string[]) =>
     client.post<{ deleted: number }>("/comfy/library/delete", { ids }).then((r) => r.data),
+  /** Edit a saved prompt's text. 409 when it would duplicate another in its category. */
+  libraryUpdate: (id: string, text: string) =>
+    client.patch<LibraryPrompt>(`/comfy/library/${id}`, { text }).then((r) => r.data),
+  /** Rename or re-nest a category with its subtree. Landing on an existing category merges. */
+  libraryMoveCategory: (path: string, newPath: string) =>
+    client.post<{ moved: number; merged: number }>("/comfy/library/categories/move", { path, new_path: newPath }).then((r) => r.data),
+  libraryDeleteCategory: (path: string) =>
+    client.post<{ deleted: number }>("/comfy/library/categories/delete", { path }).then((r) => r.data),
 
   listWorkflowFiles: (dir?: string) =>
     client.get<{ dir: string; files: WorkflowFile[] }>("/comfy/workflow-files", { params: dir ? { dir } : {} }).then((r) => r.data),

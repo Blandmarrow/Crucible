@@ -408,3 +408,75 @@ test('Set folder asks before moving rows the blueprint counts', async ({ page, r
     .toEqual(before.map((r: { subfolder: string; blueprint_linked: boolean }) =>
       [r.blueprint_linked, r.blueprint_linked ? r.subfolder : 'elsewhere']))
 })
+
+// ── M6 §8c: the button routes for copying rows to a plan and reordering them ─────
+
+test('Copy to plan keeps each row folder, and Move takes them out', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-comfy-copy-${Date.now()}`)
+  const source = await createPlanViaApi(request, ds.id, 'source plan')
+  const target = await createPlanViaApi(request, ds.id, 'target plan')
+  await addRowsViaApi(request, source.id, ['a knight in a fen', 'a monk on a ridge'])
+  const ids = (await rowsOf(request, source.id)).map((r: { id: string }) => r.id)
+  const set = await request.post(`/api/v1/comfy/plans/${source.id}/rows/set-subfolder`, {
+    data: { subfolder: 'knights', row_ids: [ids[0]] },
+  })
+  expect(set.status(), await set.text()).toBe(200)
+
+  await page.goto(`/datasets/${ds.id}/comfy`)
+  await page.getByTestId('comfy-plan-rail').getByRole('button', { name: /^source plan/ }).click()
+  const rowsTable = page.getByTestId('comfy-rows-table')
+  await rowsTable.locator('input.checkbox').first().check()
+  await page.getByRole('button', { name: 'Copy to plan (2)…' }).click()
+  await expect(page.getByRole('combobox', { name: 'Target plan' })).toHaveValue(target.id)
+  await page.getByRole('button', { name: 'Copy', exact: true }).click()
+  await expect
+    .poll(async () => (await rowsOf(request, target.id))
+      .map((r: { subfolder: string; values: { prompt: string } }) => [r.values.prompt, r.subfolder]))
+    .toEqual([['a knight in a fen', 'knights'], ['a monk on a ridge', '']])
+  expect(await rowsOf(request, source.id)).toHaveLength(2)
+
+  // A move empties the source of those rows.
+  await rowsTable.locator('input.checkbox').first().check()
+  await page.getByRole('button', { name: 'Copy to plan (2)…' }).click()
+  await page.getByRole('radio', { name: /^Move/ }).check()
+  await page.getByRole('button', { name: 'Move', exact: true }).click()
+  await expect.poll(async () => (await rowsOf(request, source.id)).length).toBe(0)
+  expect(await rowsOf(request, target.id)).toHaveLength(4)
+})
+
+test('the row menu moves a row within its folder', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-comfy-order-${Date.now()}`)
+  const plan = await createPlanViaApi(request, ds.id, 'order plan')
+  await addRowsViaApi(request, plan.id, ['first', 'second', 'third'])
+
+  await page.goto(`/datasets/${ds.id}/comfy`)
+  const rowsTable = page.getByTestId('comfy-rows-table')
+  await expect(rowsTable.locator('textarea')).toHaveCount(3)
+  await rowsTable.getByRole('button', { name: 'Row actions' }).nth(2).click()
+  // The last row cannot go further down.
+  await expect(page.getByRole('menuitem', { name: 'Move down' })).toHaveAttribute('aria-disabled', 'true')
+  await page.getByRole('menuitem', { name: 'Move to top of folder' }).click()
+  const prompts = async () => (await rowsOf(request, plan.id)).map((r: { values: { prompt: string } }) => r.values.prompt)
+  await expect.poll(prompts).toEqual(['third', 'first', 'second'])
+
+  await rowsTable.getByRole('button', { name: 'Row actions' }).nth(1).click()
+  await page.getByRole('menuitem', { name: 'Move down' }).click()
+  await expect.poll(prompts).toEqual(['third', 'second', 'first'])
+})
+
+test('the library panel stays open across a reload', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-comfy-libopen-${Date.now()}`)
+  await createPlanViaApi(request, ds.id, 'lib plan')
+
+  await page.goto(`/datasets/${ds.id}/comfy`)
+  const toggle = page.getByRole('button', { name: 'Library', exact: true })
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false')
+  await toggle.click()
+  await expect(page.getByTestId('comfy-library-panel')).toBeVisible()
+  await page.waitForTimeout(PERSIST_DEBOUNCE_MS + 100)
+  await page.reload()
+  await expect(page.getByTestId('comfy-library-panel')).toBeVisible()
+  await page.getByRole('button', { name: 'Close the library' }).click()
+  await expect(page.getByTestId('comfy-library-panel')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Library', exact: true })).toHaveAttribute('aria-pressed', 'false')
+})

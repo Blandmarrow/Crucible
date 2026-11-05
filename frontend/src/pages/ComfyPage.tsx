@@ -8,13 +8,14 @@ import { comfyApi, type ComfyPlanSummary, type ComfyRow } from "../api/comfy";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import BlueprintPanel from "../components/comfy/BlueprintPanel";
 import WorkflowPinPanel from "../components/comfy/WorkflowPinPanel";
-import ComfyRowsTable from "../components/comfy/ComfyRowsTable";
+import ComfyRowsTable, { type RowMove } from "../components/comfy/ComfyRowsTable";
 import ComfyRunBar from "../components/comfy/ComfyRunBar";
 import ComfyDefaultsStrip from "../components/comfy/ComfyDefaultsStrip";
 import GeneratePromptsModal from "../components/comfy/GeneratePromptsModal";
 import type { GeneratePromptsJobBody } from "../components/comfy/GeneratePromptsModal";
 import BulkEditRowsModal from "../components/comfy/BulkEditRowsModal";
-import PromptLibraryModal from "../components/comfy/PromptLibraryModal";
+import ComfyLibraryPanel, { type LibraryTab } from "../components/comfy/ComfyLibraryPanel";
+import CopyRowsToPlanModal from "../components/comfy/CopyRowsToPlanModal";
 import SaveToLibraryModal from "../components/comfy/SaveToLibraryModal";
 import SetRowFolderModal from "../components/comfy/SetRowFolderModal";
 import ComfyPlanRail from "../components/comfy/ComfyPlanRail";
@@ -33,10 +34,11 @@ import type { SubfolderNode } from "../utils/subfolderTree";
 type Section = "rows" | "workflow" | "blueprint";
 type StatusFilter = "all" | ComfyRow["status"];
 
-/** The last plan and tab, per dataset. The plan id is checked against the plan list
- *  before use, so a deleted plan falls back to the first. */
-interface PageState { planId: string | null; section: Section }
-const PAGE_DEFAULTS: PageState = { planId: null, section: "rows" };
+/** The last plan and tab, per dataset, and whether the library panel is open on which
+ *  tab (M6 §8c). The plan id is checked against the plan list before use, so a deleted
+ *  plan falls back to the first. */
+interface PageState { planId: string | null; section: Section; libOpen: boolean; libTab: LibraryTab }
+const PAGE_DEFAULTS: PageState = { planId: null, section: "rows", libOpen: false, libTab: "library" };
 
 function loadPageState(datasetId: string | undefined): PageState {
   if (!datasetId) return { ...PAGE_DEFAULTS };
@@ -44,6 +46,8 @@ function loadPageState(datasetId: string | undefined): PageState {
   return {
     planId: typeof v.planId === "string" ? v.planId : null,
     section: v.section === "workflow" || v.section === "blueprint" ? v.section : "rows",
+    libOpen: v.libOpen === true,
+    libTab: v.libTab === "plans" ? "plans" : "library",
   };
 }
 
@@ -68,6 +72,8 @@ export default function ComfyPage() {
 
   const [planId, setPlanId] = useState<string | null>(() => loadPageState(datasetId).planId);
   const [section, setSection] = useState<Section>(() => loadPageState(datasetId).section);
+  const [libOpen, setLibOpen] = useState(() => loadPageState(datasetId).libOpen);
+  const [libTab, setLibTab] = useState<LibraryTab>(() => loadPageState(datasetId).libTab);
   // The dataset planId and section were loaded for (see the save effect below).
   const [stateDataset, setStateDataset] = useState(datasetId);
   // The Rows tab's filters: the folder picked in the tree, a text match and a status.
@@ -98,7 +104,7 @@ export default function ComfyPage() {
   // can attach to a job it launched. The modal persists it per plan from there.
   const [promptJobId, setPromptJobId] = useState<string | null>(null);
   const [showBulkEdit, setShowBulkEdit] = useState(false);
-  const [showLibrary, setShowLibrary] = useState(false);
+  const [copyToPlan, setCopyToPlan] = useState<{ targetId?: string; move?: boolean } | null>(null);
   const [showSaveToLibrary, setShowSaveToLibrary] = useState(false);
   const [showSetFolder, setShowSetFolder] = useState(false);
   const txtFilesRef = useRef<HTMLInputElement>(null);
@@ -107,10 +113,11 @@ export default function ComfyPage() {
   useStickyOffsets(scrollerRef, headerRef, !!datasetId);
 
   /** Each .txt file is one prompt (newlines inside a file collapse to spaces);
-      every non-empty file becomes a row directly — no review modal. */
-  async function importPromptFiles(files: FileList) {
+      every non-empty file becomes a row directly — no review modal. The rows are filed
+      in `folder`: the folder in view, for the button and for a drop on the table. */
+  async function importPromptFiles(files: File[], folder: string) {
     const prompts: string[] = [];
-    for (const f of Array.from(files)) {
+    for (const f of files) {
       try {
         const text = (await f.text()).replace(/\s+/g, " ").trim();
         if (text) prompts.push(text);
@@ -122,7 +129,7 @@ export default function ComfyPage() {
       toast.error("No prompt text found in the selected files");
       return;
     }
-    bulkAddMutation.mutate({ lines: prompts, source: "files" });
+    bulkAddMutation.mutate({ lines: prompts, source: "files", subfolder: folder });
   }
 
   // Reset local state when the dataset changes without a remount (pane mode).
@@ -134,6 +141,8 @@ export default function ComfyPage() {
     setStateDataset(datasetId);
     setPlanId(saved.planId);
     setSection(saved.section);
+    setLibOpen(saved.libOpen);
+    setLibTab(saved.libTab);
     setFolderFilter(null);
     setSelected(new Set());
     setSubfolder("");
@@ -159,8 +168,8 @@ export default function ComfyPage() {
   // the render that switches a pane's dataset, planId is still the old dataset's.
   useEffect(() => {
     if (!datasetId || stateDataset !== datasetId) return;
-    savePersisted(datasetScopedKey(COMFY_PAGE_STATE_PREFIX, datasetId), { planId: effectivePlanId, section });
-  }, [datasetId, stateDataset, effectivePlanId, section]);
+    savePersisted(datasetScopedKey(COMFY_PAGE_STATE_PREFIX, datasetId), { planId: effectivePlanId, section, libOpen, libTab });
+  }, [datasetId, stateDataset, effectivePlanId, section, libOpen, libTab]);
 
   const { view: rowsView, toggle: toggleRowsView, repath: repathRowsView } = usePlanRowsView(effectivePlanId);
   const closedFolders = useMemo(() => new Set(rowsView.closedFolders), [rowsView.closedFolders]);
@@ -347,9 +356,9 @@ export default function ComfyPage() {
   const bulkAddMutation = useMutation({
     // `source` names the UI that initiated the add so onSuccess only closes/clears
     // that UI — e.g. Import .txt must not wipe an in-progress paste draft.
-    mutationFn: (vars: { lines: string[]; source: "paste" | "generate" | "files" }) =>
-      comfyApi.bulkAddRows(effectivePlanId!, vars.lines),
-    onSuccess: (data, { source }) => {
+    mutationFn: (vars: { lines: string[]; source: "paste" | "generate" | "files"; subfolder?: string }) =>
+      comfyApi.bulkAddRows(effectivePlanId!, vars.lines, vars.subfolder ?? ""),
+    onSuccess: (data, { source, subfolder: into }) => {
       qc.invalidateQueries({ queryKey: ["comfy", "rows", effectivePlanId] });
       qc.invalidateQueries({ queryKey: ["comfy", "plans", datasetId] });
       // GeneratePromptsModal reads its "N in queue" count from this key, and it
@@ -361,7 +370,7 @@ export default function ComfyPage() {
         setPasteText("");
       }
       if (source === "generate") setShowGenerate(false);
-      toast.success(`Added ${data.created} row${data.created !== 1 ? "s" : ""}`);
+      toast.success(`Added ${data.created} row${data.created !== 1 ? "s" : ""}${into ? ` to ${into}` : ""}`);
     },
     onError: (err: unknown) => toast.error(apiErrorDetail(err, "Failed to add rows")),
   });
@@ -385,6 +394,12 @@ export default function ComfyPage() {
       toast.success(`Reset ${data.reset} failed row${data.reset !== 1 ? "s" : ""} to pending`);
     },
     onError: () => toast.error("Failed to reset rows"),
+  });
+
+  const placeMutation = useMutation({
+    mutationFn: (body: Parameters<typeof comfyApi.placeRows>[1]) => comfyApi.placeRows(effectivePlanId!, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["comfy", "rows", effectivePlanId] }),
+    onError: (err: unknown) => toast.error(apiErrorDetail(err, "Failed to move the row")),
   });
 
   // Durable "generate until N". planId travels through the variables (as in
@@ -444,6 +459,43 @@ export default function ComfyPage() {
   }, [folderRows, textFilter, statusFilter, promptAlias]);
   const selectedRows = useMemo(() => rows.filter((r) => selected.has(r.id)), [rows, selected]);
   const runningPlanIds = useMemo(() => new Set(activeRuns.values()), [activeRuns]);
+  // Each folder's rows in run order (the API returns rows in run order), for the row
+  // menu's Move entries and their bounds.
+  const folderOrder = useMemo(() => {
+    const m = new Map<string, string[]>();
+    for (const r of rows) {
+      const g = m.get(r.subfolder);
+      if (g) g.push(r.id); else m.set(r.subfolder, [r.id]);
+    }
+    return m;
+  }, [rows]);
+  const rowBounds = useMemo(() => {
+    const b = new Map<string, { first: boolean; last: boolean }>();
+    for (const ids of folderOrder.values()) {
+      ids.forEach((id, i) => b.set(id, { first: i === 0, last: i === ids.length - 1 }));
+    }
+    return b;
+  }, [folderOrder]);
+  const planFolders = useMemo(
+    () => (plan ? planFolderItems(rows, plan.declared_folders ?? []).map((f) => f.path) : []),
+    [rows, plan],
+  );
+  // Where a library prompt, an import or a copy lands when no folder is named: the
+  // folder picked in the tree, or (root) when All rows is shown.
+  const folderInView = folderFilter ?? "";
+
+  /** The row menu's moves, within the row's folder, through `rows/place`. */
+  function moveRow(row: ComfyRow, where: RowMove) {
+    const ids = folderOrder.get(row.subfolder) ?? [];
+    const i = ids.indexOf(row.id);
+    const anchor = where === "top" ? ids[0] : where === "up" ? ids[i - 1]
+      : where === "down" ? ids[i + 1] : ids[ids.length - 1];
+    if (!anchor || anchor === row.id) return;
+    placeMutation.mutate({
+      row_ids: [row.id], anchor_row_id: anchor,
+      position: where === "top" || where === "up" ? "before" : "after",
+    });
+  }
 
   /** Switch plans: a new plan starts with no selection, no filter and no attached job. */
   function selectPlan(id: string | null) {
@@ -556,7 +608,7 @@ export default function ComfyPage() {
 
       {(section === "rows" || plans.length === 0) && (
         <div className="comfy-rows-wrap">
-        <div className="comfy-rows-grid">
+        <div className={`comfy-rows-grid${libOpen && plan && section === "rows" ? " lib-open" : ""}`}>
           <aside className="comfy-rail">
             <ComfyPlanRail
               plans={plans}
@@ -616,12 +668,15 @@ export default function ComfyPage() {
             </button>
             <button className="btn ghost sm" onClick={() => txtFilesRef.current?.click()}
               disabled={!hasPromptPin || bulkAddMutation.isPending}
-              title={hasPromptPin ? "Add one row per selected .txt file" : "Mark a pinned parameter as the prompt first"}>
+              title={hasPromptPin ? "Add one row per selected .txt file, in the folder in view" : "Mark a pinned parameter as the prompt first"}>
               Import .txt
             </button>
             <input
               ref={txtFilesRef} type="file" accept=".txt,text/plain" multiple style={{ display: "none" }}
-              onChange={(e) => { if (e.target.files?.length) importPromptFiles(e.target.files); e.target.value = ""; }}
+              onChange={(e) => {
+                if (e.target.files?.length) importPromptFiles(Array.from(e.target.files), folderInView);
+                e.target.value = "";
+              }}
             />
             <button className="btn ghost sm" onClick={() => setShowGenerate(true)}
               disabled={!hasPromptPin}
@@ -633,10 +688,10 @@ export default function ComfyPage() {
               title={hasPromptPin ? "Find & replace / prepend / append / remove across row prompts" : "Mark a pinned parameter as the prompt first"}>
               Edit prompts…
             </button>
-            <button className="btn ghost sm" onClick={() => setShowLibrary(true)}
-              disabled={!hasPromptPin}
-              title={hasPromptPin ? "Browse the prompt library or reuse prompts from another plan" : "Mark a pinned parameter as the prompt first"}>
-              Library…
+            <button className={`btn sm ${libOpen ? "primary" : "ghost"}`} aria-pressed={libOpen}
+              onClick={() => setLibOpen((v) => !v)}
+              title="Show the prompt library and other plans' rows beside the table">
+              Library
             </button>
             <div style={{ flex: 1 }} />
             <button className="btn ghost sm" onClick={() => setShowSaveToLibrary(true)}
@@ -648,6 +703,11 @@ export default function ComfyPage() {
               disabled={selected.size === 0 || isRunning}
               title="Set the destination folder on the selected rows">
               Set folder ({selected.size})
+            </button>
+            <button className="btn ghost sm" onClick={() => setCopyToPlan({})}
+              disabled={selected.size === 0}
+              title="Copy or move the selected rows into another plan, keeping their folders">
+              Copy to plan ({selected.size})…
             </button>
             {failedCount > 0 && (
               <button className="btn ghost sm" onClick={() => retryFailedMutation.mutate()}>
@@ -701,10 +761,23 @@ export default function ComfyPage() {
             runningJob={isRunning}
             closedGroups={closedGroups}
             onToggleGroup={toggleGroup}
+            rowBounds={rowBounds}
+            onMoveRow={moveRow}
           />
           </>
           )}
           </div>
+          {libOpen && plan && section === "rows" && (
+            <ComfyLibraryPanel
+              datasetId={datasetId}
+              plan={plan}
+              folders={planFolders}
+              folderInView={folderInView}
+              tab={libTab}
+              onTabChange={setLibTab}
+              onClose={() => setLibOpen(false)}
+            />
+          )}
         </div>
         </div>
       )}
@@ -771,12 +844,16 @@ export default function ComfyPage() {
         />
       )}
 
-      {showLibrary && plan && (
-        <PromptLibraryModal
-          targetPlanId={plan.id}
-          targetDatasetId={datasetId}
-          onImported={() => qc.invalidateQueries({ queryKey: ["comfy", "rows", plan.id] })}
-          onClose={() => setShowLibrary(false)}
+      {copyToPlan && plan && (
+        <CopyRowsToPlanModal
+          sourcePlanId={plan.id}
+          datasetId={datasetId}
+          plans={plans}
+          rows={selectedRows}
+          initialTargetId={copyToPlan.targetId}
+          initialMove={copyToPlan.move}
+          onMoved={() => setSelected(new Set())}
+          onClose={() => setCopyToPlan(null)}
         />
       )}
 

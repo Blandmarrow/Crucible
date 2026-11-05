@@ -5,24 +5,20 @@ import type { JobProgress } from "../../types";
 interface Props {
   datasetId: string;
   pendingCount: number;
-  selectedCount: number;
   totalCount: number;
   subfolder: string;
   onSubfolderChange: (v: string) => void;
   setCaption: boolean;
   onSetCaptionChange: (v: boolean) => void;
   onRunPending: () => void;
-  onRunSelected: () => void;
-  /** Only on the Rows tab: elsewhere the selection it would run is out of sight. */
-  showRunSelected: boolean;
   onRunAll: () => void;
   isRunning: boolean;
   jobProgress: JobProgress | undefined;
 }
 
 export default function ComfyRunBar({
-  datasetId, pendingCount, selectedCount, totalCount, subfolder, onSubfolderChange,
-  setCaption, onSetCaptionChange, onRunPending, onRunSelected, showRunSelected, onRunAll, isRunning, jobProgress,
+  datasetId, pendingCount, totalCount, subfolder, onSubfolderChange,
+  setCaption, onSetCaptionChange, onRunPending, onRunAll, isRunning, jobProgress,
 }: Props) {
   const { data: subfolders = [] } = useQuery({
     queryKey: ["subfolders", datasetId],
@@ -30,7 +26,8 @@ export default function ComfyRunBar({
     enabled: !!datasetId,
   });
 
-  // A strip, not a panel: it sits in the page's sticky header on every tab.
+  // A strip, not a panel: it sits in the page's sticky header on every tab. Run selected
+  // lives in the Rows tab's selection bar since M6 §8d, beside the rows it runs.
   return (
     <div data-testid="comfy-run-bar">
       <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
@@ -58,11 +55,6 @@ export default function ComfyRunBar({
           />
           Prompt as caption
         </label>
-        {showRunSelected && (
-          <button className="btn ghost" onClick={onRunSelected} disabled={isRunning || selectedCount === 0}>
-            Run selected ({selectedCount})
-          </button>
-        )}
         <button
           className="btn ghost" onClick={onRunAll} disabled={isRunning || totalCount === 0}
           title="Run every row regardless of status — re-runs completed prompts and regenerates images"

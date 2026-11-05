@@ -10,6 +10,9 @@ import { useJobSSE } from "../hooks/useSSE";
 import { useJobStore } from "../store/jobStore";
 import { comfyApi, type ComfyPlanSummary, type ComfyRow, type LibraryPrompt, type LinkedMode } from "../api/comfy";
 import ConfirmDialog from "../components/common/ConfirmDialog";
+import MenuButton from "../components/common/MenuButton";
+import ModalShell from "../components/common/ModalShell";
+import ComfyRowsSelectionBar from "../components/comfy/ComfyRowsSelectionBar";
 import BlueprintPanel from "../components/comfy/BlueprintPanel";
 import WorkflowPinPanel from "../components/comfy/WorkflowPinPanel";
 import ComfyRowsTable, { type RowMove } from "../components/comfy/ComfyRowsTable";
@@ -65,6 +68,8 @@ const STATUS_CHIPS: { value: StatusFilter; label: string }[] = [
   { value: "failed", label: "Failed" },
   { value: "completed", label: "Done" },
 ];
+
+const PROMPT_PIN_REASON = "Mark a pinned parameter as the prompt first";
 
 /** The rows a drag of `rowId` moves: the whole selection, in run order, when the row is
  *  in it, else that row alone (the gallery's rule). */
@@ -802,15 +807,12 @@ export default function ComfyPage() {
         <ComfyRunBar
           datasetId={datasetId}
           pendingCount={pendingCount}
-          selectedCount={selected.size}
           totalCount={rows.length}
           subfolder={subfolder}
           onSubfolderChange={setSubfolder}
           setCaption={setCaption}
           onSetCaptionChange={setSetCaption}
           onRunPending={() => runMutation.mutate({ planId: effectivePlanId! })}
-          onRunSelected={() => runMutation.mutate({ planId: effectivePlanId!, rowIds: [...selected] })}
-          showRunSelected={section === "rows"}
           onRunAll={() => runMutation.mutate({ planId: effectivePlanId!, rowIds: rows.map((r) => r.id) })}
           isRunning={isRunning}
           jobProgress={jobProgress}
@@ -908,69 +910,8 @@ export default function ComfyPage() {
             onSavePins={(pins) => updatePlanMutation.mutate({ pinned_params: pins })}
           />
 
-          {/* Rows toolbar. It wraps: beside the rail it no longer fits one line (§8d trims it). */}
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
-            <button className="btn ghost sm" onClick={() => addRowMutation.mutate()} disabled={plan.pinned_params.length === 0}>+ Add row</button>
-            <button className="btn ghost sm" onClick={() => setShowPaste(true)}
-              disabled={!hasPromptPin}
-              title={hasPromptPin ? "Add one row per line of prompt text" : "Mark a pinned parameter as the prompt first"}>
-              Paste prompts…
-            </button>
-            <button className="btn ghost sm" onClick={() => txtFilesRef.current?.click()}
-              disabled={!hasPromptPin || bulkAddMutation.isPending}
-              title={hasPromptPin ? "Add one row per selected .txt file, in the folder in view" : "Mark a pinned parameter as the prompt first"}>
-              Import .txt
-            </button>
-            <input
-              ref={txtFilesRef} type="file" accept=".txt,text/plain" multiple style={{ display: "none" }}
-              onChange={(e) => {
-                if (e.target.files?.length) importPromptFiles(Array.from(e.target.files), folderInView);
-                e.target.value = "";
-              }}
-            />
-            <button className="btn ghost sm" onClick={() => setShowGenerate(true)}
-              disabled={!hasPromptPin}
-              title={hasPromptPin ? "Generate prompts with an LLM provider" : "Mark a pinned parameter as the prompt first"}>
-              Generate prompts…
-            </button>
-            <button className="btn ghost sm" onClick={() => setShowBulkEdit(true)}
-              disabled={!hasPromptPin || rows.length === 0}
-              title={hasPromptPin ? "Find & replace / prepend / append / remove across row prompts" : "Mark a pinned parameter as the prompt first"}>
-              Edit prompts…
-            </button>
-            <button className={`btn sm ${libOpen ? "primary" : "ghost"}`} aria-pressed={libOpen}
-              onClick={() => setLibOpen((v) => !v)}
-              title="Show the prompt library and other plans' rows beside the table">
-              Library
-            </button>
-            <div style={{ flex: 1 }} />
-            <button className="btn ghost sm" onClick={() => setShowSaveToLibrary(true)}
-              disabled={!hasPromptPin || selected.size === 0}
-              title={hasPromptPin ? "Save the selected rows' prompts to the prompt library" : "Mark a pinned parameter as the prompt first"}>
-              Save to library ({selected.size})
-            </button>
-            <button className="btn ghost sm" onClick={() => setShowSetFolder(true)}
-              disabled={selected.size === 0 || isRunning}
-              title="Set the destination folder on the selected rows">
-              Set folder ({selected.size})
-            </button>
-            <button className="btn ghost sm" onClick={() => setCopyToPlan({})}
-              disabled={selected.size === 0}
-              title="Copy or move the selected rows into another plan, keeping their folders">
-              Copy to plan ({selected.size})…
-            </button>
-            {failedCount > 0 && (
-              <button className="btn ghost sm" onClick={() => retryFailedMutation.mutate()}>
-                Reset failed ({failedCount})
-              </button>
-            )}
-            <button className="btn ghost sm" style={{ color: "var(--bad)" }} disabled={selected.size === 0}
-              onClick={() => setConfirmDeleteRows(true)}>
-              Delete selected ({selected.size})
-            </button>
-          </div>
-
-          {/* Filters: outside the rows table, whose inputs the e2e counts as row cells. */}
+          {/* Rows toolbar (M6 §8d): the filters, then Add ▾ and the Library toggle. Outside the
+              rows table on purpose, whose inputs the e2e counts as row cells. */}
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
             <input
               className="input" aria-label="Filter prompts" placeholder="Filter prompts and folders…"
@@ -999,7 +940,79 @@ export default function ComfyPage() {
                 in <span className="mono">{folderFilter || "(root)"}</span>
               </span>
             )}
+            <div style={{ flex: 1 }} />
+            {failedCount > 0 && (
+              <button className="btn ghost sm" onClick={() => retryFailedMutation.mutate()}>
+                Reset failed ({failedCount})
+              </button>
+            )}
+            <MenuButton
+              label="Add"
+              align="right"
+              testId="comfy-add-menu"
+              actions={[
+                {
+                  label: "Add row",
+                  onClick: () => addRowMutation.mutate(),
+                  disabled: plan.pinned_params.length === 0,
+                  title: plan.pinned_params.length === 0 ? "Pin a workflow parameter first" : "Add one empty row",
+                },
+                {
+                  label: "Paste prompts…",
+                  onClick: () => setShowPaste(true),
+                  disabled: !hasPromptPin,
+                  title: hasPromptPin ? "Add one row per line of prompt text" : PROMPT_PIN_REASON,
+                },
+                {
+                  label: "Import .txt…",
+                  // Synchronous inside the click, so the file picker keeps its user activation.
+                  onClick: () => txtFilesRef.current?.click(),
+                  disabled: !hasPromptPin || bulkAddMutation.isPending,
+                  title: hasPromptPin ? "Add one row per selected .txt file, in the folder in view" : PROMPT_PIN_REASON,
+                },
+                {
+                  label: "Generate prompts…",
+                  onClick: () => setShowGenerate(true),
+                  disabled: !hasPromptPin,
+                  title: hasPromptPin ? "Generate prompts with an LLM provider" : PROMPT_PIN_REASON,
+                },
+                {
+                  label: "Edit prompts…",
+                  onClick: () => setShowBulkEdit(true),
+                  disabled: !hasPromptPin || rows.length === 0,
+                  title: !hasPromptPin
+                    ? PROMPT_PIN_REASON
+                    : rows.length === 0
+                      ? "There are no rows to edit yet"
+                      : "Find & replace / prepend / append / remove across row prompts",
+                },
+              ]}
+            />
+            <input
+              ref={txtFilesRef} type="file" accept=".txt,text/plain" multiple style={{ display: "none" }}
+              onChange={(e) => {
+                if (e.target.files?.length) importPromptFiles(Array.from(e.target.files), folderInView);
+                e.target.value = "";
+              }}
+            />
+            <button className={`btn sm ${libOpen ? "primary" : "ghost"}`} aria-pressed={libOpen}
+              onClick={() => setLibOpen((v) => !v)}
+              title="Show the prompt library and other plans' rows beside the table">
+              Library
+            </button>
           </div>
+
+          <ComfyRowsSelectionBar
+            count={selected.size}
+            hasPromptPin={hasPromptPin}
+            isRunning={isRunning}
+            onSetFolder={() => setShowSetFolder(true)}
+            onCopyToPlan={() => setCopyToPlan({})}
+            onSaveToLibrary={() => setShowSaveToLibrary(true)}
+            onRunSelected={() => runMutation.mutate({ planId: effectivePlanId!, rowIds: [...selected] })}
+            onDelete={() => setConfirmDeleteRows(true)}
+            onClear={() => setSelected(new Set())}
+          />
 
           <ComfyRowsTable
             plan={plan}
@@ -1048,42 +1061,32 @@ export default function ComfyPage() {
         </DndContext>
       )}
 
-      {/* Paste prompts modal */}
+      {/* Paste prompts. The draft lives in this page, so Escape or Cancel keeps it for
+          the next open, and only a paste's own add clears it (bulkAddMutation's source). */}
       {showPaste && (
-        <div
-          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center" }}
-          onClick={() => setShowPaste(false)}
-        >
-          <div
-            className="panel" style={{ width: 560, maxWidth: "92vw" }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="panel-h">
-              <h3>Paste prompts</h3>
-            </div>
-            <div className="panel-b">
-              <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "0 0 8px" }}>
-                One prompt per line — each becomes a row with that prompt; other parameters use the template
-                values.
-              </p>
-              <textarea
-                className="input" autoFocus value={pasteText} onChange={(e) => setPasteText(e.target.value)}
-                style={{ width: "100%", minHeight: 200, fontSize: 12, resize: "vertical" }}
-                placeholder={"a cat sitting on a windowsill\na dog running on a beach\n…"}
-              />
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 10 }}>
-                <button className="btn ghost" onClick={() => setShowPaste(false)}>Cancel</button>
-                <button
-                  className="btn primary"
-                  disabled={!pasteText.trim() || bulkAddMutation.isPending}
-                  onClick={() => bulkAddMutation.mutate({ lines: pasteText.split("\n"), source: "paste" })}
-                >
-                  Add {pasteText.split("\n").filter((l) => l.trim()).length} rows
-                </button>
-              </div>
-            </div>
+        <ModalShell label="Paste prompts" onClose={() => setShowPaste(false)} closeOnBackdrop
+          style={{ width: 560, maxWidth: "92vw" }}>
+          <h3>Paste prompts</h3>
+          <p>
+            One prompt per line — each becomes a row with that prompt; other parameters use the template
+            values.
+          </p>
+          <textarea
+            className="input" autoFocus value={pasteText} onChange={(e) => setPasteText(e.target.value)}
+            style={{ width: "100%", minHeight: 200, fontSize: 12, resize: "vertical" }}
+            placeholder={"a cat sitting on a windowsill\na dog running on a beach\n…"}
+          />
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+            <button className="btn ghost" onClick={() => setShowPaste(false)}>Cancel</button>
+            <button
+              className="btn primary"
+              disabled={!pasteText.trim() || bulkAddMutation.isPending}
+              onClick={() => bulkAddMutation.mutate({ lines: pasteText.split("\n"), source: "paste" })}
+            >
+              Add {pasteText.split("\n").filter((l) => l.trim()).length} rows
+            </button>
           </div>
-        </div>
+        </ModalShell>
       )}
 
       {showGenerate && plan && (

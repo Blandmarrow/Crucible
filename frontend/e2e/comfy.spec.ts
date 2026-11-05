@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 import type { APIRequestContext, Page } from '@playwright/test'
 import { PERSIST_DEBOUNCE_MS } from '../src/constants/storage'
-import { createDatasetViaApi } from './helpers'
+import { addMenu, createDatasetViaApi } from './helpers'
 
 const INSTRUCTIONS_PLACEHOLDER = /danbooru-style tag prompts/
 
@@ -47,7 +47,7 @@ async function savedGenSettings(request: APIRequestContext, planId: string) {
 
 async function openGenerateModal(page: Page, datasetId: string) {
   await page.goto(`/datasets/${datasetId}/comfy`)
-  await page.getByRole('button', { name: 'Generate prompts…' }).click()
+  await addMenu(page, 'Generate prompts…')
   await expect(page.getByRole('heading', { name: 'Generate prompts' })).toBeVisible()
 }
 
@@ -92,7 +92,7 @@ test.describe('saved Generate prompts settings', () => {
     await page.getByRole('button', { name: '×' }).click()
     await expect(page.getByRole('heading', { name: 'Generate prompts' })).toHaveCount(0)
 
-    await page.getByRole('button', { name: 'Generate prompts…' }).click()
+    await addMenu(page, 'Generate prompts…')
     await expect(page.getByPlaceholder(INSTRUCTIONS_PLACEHOLDER)).toHaveValue('typed then closed')
   })
 
@@ -133,7 +133,7 @@ test.describe('saved Generate prompts settings', () => {
     await expect(page.getByText(/Couldn't save your changes to the app/)).toBeVisible({ timeout: 15_000 })
 
     await page.getByRole('button', { name: '×' }).click()
-    await page.getByRole('button', { name: 'Generate prompts…' }).click()
+    await addMenu(page, 'Generate prompts…')
     await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeVisible({ timeout: 15_000 })
     await expect(page.getByPlaceholder(INSTRUCTIONS_PLACEHOLDER)).toHaveCount(0)
 
@@ -165,7 +165,7 @@ test.describe('saved Generate prompts settings', () => {
 
     await page.route('**/gen-settings', (route) => route.fulfill({ status: 500, body: '{}' }))
     await page.goto(`/datasets/${ds.id}/comfy`)
-    await page.getByRole('button', { name: 'Generate prompts…' }).click()
+    await addMenu(page, 'Generate prompts…')
     await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeVisible({ timeout: 15_000 })
     await expect(page.getByPlaceholder(INSTRUCTIONS_PLACEHOLDER)).toHaveCount(0)
 
@@ -213,7 +213,7 @@ test('pasted prompts become queue rows', async ({ page, request }) => {
   // The single plan is auto-selected and the Rows section is the default.
   await expect(page.getByText('No rows yet', { exact: false })).toBeVisible()
 
-  await page.getByRole('button', { name: 'Paste prompts…' }).click()
+  await addMenu(page, 'Paste prompts…')
   await expect(page.getByRole('heading', { name: 'Paste prompts' })).toBeVisible()
   await page
     .getByPlaceholder('a cat sitting on a windowsill', { exact: false })
@@ -247,7 +247,7 @@ test('rows carry a per-row folder, typed in a cell or set in bulk', async ({ pag
   const plan = await createPlanViaApi(request, ds.id, 'folder plan')
 
   await page.goto(`/datasets/${ds.id}/comfy`)
-  await page.getByRole('button', { name: 'Paste prompts…' }).click()
+  await addMenu(page, 'Paste prompts…')
   await page
     .getByPlaceholder('a cat sitting on a windowsill', { exact: false })
     .fill('a knight in a fen\na knight on a ridge')
@@ -271,7 +271,8 @@ test('rows carry a per-row folder, typed in a cell or set in bulk', async ({ pag
 
   // Bulk-set both rows over the top of it.
   await rowsTable.locator('input.checkbox').first().check()
-  await page.getByRole('button', { name: 'Set folder (2)' }).click()
+  await expect(page.getByTestId('comfy-selection-bar')).toContainText('2 selected')
+  await page.getByTestId('comfy-selection-bar').getByRole('button', { name: 'Set folder…' }).click()
   await expect(page.getByRole('heading', { name: 'Set folder' })).toBeVisible()
   await page.getByPlaceholder('e.g. salt-fen/iron-knight').fill('ridge/knight')
   await page.getByRole('button', { name: 'Apply' }).click()
@@ -392,7 +393,8 @@ test('Set folder asks before moving rows the blueprint counts', async ({ page, r
   await page.goto(`/datasets/${ds.id}/comfy`)
   const rowsTable = page.getByTestId('comfy-rows-table')
   await rowsTable.locator('input.checkbox').first().check()
-  await page.getByRole('button', { name: 'Set folder (2)' }).click()
+  await expect(page.getByTestId('comfy-selection-bar')).toContainText('2 selected')
+  await page.getByTestId('comfy-selection-bar').getByRole('button', { name: 'Set folder…' }).click()
   await page.getByPlaceholder('e.g. salt-fen/iron-knight').fill('elsewhere')
   await page.getByRole('button', { name: 'Apply' }).click()
   await expect(page.getByTestId('comfy-linked-confirm')).toContainText('1 of these 2 rows came from the blueprint')
@@ -426,7 +428,7 @@ test('Copy to plan keeps each row folder, and Move takes them out', async ({ pag
   await page.getByTestId('comfy-plan-rail').getByRole('button', { name: /^source plan/ }).click()
   const rowsTable = page.getByTestId('comfy-rows-table')
   await rowsTable.locator('input.checkbox').first().check()
-  await page.getByRole('button', { name: 'Copy to plan (2)…' }).click()
+  await page.getByTestId('comfy-selection-bar').getByRole('button', { name: 'Copy to plan…' }).click()
   await expect(page.getByRole('combobox', { name: 'Target plan' })).toHaveValue(target.id)
   await page.getByRole('button', { name: 'Copy', exact: true }).click()
   await expect
@@ -437,7 +439,7 @@ test('Copy to plan keeps each row folder, and Move takes them out', async ({ pag
 
   // A move empties the source of those rows.
   await rowsTable.locator('input.checkbox').first().check()
-  await page.getByRole('button', { name: 'Copy to plan (2)…' }).click()
+  await page.getByTestId('comfy-selection-bar').getByRole('button', { name: 'Copy to plan…' }).click()
   await page.getByRole('radio', { name: /^Move/ }).check()
   await page.getByRole('button', { name: 'Move', exact: true }).click()
   await expect.poll(async () => (await rowsOf(request, source.id)).length).toBe(0)
@@ -479,4 +481,104 @@ test('the library panel stays open across a reload', async ({ page, request }) =
   await page.getByRole('button', { name: 'Close the library' }).click()
   await expect(page.getByTestId('comfy-library-panel')).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Library', exact: true })).toHaveAttribute('aria-pressed', 'false')
+})
+
+// ── M6 §8d: the Add menu, the selection bar, the paste dialog on ModalShell ──────
+
+test('the Add menu says why an entry is off, and Escape hands focus back', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-comfy-addmenu-${Date.now()}`)
+  // A pin that is not marked as the prompt: Add row works, the prompt entries do not.
+  const r = await request.post('/api/v1/comfy/plans', {
+    data: {
+      dataset_id: ds.id,
+      name: 'no prompt pin',
+      workflow_json: WORKFLOW,
+      pinned_params: [{ node_id: '6', input: 'text', alias: 'text', is_prompt: false }],
+      output_node_ids: ['9'],
+    },
+  })
+  expect(r.status(), await r.text()).toBe(200)
+
+  await page.goto(`/datasets/${ds.id}/comfy`)
+  const trigger = page.getByTestId('comfy-add-menu')
+  await trigger.click()
+  await expect(trigger).toHaveAttribute('aria-expanded', 'true')
+  const paste = page.getByRole('menuitem', { name: 'Paste prompts…' })
+  await expect(paste).toHaveAttribute('aria-disabled', 'true')
+  await expect(paste).toHaveAttribute('title', 'Mark a pinned parameter as the prompt first')
+  await expect(page.getByRole('menuitem', { name: 'Add row' })).not.toHaveAttribute('aria-disabled', 'true')
+  // A click on a disabled entry does nothing and leaves the menu open. Forced, since
+  // Playwright refuses to click an aria-disabled element; a mouse does not.
+  await paste.click({ force: true })
+  await expect(page.getByRole('heading', { name: 'Paste prompts' })).toHaveCount(0)
+  await expect(page.getByRole('menu')).toBeVisible()
+
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('menu')).toHaveCount(0)
+  await expect(trigger).toBeFocused()
+})
+
+test('the paste dialog is a real dialog, and Escape keeps its draft', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-comfy-pastedlg-${Date.now()}`)
+  await createPlanViaApi(request, ds.id, 'paste dialog plan')
+
+  await page.goto(`/datasets/${ds.id}/comfy`)
+  await addMenu(page, 'Paste prompts…')
+  const dialog = page.getByRole('dialog', { name: 'Paste prompts' })
+  await expect(dialog).toBeVisible()
+  const box = dialog.getByPlaceholder('a cat sitting on a windowsill', { exact: false })
+  await expect(box).toBeFocused()
+  await box.fill('a half-written prompt')
+
+  await page.keyboard.press('Escape')
+  await expect(dialog).toHaveCount(0)
+  await expect(page.getByTestId('comfy-add-menu')).toBeFocused()
+  await addMenu(page, 'Paste prompts…')
+  await expect(box).toHaveValue('a half-written prompt')
+})
+
+test('the selection bar holds its place, so the table never moves', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-comfy-selbar-${Date.now()}`)
+  const plan = await createPlanViaApi(request, ds.id, 'selection bar plan')
+  await addRowsViaApi(request, plan.id, ['a knight in a fen', 'a monk on a ridge'])
+
+  await page.goto(`/datasets/${ds.id}/comfy`)
+  const bar = page.getByTestId('comfy-selection-bar')
+  const rowsTable = page.getByTestId('comfy-rows-table')
+  await expect(bar).toContainText('Tick rows to move, copy, run or delete them.')
+  await expect(rowsTable.locator('textarea')).toHaveCount(2)
+  // Measured against the toolbar above the bar, not the viewport, so a scroll that
+  // check() makes to reach the box cannot pass for the bar moving the table.
+  const filter = page.getByLabel('Filter prompts')
+  const gap = async () => (await rowsTable.boundingBox())!.y - (await filter.boundingBox())!.y
+  const before = await gap()
+
+  await rowsTable.locator('input.checkbox').nth(1).check()
+  await expect(bar).toContainText('1 selected')
+  expect(await gap()).toBe(before)
+
+  await bar.getByRole('button', { name: 'Clear' }).click()
+  await expect(bar).toContainText('Tick rows to move')
+  await expect(rowsTable.locator('input.checkbox:checked')).toHaveCount(0)
+})
+
+test('Import .txt and Edit prompts work from the Add menu', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-comfy-addimport-${Date.now()}`)
+  const plan = await createPlanViaApi(request, ds.id, 'import plan')
+
+  await page.goto(`/datasets/${ds.id}/comfy`)
+  // The picker must open from inside the menu entry's click: a file input clicked
+  // any later has lost the user activation and the browser shows nothing.
+  const chooser = page.waitForEvent('filechooser')
+  await addMenu(page, 'Import .txt…')
+  await (await chooser).setFiles([
+    { name: 'one.txt', mimeType: 'text/plain', buffer: Buffer.from('a knight\nin a fen') },
+    { name: 'two.txt', mimeType: 'text/plain', buffer: Buffer.from('a monk on a ridge') },
+  ])
+  await expect
+    .poll(async () => (await rowsOf(request, plan.id)).map((r: { values: { prompt: string } }) => r.values.prompt).sort())
+    .toEqual(['a knight in a fen', 'a monk on a ridge'])
+
+  await addMenu(page, 'Edit prompts…')
+  await expect(page.getByRole('heading', { name: 'Edit prompts' })).toBeVisible()
 })

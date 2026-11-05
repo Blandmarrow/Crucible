@@ -69,8 +69,9 @@ The **Rows** section is where a plan's queue is filled: by hand, by pasting or i
 The **Run** bar sits at the top of the page on every section. It takes a **Base folder** for the generated images — each row's own Folder nests underneath it — and a **Prompt as caption** toggle that writes each row's prompt into its image's caption (and its `.txt` sidecar). Then choose:
 
 - **Run pending** — every row still waiting to run. The normal case. Failed rows are *not* included until you **Reset failed**.
-- **Run selected** — only the rows you ticked, whatever their status. It shows on the **Rows** section only, where you can see what is ticked.
 - **Run all** — every row regardless of status; re-runs completed prompts and generates fresh images.
+
+To run only some rows, tick them on the **Rows** section and use **Run selected** in the selection bar above the table → [ComfyUI Queue](comfy-queue.md#building-the-queue).
 
 The whole folder tree appears in the gallery's sidebar as the run starts, before the first image lands, so you can watch it fill in. Cancelling part-way leaves the folders it had not reached empty; delete them from the gallery if you do not want them.
 

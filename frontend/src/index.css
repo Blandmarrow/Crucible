@@ -493,6 +493,23 @@
   .comfy-pill {
     font-size: 11px; color: var(--fg-mute); border: 1px solid var(--line-2); border-radius: 999px; padding: 1px 8px;
   }
+  /* M6 §8d: the selected-rows bar. One fixed height whether or not rows are ticked, so the
+     table never moves under the pointer on the first tick; it scrolls sideways rather than
+     wrapping in a narrow column, because a second line would move the table just the same. */
+  .comfy-selbar {
+    display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 10px; margin-bottom: 8px;
+    flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; white-space: nowrap;
+    border: 1px dashed var(--line-2); border-radius: var(--r);
+    /* Firefox ignores the app's 5px ::-webkit-scrollbar, and its classic bar would eat
+       the height the 24px buttons need. */
+    scrollbar-width: thin;
+  }
+  .comfy-selbar.on { border: 1px solid var(--accent-dim); background: var(--good-bg); }
+  .comfy-selbar > * { flex-shrink: 0; }
+  /* aria-disabled rather than `disabled`, whose pointer-events: none hides the title that
+     says why (the ContextMenu convention). */
+  .comfy-selbar .btn[aria-disabled="true"] { opacity: .5; cursor: not-allowed; }
+  .comfy-selbar .btn[aria-disabled="true"]:hover { background: transparent; color: var(--fg-mute); }
   /* M6 §8c: the library panel, a third column while it is open. Sticky with its own
      scroll like the rail, and z-index 6 for the same reason (the menus it opens). In a
      container too narrow for three columns it spans the top instead, above the rail and

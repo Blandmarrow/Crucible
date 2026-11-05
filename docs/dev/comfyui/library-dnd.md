@@ -76,25 +76,25 @@ the page usable without a mouse, and e2e drives the buttons.
 
 | Drag | Its button route |
 |---|---|
-| Rows onto a folder or group header | *Set folder (n)* |
-| Rows onto another plan | *Copy to plan (n)…* |
-| Rows onto a library category | *Save to library (n)* |
+| Rows onto a folder or group header | the selection bar's *Set folder…* |
+| Rows onto another plan | the selection bar's *Copy to plan…* |
+| Rows onto a library category | the selection bar's *Save to library…* |
 | Library prompts onto the table or a folder | the panel's *Add n to plan* |
 | Library prompts onto a category | the panel's *Move to…* |
 | A category onto a category | the category menu's *Move to…* |
 | A folder onto a folder | the tree menu's *Move to…* |
-| Rows between rows | the row menu's moves, and *Set folder* |
-| `.txt` files onto the table | *Import .txt* |
+| Rows between rows | the row menu's moves, and *Set folder…* |
+| `.txt` files onto the table | *Add ▾ → Import .txt…* |
 | A workflow `.json` onto *Workflow & Pins* | *Load .json file* |
 
 - **The folder in view** is where rows land when nothing names a folder: the folder picked in
-  the tree, or (root) under *All rows* (`folderInView` in `ComfyPage`). *Import .txt* and *Add n
+  the tree, or (root) under *All rows* (`folderInView` in `ComfyPage`). *Import .txt…* and *Add n
   to plan* use it, as the drops will.
 - **`CopyRowsToPlanModal`** (on `ModalShell`) picks a plan in this dataset, then Copy or Move. A
   move with linked rows asks first. The mutation is `useCopyRowsMutation` in
   `components/comfy/copyRows.ts`, shared with the drop on a plan, which opens this modal with
-  `initialTargetId` and `initialMove` when a move has to ask. §8d moves the button into the
-  selection bar.
+  `initialTargetId` and `initialMove` when a move has to ask. Its button is the selection
+  bar's *Copy to plan…* since §8d (`docs/dev/comfyui/page.md`).
 - **The row menu** opens from a grip button at each row's start (`aria-label="Row actions"`).
   The same button becomes the row's drag handle in the drag layer, as the gallery's label
   button is both. Its entries are *Move to top of folder*, *Move up*, *Move down* and *Move to

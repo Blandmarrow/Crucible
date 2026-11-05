@@ -371,6 +371,20 @@ value whose alias exists in the target plan; `PATCH` for a library prompt's text
 
 ### §8d — Toolbar cleanup
 
+**Built 2026-11-05** (`docs/dev/comfyui/page.md`, the Rows toolbar and
+`ComfyRowsSelectionBar`), under three rulings by the user that day, each a departure from the
+mockup:
+- **The selection bar keeps a fixed slot**, a hint when nothing is ticked, so the table never
+  moves under the pointer on the first tick. The mockup showed it only with a selection.
+- **Its actions are buttons opening the existing dialogs**, not the mockup's drop-downs, which
+  would have lost Set folder's blueprint ask, Copy's Move and a new library category.
+- **Run selected lives in the selection bar only**; the sticky run bar keeps Run all and Run
+  pending.
+
+The menu keeps today's labels rather than the mockup's longer ones. The filters moved up
+into the toolbar's line, which pays for the slot. *Reset failed* stays in the toolbar, as it
+is not a selection action. The menu is a new shared `MenuButton`.
+
 - One **Add ▾** menu: Add row, Paste prompts, Import .txt, Generate, Edit prompts.
 - Actions on selected rows move to a bar shown only while rows are selected: move to
   folder, copy to plan, save to library, run, delete.
@@ -482,6 +496,13 @@ owed are the one list in the roadmap's § Next session.
   `docs/dev/comfyui/blueprint-tab.md`. The user ruled the four open questions by approving
   the recommendations, and an Opus review's findings were fixed, among them a case-blind
   `LIKE` that let a folder delete take another folder's rows.
+- [x] §8c: the library side panel, Copy to plan, the row menu and drag and drop. Done
+  2026-11-05; what it delivered is § 8c above.
+- [x] §8d: the *Add ▾* menu, the selection bar in a fixed slot, Run selected moved into it,
+  and the paste dialog on `ModalShell`. Done 2026-11-05, frontend only: `MenuButton` (with
+  `ContextMenuItem` extracted from `ContextMenu`), `ComfyRowsSelectionBar`, and e2e for the
+  menu's disabled reasons, the dialog's Escape and draft, the slot holding the table still,
+  and Run selected against the fake ComfyUI.
 
 ## Documentation this arc owes
 

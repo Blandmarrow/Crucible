@@ -17,7 +17,7 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-05, after M6 §8c)
+## Next session (updated 2026-11-05, after M6 §8d)
 
 1. M5's five stages merged on 2026-10-30 as PR #101. Only its cleanup is open, and that waits
    a release. See [server-state-plan/README.md](server-state-plan/README.md) for what was
@@ -46,11 +46,10 @@ restates its stages.
    [comfy-automation-plan/README.md](comfy-automation-plan/README.md) as revised by decisions 8
    and 9. **Work on M6 happens on that branch.** What has landed, stage by stage, is the
    § M6 checklist below; this item holds only what is open.
-   - **Next: §8d, the toolbar cleanup**
-     ([the plan's § 8d](comfy-automation-plan/README.md#8d--toolbar-cleanup)), then the merge.
-     §8c landed on 2026-11-05: the library side panel, Copy to plan, the row menu and drag and
-     drop (`docs/dev/comfyui/library-dnd.md`). §8d moves *Copy to plan (n)…* into its
-     selection bar.
+   - **Next: the merge** (§ M6 below). §8, the page rework, is complete: §8d landed on
+     2026-11-05 with the *Add ▾* menu, the selection bar in a fixed slot, Run selected moved
+     into it and the paste dialog on `ModalShell`, under three rulings by the user that day
+     ([the plan's § 8d](comfy-automation-plan/README.md#8d--toolbar-cleanup)).
    - **Owed by hand, against a real ComfyUI and LM Studio** — the one list; the § M6 ticks do
      not repeat it. The user chose to take §4's checks before §5's.
      - §3: a Stop mid-rewrite, and a hand-edited row left alone by the rewrite.
@@ -66,6 +65,8 @@ restates its stages.
        another plan refused while the source runs; a drop between rows while the table
        auto-scrolls; a drop over a library category scrolled out of the panel (it must not
        take it); a category migration on a real library with free-text categories.
+     - §8d: the selection bar in Firefox with the library panel open (its buttons must not be
+       clipped by the scrollbar; e2e runs Chromium only).
    - **Found in the §8b review, not fixed there:** the gallery's
      `dataset_service.repath_subfolder` matches a folder's subtree with SQLite's case-blind
      `LIKE`, so renaming `knight` also re-paths `Knight/a`; `filesystem.py`'s
@@ -185,7 +186,8 @@ gates are green and it is pushed.
     What each delivered is the plan's § Landed stages.
   - [x] §8c, the library side panel, Copy to plan, the row menu and drag and drop
     (2026-11-05). What it delivered is the plan's § 8c.
-  - [ ] §8d: the Add menu, the selection bar, the paste dialog on `ModalShell`.
+  - [x] §8d: the Add menu, the selection bar, the paste dialog on `ModalShell`
+    (2026-11-05). What it delivered is the plan's § 8d.
 - [ ] Merge: rebase onto `main`, re-parent the first migration onto M4's head if M4 merged
   first, run every gate, open the PR. The ComfyUI docs moved behind a hub on this branch, so
   any doc `main` has added since that names an old path (comfy-prompts.md, comfyui-sync.md, or

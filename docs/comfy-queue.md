@@ -4,18 +4,26 @@ How to fill a plan's queue on the **Rows** section of the ComfyUI page: the tool
 
 ## Building the queue
 
-From the **Rows** toolbar:
+The **Rows** toolbar holds the filters (see [Folders](#folders)), **Reset failed** (shown when rows have failed; it puts them back to pending), the **Add** menu and the **Library** toggle. The **Add** menu adds rows:
 
-- **+ Add row** — one empty row.
-- **Paste prompts…** — one row per line of pasted text.
-- **Import .txt** — one row per selected file; each file becomes a single prompt (internal line breaks collapse to spaces). The rows go into the folder you have picked in the folder list, or the base folder when **All rows** is shown.
-- **✨ Generate prompts…** — write prompts with an LLM using any provider configured under Settings → LLM Providers → [details](settings.md). Two fields do different jobs: **Instructions** describe *how* prompts should be written and are saved with the plan in the app, so they are the same in every browser, while **Request** describes *what* to generate this time. Instructions saved before this change are copied over the first time each browser opens the updated app. If a second browser holds a different copy, you are asked which to keep. The model is told which prompts already exist so it diverges from them, and duplicates are dropped. There are two ways to run it:
+- **Add row** — one empty row.
+- **Paste prompts…** — one row per line of pasted text. Closing the dialog keeps what you typed for the next time you open it.
+- **Import .txt…** — one row per selected file; each file becomes a single prompt (internal line breaks collapse to spaces). The rows go into the folder you have picked in the folder list, or the base folder when **All rows** is shown.
+- **Generate prompts…** — write prompts with an LLM using any provider configured under Settings → LLM Providers → [details](settings.md). Two fields do different jobs: **Instructions** describe *how* prompts should be written and are saved with the plan in the app, so they are the same in every browser, while **Request** describes *what* to generate this time. Instructions saved before this change are copied over the first time each browser opens the updated app. If a second browser holds a different copy, you are asked which to keep. The model is told which prompts already exist so it diverges from them, and duplicates are dropped. There are two ways to run it:
   - **Generate N more** makes one batch and puts it in the review box, where you edit or delete lines before clicking **Add N rows**.
   - **Generate until N** runs in the background until the queue holds N prompts, adding rows batch by batch **without a review step**. You can close the window, leave the page, or reload — it keeps going, shows up in the progress bar at the top, and can be stopped from either place. Rows already added are always kept when it stops. Because nothing is reviewed by eye first, glance over the new rows before running them.
 - **Edit prompts…** — find/replace, prepend, append, or remove across every row's prompt or just the selected ones, with an optional regex mode.
-- **Set folder** — give every selected row the same destination folder (see below).
+
+An entry that cannot be used yet is greyed out; point at it to see why (most need a pinned parameter marked as the prompt).
+
+Under the toolbar, the **selection bar** acts on the rows you have ticked. It always keeps its place, so the table does not move when you tick the first row:
+
+- **Set folder…** — give every selected row the same destination folder (see below).
 - **Copy to plan…** — copy the selected rows into another plan of this dataset, or move them there. See [Copying rows between plans](#copying-rows-between-plans).
-- **Delete selected** removes rows; **Reset failed** puts failed rows back to pending.
+- **Save to library…** — store their prompts in the prompt library (see below).
+- **Run selected** — run only these rows, whatever their status.
+- **Delete** — remove them, after asking. Images already imported are kept.
+- **Clear** — untick them all.
 
 The **Blueprint** tab is not a toolbar button but its own section of the plan. Describe the whole dataset once (characters, places, camera angles, alone and in pairs) and it expands into rows, each already filed in its folder → [details](comfy-structured.md). To take those rows on through scoring, captioning and export in one press, see [Automated Runs](runs.md).
 
@@ -67,7 +75,7 @@ A single library shared across every dataset and plan, so a set of prompts writt
 
 Two routes, both of which keep each row's folder:
 
-- **Copy to plan…** in the toolbar copies the selected rows into another plan in this dataset. Choose **Move** to take them out of this plan instead.
+- **Copy to plan…** in the selection bar copies the selected rows into another plan in this dataset. Choose **Move** to take them out of this plan instead.
 - The library panel's **Other plans** tab browses the rows of any plan, in any dataset, with each row's folder shown. Tick some and use **Copy here** or **Move here**.
 
 A copied row carries its prompt, and every other value that the receiving plan also has as a per-row column. Values for anything else are left behind, and the receiving plan's own settings apply. The new row starts as pending, even if the original had already run.

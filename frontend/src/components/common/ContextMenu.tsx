@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { MENU_PANEL_STYLE } from "./menuStyle";
 
 /** One row in a `ContextMenu`. `icon` is optional — a menu whose entries have no
  *  natural glyph renders without the icon gutter rather than with blank slots. */
@@ -82,37 +83,39 @@ export default function ContextMenu({ x, y, actions, onClose }: ContextMenuProps
       ref={ref}
       role="menu"
       aria-orientation="vertical"
-      style={{
-        position: "fixed", left: pos.x, top: pos.y, zIndex: 1000,
-        background: "var(--surface-2)", border: "1px solid var(--line-2)",
-        borderRadius: "var(--r)", boxShadow: "0 8px 24px rgba(0,0,0,.4)",
-        minWidth: 180, padding: "4px 0",
-      }}
+      style={{ position: "fixed", left: pos.x, top: pos.y, zIndex: 1000, ...MENU_PANEL_STYLE }}
     >
-      {actions.map((a) => (
-        <button
-          key={a.label}
-          role="menuitem"
-          // aria-disabled, not `disabled`: a disabled button shows no tooltip, and
-          // `title` is where the reason lives.
-          aria-disabled={a.disabled || undefined}
-          title={a.title}
-          onClick={() => { if (a.disabled) return; a.onClick(); onClose(); }}
-          style={{
-            display: "flex", alignItems: "center", gap: 8,
-            width: "100%", padding: "7px 14px",
-            fontSize: 13, background: "none", border: "none",
-            color: a.danger ? "var(--bad)" : "var(--fg)",
-            cursor: a.disabled ? "default" : "pointer", textAlign: "left",
-            opacity: a.disabled ? 0.45 : 1,
-          }}
-          onMouseEnter={(e) => { if (!a.disabled) e.currentTarget.style.background = "var(--surface-3)"; }}
-          onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
-        >
-          {a.icon && <span style={{ opacity: 0.7 }}>{a.icon}</span>}
-          {a.label}
-        </button>
-      ))}
+      {actions.map((a) => <ContextMenuItem key={a.label} action={a} onDone={onClose} />)}
     </div>
+  );
+}
+
+/**
+ * One entry of a menu: `ContextMenu`'s rows and `MenuButton`'s. A disabled entry
+ * swallows the click and leaves the menu open, so its `title` can say why.
+ */
+export function ContextMenuItem({ action: a, onDone }: { action: ContextMenuAction; onDone: () => void }) {
+  return (
+    <button
+      role="menuitem"
+      // aria-disabled, not `disabled`: a disabled button shows no tooltip, and
+      // `title` is where the reason lives.
+      aria-disabled={a.disabled || undefined}
+      title={a.title}
+      onClick={() => { if (a.disabled) return; a.onClick(); onDone(); }}
+      style={{
+        display: "flex", alignItems: "center", gap: 8,
+        width: "100%", padding: "7px 14px",
+        fontSize: 13, background: "none", border: "none",
+        color: a.danger ? "var(--bad)" : "var(--fg)",
+        cursor: a.disabled ? "default" : "pointer", textAlign: "left",
+        opacity: a.disabled ? 0.45 : 1,
+      }}
+      onMouseEnter={(e) => { if (!a.disabled) e.currentTarget.style.background = "var(--surface-3)"; }}
+      onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
+    >
+      {a.icon && <span style={{ opacity: 0.7 }}>{a.icon}</span>}
+      {a.label}
+    </button>
   );
 }

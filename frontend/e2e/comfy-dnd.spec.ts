@@ -174,11 +174,11 @@ test('rows dragged out of the folder in view leave the selection', async ({ page
   await tree.getByRole('button', { name: /^src/ }).click()
   const rowsTable = page.getByTestId('comfy-rows-table')
   await rowsTable.locator('input.checkbox').first().check()
-  await expect(page.getByRole('button', { name: 'Delete selected (2)' })).toBeVisible()
+  await expect(page.getByTestId('comfy-selection-bar')).toContainText('2 selected')
   await dragTo(page, rowsTable.getByRole('button', { name: 'Row actions' }).first(), tree.getByRole('button', { name: /^dst/ }))
 
   await expect
     .poll(async () => (await rowsOf(request, plan.id)).map((r: { subfolder: string }) => r.subfolder))
     .toEqual(['dst', 'dst'])
-  await expect(page.getByRole('button', { name: 'Delete selected (0)' })).toBeVisible()
+  await expect(page.getByTestId('comfy-selection-bar')).toContainText('Tick rows to move')
 })

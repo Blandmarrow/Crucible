@@ -3,7 +3,7 @@
 The frontend of the ComfyUI queue: how `ComfyPage` is routed and registered, what its e2e spec
 covers, the header line, `WorkflowPinPanel` and the workflow scan, the run-default strip, the rows
 table and its Folder column, the run bar and how the page tracks concurrent runs, the prompt
-Rows toolbar, and the Rows tab's plan rail, folder tree and grouped table (M6 §8b). The library
+Rows toolbar and selection bar (M6 §8d), and the Rows tab's plan rail, folder tree and grouped table (M6 §8b). The library
 panel, Copy to plan, the row menu and drag and drop (M6 §8c) are `docs/dev/comfyui/library-dnd.md`. The Blueprint tab is `docs/dev/comfyui/blueprint-tab.md`. The data model and endpoints it calls are in
 `docs/dev/comfyui/queue.md`; what a run does server-side is `docs/dev/comfyui/run.md`; *Generate
 prompts* is `docs/dev/comfyui/prompts.md` and *Sync from canvas* `docs/dev/comfyui/sync.md`.
@@ -95,7 +95,7 @@ image's generation metadata on its detail page, and a failed row's error tooltip
   - **A row the blueprint still counts is locked** (`blueprint_linked`): a lock icon and a
     read-only input, keeping `placeholder="(root)"` so the e2e's cell count holds. Moving it
     unlinks it from its leaf, and only Set folder asks about that.
-- **`SetRowFolderModal`** (Rows toolbar *Set folder (n)*, needs a selection, disabled while
+- **`SetRowFolderModal`** (the selection bar's *Set folder…*, disabled while
   that plan is running) — a text input with a `<datalist>` of the dataset's existing folders
   (query key `["subfolders", datasetId]`, usually already cached by `ComfyRunBar`); a datalist
   rather than the run bar's closed select, because creating folders that do not exist yet is
@@ -108,11 +108,12 @@ image's generation metadata on its detail page, and a failed row's error tooltip
     only* (`"skip"`) and *Cancel*. Otherwise it sends `"refuse"`, the server's default, which
     409s if the client was wrong about a row.
 - **`ComfyRunBar`** — a strip in the sticky header, shown on every tab once a plan exists
-  (before §8a it rendered on *Rows* only). *Run selected* shows on *Rows* only
-  (`showRunSelected`): elsewhere the selection it would run is out of sight. Base-folder select (`["subfolders", datasetId]`; labelled *Base folder*,
+  (before §8a it rendered on *Rows* only). *Run selected* left it in §8d for the Rows tab's
+  selection bar, beside the rows it runs (before that it showed on *Rows* only, through a
+  `showRunSelected` prop). Base-folder select (`["subfolders", datasetId]`; labelled *Base folder*,
   since per-row folders nest under it, and folders a run declares appear in the next run's
   options automatically), "Prompt as caption"
-  toggle, *Run pending (n)* / *Run selected (n)* / *Run all (n)* (runs every row regardless of
+  toggle, *Run pending (n)* / *Run all (n)* (runs every row regardless of
   status — re-runs completed prompts and regenerates images; passes all row ids to `/comfy/run`,
   which runs explicit `row_ids` regardless of status).
   - The page tracks runs in an
@@ -134,19 +135,41 @@ image's generation metadata on its detail page, and a failed row's error tooltip
 - **The prompt library** is a side panel since M6 §8c, toggled by the Rows toolbar's
   *Library* (`ComfyLibraryPanel`), with *Other plans* as its second tab: see
   `docs/dev/comfyui/library-dnd.md`. `PromptLibraryModal` is gone. Query key `["comfy","library"]`.
-- **`SaveToLibraryModal`** (Rows toolbar *Save to library (n)*, needs a selection) — category
+- **`SaveToLibraryModal`** (the selection bar's *Save to library…*) — category
   input (a `/` path, ≤512) with a `<datalist>` of every category path and its ancestors; saves the selected rows' **effective**
   prompts (via `GET /comfy/plans/{id}/prompts`, backend-authoritative) through
   `POST /comfy/library`; toast reports created/skipped-duplicates.
-- Rows toolbar: *+ Add row*, *Paste prompts…* (modal, one prompt per line → `rows/bulk`;
-  disabled until a pin is marked as prompt), *Import .txt* (browser file picker, no modal —
-  **one file = one prompt**, inner newlines collapsed to spaces, straight to `rows/bulk`, filed
-  in the folder in view since §8c),
-  *✨ Generate prompts…* (`GeneratePromptsModal` — `docs/dev/comfyui/prompts.md`),
-  *Edit prompts…* (`BulkEditRowsModal`: find/replace, prepend, append, remove + regex toggle,
-  scope all/selected → `rows/bulk-edit`), *Library* (the panel toggle), *Save to library (n)*,
-  *Set folder (n)*, *Copy to plan (n)…*, *Reset failed (n)*, *Delete selected (n)*
-  (`ConfirmDialog`).
+- **The Rows toolbar** (M6 §8d) is one line: the text filter, the status chips and the
+  "in <folder>" note, then *Reset failed (n)* (only while rows have failed), **Add ▾** and
+  *Library* (the panel toggle, `aria-pressed`). It sits outside `ComfyRowsTable` because the
+  e2e counts the table's inputs as row cells.
+  - **Add ▾** is a `MenuButton` (`docs/dev/shared-utilities.md`), test id `comfy-add-menu`,
+    with *Add row*, *Paste prompts…* (one prompt per line → `rows/bulk`), *Import .txt…*
+    (browser file picker, no modal — **one file = one prompt**, inner newlines collapsed to
+    spaces, straight to `rows/bulk`, filed in the folder in view since §8c), *Generate
+    prompts…* (`GeneratePromptsModal` — `docs/dev/comfyui/prompts.md`) and *Edit prompts…*
+    (`BulkEditRowsModal`: find/replace, prepend, append, remove + regex toggle, scope
+    all/selected → `rows/bulk-edit`). All but *Add row* need a prompt pin. A disabled entry is
+    `aria-disabled` with its reason in `title`, so the reason shows as a tooltip, which a
+    `disabled` button would not. *Import .txt…* clicks the hidden file input synchronously
+    inside the entry's click: the picker needs that user activation.
+  - **The paste dialog** is inline in `ComfyPage` on `ModalShell` (`role="dialog"`, Escape, a
+    focus trap; before §8d a bare overlay). `pasteText` lives in the page, so closing keeps
+    the draft, and only a paste's own add clears it (`bulkAddMutation`'s `source`). Focus
+    comes back to *Add*, because `MenuButton` refocuses its trigger before the dialog mounts.
+- **`ComfyRowsSelectionBar`** (M6 §8d, `comfy-selection-bar`) is between the toolbar and the
+  table: *n selected*, *Set folder…*, *Copy to plan…*, *Save to library…*, *Run selected*,
+  *Delete* (`ConfirmDialog`) and *Clear*. **Its slot is always there**, with a hint when
+  nothing is ticked, at one fixed height that scrolls sideways rather than wrap
+  (`.comfy-selbar`). That was the user's ruling on 2026-11-05: the mockup showed the bar only
+  with a selection, which moves the table under the pointer on the first tick. e2e pins it by
+  comparing the table's `boundingBox().y` before and after. Each button opens the dialog the
+  old toolbar button did; the mockup's drop-downs were rejected because they would lose Set
+  folder's blueprint ask, Copy's Move and a new library category. *Set folder…* and *Run
+  selected* are disabled while the plan runs, and *Save to library…* without a prompt pin —
+  through `aria-disabled` with the reason in `title`, because `.btn:disabled` sets
+  `pointer-events: none` and would hide it. `scrollbar-width: thin` keeps Firefox's
+  scrollbar from eating the 24px buttons' height in a narrow column.
 
 ### The plan rail, the folder tree and the grouped table
 

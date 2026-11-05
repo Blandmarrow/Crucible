@@ -168,3 +168,12 @@ export async function uploadVideoViaApi(
   ).json()
   return listing.find((v: { filename: string }) => v.filename === name)
 }
+
+/**
+ * Picks an entry from the ComfyUI Rows toolbar's *Add ▾* menu (M6 §8d), which holds
+ * Add row, Paste prompts…, Import .txt…, Generate prompts… and Edit prompts….
+ */
+export async function addMenu(page: import('@playwright/test').Page, item: string): Promise<void> {
+  await page.getByTestId('comfy-add-menu').click()
+  await page.getByRole('menuitem', { name: item }).click()
+}

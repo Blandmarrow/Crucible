@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import type { APIRequestContext } from '@playwright/test'
-import { createDatasetViaApi, setComfyUrlViaApi } from './helpers'
+import { addMenu, createDatasetViaApi, setComfyUrlViaApi } from './helpers'
 
 // ComfyUI journeys that press Run. The backend talks to the fake ComfyUI that
 // e2e/serve-comfy.mjs serves beside it (backend/tests/fake_comfy.py): every
@@ -34,7 +34,7 @@ async function createPlanViaApi(request: APIRequestContext, datasetId: string, n
 }
 
 async function pastePrompts(page: import('@playwright/test').Page, prompts: string[]) {
-  await page.getByRole('button', { name: 'Paste prompts…' }).click()
+  await addMenu(page, 'Paste prompts…')
   await page.getByPlaceholder('a cat sitting on a windowsill', { exact: false }).fill(prompts.join('\n'))
   await page.getByRole('button', { name: `Add ${prompts.length} rows` }).click()
   await expect(page.getByRole('heading', { name: 'Paste prompts' })).toHaveCount(0)
@@ -105,6 +105,28 @@ test('a failed row shows ComfyUI\'s error and can be reset', async ({ page, requ
   expect(rows.map((r) => r.status)).toEqual(['completed', 'pending'])
   const images = await (await request.get('/api/v1/images/', { params: { dataset_id: ds.id } })).json()
   expect(images).toHaveLength(1)
+})
+
+// M6 §8d: Run selected moved out of the sticky run bar into the selection bar.
+test('Run selected in the selection bar runs only the ticked rows', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-comfy-runsel-${Date.now()}`)
+  const plan = await createPlanViaApi(request, ds.id, 'run selected plan')
+
+  await page.goto(`/datasets/${ds.id}/comfy`)
+  await pastePrompts(page, ['the first prompt', 'the second prompt', 'the third prompt'])
+  await expect(page.getByTestId('comfy-head').getByRole('button', { name: /^Run selected/ })).toHaveCount(0)
+
+  // Header checkbox first, then one per row in run order.
+  const rowsTable = page.getByTestId('comfy-rows-table')
+  await rowsTable.locator('input.checkbox').nth(2).check()
+  const bar = page.getByTestId('comfy-selection-bar')
+  await expect(bar).toContainText('1 selected')
+  await bar.getByRole('button', { name: 'Run selected' }).click()
+
+  await expect(rowsTable.getByText('completed', { exact: true })).toHaveCount(1, { timeout: 30_000 })
+  await expect(page.getByRole('button', { name: 'Run pending (2)' })).toBeEnabled()
+  const rows: Row[] = await (await request.get(`/api/v1/comfy/plans/${plan.id}/rows`)).json()
+  expect(rows.map((r) => r.status)).toEqual(['pending', 'completed', 'pending'])
 })
 
 test('a hand-written blueprint expands into rows with folders, and they run', async ({ page, request }) => {

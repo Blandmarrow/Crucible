@@ -32,6 +32,7 @@ from backend.models.comfy import ComfyBlueprint, ComfyLeaf, ComfyLibraryPrompt, 
 from backend.schemas.app_data import ComfyGenSettings
 from backend.schemas.comfy_blueprint import BlueprintSpec
 from backend.services import blueprint_rewrite, blueprint_service
+from backend.services.comfy_rows import place_rows
 from backend.services.comfy_library import (
     CATEGORY_MAX_LEN,
     dedupe_key,
@@ -158,10 +159,24 @@ class RowUpdate(BaseModel):
 
 class BulkLinesRequest(BaseModel):
     lines: list[str]
+    # The folder the new rows are filed in ("" = the run's base folder): the folder in
+    # view, for a library drop or an import (M6 §8c).
+    subfolder: str = Field(default="", max_length=512)
 
 
 class RowIdsRequest(BaseModel):
     row_ids: list[str]
+
+
+class RowPlaceRequest(BaseModel):
+    row_ids: list[str] = Field(min_length=1)
+    # Land before or after this row; None = after the target folder's last row, or at
+    # the end of the plan when no folder is given.
+    anchor_row_id: str | None = None
+    position: Literal["before", "after"] = "before"
+    # None keeps each row's folder; a string, even "", re-files every row there.
+    subfolder: str | None = Field(default=None, max_length=512)
+    linked: LinkedMode = "refuse"
 
 
 class RowResetRequest(BaseModel):
@@ -368,12 +383,6 @@ def _descendant_clause(path: str):
 
 def _subtree_clause(path: str):
     return (ComfyRow.subfolder == path) | _descendant_clause(path)
-
-
-def _unlink_lock(plan_id: str, linked: str):
-    """An unlink clears `leaf_id`, which is what fill accounting counts, so it takes
-    Apply's lock (against adoption re-linking a row mid-move); other modes need none."""
-    return _plan_lock(plan_id) if linked == "unlink" else contextlib.nullcontext()
 
 
 async def _folder_state(db: AsyncSession, plan: ComfyPlan) -> tuple[set[str], list[str]]:
@@ -1262,6 +1271,19 @@ async def _refuse_during_rewrite(db: AsyncSession, plan_id: str) -> None:
         raise HTTPException(409, _REWRITE_LIVE_MSG)
 
 
+_RUN_LIVE_FOLDER_MSG = "This plan is running — change folders when the run finishes"
+_RUN_LIVE_DELETE_MSG = "This plan is running — delete rows when the run finishes"
+
+
+async def _refuse_folder_change_during_run(db: AsyncSession, plan_id: str) -> None:
+    """409 for a folder change while a `comfy_generate` job is live. The run files each
+    row by the `subfolder` of the row it loaded at start, so a change made now would show
+    a folder the image never went to. Callers hold the plan lock, which `_start_run`
+    takes too, so no run can start between this check and their commit."""
+    if await _plan_job_active(db, plan_id, ("comfy_generate",)):
+        raise HTTPException(409, _RUN_LIVE_FOLDER_MSG)
+
+
 def _mark_manual_if_prompt_changed(row: ComfyRow, alias: str | None, old: dict, new: dict) -> None:
     """A hand edit of the prompt makes it the user's: the §3 rewrite never touches it."""
     if alias and old.get(alias) != new.get(alias):
@@ -1290,10 +1312,14 @@ async def bulk_add_rows(plan_id: str, body: BulkLinesRequest, db: AsyncSession =
     prompt_alias = _prompt_alias(plan)
     if not prompt_alias:
         raise HTTPException(400, NO_PROMPT_PIN_MSG)
+    subfolder = normalize_subfolder(body.subfolder)
     lines = [ln.strip() for ln in body.lines if ln.strip()]
     order = await _next_sort_order(db, plan_id)
     for i, line in enumerate(lines):
-        db.add(ComfyRow(plan_id=plan_id, sort_order=order + i, values={prompt_alias: line}))
+        db.add(ComfyRow(
+            plan_id=plan_id, sort_order=order + i, subfolder=subfolder,
+            values={prompt_alias: line},
+        ))
     await db.commit()
     return {"created": len(lines)}
 
@@ -1314,7 +1340,10 @@ async def update_row(row_id: str, body: RowUpdate, db: AsyncSession = Depends(ge
             row.status = "pending"
             row.error_msg = None
             row.prompt_id = None
-    async with _unlink_lock(row.plan_id, body.linked):
+    # A folder edit holds the plan lock from its checks to its commit: an unlink clears
+    # `leaf_id`, which Apply counts, and the run guard must not race `_start_run`.
+    lock = _plan_lock(row.plan_id) if body.subfolder is not None else contextlib.nullcontext()
+    async with lock:
         if body.subfolder is not None:
             # Deliberately NOT a reset, unlike a `values` edit: a folder change does not
             # change the image that would be produced, only where the next one is filed.
@@ -1322,6 +1351,7 @@ async def update_row(row_id: str, body: RowUpdate, db: AsyncSession = Depends(ge
             # Placed after the `values` branch so a combined PATCH still resets.
             new_folder = normalize_subfolder(body.subfolder)
             if new_folder != (row.subfolder or ""):
+                await _refuse_folder_change_during_run(db, row.plan_id)
                 linked_ids = await _current_leaf_ids(db, row.plan_id)
                 if row.leaf_id in linked_ids:
                     if body.linked == "refuse":
@@ -1343,15 +1373,20 @@ async def update_row(row_id: str, body: RowUpdate, db: AsyncSession = Depends(ge
 
 @router.post("/plans/{plan_id}/rows/delete")
 async def delete_rows(plan_id: str, body: RowIdsRequest, db: AsyncSession = Depends(get_db)):
+    """Refused while a `comfy_generate` job is live: the run holds the rows it loaded at
+    start and commits `status` on each in turn, so deleting one under it fails the job."""
     await _get_plan(db, plan_id)
-    rows = (
-        await db.execute(
-            select(ComfyRow).where(ComfyRow.plan_id == plan_id, ComfyRow.id.in_(body.row_ids))
-        )
-    ).scalars().all()
-    for r in rows:
-        await db.delete(r)
-    await db.commit()
+    async with _plan_lock(plan_id):
+        if await _plan_job_active(db, plan_id, ("comfy_generate",)):
+            raise HTTPException(409, _RUN_LIVE_DELETE_MSG)
+        rows: list[ComfyRow] = []
+        for chunk in chunked(list(dict.fromkeys(body.row_ids))):
+            rows.extend((await db.execute(
+                select(ComfyRow).where(ComfyRow.plan_id == plan_id, ComfyRow.id.in_(chunk))
+            )).scalars().all())
+        for r in rows:
+            await db.delete(r)
+        await db.commit()
     return {"deleted": len(rows)}
 
 
@@ -1367,6 +1402,68 @@ async def reorder_rows(plan_id: str, body: RowIdsRequest, db: AsyncSession = Dep
     for i, rid in enumerate(body.row_ids):
         by_id[rid].sort_order = i
     await db.commit()
+
+
+@router.post("/plans/{plan_id}/rows/place")
+async def place_rows_endpoint(plan_id: str, body: RowPlaceRequest, db: AsyncSession = Depends(get_db)):
+    """Move rows to a spot in the run order, optionally re-filing them, in one step: the
+    drag between rows and the row menu's Move up/down (M6 §8c). The server computes the
+    whole order, unlike `rows/reorder`, whose full id list goes stale the moment another
+    tab adds a row.
+
+    A folder change takes `set_rows_subfolder`'s rules — the run guard, and `linked` for
+    rows the blueprint counts; a skipped row neither moves folder nor changes place. The
+    plan lock is taken once; never nest `_folder_write_guard` in it (not re-entrant).
+    """
+    await _get_plan(db, plan_id)
+    subfolder = normalize_subfolder(body.subfolder) if body.subfolder is not None else None
+    wanted = list(dict.fromkeys(body.row_ids))
+    async with _plan_lock(plan_id):
+        rows = (await db.execute(
+            select(ComfyRow).where(ComfyRow.plan_id == plan_id)
+            .order_by(ComfyRow.sort_order, ComfyRow.created_at)
+        )).scalars().all()
+        by_id = {r.id: r for r in rows}
+        if any(i not in by_id for i in wanted):
+            raise HTTPException(400, "row_ids must belong to this plan")
+        if body.anchor_row_id is not None:
+            if body.anchor_row_id not in by_id:
+                raise HTTPException(400, "anchor_row_id must belong to this plan")
+            if body.anchor_row_id in wanted:
+                raise HTTPException(400, "The anchor row cannot be one of the rows being placed")
+        moving = wanted
+        unlinked = skipped = 0
+        if subfolder is not None:
+            changing = [by_id[i] for i in wanted if (by_id[i].subfolder or "") != subfolder]
+            if changing:
+                await _refuse_folder_change_during_run(db, plan_id)
+                linked_ids = await _current_leaf_ids(db, plan_id)
+                n_linked = sum(1 for r in changing if r.leaf_id in linked_ids)
+                if n_linked and body.linked == "refuse":
+                    raise HTTPException(409, _linked_refusal(n_linked))
+                if n_linked and body.linked == "unlink":
+                    await _refuse_live_run(db, plan_id)
+                skip: set[str] = set()
+                for r in changing:
+                    if r.leaf_id in linked_ids:
+                        if body.linked == "skip":
+                            skip.add(r.id)
+                            continue
+                        r.leaf_id = None
+                        unlinked += 1
+                    r.subfolder = subfolder
+                skipped = len(skip)
+                moving = [i for i in wanted if i not in skip]
+        end_after = None
+        if body.anchor_row_id is None and subfolder is not None:
+            mv = set(moving)
+            in_target = [r.id for r in rows if (r.subfolder or "") == subfolder and r.id not in mv]
+            end_after = in_target[-1] if in_target else None
+        order = place_rows([r.id for r in rows], moving, body.anchor_row_id, body.position, end_after)
+        for i, rid in enumerate(order):
+            by_id[rid].sort_order = i
+        await db.commit()
+    return {"placed": len(moving), "unlinked": unlinked, "skipped": skipped}
 
 
 @router.post("/plans/{plan_id}/rows/set-value")
@@ -1426,7 +1523,9 @@ async def set_rows_subfolder(
     await _get_plan(db, plan_id)
     subfolder = normalize_subfolder(body.subfolder)
     stmt = select(ComfyRow).where(ComfyRow.plan_id == plan_id)
-    async with _unlink_lock(plan_id, body.linked):
+    # The plan lock for every mode, not only unlink: the run guard below must not race
+    # `_start_run`, which takes it too.
+    async with _plan_lock(plan_id):
         if body.row_ids is not None:
             rows = []
             for chunk in chunked(list(dict.fromkeys(body.row_ids))):
@@ -1435,6 +1534,8 @@ async def set_rows_subfolder(
             rows = (await db.execute(stmt)).scalars().all()
         linked_ids = await _current_leaf_ids(db, plan_id)
         changing = [r for r in rows if (r.subfolder or "") != subfolder]
+        if changing:
+            await _refuse_folder_change_during_run(db, plan_id)
         n_linked = sum(1 for r in changing if r.leaf_id in linked_ids)
         if n_linked and body.linked == "refuse":
             raise HTTPException(409, _linked_refusal(n_linked))

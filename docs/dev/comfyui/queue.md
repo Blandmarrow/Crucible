@@ -104,7 +104,8 @@ completion); `workflow_format(obj)` classifies parsed workflow JSON as
 `"api" | "ui" | "invalid"` (server-side mirror of the client's `isApiFormat`).
 
 Router endpoints: plan CRUD (`/comfy/plans…`), row CRUD (`…/rows`, `…/rows/bulk` one row per
-non-empty line into the `is_prompt` alias, `…/rows/delete`, `…/rows/reorder`, `…/rows/reset`
+non-empty line into the `is_prompt` alias, filed in an optional `subfolder` (M6 §8c),
+`…/rows/delete`, `…/rows/reorder`, `…/rows/place` (below), `…/rows/reset`
 failed→pending, `GET …/rows` — full rows; `GET /comfy/plans/{id}/prompts` returns
 `{prompts: [{row_id, prompt, status}]}` — the **effective** prompt (row→default→template) of
 each non-empty row, used to browse/reuse prompts across plans and datasets (the
@@ -133,6 +134,32 @@ the blueprint still counts. Only rows whose folder would change count; `"refuse"
 moves nothing, `"unlink"` also clears `leaf_id`, `"skip"` moves the rest. Why, and what
 *linked* means, is `docs/dev/comfyui/structured.md` § Moving a blueprint row. `GET …/rows`
 returns each row's `blueprint_linked`; the `PATCH` response does not, so the page refetches.
+
+**A live run locks its plan's folders and rows** (M6 §8c). A `comfy_generate` run files each
+row by the `subfolder` of the row object it loaded at start, and commits `status` on each in
+turn. So while one is queued or running, `_refuse_folder_change_during_run` 409s every folder
+change — `PATCH` (a real change, not a no-op), `rows/set-subfolder` and `rows/place` — and
+`rows/delete` 409s outright. Before §8c only the page enforced this, and its `isRunning` knew
+only the runs that tab had started. Each check runs under `_plan_lock`, which `_start_run`
+takes too, so no run starts between the check and the commit. For that reason the PATCH folder
+branch and `set-subfolder` take the lock in every `linked` mode now, not only `"unlink"`.
+
+**`POST …/rows/place`** (`{row_ids, anchor_row_id?, position, subfolder?, linked}` →
+`{placed, unlinked, skipped}`, M6 §8c) moves rows to a spot in the run order and optionally
+re-files them, in one step: the drag between rows, and the row menu's Move up and down.
+- The server computes the whole order with `services/comfy_rows.py`'s `place_rows`, unlike
+  `rows/reorder`, whose full id list goes stale the moment another tab adds a row. The moved
+  rows land as one block, in their existing run order, before or after the anchor. With no
+  anchor they land after the target folder's last row, or at the end when no folder is given
+  or nobody is in it yet. Then the plan is renumbered `0..n-1`.
+- A folder change follows `set-subfolder`'s rules: the run guard above, and `linked` for rows
+  the blueprint counts. A skipped row neither moves folder nor changes place.
+- 400s: an id from another plan, an anchor from another plan, an anchor that is itself moving
+  (the client picks the nearest row that stays put), and `..` in the folder.
+- A plain reorder passes during a run: the run's row list and seeds were fixed when it started.
+- **Run order matters beyond the run.** `sort_order` also decides which rows survive the
+  image-cap clamp, Top up's pending order, and each row's `increment` seed. The table groups
+  rows by folder, so the run order *across* folders is not what the table shows.
 
 **The folder tree's endpoints** (M6 §8b, migration `d5b7f9a1c3e6`). A plan's folders are its
 rows' `subfolder` values, their ancestors, and `comfy_plans.declared_folders` (JSON list, NOT

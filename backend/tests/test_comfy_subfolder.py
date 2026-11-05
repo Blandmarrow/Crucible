@@ -8,8 +8,6 @@ a router, where no service-level test reaches.
 """
 from pathlib import Path
 
-import pytest
-
 from backend.tests.conftest import API, api_env, png_bytes, run, wait_for_job
 from backend.tests.test_provenance_http import _FakeComfyClient
 
@@ -633,7 +631,6 @@ def test_reorder_needs_the_exact_row_id_set(tmp_path, monkeypatch):
     run(scenario())
 
 
-@pytest.mark.xfail(strict=True, reason="delete_rows has no live-run guard yet — fixed in M6 §8c stage 3")
 def test_row_delete_refuses_while_a_generate_job_is_live(tmp_path, monkeypatch):
     from backend.models import BackgroundJob
 
@@ -647,4 +644,36 @@ def test_row_delete_refuses_while_a_generate_job_is_live(tmp_path, monkeypatch):
             r = await env.client.post(f"{API}/comfy/plans/{plan_id}/rows/delete", json={"row_ids": [row["id"]]})
             assert r.status_code == 409, r.text
             assert [x["id"] for x in await _rows(env, plan_id)] == [row["id"]]
+    run(scenario())
+
+
+def test_folder_changes_refuse_while_a_generate_job_is_live(tmp_path, monkeypatch):
+    """M6 §8c: the run files each row by the folder it loaded at start, so the server
+    refuses a folder change during one; the page's lock only knew about its own runs."""
+    from backend.models import BackgroundJob
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            _, plan_id = await _plan(env)
+            row = await _add_row(env, plan_id, subfolder="a")
+            other = await _add_row(env, plan_id, subfolder="a")
+            async with env.Session() as db:
+                db.add(BackgroundJob(job_type="comfy_generate", status="running", config={"plan_id": plan_id}))
+                await db.commit()
+            r = await env.client.patch(f"{API}/comfy/rows/{row['id']}", json={"subfolder": "b"})
+            assert r.status_code == 409 and "running" in r.json()["detail"]
+            r = await env.client.post(f"{API}/comfy/plans/{plan_id}/rows/set-subfolder",
+                                      json={"subfolder": "b"})
+            assert r.status_code == 409
+            r = await env.client.post(f"{API}/comfy/plans/{plan_id}/rows/place",
+                                      json={"row_ids": [row["id"]], "subfolder": "b"})
+            assert r.status_code == 409
+            assert {x["subfolder"] for x in await _rows(env, plan_id)} == {"a"}
+            # No-op folders and a plain reorder are not changes, so they pass.
+            r = await env.client.patch(f"{API}/comfy/rows/{row['id']}", json={"subfolder": "a"})
+            assert r.status_code == 200, r.text
+            r = await env.client.post(f"{API}/comfy/plans/{plan_id}/rows/place",
+                                      json={"row_ids": [row["id"]], "anchor_row_id": other["id"],
+                                            "position": "after"})
+            assert r.status_code == 200, r.text
     run(scenario())

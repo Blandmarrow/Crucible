@@ -94,6 +94,7 @@ not a see-also, and says which part of the code it owns.
 |---|---|
 | `backend/tests/fake_comfy.py`, `backend/tests/test_comfy_run_body.py`, `backend/tests/test_comfy_queue_cleanup.py`, `frontend/e2e/serve-comfy.mjs` | `docs/dev/comfyui/run.md` § Testing the run |
 | `backend/tests/test_comfy_cancel_stats.py`, `backend/tests/test_comfy_subfolder.py` | `docs/dev/comfyui/run.md` § The `comfy_generate` job (the per-row stats refresh; the per-row folder and stem) |
+| `backend/services/comfy_rows.py` (`place_rows`), `backend/tests/test_comfy_rows_place.py` | `docs/dev/comfyui/queue.md` § Backend (`rows/place`, and the live run's folder lock) |
 | `backend/tests/test_comfy_library_http.py`, `test_comfy_library_service.py`, `test_migration_nest_library_categories.py` | `docs/dev/comfyui/queue.md` § Backend (the prompt library) |
 | `backend/tests/test_comfy_bulk_edit_regex_http.py` | `docs/dev/comfyui/queue.md` § Backend (the `rows/bulk-edit` regex handling) |
 | `backend/tests/test_parse_prompts.py`, `backend/tests/test_conflict_paths_http.py` | `docs/dev/comfyui/prompts.md` § Generating (the parser) and § The `comfy_prompts` job (the per-plan 409s) |

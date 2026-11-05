@@ -87,7 +87,9 @@ image's generation metadata on its detail page, and a failed row's error tooltip
   `knight ` would be a second folder. **Every Folder cell is locked while the plan runs**, not
   only the busy row's, unlike the parameter cells: the run files each row from the rows it
   loaded at start (they reload only after a failed row), so a mid-run edit to a later row
-  would show a folder its image never went to, and a finished row keeps it. The
+  would show a folder its image never went to, and a finished row keeps it. Since M6 §8c the server
+  refuses the change too (`docs/dev/comfyui/queue.md` § Backend), since this lock knows only
+  the runs this tab started. The
   `columns.length === 0` early return still hides the whole table for a plan with no per-row
   pins, folder column included — accepted, since such a plan cannot run anyway.
   - **A row the blueprint still counts is locked** (`blueprint_linked`): a lock icon and a

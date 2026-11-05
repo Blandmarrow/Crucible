@@ -8,6 +8,8 @@ a router, where no service-level test reaches.
 """
 from pathlib import Path
 
+import pytest
+
 from backend.tests.conftest import API, api_env, png_bytes, run, wait_for_job
 from backend.tests.test_provenance_http import _FakeComfyClient
 
@@ -603,4 +605,46 @@ def test_an_unlink_is_refused_while_an_automated_run_is_live(tmp_path, monkeypat
             assert r.status_code == 200 and r.json() == {"updated": 1}
             rows = {x["id"]: x for x in await _rows(env, plan_id)}
             assert rows[linked["id"]]["blueprint_linked"] and rows[free["id"]]["subfolder"] == "M"
+    run(scenario())
+
+
+# ── Row reorder and delete (M6 §8c, pinned before the change) ─────────────────
+
+def test_reorder_needs_the_exact_row_id_set(tmp_path, monkeypatch):
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            _, plan_id = await _plan(env)
+            _, other_plan = await _plan(env, ds_name="other-ds", plan_name="other")
+            ids = [(await _add_row(env, plan_id))["id"] for _ in range(3)]
+            foreign = (await _add_row(env, other_plan))["id"]
+            url = f"{API}/comfy/plans/{plan_id}/rows/reorder"
+
+            r = await env.client.post(url, json={"row_ids": [ids[2], ids[0], ids[1]]})
+            assert r.status_code == 204, r.text
+            rows = await _rows(env, plan_id)
+            assert [x["id"] for x in rows] == [ids[2], ids[0], ids[1]]
+            assert [x["sort_order"] for x in rows] == [0, 1, 2]
+
+            # A partial set, a foreign id and an extra id are all 400, and move nothing.
+            for bad in ([ids[0], ids[1]], [ids[0], ids[1], foreign], [*ids, foreign]):
+                r = await env.client.post(url, json={"row_ids": bad})
+                assert r.status_code == 400, (bad, r.text)
+            assert [x["id"] for x in await _rows(env, plan_id)] == [ids[2], ids[0], ids[1]]
+    run(scenario())
+
+
+@pytest.mark.xfail(strict=True, reason="delete_rows has no live-run guard yet — fixed in M6 §8c stage 3")
+def test_row_delete_refuses_while_a_generate_job_is_live(tmp_path, monkeypatch):
+    from backend.models import BackgroundJob
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            _, plan_id = await _plan(env)
+            row = await _add_row(env, plan_id)
+            async with env.Session() as db:
+                db.add(BackgroundJob(job_type="comfy_generate", status="running", config={"plan_id": plan_id}))
+                await db.commit()
+            r = await env.client.post(f"{API}/comfy/plans/{plan_id}/rows/delete", json={"row_ids": [row["id"]]})
+            assert r.status_code == 409, r.text
+            assert [x["id"] for x in await _rows(env, plan_id)] == [row["id"]]
     run(scenario())

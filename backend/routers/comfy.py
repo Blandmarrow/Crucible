@@ -179,6 +179,16 @@ class RowPlaceRequest(BaseModel):
     linked: LinkedMode = "refuse"
 
 
+class RowCopyRequest(BaseModel):
+    source_plan_id: str
+    row_ids: list[str] = Field(min_length=1)
+    move: bool = False
+    # None keeps each row's own folder; a string, even "", files every copy there.
+    subfolder: str | None = Field(default=None, max_length=512)
+    # A move takes rows the source's blueprint counts out of it, as a folder move does.
+    linked: LinkedMode = "refuse"
+
+
 class RowResetRequest(BaseModel):
     row_ids: list[str] | None = None
 
@@ -1464,6 +1474,91 @@ async def place_rows_endpoint(plan_id: str, body: RowPlaceRequest, db: AsyncSess
             by_id[rid].sort_order = i
         await db.commit()
     return {"placed": len(moving), "unlinked": unlinked, "skipped": skipped}
+
+
+_SOURCE_LIVE_MSG = "The source plan has a run or prompt job live — move its rows when it finishes"
+
+
+@router.post("/plans/{plan_id}/rows/copy")
+async def copy_rows(plan_id: str, body: RowCopyRequest, db: AsyncSession = Depends(get_db)):
+    """Copy (or move) rows from another plan, in any dataset, into this one (M6 §8c,
+    ruling 3: a drop on a plan copies, Shift moves).
+
+    Each new row carries what still means something in the target:
+    - the source's **effective** prompt (row → run default → template), under the
+      target's prompt alias — the two plans may name their prompt pins differently;
+    - every other value whose alias is a **per-row** pin in the target. Not a run-default
+      pin: `patch_workflow` applies any alias, so a carried value would silently override
+      that pin's default with no column to show it;
+    - the row's folder, unless `subfolder` overrides it.
+    It starts pending, with no `leaf_id` (the target's blueprint never made it) and no
+    `prompt_origin` (NULL is hand-added, like `rows/bulk`). A row whose effective prompt
+    is empty is skipped, and a move leaves it in the source.
+
+    A move also deletes the source rows, so it takes the source's folder-write checks
+    inline: no automated run, no row job, no running row, and `linked` for rows the
+    source's blueprint counts. A copy has no guard on the target, like `rows/bulk`.
+    Each plan's lock is taken once, in id order: `asyncio.Lock` is not re-entrant.
+    """
+    if body.source_plan_id == plan_id:
+        raise HTTPException(400, "Those rows are already in this plan")
+    target = await _get_plan(db, plan_id)
+    source = await _get_plan(db, body.source_plan_id)
+    target_prompt = _prompt_alias(target)
+    if not target_prompt:
+        raise HTTPException(400, NO_PROMPT_PIN_MSG)
+    subfolder = normalize_subfolder(body.subfolder) if body.subfolder is not None else None
+    carried = {
+        p["alias"] for p in (target.pinned_params or []) if p.get("per_row")
+    } - {target_prompt, _prompt_alias(source)}
+    first, second = sorted((plan_id, source.id))
+    async with _plan_lock(first), _plan_lock(second):
+        wanted = list(dict.fromkeys(body.row_ids))
+        rows: list[ComfyRow] = []
+        for chunk in chunked(wanted):
+            rows.extend((await db.execute(
+                select(ComfyRow).where(ComfyRow.plan_id == source.id, ComfyRow.id.in_(chunk))
+            )).scalars().all())
+        if len(rows) != len(wanted):
+            raise HTTPException(400, "row_ids must belong to the source plan")
+        rows.sort(key=lambda r: (r.sort_order, r.created_at))
+        skipped = unlinked = 0
+        if body.move:
+            await _refuse_live_run(db, source.id)
+            if await _plan_job_active(db, source.id, _ROW_JOB_TYPES):
+                raise HTTPException(409, _SOURCE_LIVE_MSG)
+            if any(r.status == "running" for r in rows):
+                raise HTTPException(409, "A running row cannot be moved")
+            linked_ids = await _current_leaf_ids(db, source.id)
+            n_linked = sum(1 for r in rows if r.leaf_id in linked_ids)
+            if n_linked and body.linked == "refuse":
+                raise HTTPException(409, _linked_refusal(n_linked))
+            if body.linked == "skip":
+                skipped = n_linked
+                rows = [r for r in rows if r.leaf_id not in linked_ids]
+            else:
+                unlinked = n_linked
+        workflow = source.workflow_json or {}
+        pinned = source.pinned_params or []
+        order = await _next_sort_order(db, plan_id)
+        done = 0
+        for r in rows:
+            prompt = (effective_prompt(workflow, pinned, r.values or {}) or "").strip()
+            if not prompt:
+                skipped += 1
+                continue
+            values = {a: copy.deepcopy(v) for a, v in (r.values or {}).items() if a in carried}
+            values[target_prompt] = prompt
+            db.add(ComfyRow(
+                plan_id=plan_id, sort_order=order + done,
+                subfolder=subfolder if subfolder is not None else (r.subfolder or ""),
+                values=values,
+            ))
+            done += 1
+            if body.move:
+                await db.delete(r)
+        await db.commit()
+    return {"moved" if body.move else "copied": done, "skipped": skipped, "unlinked": unlinked}
 
 
 @router.post("/plans/{plan_id}/rows/set-value")

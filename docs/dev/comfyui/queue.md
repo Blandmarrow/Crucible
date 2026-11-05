@@ -67,7 +67,7 @@ rewrite pass) touches only text a template wrote:
 | `template` | blueprint Apply; the migration backfilled every row with a `leaf_id` |
 | `rewritten` | the rewrite pass |
 | `manual` | `PATCH /rows/{id}`, `rows/set-value` and `rows/bulk-edit`, whenever the prompt alias's value changes |
-| NULL | flat generation, `rows/bulk`, a hand-added row |
+| NULL | flat generation, `rows/bulk`, `rows/copy`, a hand-added row |
 
 **A new writer of a row's prompt text must set it** (`_mark_manual_if_prompt_changed` in
 the router), or the pass will overwrite a prompt the user corrected. It must also 409 while
@@ -105,7 +105,7 @@ completion); `workflow_format(obj)` classifies parsed workflow JSON as
 
 Router endpoints: plan CRUD (`/comfy/plans…`), row CRUD (`…/rows`, `…/rows/bulk` one row per
 non-empty line into the `is_prompt` alias, filed in an optional `subfolder` (M6 §8c),
-`…/rows/delete`, `…/rows/reorder`, `…/rows/place` (below), `…/rows/reset`
+`…/rows/delete`, `…/rows/reorder`, `…/rows/place` and `…/rows/copy` (below), `…/rows/reset`
 failed→pending, `GET …/rows` — full rows; `GET /comfy/plans/{id}/prompts` returns
 `{prompts: [{row_id, prompt, status}]}` — the **effective** prompt (row→default→template) of
 each non-empty row, used to browse/reuse prompts across plans and datasets (the
@@ -160,6 +160,31 @@ re-files them, in one step: the drag between rows, and the row menu's Move up an
 - **Run order matters beyond the run.** `sort_order` also decides which rows survive the
   image-cap clamp, Top up's pending order, and each row's `increment` seed. The table groups
   rows by folder, so the run order *across* folders is not what the table shows.
+
+**`POST /comfy/plans/{target}/rows/copy`** (`{source_plan_id, row_ids, move, subfolder?, linked}`
+→ `{copied | moved, skipped, unlinked}`, M6 §8c) copies rows from another plan, in any
+dataset, into this one. A drop on a plan copies and Shift moves (the plan's ruling 3). Before
+§8c the only route was the library's *Other plans* tab, which carried prompt text alone and
+dropped the folder.
+- **What a new row carries.** The source's **effective** prompt (`effective_prompt`: row →
+  run default → template), written under the *target's* prompt alias, since the two plans may
+  name their prompt pins differently. Every other value whose alias is a **per-row** pin in
+  the target, minus the source's own prompt alias. And the row's folder, unless `subfolder`
+  overrides it.
+  - Only per-row pins carry, a deliberate narrowing of the plan's "every value whose alias
+    exists". `patch_workflow` applies any alias in `values`, so a value carried under a
+    run-default pin would silently override that default, with no column to show it.
+- It starts pending, with `leaf_id` NULL (the target's blueprint never made it), `prompt_origin`
+  NULL, and no images or error. Rows are appended in source run order. A row whose effective
+  prompt is empty is skipped, and a move leaves it in the source.
+- **A move deletes the source rows**, so it takes the source's folder-write checks inline:
+  `_refuse_live_run`, a 409 while a `_ROW_JOB_TYPES` job is live, a 409 on any `running` row,
+  and `linked` for rows the source's blueprint counts (refuse 409s; skip leaves them). Inline,
+  not `_folder_write_guard`, because the endpoint already holds both plans' locks, taken once
+  each in id order, and `asyncio.Lock` is not re-entrant.
+- A copy has no guard on the target, like `rows/bulk`. A live automated run's next pass will
+  pick the new pending rows up.
+- 400s: the source is the target, the target has no prompt pin, or an id is not the source's.
 
 **The folder tree's endpoints** (M6 §8b, migration `d5b7f9a1c3e6`). A plan's folders are its
 rows' `subfolder` values, their ancestors, and `comfy_plans.declared_folders` (JSON list, NOT

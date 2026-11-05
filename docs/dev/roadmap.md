@@ -17,7 +17,7 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-05, after M6 §8b)
+## Next session (updated 2026-11-05, before M6 §8c)
 
 1. M5's five stages merged on 2026-10-30 as PR #101. Only its cleanup is open, and that waits
    a release. See [server-state-plan/README.md](server-state-plan/README.md) for what was
@@ -41,61 +41,26 @@ restates its stages.
    now [style-embedding-plan/README.md](style-embedding-plan/README.md), and the research
    folder's findings moved into `docs/dev/quality/style-evaluation.md`. What is left in M7 is
    below.
-4. **M6 is ported and its build has started, held on `feat/m6-comfy-automation`**
-   ([decision 7](decisions/07-m6-built-whole-on-one-branch.md)): per-row folders are 8dee5de
-   there, the plan is rewritten in
-   [comfy-automation-plan/README.md](comfy-automation-plan/README.md) by decisions 8 and 9, and
-   `comfy-per-row-subfolders` is deleted. **Work on M6 happens on that branch.**
-   - The ComfyUI dev docs sit behind the hub `docs/dev/comfyui.md`, with eleven files in
-     `docs/dev/comfyui/`.
-   - §7 (the mock ComfyUI server), §2a (blueprints, see `docs/dev/comfyui/structured.md`),
-     §2b (the outline call) and §2c (Top up) have landed there, so the arc's cut point is
-     reached.
-   - §3, the optional LLM rewrite pass, landed on 2026-11-03
-     (`docs/dev/comfyui/structured-llm.md` § The rewrite pass). On 2026-11-04 the user ran a
-     draft and a rewrite with LM Studio and a thinking model, and both worked. Two hand
-     checks are still open: a Stop mid-run, and a hand-edited row left alone.
-   - M8 stages 2 and 3 merged to `main` on 2026-11-04 as PR #109, and this branch was
-     rebased onto it the same day.
-   - **§4, the stepping run, landed on 2026-11-04** (`docs/dev/comfyui/automation.md`, the
-     Runs page), with every automated gate green. The user ran it by hand the same day
-     against a real ComfyUI and LM Studio: full runs through every stage worked, `/free`
-     really freed ComfyUI's VRAM, and the scorers unloaded after scoring (measured with
-     the Windows per-process GPU counters). Still unchecked by hand: Pause, a restart
-     mid-run and a `TopBar` cancel.
-   - **§5, the goal loop, the gate and budgets, landed on 2026-11-04**
-     (`docs/dev/comfyui/run-loop.md`, migration `c8e4a6b2d0f7` for the provider's
-     `billed`), with every automated gate green and an Opus review's twelve findings
-     fixed. Still unchecked by hand, against a real ComfyUI and LM Studio: a two-pass
-     loop to target, and a run stopped by a cap. §4's three hand checks above come
-     first, by the user's choice.
-   - **§6, the dry run, the snapshot stage and the recipe library, was built on
-     2026-11-04**, with the user's three extras (Use these settings, raising a cap to carry
-     a run on, the remembered start form) and every automated gate green, and pushed the
-     same day. Its hand checks, against a real
-     ComfyUI and LM Studio: a dry run and a start with ComfyUI off, a run with Snapshot on
-     (and a Cancel during it), a recipe exported and imported, and a pass cap raised.
-   - **A branch review and its fixes landed on 2026-11-04** (four code reviewers, two doc
-     audits). The user ruled twice: a run whose generate or caption job failed every item
-     now fails, and `gate_rejected` clears when an image leaves `rejects/`. Still owed by
-     hand against a real ComfyUI: a run whose ComfyUI rejects every row ends `failed` and
-     Resume retries it, and a rejected image moved back loses its flag in the gallery and
-     the Stats card.
-   - **Next M6 work: the ComfyUI page rework, §8**, so prompts are easier to categorize and
-     the prompt library easier to use. Scoped on 2026-11-05 in four sub-stages, with a
-     mockup the user approved
-     ([the plan's § 8](comfy-automation-plan/README.md#8-the-comfyui-page-rework-planned)).
-     **§8a, the layout, landed on 2026-11-05** with every frontend gate green and the wide
-     and narrow layouts checked by screenshot. **§8b, the plan rail, the folder tree, the
-     grouped table and plan Duplicate, was built on 2026-11-05** (migration `d5b7f9a1c3e6`,
-     `comfy_plans.declared_folders`), after the user ruled all four open questions by
-     approving the recommendations (the plan's § The open questions, ruled). An Opus review's
-     findings were fixed, among them a case-blind `LIKE` that let a folder delete take
-     another folder's rows. Next is §8c. **Its first action is the split of
-     `docs/comfyui.md`** queued in [pending-splits.md](pending-splits.md): §8b left it at
-     2,498 of 2,500 words, and §8c rewrites the two sections that move.
-   - Still owed by hand for §8b, against a real ComfyUI: the rail's dot turning blue during a
-     run, and a folder rename refused while one is live.
+4. **M6 is being built on `feat/m6-comfy-automation`**
+   ([decision 7](decisions/07-m6-built-whole-on-one-branch.md)), under the plan
+   [comfy-automation-plan/README.md](comfy-automation-plan/README.md) as revised by decisions 8
+   and 9. **Work on M6 happens on that branch.** What has landed, stage by stage, is the
+   § M6 checklist below; this item holds only what is open.
+   - **Next: §8c, the library side panel and drag and drop**
+     ([the plan's § 8c](comfy-automation-plan/README.md#8c--a-library-side-panel-and-drag-and-drop)),
+     then §8d and the merge. Its doc splits are done (2026-11-05): the Rows tab's user guide is
+     now `docs/comfy-queue.md`.
+   - **Owed by hand, against a real ComfyUI and LM Studio** — the one list; the § M6 ticks do
+     not repeat it. The user chose to take §4's checks before §5's.
+     - §3: a Stop mid-rewrite, and a hand-edited row left alone by the rewrite.
+     - §4: Pause, a restart mid-run, and a `TopBar` cancel.
+     - §5: a two-pass loop to target, and a run stopped by a cap.
+     - §6: a dry run and a start with ComfyUI off, a run with Snapshot on (and a Cancel
+       during it), a recipe exported and imported, and a pass cap raised.
+     - Review fixes: a run whose ComfyUI rejects every row ends `failed` and Resume retries
+       it; a rejected image moved back loses its flag in the gallery and the Stats card.
+     - §8b: the rail's dot turning blue during a run, and a folder rename refused while one
+       is live.
    - **Found in the §8b review, not fixed there:** the gallery's
      `dataset_service.repath_subfolder` matches a folder's subtree with SQLite's case-blind
      `LIKE`, so renaming `knight` also re-paths `Knight/a`; `filesystem.py`'s
@@ -202,77 +167,20 @@ Gate: the whole build below, done on `feat/m6-comfy-automation` and merged once
 [decision 9](decisions/09-runs-step-forward-on-job-completion.md). Tick each stage when its
 gates are green and it is pushed.
 
-- [x] Port per-row output folders from `comfy-per-row-subfolders`: c2d6a6d. Ported 2026-11-03 as
-  8dee5de, with the migration re-parented onto `c2b8e4f6a1d7` and the plan moved into its own
-  folder and rewritten. The old branch is deleted.
-- [x] Split `docs/dev/comfyui.md` along its two recorded seams. Done 2026-11-03: the run body
-  moved to `docs/dev/comfyui/run.md` and the page to `docs/dev/comfyui/page.md`, each with a Map row.
-- [x] §7: the mock ComfyUI server. Done 2026-11-03: `backend/tests/fake_comfy.py`, in-process
-  for pytest (`test_comfy_run_body.py`) and on port 8198 for Playwright (`comfy-run.spec.ts`).
-  Every later stage tests against it.
-- [x] §2a: blueprints, leaves, the pure expansion service and its guard rails, and prompts
-  composed from templates. Done 2026-11-03: migration `b7d2f4a9c1e3` (which also carries §2b's
-  `brief`/`draft` columns), the *Blueprint* tab, and `docs/dev/comfyui/structured.md`.
-- [x] §2b: the outline call and the review panel, reachable without an LLM. Done 2026-11-03:
-  the `comfy_outline` job saves a draft for *Use it* / *Discard*.
-- [x] §2c: Top up. The plan's cut point if the arc stops early. Done 2026-11-03: Apply, reset
-  failed rows, run pending ones, in one press.
-- [x] Split comfy-structured.md before §3 grows it. Done 2026-11-03, re-cut three ways, with
-  the ComfyUI family moved behind the hub `docs/dev/comfyui.md`.
-- [x] §3: the optional LLM rewrite pass, and the outline's instruction-order fix. Done
-  2026-11-03: the `comfy_rewrite` job, migration `d4a8c2e6f1b9` (`comfy_rows.prompt_origin`),
-  Top up's refusal while rows wait, and `docs/dev/comfyui/structured-llm.md` § The rewrite
-  pass. Verified by hand against a real LLM in part (2026-11-04, `qwen3.8-27b` in LM
-  Studio): a draft and a rewrite both worked, and the draft review, the label wording and
-  the rewrite count's refresh came out of that test. Stop mid-run and a hand-edited row
-  are not yet checked.
-- [x] Rebase onto `main` once M8 stages 2 and 3 have landed there. Needed by §4. Done
-  2026-11-04, after PR #109.
-- [x] §4: the stepping run (`Run` row, `advance_run()`), its page and the VRAM handoff. Done
-  2026-11-04: start functions lifted out of the score, caption and export routes and Top
-  up, migration `f3b9d1a7c5e2` (`runs`), `run_service.py`, the worker's `_after_terminal`
-  hook, the Runs page and `docs/runs.md`. The user moved the gate to §5 and the snapshot
-  stage to §6 that day. Full runs checked by hand against a real ComfyUI and LM Studio the
-  same day; Pause, a restart mid-run and a `TopBar` cancel are not.
-- [x] §5: the goal loop, the gate and budgets. Done 2026-11-04: the body/tail split and
-  `next_pass`, the gate (`run_gate.py`, `rejects/`, `gate_rejected`), the rewrite stage,
-  the caps and the paid-call cap, the per-provider `billed` setting (migration
-  `c8e4a6b2d0f7`), the kept rule applied everywhere, and `docs/dev/comfyui/run-loop.md`.
-  A two-pass loop and a capped run are not yet checked by hand.
-- [x] §6: the dry run, the snapshot stage and the recipe library. Done 2026-11-04 with
-  every gate green: `plan_run` behind both the dry run and the
-  start, the head `snapshot` stage and its waiting cancel (migration `a6d2f8c4e0b3`), the
-  `run_recipes` library (`b2e7c9a4d1f6`) and the remembered form (`c4a8e2f6b9d3`),
-  `extend_run`, and `docs/dev/comfyui/recipes.md`. Not yet checked by hand against a real
-  ComfyUI and LM Studio.
-- [x] Review-fix pass. Done 2026-11-04: a branch review (four code reviewers and two doc
-  audits) and its fixes, each with a regression test. Two rulings by the user: a run fails
-  when a generate or caption job failed every item (`docs/dev/comfyui/automation.md`), and
-  `gate_rejected` is cleared when an image leaves `rejects/` (`services/gate_flags.py`,
-  `docs/dev/comfyui/run-gate.md` § The gate). The rest: the gate honours a cancel and needs
-  no plan, a second Cancel finishes a stuck snapshot wait, a stale job cannot step a resumed
-  stage, an empty pass stops the loop, `kept` counts completed rows only, Top up's error
-  after a committed fill says so, id lists in the score and caption starts are chunked,
-  recipe import refuses an ambiguous provider, and blueprint and export inputs are bounded.
-  The M6 docs were audited against the final code.
+- [x] Per-row folders ported (2026-11-03), the comfyui doc splits, §7 the mock ComfyUI, §2a
+  blueprints, §2b the outline call, §2c Top up, §3 the rewrite pass, the rebase onto M8
+  stages 2–3, §4 the stepping run, §5 the goal loop, §6 the dry run, snapshot and recipes, and
+  the review-fix pass (all by 2026-11-04). What each delivered is the plan's § Landed stages.
 - §8, the ComfyUI page rework, so prompts are easier to categorize and the prompt library
   easier to use (the user's call, 2026-11-04: it lands before the merge). Scoped with the
   user on 2026-11-05 and the mockup approved; the *what* is
   [comfy-automation-plan/README.md § 8](comfy-automation-plan/README.md#8-the-comfyui-page-rework-planned).
   Its open questions were ruled by the user on 2026-11-05.
-  - [x] §8a: the sticky header and run bar, Blueprint in two columns with the preview
-    sticky, collapsible editor sections. Done 2026-11-05, frontend only: the page is its own
-    bounded scroller, a container query stacks the columns in a narrow pane, and the
-    preview's sample prompts open per folder (the user's call). See
-    `docs/dev/comfyui/page.md` § The layout and `docs/dev/comfyui/blueprint-tab.md` § The layout.
-  - [x] §8b: the plan rail, the folder tree and rows grouped by folder, plan duplicate,
-    the remembered plan and tab. Done 2026-11-05: migration `d5b7f9a1c3e6`
-    (`comfy_plans.declared_folders`), the folder and duplicate endpoints, the `linked` mode
-    on folder moves, and `docs/dev/comfyui/page.md` § The plan rail, the folder tree and the
-    grouped table. `page.md` was split first, as queued: the Blueprint tab is now
-    `docs/dev/comfyui/blueprint-tab.md`. Not yet checked by hand against a real ComfyUI.
+  - [x] §8a, the layout, and §8b, the plan rail, folder tree and grouped table (2026-11-05).
+    What each delivered is the plan's § Landed stages.
   - [ ] §8c: the library side panel with nested categories, and drag and drop with a
-    button route for every drag. Question 3 is ruled; split `docs/comfyui.md` first.
+    button route for every drag. Question 3 is ruled. Its doc splits were done first
+    (2026-11-05): `docs/comfy-queue.md` and this file's restructure.
   - [ ] §8d: the Add menu, the selection bar, the paste dialog on `ModalShell`.
 - [ ] Merge: rebase onto `main`, re-parent the first migration onto M4's head if M4 merged
   first, run every gate, open the PR. The ComfyUI docs moved behind a hub on this branch, so

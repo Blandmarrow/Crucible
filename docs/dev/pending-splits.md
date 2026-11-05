@@ -206,34 +206,3 @@ utilities → `docs/dev/shared-utilities.md`.
   it is the index doc for the same material, so anything § Features says that the topic docs
   do not is a fact to move *there* rather than lose. A handful of Features bullets name
   things with no topic doc at all (verify each against the Docs table before cutting).
-
-## docs/comfyui.md
-
-- **Moves:** § Building the queue (the toolbar, per-row folders, the folder list and the
-  blueprint-row lock added by M6 §8b) and § Prompt library.
-- **New file:** docs/comfy-queue.md, the user guide to the Rows tab; docs/comfyui.md keeps
-  Setup, Plans, Loading a workflow, Pinning parameters, Running and Common problems.
-- **Why here:** §8b took it to 2,498 of 2,500 words (2026-11-05), and §8c's library side
-  panel and drag and drop rewrite exactly these two sections, so split before §8c appends.
-  The Rows tab is what a user reads while building a queue; the rest is setup and running.
-- **Watch for:** README's Docs table and `docs/features.md` link docs/comfyui.md; anchors
-  `#building-the-queue` and `#prompt-library` may be linked from docs/comfy-structured.md,
-  docs/runs.md or README, so grep for them. § Pinning parameters names "the prompt library",
-  which becomes a cross-file pointer.
-
-## docs/dev/roadmap.md
-
-- **Moves:** the M6 history in § Next session item 4 (one sub-bullet per landed stage, §3
-  through §8b, each restating its tick in § M6 with the hand checks still owed) goes to the
-  M6 checklist it duplicates, or to the plan's README. Item 4 keeps the branch rule, the
-  open hand checks in one list, the next step and the migration chain.
-- **New file:** none; a restructure. If § M6 itself is still too long once it holds the
-  hand checks, its ticked stages can go to docs/dev/comfy-automation-plan/README.md, which
-  is transient and exempt from budgets.
-- **Why here:** §8b took it to 3,680 words (2026-11-05). Every M6 stage has been written
-  twice, once as a tick and once as a handoff paragraph, and the two drift: a hand check
-  closed in one copy stays open in the other.
-- **Watch for:** the hand checks owed for §3, §4, §5, §6, the review-fix pass and §8b are
-  scattered across both copies; collect every one before deleting either. Inbound links
-  name `roadmap.md#next-session-…` anchors only through the heading text, which carries a
-  date and so changes every session anyway.

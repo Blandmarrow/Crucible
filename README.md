@@ -44,8 +44,8 @@ Every step from raw images to a training-ready export, in order:
 - **Re-extract the keepers at full resolution** once you have curated the small triage frames — Crucible seeks back to the exact moment each frame came from and cuts it again from the original video, replaying the same crop and deinterlacer, as JPEG or lossless PNG. Frames edited in place since are skipped rather than silently overwritten → [details](docs/video-reextract.md)
 
 ### Image generation
-- **Generate** images into a dataset by queueing prompts against your own ComfyUI workflow — pin the parameters you want to vary, build a queue of prompts (write them by hand, import them, or generate them with an LLM), give each row its own destination folder so one run builds a whole folder structure, and every output is imported automatically with metadata and optional captions → [details](docs/comfyui.md)
-- **Reuse prompts** from a global prompt library shared across every dataset and plan → [details](docs/comfyui.md)
+- **Generate** images into a dataset by queueing prompts against your own ComfyUI workflow — pin the parameters you want to vary, build a queue of prompts (write them by hand, import them, or generate them with an LLM), give each row its own destination folder so one run builds a whole folder structure, and every output is imported automatically with metadata and optional captions → [details](docs/comfyui.md), [the queue](docs/comfy-queue.md)
+- **Reuse prompts** from a global prompt library shared across every dataset and plan → [details](docs/comfy-queue.md#prompt-library)
 - **Describe a dataset once** — axes of characters, places or anything else, variation pieces like camera angle, and scenarios that combine them alone or in pairs — and a blueprint expands it into a foldered ComfyUI queue, writing every prompt from a template so each character reads the same everywhere → [details](docs/comfy-structured.md)
 - **Run a plan end to end** in one press — fill the blueprint's short folders, generate, score, caption and export, stage by stage, with pause, resume and cancel; optionally repeat, rejecting images that fail a quality gate, until every folder is full, within hard caps you can raise to carry on; check a run first with a dry run, take a snapshot before it, and save its settings as recipes → [details](docs/runs.md)
 
@@ -313,6 +313,7 @@ Start at the [feature index](docs/features.md), or jump straight to a topic:
 | Frame Extraction | [docs/video-extraction.md](docs/video-extraction.md) |
 | Re-extracting Frames | [docs/video-reextract.md](docs/video-reextract.md) |
 | ComfyUI Generation | [docs/comfyui.md](docs/comfyui.md) |
+| ComfyUI Queue | [docs/comfy-queue.md](docs/comfy-queue.md) |
 | ComfyUI Blueprints | [docs/comfy-structured.md](docs/comfy-structured.md) |
 | Automated Runs | [docs/runs.md](docs/runs.md) |
 | Setting up a run | [docs/run-setup.md](docs/run-setup.md) |

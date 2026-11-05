@@ -12,6 +12,7 @@ The order images travel through the app:
 | 1 | Browse, filter, select and sort a dataset's images | [Gallery](gallery.md) |
 | 1 | File images into subfolders; rename and re-nest them | [Subfolders](subfolders.md) |
 | 1 | Generate images with your own ComfyUI workflow | [ComfyUI Generation](comfyui.md) |
+| 1 | Fill a ComfyUI queue: paste, import or generate prompts, file each row in a folder, reuse prompts from a shared library | [ComfyUI Queue](comfy-queue.md) |
 | 1 | Describe a whole foldered dataset once and expand it into a ComfyUI queue | [ComfyUI Blueprints](comfy-structured.md) |
 | 1–7 | Run a plan end to end in one press: fill, generate, score, caption, export, repeating until every folder holds enough images that pass a quality gate; check it first with a dry run, and keep its settings as shareable recipes | [Automated Runs](runs.md) · [Setting up a run](run-setup.md) · [Repeating a run](repeating-runs.md) |
 | 1 | Hold videos as sources for frame extraction | [Videos](video.md) |
@@ -41,7 +42,7 @@ The order images travel through the app:
 | Bulk Edit | [editing.md](editing.md) · [detection.md](detection.md) |
 | Consolidate Tags | [tag-consolidation.md](tag-consolidation.md) |
 | Versions | [versioning.md](versioning.md) |
-| ComfyUI | [comfyui.md](comfyui.md) · [comfy-structured.md](comfy-structured.md) |
+| ComfyUI | [comfyui.md](comfyui.md) · [comfy-queue.md](comfy-queue.md) · [comfy-structured.md](comfy-structured.md) |
 | Runs | [runs.md](runs.md) · [run-setup.md](run-setup.md) · [repeating-runs.md](repeating-runs.md) |
 | Export | [export.md](export.md) |
 | Booru Browser | [workspace.md](workspace.md#booru-tag-lookup) |

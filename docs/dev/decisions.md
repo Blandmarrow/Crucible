@@ -82,3 +82,11 @@ of its child jobs finishes, instead of a parent job on a second queue that polls
 service functions, so M8 stages 2 and 3 land first (corrected 2026-11-04: they did, and §4
 still builds the score, caption and export start functions itself). Full record:
 [decisions/09-runs-step-forward-on-job-completion.md](decisions/09-runs-step-forward-on-job-completion.md).
+
+## 10. Unload a local Strata server while ComfyUI generates
+
+**Decided** (2026-11-06, by the user) that Crucible frees a local Strata LLM server's GPU
+before ComfyUI generates, so captioning and prompt writing can run on a 16 GB card beside
+ComfyUI; **Leaning** on the mechanism: an HTTP unload behind an opt-in setting, and no load
+step, since Strata reloads on the next request. Full record:
+[decisions/10-unload-strata-while-comfyui-generates.md](decisions/10-unload-strata-while-comfyui-generates.md).

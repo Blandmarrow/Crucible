@@ -28,6 +28,10 @@ This file covers OpenAI-compatible provider configuration: the `/providers` CRUD
 
 `ml/openai_compat_captioner.py` — `caption_image(image_path, base_url, api_key, model_name, style, custom_prompt, max_px, max_tokens, target_w, target_h, timeout_s)`. Encodes the image as JPEG base64 (after `preprocess_for_caption` and optional `max_px` downscale), sends via the v1 SDK (`OpenAI(base_url=…).chat.completions.create`) with an `image_url` content block. The per-image timeout is the provider's `timeout_s`; `_caption_sync` takes it as its **last** positional parameter, and the `run_in_executor` call is positional, so both signatures append new parameters at the end. Not tracked by `model_manager`. `_caption_sync` binds `resp.choices[0]` and **inspects `finish_reason`** before returning: an empty stripped content logs a warning naming the model, the `finish_reason` and whether a `reasoning_content` field was present (a provider extension the SDK carries as an extra field, hence `getattr`), pointing at Max tokens — LM Studio returns exactly that shape when a reasoning model spends its whole budget thinking; non-empty content with `finish_reason == "length"` logs that the caption is truncated. Both are logs only — it still returns `""`, and the router owns the failure (see `docs/dev/captioning.md` § Captioning job execution, the empty-caption bullet).
 
+## Local servers and the GPU
+
+A local provider whose `/health` says it is Strata can be unloaded around ComfyUI work; LM Studio and Ollama models are unloaded after a run's LLM stages. Both live in `backend/services/run_service.py`'s `_free_llm`; the Strata side is `docs/dev/comfyui/gpu-handoff.md`.
+
 ## Model ID format in captioning
 
 `openai_compat:{provider_id}:{model_name}`. The router splits on `:` with `maxsplit=2` to recover `provider_id` and `model_name`. If `model_name` is empty, `openai_provider.default_model` is used.

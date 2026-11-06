@@ -43,6 +43,7 @@ const DEFAULTS: Thresholds = {
   auto_unload_after_scoring: true,
   comfyui_url: "",
   comfy_workflow_dir: "",
+  llm_gpu_handoff: false,
 };
 
 interface ThresholdField {
@@ -514,6 +515,27 @@ export default function SettingsPage() {
                   Save
                 </button>
               </div>
+            </div>
+            <div>
+              <label style={{ display: "flex", gap: 8, alignItems: "center", fontWeight: 500, fontSize: 13 }}>
+                <input
+                  type="checkbox"
+                  checked={form.llm_gpu_handoff}
+                  disabled={!thresholds || mutation.isPending}
+                  onChange={(e) => {
+                    const next = e.target.checked;
+                    setForm((prev) => ({ ...prev, llm_gpu_handoff: next }));
+                    mutation.mutate({ llm_gpu_handoff: next });
+                  }}
+                />
+                Unload a local Strata server while ComfyUI generates
+              </label>
+              <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "6px 0 0 24px" }}>
+                For a graphics card too small for both. Before every generation, a Strata LLM
+                server on this machine drops its model from the GPU; the next caption or prompt
+                request loads it again by itself, which takes about a minute. Leave it off when
+                your card has room for both.
+              </p>
             </div>
           </div>
         </div>

@@ -26,8 +26,8 @@ when you want them. Switch off any stage you do not want.
 | **Snapshot the dataset** | Off by default. Takes a version of the dataset before the run changes anything, so you can go back to it on the Versions page. It runs once, before the first pass. With versioning off in Settings it is skipped, and the run says so. |
 | **Fill the blueprint** | The same as **Top up** on the Blueprint tab: adds the rows each short folder needs, and puts failed rows back in the queue. With no blueprint it is skipped, and the run generates the plan's pending rows instead. |
 | **Rewrite prompts** | Off by default, and it needs **Fill the blueprint**, because it rewrites the rows the fill adds. Rewrites the new template prompts into prose with a language model before generating, for the scenarios you tick (see below). |
-| **Unload the rewrite model** | Frees the GPU from the model that rewrote, so ComfyUI has it. Only runs with Rewrite. |
-| **Free VRAM for ComfyUI** | Unloads Crucible's own models (captioners, scorers), so ComfyUI has the GPU. |
+| **Unload the rewrite model** | Frees the GPU from the model that rewrote, so ComfyUI has it. Only runs with Rewrite. A Strata server is unloaded only with Settings → ComfyUI's **Unload a local Strata server** on ([details](comfyui.md#setup)); it loads the model again by itself on the next pass's rewrite. |
+| **Free VRAM for ComfyUI** | Unloads Crucible's own models (captioners, scorers), so ComfyUI has the GPU. With Settings → ComfyUI's **Unload a local Strata server** on, it also unloads a Strata LLM server on this computer. |
 | **Generate** | Runs this run's rows through ComfyUI, filing each image in its row's folder, under the base folder if you set one. |
 | **Free ComfyUI's VRAM** | Asks ComfyUI to unload its models, so Crucible's scorers and captioners have the GPU. If your ComfyUI cannot do that, the run notes it and carries on. |
 | **Score** | Scores the images this run made. Technical scores always run, because they are what finds duplicates. The aesthetic score is optional. |

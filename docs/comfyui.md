@@ -6,10 +6,11 @@ Available from: the **ComfyUI** sidebar item on any dataset page.
 
 ## Setup
 
-Settings → **ComfyUI** tab. Both fields are global (shared by every dataset) and require **Save**:
+Settings → **ComfyUI** tab. The two fields are global (shared by every dataset) and require **Save**:
 
 - **Server URL** — base URL of your ComfyUI server, default port 8188 (e.g. `http://127.0.0.1:8188`). **Test connection** reports whether it is reachable before you save. The server is contacted by Crucible's backend, not by your browser — a ComfyUI on another machine, or in a container, needs an address that resolves from wherever Crucible is running.
 - **Workflow folder** — the folder **Scan folder…** searches by default. **Browse…** picks it. This is a path on the machine running Crucible.
+- **Unload a local Strata server while ComfyUI generates** — a checkbox, saved as soon as you tick it, and off by default. Turn it on when you caption or write prompts with a Strata LLM server on the same computer and your graphics card is too small for it and ComfyUI together (Strata takes almost all of a 16 GB card). Before every generation, by hand or in a run, Crucible asks Strata to drop its model from the graphics card; Strata keeps running and loads the model again by itself on the next caption or prompt request, which takes about a minute. Give that Strata provider a timeout of at least a few minutes (600 s works) so the first request after a generation does not time out. Only a Strata provider whose address is this computer's own (`localhost`, `127.0.0.1`) is unloaded; other LLM servers are not affected. Leave it off when your card has room for both.
 
 Optionally, install the **CrucibleBridge** extension into ComfyUI so **Sync from canvas** can pull the workflow you currently have open — see [extras/ComfyUI-CrucibleBridge/README.md](../extras/ComfyUI-CrucibleBridge/README.md). Without it, syncing falls back to the last prompt you queued in ComfyUI.
 

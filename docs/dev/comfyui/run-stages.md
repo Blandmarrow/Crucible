@@ -16,7 +16,7 @@ stages are `docs/dev/comfyui/run-loop.md` and the `gate` stage is
 |---|---|
 | `snapshot` | M6 §6, opt-in. A `create_snapshot` job through `routers/versioning.start_snapshot_job`, lifted out of the snapshot route and always the job path (the route keeps its inline path for small datasets in auto mode). Skipped with a note when `versioning_mode` is off. The only **head** stage (`HEAD_STAGES`): it has no `pass_no`, so `next_pass` never copies it into a later pass. The job writes `{version_id, name, images}` to `result_data` after the snapshot's own commit. |
 | `prompts` | Top up's fill on the **stored** blueprint, through `routers/comfy.fill_blueprint` under the plan lock (Apply, then `prepare_top_up`). `confirm_total=None`, since the lock holds from Apply's count to its write. Stores the pending row ids in `context`. With no blueprint it is skipped. A first pass over the row cap is refused at the start (`docs/dev/comfyui/run-start.md` § Starting, and the checks it runs first); the stage still fails with Apply's message if the blueprint grew past the cap between the start and the stage. |
-| `handoff_to_comfy` | A `run_handoff` job: `model_manager.evict_all()`. The note counts the models that were resident (`evict_all` returns every registered id) and names any still leased. `evict_all` ends with a torch cache flush that raises on a torch-free install; that is caught, because nothing torch-backed was loaded there. |
+| `handoff_to_comfy` | A `run_handoff` job: `model_manager.evict_all()`. The note counts the models that were resident (`evict_all` returns every registered id) and names any still leased. `evict_all` ends with a torch cache flush that raises on a torch-free install; that is caught, because nothing torch-backed was loaded there. With Settings → ComfyUI's GPU handoff on (`llm_gpu_handoff`), it also unloads every loaded local Strata server, each one's note appended (`docs/dev/comfyui/gpu-handoff.md`). |
 | `generate` | The run's rows that are not completed yet: `failed` and `running` ones go back to pending, under the plan lock. Then `_start_run` with those exact row ids. With no `context.row_ids` (no blueprint, or `prompts` off) it takes the plan's pending rows when it first starts, and stores them. Completed rows are never run twice. |
 | `handoff_to_local` | A `run_handoff` job: `ComfyClient.free()` (`POST /free`), best effort. Any error is a note. It is built through `backend.routers.comfy.ComfyClient`, the name the tests patch onto the fake. |
 | `score` | `start_score_job` over the run's images, technical scoring always on (it flags duplicates through `_flag_duplicates`, dataset-wide) and aesthetic optional. |
@@ -59,8 +59,12 @@ every failure is a note:
 - **Ollama** gets a `/api/generate` with `keep_alive: 0`, its documented unload-now.
 - **A local captioner** (Florence-2, JoyCaption, PaliGemma, WD14) goes through `evict_all`,
   as `handoff_to_comfy` does.
+- **A Strata server** (its `/health` answers `"service": "strata"`) is checked before LM
+  Studio's API, which it lacks: `POST /v1/unload` when the GPU handoff setting is on, and a
+  note that it stays loaded when it is off (`docs/dev/comfyui/gpu-handoff.md`).
 
 All LLM-server calls go through `run_service._LLM_TRANSPORT`, which the tests set to an
-`httpx.MockTransport`. The two VRAM handoffs still do nothing for an LLM. Since §5 a rewrite
+`httpx.MockTransport`. Of the two VRAM handoffs, only `handoff_to_comfy` acts on an LLM, and
+only on a Strata server with the setting on. Since §5 a rewrite
 stage can run an LLM before generating, and `free_rewrite_model` unloads it after the
 rewrite through the same `_free_llm` (`docs/dev/comfyui/run-loop.md`).

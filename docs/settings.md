@@ -74,10 +74,11 @@ Add, edit, and delete OpenAI-compatible API provider configurations for use as c
 
 ## ComfyUI
 
-Server-side settings for the ComfyUI generation page, shared across all datasets (each requires Save; see [ComfyUI Generation](comfyui.md)):
+Server-side settings for the ComfyUI generation page, shared across all datasets (see [ComfyUI Generation](comfyui.md)). The two fields require Save; the checkbox saves when you tick it:
 
 - Server URL — base URL of your ComfyUI server (default port 8188). **Test connection** checks reachability before saving. The server is contacted by the Crucible backend, so it must be reachable from the machine running Crucible
 - Workflow folder — default folder scanned by the **Scan folder…** button on the ComfyUI page, with a **Browse…** picker; a path on the machine running Crucible
+- Unload a local Strata server while ComfyUI generates — off by default. For a graphics card too small for a Strata LLM server and ComfyUI together: before each generation Strata drops its model, and loads it again by itself on the next caption or prompt request → [details](comfyui.md#setup)
 
 ## API Keys
 

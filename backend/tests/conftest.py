@@ -58,7 +58,8 @@ def _no_real_llm_server(monkeypatch):
     """Keep every automated run's LLM-server call off the network.
 
     `run_service._LLM_TRANSPORT` carries the run's model listing (the start check, M6
-    §6) and its unloads. Its default is the real network, and the tests' providers point
+    §6) and its unloads, and `llm_server` reads it at call time for the Strata GPU
+    handoff (M6 §9), which every `comfy_generate` job runs. Its default is the real network, and the tests' providers point
     at `127.0.0.1:1234` — LM Studio's real port on a dev machine — so a test could list,
     or unload, the developer's own models. Every call now fails as a refused connection
     would, which is what CI sees; a test that wants a server sets its own transport.

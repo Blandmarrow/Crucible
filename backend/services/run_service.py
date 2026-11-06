@@ -953,6 +953,12 @@ async def _handoff(direction: str, comfy_url: str | None) -> str:
         note = f"Unloaded {len(freed)} local model{'s' if len(freed) != 1 else ''}"
         if leased:
             note += f"; still in use: {', '.join(leased)}"
+        # A local Strata server holds the whole card; with Settings' GPU handoff on it
+        # drops its model here, and the next LLM request loads it again by itself.
+        from backend.services.llm_server import free_local_llm_servers
+
+        for extra in await free_local_llm_servers():
+            note += f"; {extra}"
         return note
     from backend.routers import comfy as comfy_router
 
@@ -980,6 +986,10 @@ async def _free_llm(model: str) -> str:
       its models are not on this GPU.
     - Ollama: a request with `keep_alive: 0`, its own way to unload now.
     - A local captioner (Florence-2, JoyCaption, PaliGemma, WD14): `evict_all`.
+    - A local Strata server (its `/health` says so), only while Settings' GPU handoff is
+      on: `POST /v1/unload`, checked before LM Studio's API, which Strata lacks
+      (`backend/services/llm_server.py`). Off, it is asked nothing new, and LM Studio's
+      404 note says it stays loaded.
     """
     if model.startswith("openai_compat:"):
         parts = model.split(":", 2)
@@ -995,6 +1005,14 @@ async def _free_llm(model: str) -> str:
             return "The provider was deleted; nothing to unload"
         if _is_remote(provider.base_url):
             return f"{provider.name} is a remote provider; its models are not on this GPU"
+        from backend.services import llm_server
+
+        # The setting first: off, this stage sends exactly what it did before §9.
+        if (
+            await llm_server.handoff_enabled()
+            and await llm_server.strata_health(provider.base_url, provider.api_key) is not None
+        ):
+            return await llm_server.unload_strata(provider.base_url, provider.api_key, label=provider.name)
         return await _unload_lmstudio(provider.base_url, provider.api_key, name or provider.default_model)
     if model.startswith("ollama:"):
         from backend.config import settings

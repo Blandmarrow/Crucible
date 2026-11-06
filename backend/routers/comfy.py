@@ -2720,7 +2720,15 @@ async def _start_run(
             declare_subfolders,
             refresh_stats,
         )
+        from backend.services.llm_server import free_local_llm_servers
         from backend.workers.progress import broadcaster
+
+        # With Settings → ComfyUI's GPU handoff on, a local Strata server drops its model
+        # before ComfyUI needs the card — for a run (whose handoff stage has usually done
+        # it already; this is then one /health call) and for a generation started by hand.
+        # Best effort: it never raises.
+        for note in await free_local_llm_servers():
+            logger.info("comfy_generate %s: %s", job_id, note)
 
         async with AsyncSessionLocal() as session:
             plan_row = await session.get(ComfyPlan, plan_id)

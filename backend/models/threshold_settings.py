@@ -21,6 +21,9 @@ class ThresholdSettings(Base):
     auto_unload_after_scoring: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="1")
     comfyui_url: Mapped[str] = mapped_column(String(500), nullable=False, server_default="")
     comfy_workflow_dir: Mapped[str] = mapped_column(String(1000), nullable=False, server_default="")
+    # Unload a local Strata LLM server before ComfyUI generates (M6 §9,
+    # backend/services/llm_server.py). Off by default: only a card too small for both needs it.
+    llm_gpu_handoff: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="0")
 
     # Secrets, editable from Settings -> API Keys. The column names MUST equal the
     # backend.config.Settings field names of the same secrets: secrets_service uses one

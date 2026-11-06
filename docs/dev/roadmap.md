@@ -17,7 +17,7 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-05, after the M6 §8 review fixes)
+## Next session (updated 2026-11-06, M6 §9)
 
 1. M5's five stages merged on 2026-10-30 as PR #101. Only its cleanup is open, and that waits
    a release. See [server-state-plan/README.md](server-state-plan/README.md) for what was
@@ -46,6 +46,10 @@ restates its stages.
    [comfy-automation-plan/README.md](comfy-automation-plan/README.md) as revised by decisions 8
    and 9. **Work on M6 happens on that branch.** What has landed, stage by stage, is the
    § M6 checklist below; this item holds only what is open.
+   - **§9, two installs and a 16 GB card (2026-11-06)**: configurable ports, the orphan
+     sweep's refusal on a mismatched tree, and the Strata GPU handoff
+     ([decision 10](decisions/10-unload-strata-while-comfyui-generates.md)) are built. The user
+     tests the branch on a second machine before the merge (`docs/dev/multiple-installs.md`).
    - **Next: the merge** (§ M6 below). §8, the page rework, is complete: §8d landed on
      2026-11-05 with the *Add ▾* menu, the selection bar in a fixed slot, Run selected moved
      into it and the paste dialog on `ModalShell`, under three rulings by the user that day
@@ -71,6 +75,9 @@ restates its stages.
        staying on the page.
      - §8d: the selection bar in Firefox with the library panel open (its buttons must not be
        clipped by the scrollbar; e2e runs Chromium only).
+     - §9, on a second machine: a run with rewrite, generate and caption against a real
+       Strata and ComfyUI, `nvidia-smi` between stages; a second install on its own ports
+       beside the first; the backend suite there.
    - **Found in the §8b review, not fixed there:** the gallery's
      `dataset_service.repath_subfolder` matches a folder's subtree with SQLite's case-blind
      `LIKE`, so renaming `knight` also re-paths `Knight/a`; `filesystem.py`'s
@@ -199,6 +206,11 @@ gates are green and it is pushed.
     (2026-11-05). What it delivered is the plan's § 8d.
   - [x] §8 review fixes (2026-11-05), under four rulings by the user that day: the plan's
     [§ Review fixes](comfy-automation-plan/README.md#review-fixes-2026-11-05).
+- [x] §9, two installs and a 16 GB card (2026-11-06): `CRUCIBLE_PORT`/`CRUCIBLE_VITE_PORT`, the
+  orphan sweep's refusal on a mismatched tree, and the Strata GPU handoff
+  (`docs/dev/comfyui/gpu-handoff.md`, [decision 10](decisions/10-unload-strata-while-comfyui-generates.md));
+  running several installs is `docs/dev/multiple-installs.md`. Its migration `a3c7e9b1d5f2` is
+  the branch's new last.
 - [ ] Merge: rebase onto `main`, re-parent the first migration onto M4's head if M4 merged
   first, run every gate, open the PR. The ComfyUI docs moved behind a hub on this branch, so
   any doc `main` has added since that names an old path (comfy-prompts.md, comfyui-sync.md, or

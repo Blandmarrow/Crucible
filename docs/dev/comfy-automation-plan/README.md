@@ -46,7 +46,7 @@ blueprint rather than once per leaf.
 **Section numbers are stable identities, not an order.** The build order is the roadmap's M6
 checklist alone. In short: the `docs/dev/comfyui.md` split and §7 (both done 2026-11-03), then
 §2a, §2b, Top up (§2c), §3, a rebase after M8 stages 2–3, §4, §5 and §6 (all landed), then
-the ComfyUI page rework (§8, landed), then the merge.
+the ComfyUI page rework (§8, landed), §9 (two installs and a 16 GB card, landed), then the merge.
 
 **§1 (per-row `subfolder` + `leaf_id`) is ported**, commit 8dee5de on the branch; its rationale
 lives in `docs/dev/comfyui/queue.md` (the columns and endpoints) and `docs/dev/comfyui/run.md` (how a run
@@ -447,6 +447,16 @@ Also fixed:
 
 Where each lives: `docs/dev/comfyui/queue.md` § Backend, `docs/dev/comfyui/page.md`,
 `docs/dev/comfyui/library-dnd.md`, `docs/dev/styling.md` and `docs/dev/frontend-core.md`.
+
+## 9. Two installs and a 16 GB card (landed)
+
+Added 2026-11-06, so this branch can be tested on a second machine before the merge. Three
+changes: the backend and Vite ports became
+settings (`CRUCIBLE_PORT`, `CRUCIBLE_VITE_PORT`; `docs/dev/server-start.md`), the startup
+orphan sweep refuses to run when the database and the datasets folder visibly disagree
+(`docs/dev/database.md`), and a local Strata server drops its model before ComfyUI generates
+(`docs/dev/comfyui/gpu-handoff.md`, [decision 10](../decisions/10-unload-strata-while-comfyui-generates.md)).
+Running several installs is `docs/dev/multiple-installs.md`.
 
 ## Landed stages
 

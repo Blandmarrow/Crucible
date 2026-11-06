@@ -133,13 +133,52 @@ async def sweep_orphan_dataset_folders(db: AsyncSession) -> list[str]:
     behind if the row disappeared by another route (DB reset/migration/swap) so the
     delete endpoint never ran for it. This reconciles disk against the DB at startup.
     Returns the names of the folders removed.
+
+    It removes nothing when the DB and the tree visibly disagree, because then "no row"
+    means the wrong tree, not an orphan: a row whose folder lies outside datasets_dir
+    (a DB copied from another machine, or DATASETS_DIR changed under it), rows none of
+    whose folders exist (a network share that is not mounted), or no rows at all beside
+    folders that hold datasets (a second install given another one's DATASETS_DIR, or a
+    fresh database next to a copied tree). Each time every folder would look orphaned and
+    the sweep would delete a whole tree of real datasets.
     """
     datasets_dir = settings.datasets_dir
     if not datasets_dir.exists():
         return []
 
     result = await db.execute(select(Dataset.folder_path))
-    known = {Path(p).resolve() for (p,) in result.all()}
+    stored = [p for (p,) in result.all()]
+    root = datasets_dir.resolve()
+    # A path written on another OS is not absolute here (`D:\...` on Linux, `/mnt/...` on
+    # Windows); resolve() would join it to the working directory, so judge it unresolved.
+    outside = sorted(p for p in stored if not Path(p).is_absolute() or not Path(p).resolve().is_relative_to(root))
+    known = {Path(p).resolve() for p in stored if Path(p).is_absolute()}
+    if not stored:
+        holding = sorted(c.name for c in datasets_dir.iterdir() if (c / "images").is_dir())
+        if holding:
+            logger.warning(
+                "Orphan dataset-folder sweep skipped: the database has no datasets, but %s "
+                "holds %d dataset folder(s) (first: %s). Is this install pointed at another "
+                "one's datasets folder? Nothing was removed.",
+                root, len(holding), holding[0],
+            )
+            return []
+    if outside:
+        logger.warning(
+            "Orphan dataset-folder sweep skipped: %d dataset folder(s) lie outside the "
+            "datasets folder %s (first: %s). Was the database moved, or DATASETS_DIR "
+            "changed? Nothing was removed.",
+            len(outside), root, outside[0],
+        )
+        return []
+    if known and not any(p.is_dir() for p in known):
+        logger.warning(
+            "Orphan dataset-folder sweep skipped: none of the %d dataset folders exist "
+            "under %s. Is the datasets folder (or its network share) missing? Nothing "
+            "was removed.",
+            len(known), root,
+        )
+        return []
 
     removed: list[str] = []
     for child in datasets_dir.iterdir():

@@ -483,6 +483,10 @@ $script:BindHost = "127.0.0.1"
 # localhost for a loopback or wildcard bind, the address itself otherwise.
 $script:BrowseHost = "localhost"
 $script:BindMode = "loopback"
+# The backend and Vite ports (CRUCIBLE_PORT / CRUCIBLE_VITE_PORT), resolved by
+# scripts\bind_host.py in the same --describe call as the host.
+$script:Port = 8000
+$script:VitePort = 5173
 
 function Invoke-BindHostScript {
     # Runs scripts\bind_host.py with the given extra arguments and returns its
@@ -510,13 +514,21 @@ function Resolve-BindHost {
     # One --describe call answers everything the launcher needs, so no loopback
     # test or browse-host rule is copied here.
     $out = @(Invoke-BindHostScript -ExtraArgs @("--describe") | ForEach-Object { ([string]$_).Trim() })
-    if ($out.Count -lt 3 -or -not $out[0] -or -not $out[1] -or -not $out[2]) {
-        Write-Host "ERROR: could not resolve the bind address (scripts\bind_host.py failed)." -ForegroundColor Red
+    if ($out.Count -lt 5 -or -not $out[0] -or -not $out[1] -or -not $out[2] -or -not $out[3] -or -not $out[4]) {
+        Write-Host "ERROR: could not resolve the bind address or ports (scripts\bind_host.py failed)." -ForegroundColor Red
+        # Run it again with stderr visible: a bad CRUCIBLE_PORT is explained there.
+        $py = "$ROOT\venv\Scripts\python.exe"
+        if (-not (Test-Path $py)) { $py = "python" }
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try { & $py "$ROOT\scripts\bind_host.py" --describe 2>&1 | ForEach-Object { Write-Host "  $_" -ForegroundColor Red } } finally { $ErrorActionPreference = $prevEap }
         exit 1
     }
     $script:BindHost = $out[0]
     $script:BrowseHost = $out[1]
     $script:BindMode = $out[2]
+    $script:Port = [int]$out[3]
+    $script:VitePort = [int]$out[4]
 }
 
 function Write-AccessInfo {
@@ -538,7 +550,7 @@ function Write-AccessInfo {
 # --- Startup splash --------------------------------------------------------
 # `start` is silent for a long stretch before uvicorn answers: migrations, an
 # occasional frontend rebuild, then the torch/transformers import chain. A
-# stdlib-only placeholder server holds :8000 for that stretch and serves the
+# stdlib-only placeholder server holds the backend port (8000 by default) for that stretch and serves the
 # animated mark, so the browser can be opened straight away on the real URL; it
 # is stopped before uvicorn binds, and the page swaps itself for the app on the
 # first healthy response. See scripts\splash_server.py.
@@ -559,7 +571,7 @@ function Start-Splash {
 
     try {
         $script:SplashProcess = Start-Process -FilePath $py `
-            -ArgumentList @("`"$splash`"", "--host", $script:BindHost, "--parent-pid", $PID, "--ready-file", "`"$ready`"") `
+            -ArgumentList @("`"$splash`"", "--host", $script:BindHost, "--port", $script:Port, "--parent-pid", $PID, "--ready-file", "`"$ready`"") `
             -WindowStyle Hidden -PassThru
     } catch {
         $script:SplashProcess = $null
@@ -593,8 +605,8 @@ function Start-Splash {
         return
     }
 
-    try { Start-Process "http://$($script:BrowseHost):8000" | Out-Null } catch {
-        Write-Host "  (could not open a browser - open http://$($script:BrowseHost):8000 yourself)" -ForegroundColor DarkGray
+    try { Start-Process "http://$($script:BrowseHost):$($script:Port)" | Out-Null } catch {
+        Write-Host "  (could not open a browser - open http://$($script:BrowseHost):$($script:Port) yourself)" -ForegroundColor DarkGray
     }
 }
 
@@ -787,7 +799,7 @@ function Cmd-Start {
 
         if ($needsBuild) { Build-Frontend }
     } finally {
-        # Hand :8000 over. Has to happen before uvicorn binds, on every way out
+        # Hand the port over. Has to happen before uvicorn binds, on every way out
         # of the block above - Run-Migrations exits the script on failure. The
         # restart loop below never brings the splash back: a restart is already
         # covered in-app by the TopBar overlay.
@@ -795,8 +807,8 @@ function Cmd-Start {
     }
 
     Write-Host ""
-    Write-Host "Starting server at http://$($script:BrowseHost):8000" -ForegroundColor Green
-    Write-AccessInfo -Port 8000 -CommandName "start"
+    Write-Host "Starting server at http://$($script:BrowseHost):$($script:Port)" -ForegroundColor Green
+    Write-AccessInfo -Port $script:Port -CommandName "start"
     Write-Host "Press Ctrl+C to stop." -ForegroundColor DarkGray
     Write-Host ""
 
@@ -807,7 +819,7 @@ function Cmd-Start {
     if (Test-Path "$ROOT\.shutdown") { Remove-Item "$ROOT\.shutdown" -Force }
 
     :restart_loop while ($true) {
-        python -m uvicorn backend.main:app --host $script:BindHost --port 8000
+        python -m uvicorn backend.main:app --host $script:BindHost --port $script:Port
         if (Test-Path "$ROOT\.restart") {
             Remove-Item "$ROOT\.restart" -Force
             Write-Host ""
@@ -1012,19 +1024,19 @@ function Cmd-Dev {
     python -m alembic upgrade head
     Pop-Location
 
-    Write-Host "Starting backend on :8000 and frontend dev server on :5173..." -ForegroundColor Cyan
-    Write-Host "Open http://$($script:BrowseHost):5173 in your browser." -ForegroundColor Green
-    Write-AccessInfo -Port 5173 -CommandName "dev"
+    Write-Host "Starting backend on :$($script:Port) and frontend dev server on :$($script:VitePort)..." -ForegroundColor Cyan
+    Write-Host "Open http://$($script:BrowseHost):$($script:VitePort) in your browser." -ForegroundColor Green
+    Write-AccessInfo -Port $script:VitePort -CommandName "dev"
     Write-Host ""
 
     $backendJob = Start-Job -ScriptBlock {
-        param($root, $bindHost)
+        param($root, $bindHost, $port)
         Set-Location $root
 
         if (Test-Path "$root\.restart") { Remove-Item "$root\.restart" -Force }
 
         :restart_loop while ($true) {
-            & "$root\venv\Scripts\python.exe" -m uvicorn backend.main:app --host $bindHost --port 8000 --reload --reload-dir backend
+            & "$root\venv\Scripts\python.exe" -m uvicorn backend.main:app --host $bindHost --port $port --reload --reload-dir backend
             if (Test-Path "$root\.restart") {
                 Remove-Item "$root\.restart" -Force
                 Write-Host ""
@@ -1034,18 +1046,22 @@ function Cmd-Dev {
                 break restart_loop
             }
         }
-    } -ArgumentList $ROOT, $script:BindHost
+    } -ArgumentList $ROOT, $script:BindHost, $script:Port
 
     Push-Location "$ROOT\frontend"
     # vite.config.ts proxies /api here. A server bound to one LAN address does
     # not answer on localhost, so the proxy must follow the bind.
-    $env:CRUCIBLE_API_TARGET = "http://$($script:BrowseHost):8000"
+    $env:CRUCIBLE_API_TARGET = "http://$($script:BrowseHost):$($script:Port)"
+    # node + vite.js directly, never `npm run dev -- ...`: when npm resolves to npm.ps1,
+    # PowerShell consumes the bare `--` itself, and npm.ps1 re-reads the calling line's
+    # source text and Invoke-Expressions it in its own scope, where `$script:VitePort`
+    # is unset (StrictMode then throws). --strictPort: fail rather than drift to
+    # another install's next port.
+    $vite = "$ROOT\frontend\node_modules\vite\bin\vite.js"
     if ($script:BindMode -eq "loopback") {
-        npm run dev
+        node $vite --port $script:VitePort --strictPort
     } else {
-        # node + vite.js directly rather than `npm run dev -- --host`: when npm
-        # resolves to npm.ps1, PowerShell consumes the bare `--` itself.
-        node "$ROOT\frontend\node_modules\vite\bin\vite.js" --host $script:BindHost
+        node $vite --host $script:BindHost --port $script:VitePort --strictPort
     }
     Pop-Location
     # $env: is the caller's session, not a child scope: do not leave it behind.
@@ -1064,7 +1080,7 @@ if ($Command -eq "") {
     Write-Host "=== Crucible ===" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "  1) Setup   - First-time install (creates venv, installs deps, builds frontend)"
-    Write-Host "  2) Start   - Launch the app at http://localhost:8000"
+    Write-Host "  2) Start   - Launch the app (http://localhost:8000 by default)"
     Write-Host "  3) Update  - Pull latest changes and rebuild"
     Write-Host ""
     $choice = Read-Host "Enter choice [1-3]"

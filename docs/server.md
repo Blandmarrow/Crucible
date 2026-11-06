@@ -16,6 +16,19 @@ Only `start` does this — `dev` leaves your browser alone. A few other things w
 - **Browsing from another machine on your network is off by default.** Crucible listens on this machine only until you opt in with `start --lan` (`.\manage.ps1 start -Lan` on Windows) or `CRUCIBLE_HOST=0.0.0.0` in `.env`; the launcher then prints the address to use and a reminder that there is no login. Earlier versions listened on the network without asking, so if you used to browse from another device, opt in once. See [Access from other devices](../README.md#access-from-other-devices-lan) for host names and the security trade-off.
 - **A LAN address** (`http://192.168.1.5:8000`, say) is also a non-secure origin, and that one is left alone — it is a deliberate choice about where you want to reach the app from, and rewriting it would point your browser at the wrong machine. Everything works there; copy buttons fall back to an older browser mechanism, which is invisible in use.
 
+## Changing the ports
+
+Crucible serves on port **8000**, and `dev` also runs the Vite dev server on **5173**. Set either one in `.env` in the repo folder, or as an environment variable (the environment wins over `.env`):
+
+```
+CRUCIBLE_PORT=8100
+CRUCIBLE_VITE_PORT=5200
+```
+
+Both must be whole numbers from 1 to 65535. An empty value means "use the default". A value that is not a valid port stops the launcher with a clear message instead of falling back to the default, so a typo cannot start the server on the wrong port. `start` and `dev` (on Windows and Linux/macOS) then use the new numbers everywhere: the server, the browser tab it opens, the placeholder page, the addresses printed for LAN access, and Vite's `/api` proxy. In `dev`, Vite refuses to start if its port is already taken, rather than quietly moving to the next one.
+
+**Two installs on one machine.** Give each copy its own folder, its own `.env` and its own ports. For example, leave the production copy on the defaults and put `CRUCIBLE_PORT=8100` and `CRUCIBLE_VITE_PORT=5200` in the dev copy's `.env`. Open the dev copy at `http://localhost:5200`. Browser-stored settings are kept per address and port, so the two copies do not share them.
+
 ## Restarting & shutting down
 
 Two buttons sit at the right of the top bar. Both ask for confirmation first, and both are disabled while the other is in progress.

@@ -259,13 +259,13 @@ See [docs/settings.md](docs/settings.md).
 
 | Command | Effect |
 |---|---|
-| `.\manage.ps1 start` | Production server on :8000 |
-| `.\manage.ps1 dev` | Backend hot-reload + Vite dev server (:5173) |
+| `.\manage.ps1 start` | Production server on :8000 (change with `CRUCIBLE_PORT`) |
+| `.\manage.ps1 dev` | Backend hot-reload + Vite dev server (:5173, change with `CRUCIBLE_VITE_PORT`) |
 | `.\manage.ps1 update` | Pull latest + rebuild |
 
 **Linux / macOS** — same commands via `./manage.sh start`, `./manage.sh dev`, `./manage.sh update`.
 
-`start` opens your browser on http://localhost:8000 right away and shows an animated placeholder until the server is ready, then loads the app by itself — set `CRUCIBLE_NO_BROWSER=1` to launch without it → [details](docs/server.md#starting-up).
+`start` opens your browser on http://localhost:8000 right away and shows an animated placeholder until the server is ready, then loads the app by itself — set `CRUCIBLE_NO_BROWSER=1` to launch without it → [details](docs/server.md#starting-up). To use other ports, for example to run two installs on one machine, see [Changing the ports](docs/server.md#changing-the-ports).
 
 > **If `update` stops at "git pull failed"** with *"Your local changes to the following files would be overwritten by merge"*, you have edited a tracked file. Run `git stash` (to keep the changes) or `git checkout -- <file>` (to discard them), then re-run `update`. `frontend/package-lock.json` is handled automatically — `update` discards npm's rewrites of it, since it is regenerated from the repo copy anyway.
 

@@ -73,8 +73,22 @@ behaviour) when `PATHS_FOLD_CASE` is set — Windows and macOS — and exact on 
 Case-variant tests sit beside each site's existing tests; `backend/tests/test_filesystem_root_case.py`
 pins the root-spelling drift with the flag forced on, so Linux CI runs it too; and
 `backend/tests/test_sql_prefix_guard.py` is an AST guard, whose docstring says which
-shapes it cannot see. The deeper fix, one stored spelling for the root and a migration
-of existing rows, is not done.
+shapes it cannot see.
+
+The deeper fix followed on `fix/root-spelling`. At startup the root's on-disk case is
+worked out (`utils.on_disk_spelling`, which follows no link), and
+`services/root_spelling.py` rewrites every stored row whose root is a case variant of it
+and the same folder on disk (`os.path.samefile`), after an integrity-checked backup. The
+setting adopts the new spelling only when that repair went ahead (`docs/dev/database.md`
+§ The datasets root's one spelling). The file browser's exact matches (`/delete`'s and
+`/rename`'s file arms, `/move`'s, guards C and D) now take `utils.sql_path_equals`, so a
+case drift *below* the root cannot strand rows either. For a single file the case-blind
+match is only a pre-filter: `_rows_naming` keeps a variant row only when it is the same
+file, since on a case-sensitive directory under the flag it is another file's record. The
+AST guard flags a bare `==` on a full-path column in `routers/filesystem.py`. The same
+review found the orphan sweep comparing resolved paths case-sensitively on macOS, where
+`resolve()` keeps the given case, so a dataset folder renamed by case could be
+`rmtree`'d. It now compares folded under the flag.
 Left on LIKE on purpose, and listed in `docs/dev/shared-utilities.md`: the filename
 reservation scans and `filesystem._find_dataset_for_path`'s pre-filter.
 

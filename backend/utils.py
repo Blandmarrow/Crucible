@@ -381,6 +381,95 @@ def sql_has_path_prefix(col, prefix: str):
     return sql_has_prefix(col, prefix)
 
 
+def _like_literal(s: str) -> str:
+    """Escape `s` for a `LIKE ... ESCAPE '/'` so it matches only itself (bar case)."""
+    return s.replace("/", "//").replace("%", "/%").replace("_", "/_")
+
+
+def sql_path_equals(col, path: str):
+    """SQL: absolute-path column `col` names exactly `path`, matched the way the
+    filesystem matches names — the equality twin of `sql_has_path_prefix`, with the
+    same `PATHS_FOLD_CASE` rule and for the same columns.
+
+    A bare `col == str(p)` misses a row whose spelling differs from the request's
+    only in case, which on Windows is the same file: `/filesystem/delete`'s file arm
+    then deleted the bytes and left the rows and their versioning backup behind
+    (PM-034). The root's own spelling is normalised at startup
+    (`services/root_spelling.py`); this covers a case drift *below* it, such as a
+    dataset folder renamed by case outside the app. Case-blind is an escaped `LIKE`
+    with no wildcard, so it folds ASCII only, like the prefix helper. It cannot use
+    `ix_images_file_path` (the column is not `NOCASE`), so it scans; keep it to
+    one-per-request lookups, never a per-row loop.
+    """
+    if PATHS_FOLD_CASE:
+        return col.like(_like_literal(path), escape="/")
+    return col == path
+
+
+_ASCII_FOLD = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+
+
+def path_str_equals(a: str, b: str) -> bool:
+    """Python twin of `sql_path_equals`: ASCII case-blind under `PATHS_FOLD_CASE`.
+
+    ASCII only, to agree with SQLite's `LIKE` — a row a query matched must also
+    compare equal here, or a guard's message would pick the wrong branch.
+    """
+    if PATHS_FOLD_CASE:
+        return a.translate(_ASCII_FOLD) == b.translate(_ASCII_FOLD)
+    return a == b
+
+
+def path_str_has_prefix(s: str, prefix: str) -> bool:
+    """Python twin of `sql_has_path_prefix` (see `path_str_equals`)."""
+    return path_str_equals(s[: len(prefix)], prefix)
+
+
+def on_disk_spelling(path: Path) -> Path:
+    """`path` with each existing component spelled the way its directory lists it.
+
+    For a case-folding filesystem (`PATHS_FOLD_CASE`), where `c:\\crucible` and
+    `C:\\Crucible` name one folder but store as two strings. Used once at startup
+    to give `settings.datasets_dir` one spelling, whatever case the launch folder
+    was typed in (PM-034).
+
+    **Never follows a link** — no `resolve()`. Stored paths are deliberately
+    unresolved (`canonical_abs_path`), so a root behind a symlink, junction or
+    `subst` must keep that spelling; only the *case* of each name changes. Each
+    component is looked up in a listing of its parent: an exact name wins (a
+    case-sensitive directory can hold both `Foo` and `foo`), else the single
+    case-blind match. The walk stops at the first component it cannot settle —
+    missing, ambiguous, unreadable, or `..` — and keeps the rest as typed. A drive
+    letter is upper-cased; a UNC `\\\\server\\share` anchor is kept as typed. A
+    relative path comes back unchanged.
+    """
+    p = Path(path)
+    if not p.anchor:
+        return p
+    anchor = p.anchor
+    if len(p.drive) == 2 and p.drive[1] == ":":
+        anchor = p.drive.upper() + anchor[2:]
+    current = Path(anchor)
+    parts = p.parts[1:]
+    for i, name in enumerate(parts):
+        if name == "..":
+            return current.joinpath(*parts[i:])
+        try:
+            with os.scandir(current) as it:
+                names = [e.name for e in it]
+        except OSError:
+            return current.joinpath(*parts[i:])
+        if name in names:
+            current = current / name
+            continue
+        folded = name.casefold()
+        matches = [n for n in names if n.casefold() == folded]
+        if len(matches) != 1:
+            return current.joinpath(*parts[i:])
+        current = current / matches[0]
+    return current
+
+
 def _is_unsafe_url_char(c: str) -> bool:
     """The single character predicate `safe_external_url` trims *and* rejects with."""
     return c.isspace() or ord(c) < 0x20 or ord(c) in (0x7F, 0xFEFF)

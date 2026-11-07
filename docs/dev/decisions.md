@@ -64,7 +64,7 @@ record:
 ## 7. M6 is built whole on one branch
 
 **Decided** (2026-11-03, by the user): every M6 stage is built on `feat/m6-comfy-automation`
-and nothing merges until the whole build is done; numbers 7 to 10 are held on that branch.
+and nothing merges until the whole build is done; numbers 7 to 10 were held on that branch until it merged (PR #110, 2026-11-07).
 Full record:
 [decisions/07-m6-built-whole-on-one-branch.md](decisions/07-m6-built-whole-on-one-branch.md).
 

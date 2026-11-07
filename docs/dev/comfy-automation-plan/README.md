@@ -7,8 +7,9 @@ dataset end to end without babysitting it. The first is useful on its own; the s
 on it and holds the architectural risk.
 
 **The whole build stays on one branch and merges once**
-([decision 7](../decisions/07-m6-built-whole-on-one-branch.md)). The order of work is
-[roadmap.md § M6](../roadmap.md#m6--comfyui-per-row-folders-and-automation); this file owns the
+([decision 7](../decisions/07-m6-built-whole-on-one-branch.md)). It merged on 2026-11-07 as
+PR #110; the order of work is archived in
+[roadmap-archive/m6-comfy-automation.md](../roadmap-archive/m6-comfy-automation.md); this file owns the
 *what* of each stage, and the 2026-11-03 revisions are
 [decision 8](../decisions/08-templates-first-filed-by-folder.md) (templates, folders, Top up) and
 [decision 9](../decisions/09-runs-step-forward-on-job-completion.md) (the stepping run).
@@ -18,7 +19,7 @@ no Map row and no word budget. When a stage lands, move its durable rationale in
 named in § Documentation this arc owes and delete the stage from here; delete the folder when
 everything is done.
 
-Stages §1 to §8 are built on this branch; only the merge remains. Read `CLAUDE.md`, `docs/dev/comfyui.md`,
+Every stage is built and merged (PR #110, 2026-11-07). Read `CLAUDE.md`, `docs/dev/comfyui.md`,
 `docs/dev/comfyui/run.md` and `docs/dev/comfyui/prompts.md` before implementing, and prefer the repo's conventions over the
 sketches here.
 

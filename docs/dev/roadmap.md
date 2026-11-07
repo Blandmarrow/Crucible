@@ -65,10 +65,13 @@ restates its stages.
      an amber rail dot and a `TopBar` chip, and the page greys what the server would refuse
      (`docs/dev/comfyui/page.md`); and Restart and Shutdown work under `manage dev`'s
      `--reload` (`docs/dev/http-edge.md`), a bug `main` has too and gets with the merge.
-     That Restart was confirmed live on Linux; on Windows it is unit-tested only, since
-     uvicorn's reloader could not restart a worker in the headless session it was tried in
-     (a bare uvicorn app hung the same way), so one run of `manage.ps1 dev` plus Restart in
-     a real terminal is still owed.
+     That Restart was confirmed live on Linux. The owed Windows check, run on 2026-11-07 in
+     a real console window, **failed**: `Cmd-Dev` ran uvicorn in a `Start-Job`, where the
+     reloader's Ctrl+C never reached its worker, so every reload hung, Restart or a saved
+     `.py` alike (PM-033, also on `main` since May). Fixed the same day: the backend now runs
+     in a console window of its own, and the check passed (two Restarts back in ~2 s each,
+     Shutdown, the window closed when Vite exits). Pressing Ctrl+C on Vite in a real terminal
+     is the one path left to the user's eye; the same `finally` was checked by a Vite exit.
    - **Found in the §8b review, not fixed there:** the gallery's
      `dataset_service.repath_subfolder` matches a folder's subtree with SQLite's case-blind
      `LIKE`, so renaming `knight` also re-paths `Knight/a`; `filesystem.py`'s

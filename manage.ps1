@@ -1029,48 +1029,58 @@ function Cmd-Dev {
     Write-AccessInfo -Port $script:VitePort -CommandName "dev"
     Write-Host ""
 
-    $backendJob = Start-Job -ScriptBlock {
-        param($root, $bindHost, $port)
-        Set-Location $root
+    if (Test-Path "$ROOT\.restart") { Remove-Item "$ROOT\.restart" -Force }
+    if (Test-Path "$ROOT\.shutdown") { Remove-Item "$ROOT\.shutdown" -Force }
 
-        if (Test-Path "$root\.restart") { Remove-Item "$root\.restart" -Force }
-
-        # Under --reload the app restarts via the reloader, not .restart (docs/dev/http-edge.md).
-        $env:CRUCIBLE_DEV_RELOAD = "1"
-        :restart_loop while ($true) {
-            & "$root\venv\Scripts\python.exe" -m uvicorn backend.main:app --host $bindHost --port $port --reload --reload-dir backend
-            if (Test-Path "$root\.restart") {
-                Remove-Item "$root\.restart" -Force
-                Write-Host ""
-                Write-Host "Restarting backend..." -ForegroundColor Yellow
-                Write-Host ""
-            } else {
-                break restart_loop
-            }
-        }
-    } -ArgumentList $ROOT, $script:BindHost, $script:Port
+    # The backend gets a console window of its own, never a Start-Job. uvicorn's
+    # reloader restarts its worker on Windows with CTRL_C_EVENT, which only lands in a
+    # process on a real console that has Ctrl+C enabled: inside a job it never arrived,
+    # so every reload (a saved .py, or Restart) hung the backend. It cannot share this
+    # console either, since that event reaches every process on the console, Vite
+    # included (docs/dev/http-edge.md § Dev mode). No restart loop: under --reload,
+    # Restart goes through the reloader, not .restart. -NoExit keeps a startup error
+    # readable after uvicorn exits.
+    $py = "$ROOT\venv\Scripts\python.exe" -replace "'", "''"
+    $title = "Crucible backend :$($script:Port)"
+    $backendCmd = "`$Host.UI.RawUI.WindowTitle = '$title'; " +
+        "& '$py' -m uvicorn backend.main:app --host $($script:BindHost) --port $($script:Port) --reload --reload-dir backend"
+    # Inherited by the child at Start-Process, then dropped from the caller's session.
+    $env:CRUCIBLE_DEV_RELOAD = "1"
+    $backend = Start-Process powershell.exe -WorkingDirectory $ROOT -WindowStyle Minimized -PassThru `
+        -ArgumentList @("-NoProfile", "-NoExit", "-ExecutionPolicy", "Bypass", "-Command", $backendCmd)
+    Remove-Item Env:CRUCIBLE_DEV_RELOAD -ErrorAction SilentlyContinue
+    Write-Host "Backend log: the '$title' window on the taskbar." -ForegroundColor DarkGray
+    Write-Host ""
 
     Push-Location "$ROOT\frontend"
-    # vite.config.ts proxies /api here. A server bound to one LAN address does
-    # not answer on localhost, so the proxy must follow the bind.
-    $env:CRUCIBLE_API_TARGET = "http://$($script:BrowseHost):$($script:Port)"
-    # node + vite.js directly, never `npm run dev -- ...`: when npm resolves to npm.ps1,
-    # PowerShell consumes the bare `--` itself, and npm.ps1 re-reads the calling line's
-    # source text and Invoke-Expressions it in its own scope, where `$script:VitePort`
-    # is unset (StrictMode then throws). --strictPort: fail rather than drift to
-    # another install's next port.
-    $vite = "$ROOT\frontend\node_modules\vite\bin\vite.js"
-    if ($script:BindMode -eq "loopback") {
-        node $vite --port $script:VitePort --strictPort
-    } else {
-        node $vite --host $script:BindHost --port $script:VitePort --strictPort
+    try {
+        # vite.config.ts proxies /api here. A server bound to one LAN address does
+        # not answer on localhost, so the proxy must follow the bind.
+        $env:CRUCIBLE_API_TARGET = "http://$($script:BrowseHost):$($script:Port)"
+        # node + vite.js directly, never `npm run dev -- ...`: when npm resolves to npm.ps1,
+        # PowerShell consumes the bare `--` itself, and npm.ps1 re-reads the calling line's
+        # source text and Invoke-Expressions it in its own scope, where `$script:VitePort`
+        # is unset (StrictMode then throws). --strictPort: fail rather than drift to
+        # another install's next port.
+        $vite = "$ROOT\frontend\node_modules\vite\bin\vite.js"
+        if ($script:BindMode -eq "loopback") {
+            node $vite --port $script:VitePort --strictPort
+        } else {
+            node $vite --host $script:BindHost --port $script:VitePort --strictPort
+        }
+    } finally {
+        # finally, so Ctrl+C on Vite still runs it.
+        Pop-Location
+        # $env: is the caller's session, not a child scope: do not leave it behind.
+        Remove-Item Env:CRUCIBLE_API_TARGET -ErrorAction SilentlyContinue
+        # Close the backend window with its whole tree: the reloader and its worker are
+        # children of that window's PowerShell, and Stop-Process reaches no children.
+        if ($backend -and -not $backend.HasExited) {
+            $prevEap = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
+            try { & taskkill.exe /PID $backend.Id /T /F 2>$null | Out-Null } finally { $ErrorActionPreference = $prevEap }
+        }
     }
-    Pop-Location
-    # $env: is the caller's session, not a child scope: do not leave it behind.
-    Remove-Item Env:CRUCIBLE_API_TARGET -ErrorAction SilentlyContinue
-
-    Stop-Job $backendJob -ErrorAction SilentlyContinue
-    Remove-Job $backendJob -ErrorAction SilentlyContinue
 }
 
 # ---------------------------------------------------------------------------

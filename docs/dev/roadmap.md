@@ -225,6 +225,8 @@ Detail, hazards and what to leave alone:
   `_apply_bulk_filters` takes a 422 cap at `SELECT_ALL_ID_CAP` rather than chunking, by the
   user's choice on 2026-11-07. Batch move and copy need M4 merged and stay out. Items 12 and 13
   are folded into stage 6, beside item 7.
+- [ ] Stage 1 follow-up 14: guard the copy-mode thumbnail in detection crop and the upscale and
+  LUT loop, as inpaint does. Found by the review of 8, 10 and 11; any time.
 - [x] Stage 2: one shared helper for a job's image scope. Landed 2026-11-04 on
   `refactor/m8-stages-2-3`.
 - [x] Stage 3: a shared job loop for upscale and LUT. Needs stage 2. Landed 2026-11-04 on the

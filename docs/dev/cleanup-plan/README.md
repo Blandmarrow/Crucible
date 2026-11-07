@@ -97,6 +97,12 @@ Still open:
     `frontend/e2e/detail-edit-outcome.spec.ts` sets a 1920px viewport to get past it. Seen only
     in Playwright's Chromium so far, so confirm by hand first. Stage 6 moves those controls into
     forms, so it is folded in there.
+14. **A copy-mode thumbnail raise fails the whole run** in detection crop and in the upscale
+    and LUT loop (`image_edit_job.py`): `generate_thumbnail` sits outside any `try` after the
+    copy is written, and the copy rows are only flushed, so a raise rolls back every earlier
+    copy row while their files stay on disk for a rescan to adopt. Inpaint's copy branch
+    commits first and guards the thumbnail (PM-013 Tier 1); the other two want the same.
+    Found by the review of items 8, 10 and 11.
 
 ## Stages 2 to 4: no port conflict
 

@@ -371,3 +371,70 @@ test('a run started elsewhere shows up on an open Runs page without a reload', a
   await expect(history.getByText('started elsewhere')).toBeVisible({ timeout: 30_000 })
   await expect(history.getByText('completed', { exact: true })).toBeVisible({ timeout: 30_000 })
 })
+
+// A paused run holds no job, so nothing showed it: the plan rail gets an amber dot, the
+// controls the server would refuse (409) are greyed out with its reason, and the TopBar
+// carries a chip to the Runs page. Started over the API and paused at once; it stops at
+// the first stage boundary.
+test('a paused run shows an amber dot, locks what the server refuses, and a TopBar chip', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-paused-${Date.now()}`)
+  let r = await request.post('/api/v1/comfy/plans', {
+    data: {
+      dataset_id: ds.id, name: 'paused plan', workflow_json: WORKFLOW,
+      pinned_params: [{ node_id: '6', input: 'text', alias: 'prompt', is_prompt: true }],
+      output_node_ids: ['9'],
+    },
+  })
+  expect(r.status(), await r.text()).toBe(200)
+  const plan = await r.json()
+  r = await request.put(`/api/v1/comfy/plans/${plan.id}/blueprint`, { data: { spec: SPEC, seed: 3 } })
+  expect(r.status(), await r.text()).toBe(200)
+
+  r = await request.post('/api/v1/runs/', {
+    data: { dataset_id: ds.id, plan_id: plan.id, name: 'paused run', recipe: { stages: ['prompts', 'handoff_to_comfy', 'generate', 'handoff_to_local'] } },
+  })
+  expect(r.status(), await r.text()).toBe(200)
+  const started = await r.json()
+  r = await request.post(`/api/v1/runs/${started.id}/pause`)
+  expect(r.status(), await r.text()).toBe(200)
+  await expect.poll(async () => (await (await request.get(`/api/v1/runs/${started.id}`)).json()).status,
+    { timeout: 30_000 }).toBe('paused')
+
+  const reason = 'An automated run on this plan is running or paused'
+  await page.goto(`/datasets/${ds.id}/comfy`)
+
+  // The chip is on every page; it names the run and leads to the Runs page.
+  const chip = page.getByTestId('topbar-paused-runs')
+  await expect(chip).toContainText(/runs? paused/i)
+  await expect(chip).toHaveAttribute('title', /paused run/)
+
+  const rail = page.getByTestId('comfy-plan-rail')
+  await expect(rail.getByRole('img', { name: 'An automated run is paused' })).toBeVisible()
+
+  await rail.getByRole('button', { name: 'Plan actions for paused plan' }).click()
+  const del = page.getByRole('menuitem', { name: 'Delete…' })
+  await expect(del).toHaveAttribute('aria-disabled', 'true')
+  await expect(del).toHaveAttribute('title', new RegExp(reason))
+  await page.keyboard.press('Escape')
+
+  await page.getByTestId('comfy-add-menu').click()
+  for (const name of ['Add row', 'Paste prompts…', 'Import .txt…']) {
+    const item = page.getByRole('menuitem', { name })
+    await expect(item).toHaveAttribute('aria-disabled', 'true')
+    await expect(item).toHaveAttribute('title', new RegExp(reason))
+  }
+  await page.keyboard.press('Escape')
+
+  // The server's refusal is still the backstop.
+  r = await request.post(`/api/v1/comfy/plans/${plan.id}/rows`, { data: { values: {} } })
+  expect(r.status()).toBe(409)
+
+  await chip.click()
+  await expect(page).toHaveURL(/\/datasets\/[^/]+\/runs$/)
+
+  // Cancelling clears the dot and the chip's run.
+  r = await request.post(`/api/v1/runs/${started.id}/cancel`)
+  expect(r.status(), await r.text()).toBe(200)
+  await page.goto(`/datasets/${ds.id}/comfy`)
+  await expect(page.getByTestId('comfy-plan-rail').getByRole('img', { name: 'An automated run is paused' })).toHaveCount(0)
+})

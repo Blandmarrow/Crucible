@@ -10,6 +10,7 @@ import MoveSubfolderModal from "../gallery/MoveSubfolderModal";
 import FolderNameModal from "./FolderNameModal";
 import DndRow from "./DndRow";
 import { DROP_RING, LIBRARY_REPATH_EVENT, dragId, dropId } from "./dnd";
+import { LIVE_RUN_REASON } from "../../api/runs";
 import { COMFY_LIBRARY_VIEW_KEY } from "../../constants/storage";
 import { apiErrorDetail } from "../../utils/apiError";
 import { loadPersisted, savePersisted } from "../../utils/persistentState";
@@ -29,6 +30,9 @@ export interface ComfyLibraryPanelProps {
   tab: LibraryTab;
   onTabChange: (tab: LibraryTab) => void;
   onClose: () => void;
+  /** Plans (of the page's dataset) whose automated Run is running or paused: the server
+   *  refuses rows added to or moved into or out of them. */
+  liveRunPlanIds?: Set<string>;
 }
 
 const plural = (n: number, word: string) => `${n} ${word}${n !== 1 ? "s" : ""}`;
@@ -80,7 +84,8 @@ function loadClosed(): string[] {
   return Array.isArray(v.closed) ? v.closed.filter((p) => typeof p === "string") : [];
 }
 
-function LibraryTabBody({ datasetId, plan, folders, folderInView }: ComfyLibraryPanelProps) {
+function LibraryTabBody({ datasetId, plan, folders, folderInView, liveRunPlanIds }: ComfyLibraryPanelProps) {
+  const planLive = !!liveRunPlanIds?.has(plan.id);
   const qc = useQueryClient();
   const [search, setSearch] = useState("");
   const [closed, setClosed] = useState<string[]>(loadClosed);
@@ -367,8 +372,9 @@ function LibraryTabBody({ datasetId, plan, folders, folderInView }: ComfyLibrary
             <button
               className="btn primary sm"
               disabled={none || !hasPromptPin || addMutation.isPending}
-              title={hasPromptPin ? undefined : "This plan has no prompt pin, so there is nowhere to put the text"}
-              onClick={() => addMutation.mutate()}
+              aria-disabled={planLive || undefined}
+              title={planLive ? LIVE_RUN_REASON : hasPromptPin ? undefined : "This plan has no prompt pin, so there is nowhere to put the text"}
+              onClick={() => { if (!planLive) addMutation.mutate(); }}
             >
               {none ? "Add to plan" : `Add ${selected.length} to plan`}
             </button>
@@ -589,7 +595,7 @@ function PromptEditor({ initial, saving, onCancel, onSave }: {
 
 // ── Other plans tab ───────────────────────────────────────────────────────────
 
-function OtherPlansTabBody({ datasetId, plan }: ComfyLibraryPanelProps) {
+function OtherPlansTabBody({ datasetId, plan, liveRunPlanIds }: ComfyLibraryPanelProps) {
   const qc = useQueryClient();
   const [sourceDatasetId, setSourceDatasetId] = useState(datasetId);
   const [sourcePlanId, setSourcePlanId] = useState("");
@@ -674,8 +680,14 @@ function OtherPlansTabBody({ datasetId, plan }: ComfyLibraryPanelProps) {
     },
   });
 
+  // The server refuses rows into a plan with a live Run, and out of one on a move.
+  const liveReason = (move: boolean) =>
+    liveRunPlanIds?.has(plan.id) || (move && !!srcId && sourceDatasetId === datasetId && liveRunPlanIds?.has(srcId))
+      ? LIVE_RUN_REASON : undefined;
+
   function run(move: boolean) {
     if (copyMutation.isPending) return;
+    if (liveReason(move)) return;
     if (move && linkedCount > 0) setAsking(true);
     else copyMutation.mutate({ move, linked: "refuse" });
   }
@@ -757,10 +769,12 @@ function OtherPlansTabBody({ datasetId, plan }: ComfyLibraryPanelProps) {
         </div>
       ) : (
         <div style={{ display: "flex", gap: 6 }}>
-          <button className="btn primary sm" disabled={selected.length === 0 || copyMutation.isPending} onClick={() => run(false)}>
+          <button className="btn primary sm" disabled={selected.length === 0 || copyMutation.isPending}
+            aria-disabled={liveReason(false) ? true : undefined} title={liveReason(false)} onClick={() => run(false)}>
             Copy here ({selected.length})
           </button>
-          <button className="btn sm" disabled={selected.length === 0 || copyMutation.isPending} onClick={() => run(true)}>
+          <button className="btn sm" disabled={selected.length === 0 || copyMutation.isPending}
+            aria-disabled={liveReason(true) ? true : undefined} title={liveReason(true)} onClick={() => run(true)}>
             Move here ({selected.length})
           </button>
         </div>

@@ -788,3 +788,111 @@ def test_the_gate_stage_starts_after_its_plan_was_deleted(tmp_path):
             # Reached the gate itself (nothing to judge), not "The run's plan was deleted".
             assert out == ("completed", "skipped", "This pass produced no images to gate")
     run(go())
+
+
+# Box checks (2026-11-07) ──────────────────────────────────────────────────────
+
+async def _release_jobs(env, run_id: str) -> list[BackgroundJob]:
+    return [j for j in await _jobs(env, "run_handoff") if (j.config or {}).get("after_run") == run_id]
+
+
+def test_a_failed_run_frees_comfyui_with_a_job_that_steps_nothing(tmp_path, monkeypatch):
+    """The user's ruling, 2026-11-07: a run that ends failed never reaches
+    `handoff_to_local`, so it frees ComfyUI itself."""
+    async def go():
+        async with api_env(tmp_path) as env:
+            fake, ds, plan_id = await _plan(env, monkeypatch)
+            await _add_row(env, plan_id, f"broken {FAIL_MARKER}")
+            code, body = await _start(env, ds["id"], plan_id, ["generate", "handoff_to_local"])
+            assert code == 200, body
+            done = await wait_for_run(env, body["id"])
+            assert done["status"] == "failed", done
+            await job_queue._queue.join()
+            assert len(fake.frees) == 1
+            (job,) = await _release_jobs(env, body["id"])
+            assert job.status == "completed"
+            assert job.result_data["note"] == "Asked ComfyUI to unload its models"
+            # Its config carries no `run_id`, so its end stepped nothing.
+            assert "run_id" not in job.config
+            assert await _get(env, body["id"]) == done
+    run(go())
+
+
+def test_a_cancel_frees_comfyui_only_after_the_running_generate_stops(tmp_path, monkeypatch):
+    async def go():
+        async with api_env(tmp_path) as env:
+            fake, ds, plan_id = await _plan(env, monkeypatch, FakeComfy(canvas_running=False, complete=True, polls_before_done=30))
+            await _add_row(env, plan_id, "a knight")
+            code, body = await _start(env, ds["id"], plan_id, ["generate", "handoff_to_local"])
+            assert code == 200, body
+            child = body["current_job_id"]
+            for _ in range(200):
+                if (await env.client.get(f"{API}/jobs/{child}")).json()["status"] == "running":
+                    break
+                await asyncio.sleep(0.05)
+            r = await env.client.post(f"{API}/runs/{body['id']}/cancel")
+            assert r.status_code == 200 and r.json()["status"] == "cancelled", r.text
+            await job_queue._queue.join()
+            (release,) = await _release_jobs(env, body["id"])
+            async with env.Session() as db:
+                gen = await db.get(BackgroundJob, child)
+            assert gen.status == "cancelled"
+            # Queued behind the child, so it ran only once the child had stopped.
+            assert release.started_at >= gen.finished_at
+            assert len(fake.frees) == 1
+    run(go())
+
+
+def test_a_failed_caption_unloads_its_model_and_leaves_comfyui_alone(tmp_path, monkeypatch):
+    """Both sides by the same rule: the caption model is owed an unload, ComfyUI is not,
+    since `handoff_to_local` already ran."""
+    async def go():
+        async with api_env(tmp_path) as env:
+            fake, ds, plan_id = await _plan(env, monkeypatch)
+            await _add_row(env, plan_id, "a knight")
+            model = await _caption_model(env, monkeypatch)
+            import backend.ml.openai_compat_captioner as mod
+
+            async def _boom(image_path, **kwargs):
+                raise RuntimeError("provider is down")
+
+            monkeypatch.setattr(mod, "caption_image", _boom)
+            calls: list = []
+            monkeypatch.setattr(run_service, "_LLM_TRANSPORT", _fake_llm_server(
+                [{"key": "qwen-vl", "loaded_instances": [{"id": "qwen-vl"}]}], calls))
+            code, body = await _start(env, ds["id"], plan_id,
+                                      ["generate", "handoff_to_local", "caption", "free_caption_model"],
+                                      caption={"model": model})
+            assert code == 200, body
+            done = await wait_for_run(env, body["id"])
+            assert done["status"] == "failed", done
+            await job_queue._queue.join()
+            (release,) = await _release_jobs(env, body["id"])
+            assert release.result_data["note"] == "Unloaded qwen-vl from LM Studio"
+            assert [b["instance_id"] for m, p, b in calls if p == "/api/v1/models/unload"] == ["qwen-vl"]
+            assert len(fake.frees) == 1  # the run's own handoff_to_local, nothing more
+    run(go())
+
+
+def test_a_queued_child_cancelled_from_the_topbar_fails_the_run_at_once(tmp_path, monkeypatch):
+    """`DELETE /jobs/{id}` on a run's queued child steps the run there and then, rather
+    than when the worker reaches the job; the worker's later call changes nothing."""
+    async def go():
+        async with api_env(tmp_path) as env:
+            fake, ds, plan_id = await _plan(env, monkeypatch)
+            await _add_row(env, plan_id, "a knight")
+            gate = await _block_worker(env)
+            code, body = await _start(env, ds["id"], plan_id, ["generate", "handoff_to_local"])
+            assert code == 200, body
+            assert (await env.client.delete(f"{API}/jobs/{body['current_job_id']}")).status_code == 204
+            now = await _get(env, body["id"])
+            assert now["status"] == "failed", now
+            assert _statuses(now) == {"generate": "cancelled", "handoff_to_local": "pending"}
+            assert "cancelled outside the run" in now["error_msg"]
+            gate.set()
+            await job_queue._queue.join()
+            assert await _get(env, body["id"]) == now
+            # The generate never started, so nothing was loaded and nothing is freed.
+            assert await _release_jobs(env, body["id"]) == []
+            assert fake.frees == []
+    run(go())

@@ -139,8 +139,22 @@ hand check: the fake has no pause.
     job, counts too. That needs `plan_id` on the job's events: the prompt and rewrite jobs
     always sent it, and the generate job's progress events carry it since the review. It disables the selection bar's *Delete*, the tree's folder writes
     (*New folder…* and its header + included) and the rail's *Delete…*. A paused automated
-    Run has no job, so for that case the server's 409 is the only lock, and the page shows its
-    text through `apiErrorDetail` (`docs/dev/comfyui/queue.md` § Backend has the guards).
+    Run has no job, so the page reads the dataset's Runs instead (below), and the server's 409
+    stays the backstop (`docs/dev/comfyui/queue.md` § Backend has the guards).
+  - **A paused or running automated Run is read from `["runs", datasetId]`** (the Runs page's
+    key, so its invalidations apply; `runsApi.list`), refetched on a 30 s poll and whenever one of
+    the dataset's jobs changes status (a statuses-only store key, as `RunsPage` builds). From it
+    the page derives `liveRunPlanIds` (running or paused), `pausedPlanIds` and the running
+    ones. `liveRunPlanIds` joins `busyPlanIds`; running Runs join `runningPlanIds` (blue dot
+    between child jobs). The rail's `planDot` order is running (blue), paused (amber,
+    `var(--warn)`, "An automated run is paused"), failed (red). The controls the server refuses with
+    `_refuse_live_run` (`routers/comfy.py`) are greyed out with `LIVE_RUN_REASON` (`api/runs.ts`,
+    the server's text) as the tooltip: the rail's *Delete…*, Add ▾'s *Add row*, *Paste prompts…* and
+    *Import .txt…*, the selection bar's *Delete*, the library panel's *Add n to plan* (and *Copy
+    here* / *Move here* on Other plans), `CopyRowsToPlanModal`'s button (target live, or the source
+    on a move) and Blueprint *Apply* / *Top up* (`BlueprintPreview`'s `liveRun`). Folder writes
+    ride on `planBusy`. Not covered: *Generate prompts…*'s add, a drop of rows onto a locked plan in the rail, and a
+    move out of a plan in another dataset; the 409 toast handles those.
   - While a run is live the page invalidates
   `["comfy","rows",planId]` (that run's plan, not the viewed one) and `["comfy","plans",datasetId]`
   on each progress event, so row statuses and the rail's dot update in place; on terminal status it also invalidates `["images", datasetId]`,

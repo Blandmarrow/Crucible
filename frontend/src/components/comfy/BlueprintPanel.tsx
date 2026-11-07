@@ -26,6 +26,8 @@ interface Props {
   hasPromptPin: boolean;
   /** A run is live on this plan: the server refuses Apply, so the form is read-only. */
   running: boolean;
+  /** An automated Run on this plan is running or paused: the server refuses Apply and Top up. */
+  liveRun?: boolean;
   /** The run bar's Base folder and Prompt-as-caption toggle, which Top up runs with. */
   subfolder: string;
   setCaption: boolean;
@@ -65,7 +67,7 @@ export default function BlueprintPanel(props: Props) {
   );
 }
 
-function BlueprintForm({ planId, datasetId, hasPromptPin, running, subfolder, setCaption, onRunStarted, initial }: Props & { initial: BlueprintValue }) {
+function BlueprintForm({ planId, datasetId, hasPromptPin, running, liveRun, subfolder, setCaption, onRunStarted, initial }: Props & { initial: BlueprintValue }) {
   const [spec, setSpec] = useState<BlueprintSpec>(initial.spec);
   const [seed, setSeed] = useState(initial.seed);
   const value: BlueprintValue = { spec, seed };
@@ -239,7 +241,7 @@ function BlueprintForm({ planId, datasetId, hasPromptPin, running, subfolder, se
       {/* Outside the editors: its own `running` guard replaces the fieldset it sat in. */}
       <BlueprintPreview
         planId={planId} datasetId={datasetId} value={value}
-        hasPromptPin={hasPromptPin} running={running}
+        hasPromptPin={hasPromptPin} running={running} liveRun={liveRun}
         subfolder={subfolder} setCaption={setCaption} onRunStarted={onRunStarted}
       />
      </div>

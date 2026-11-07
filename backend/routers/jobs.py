@@ -1,4 +1,5 @@
 import json
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select
@@ -10,6 +11,8 @@ from backend.models import BackgroundJob
 from backend.schemas.job import JobOut
 from backend.workers.job_queue import job_queue
 from backend.workers.progress import broadcaster
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -74,6 +77,18 @@ async def cancel_job(job_id: str, db: AsyncSession = Depends(get_db)):
         # report a different outcome.
         job.status = "cancelled"
         await db.commit()
+        run_id = (job.config or {}).get("run_id")
+        if run_id:
+            # An automated run's child, cancelled before it started: step the run now.
+            # The worker would only do it on reaching the job, so until the job ahead
+            # finished the run read `running` with nothing in flight (found 2026-11-07).
+            # Its later call finds the stage already ended and does nothing.
+            from backend.services import run_service
+
+            try:
+                await run_service.advance_run(run_id, job_id)
+            except Exception:
+                logger.exception("Could not step run %s after its queued job was cancelled", run_id)
     # A running job stops cooperatively — loops poll the flag between items, so
     # the job keeps working until its next check (for comfy_prompts that is a
     # whole LLM call, up to 120 s). Writing "cancelled" here would put a terminal

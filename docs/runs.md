@@ -90,9 +90,16 @@ name in front of its label.
   available meanwhile: if the snapshot has already finished or is gone, pressing it again
   ends the run at once.
 
+A paused run holds no job, so two things show it. On the ComfyUI page its plan gets an
+amber dot in the plan list, and a chip in the top bar ("Run paused") links to the Runs page
+on every page of the app. Crucible pauses every running run when it restarts, so look for
+the chip after a restart.
+
 A dataset can have one run going or paused at a time. While a run on a plan is going or
 paused, that plan's **Apply** and **Top up** buttons are refused, so nothing adds rows
-between its passes. A repeating run shows its stages grouped by pass.
+between its passes. The ComfyUI page greys out the other things that would be refused, with
+the reason as a tooltip: **Delete** on the plan, **Add row**, **Paste prompts**, **Import .txt**,
+deleting rows, **Add to plan** in the library, and copying or moving rows into the plan. A repeating run shows its stages grouped by pass.
 
 Finished runs are listed under *Past runs*. Each has **Delete**, **Use these settings**,
 **Resume** if it failed, and **Raise caps and continue** (see [Repeating a run](repeating-runs.md)) if a cap stopped it. The last

@@ -5,6 +5,7 @@ import toast from "react-hot-toast";
 import { comfyApi, type BlueprintValue } from "../../api/comfy";
 import { useDebouncedValue } from "../../hooks/useDebouncedValue";
 import { apiErrorDetail } from "../../utils/apiError";
+import { LIVE_RUN_REASON } from "../../api/runs";
 import RewriteModal from "./RewriteModal";
 
 const PREVIEW_DEBOUNCE_MS = 350;
@@ -18,6 +19,8 @@ interface Props {
   /** A run is live on this plan. The preview sits outside the editors' read-only
    *  fieldsets, so it disables its own buttons and options. */
   running: boolean;
+  /** An automated Run on this plan is running or paused: Apply and Top up are refused. */
+  liveRun?: boolean;
   /** The run bar's settings, which Top up runs with (read-only here). */
   subfolder: string;
   setCaption: boolean;
@@ -28,7 +31,7 @@ interface Props {
 const cell = { padding: "4px 8px", textAlign: "left" as const, fontSize: 12 };
 const num = { ...cell, textAlign: "right" as const };
 
-export default function BlueprintPreview({ planId, datasetId, value, hasPromptPin, running, subfolder, setCaption, onRunStarted }: Props) {
+export default function BlueprintPreview({ planId, datasetId, value, hasPromptPin, running, liveRun, subfolder, setCaption, onRunStarted }: Props) {
   const qc = useQueryClient();
   // Folders whose sample prompts are shown, by scenario + "/" + path.
   const [openLeaves, setOpenLeaves] = useState<Set<string>>(() => new Set());
@@ -156,6 +159,7 @@ export default function BlueprintPreview({ planId, datasetId, value, hasPromptPi
   const overCapBlocked = !!preview?.over_cap && !allowOverCap;
   const blockedReason = running
     ? "A run is in progress on this plan"
+    : liveRun ? LIVE_RUN_REASON
     : !hasPromptPin
     ? "Mark a pinned parameter as the prompt first (Workflow & Pins)"
     : errors.length > 0 ? "Fix the errors first"

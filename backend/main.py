@@ -245,10 +245,41 @@ _SHUTDOWN_SENTINEL = Path(__file__).parent.parent / ".shutdown"
 _START_TIME = time.time()
 
 
+# `manage.* dev` sets CRUCIBLE_DEV_RELOAD=1 because it runs uvicorn with --reload. There
+# `os.getpid()` is the reloader's *worker*: killing it leaves the reloader parent alive and
+# idle, so the manage script's restart loop never sees uvicorn end (docs/dev/http-edge.md).
+_DEV_RELOAD_TRIGGER = Path(__file__).parent / "_dev_reload_trigger.py"
+
+
+def _dev_reload() -> bool:
+    return os.environ.get("CRUCIBLE_DEV_RELOAD") == "1"
+
+
+def _dev_reload_restart() -> None:
+    """Ask uvicorn's own reloader to respawn the worker, by changing a watched file.
+
+    Non-hidden `*.py` under `backend/`: --reload ignores dotfiles by default. The file is
+    gitignored and never imported; only its mtime and content matter to the reloader.
+    """
+    _DEV_RELOAD_TRIGGER.write_text(f"# touched by POST /restart at {time.time()!r}\n", encoding="utf-8")
+
+
+def _dev_reload_shutdown() -> None:
+    """End the whole dev backend: the reloader parent first, then this worker.
+
+    Signalling the parent alone would orphan the worker on Windows (os.kill there is
+    TerminateProcess, which does not reach children), so the worker also ends itself.
+    """
+    time.sleep(0.5)  # let the 204 reach the client first; Windows kills are not graceful
+    os.kill(os.getppid(), signal.SIGTERM)
+    os.kill(os.getpid(), signal.SIGTERM)
+
+
 @app.post("/api/v1/shutdown", status_code=204)
 async def shutdown():
     _SHUTDOWN_SENTINEL.touch()
-    threading.Thread(target=lambda: os.kill(os.getpid(), signal.SIGTERM), daemon=True).start()
+    target = _dev_reload_shutdown if _dev_reload() else (lambda: os.kill(os.getpid(), signal.SIGTERM))
+    threading.Thread(target=target, daemon=True).start()
 
 
 @app.get("/api/v1/health", status_code=200)
@@ -260,6 +291,9 @@ async def health():
 async def restart():
     def _do_restart():
         _SHUTDOWN_SENTINEL.unlink(missing_ok=True)
+        if _dev_reload():
+            _dev_reload_restart()
+            return
         _RESTART_SENTINEL.touch()
         os.kill(os.getpid(), signal.SIGTERM)
     threading.Thread(target=_do_restart, daemon=True).start()

@@ -58,22 +58,17 @@ restates its stages.
    - **Not held open: §6c's "cancelling after the snapshot" state.** On the box a snapshot of
      834 images took about 1 s, too short to hold the wait open by hand, so its UI text and a
      second Cancel during it rest on `test_run_snapshot.py`'s gated snapshot.
-   - **Found in the box checks, open — the user decides before or after the merge:**
-     - A run that ends `failed` or `cancelled` after `handoff_to_comfy` never reaches
-       `handoff_to_local`, so ComfyUI keeps its models; on the 16 GB card the next Strata
-       load then got 10.2 GB instead of 15.6. A best-effort ComfyUI `/free` on such an end
-       would fix it.
-     - A paused automated run shows no dot in the plan rail, and the rail greys Delete only
-       for a live job, so a paused run's plan offers Delete and refuses it on confirm.
-     - A `TopBar` cancel of a run's child that is still queued leaves the run reading
-       `running` until the worker reaches that job (`docs/dev/comfyui/automation.md`
-       § Cancel, pause, resume, restart). `DELETE /jobs/{id}` on a pending run child could
-       step the run at once.
-   - **Found in the box checks, a fix for `main`:** `TopBar`'s Restart never comes back under
-     `manage.sh dev`. `cmd_dev` runs uvicorn with `--reload`, so `POST /restart`'s
-     `os.kill(os.getpid(), SIGTERM)` stops only the reload worker; the reloader neither
-     respawns it nor exits, so the restart loop never sees uvicorn end and `.restart` is left
-     behind. `start` is unaffected; `manage.ps1`'s dev path was not checked.
+   - **What the box checks found beyond the owed list was fixed the same day**, under the
+     user's rulings: a run that ends `failed` or `cancelled` frees ComfyUI and any local LLM
+     it left loaded, and a `TopBar` cancel of a queued child steps its run at once
+     (`docs/dev/comfyui/automation.md` § Cancel, pause, resume, restart); a paused run shows
+     an amber rail dot and a `TopBar` chip, and the page greys what the server would refuse
+     (`docs/dev/comfyui/page.md`); and Restart and Shutdown work under `manage dev`'s
+     `--reload` (`docs/dev/http-edge.md`), a bug `main` has too and gets with the merge.
+     That Restart was confirmed live on Linux; on Windows it is unit-tested only, since
+     uvicorn's reloader could not restart a worker in the headless session it was tried in
+     (a bare uvicorn app hung the same way), so one run of `manage.ps1 dev` plus Restart in
+     a real terminal is still owed.
    - **Found in the §8b review, not fixed there:** the gallery's
      `dataset_service.repath_subfolder` matches a folder's subtree with SQLite's case-blind
      `LIKE`, so renaming `knight` also re-paths `Knight/a`; `filesystem.py`'s

@@ -103,6 +103,13 @@ dataset, so a dataset switch shows that dataset's own; a `prevDatasetId` effect,
   until the page was reopened (found on the box, 2026-11-07; `runs.spec.ts` "a run started
   elsewhere shows up on an open Runs page without a reload"). The children keep their own job types, so `TopBar`'s `LIVE_IMAGE_JOB_TYPES` and
   `IMAGE_MODIFYING_JOB_TYPES` fire their usual invalidations; `run_handoff` needs no entry.
+- **The TopBar's paused-run chip.** `GET /runs/` takes an optional `dataset_id` (omitted: every
+  dataset's runs) and an optional `status`. `TopBar` lists `status=paused` under `PAUSED_RUNS_KEY`
+  (`["runs","paused-chip"]`, deliberately not under `["runs", datasetId]`), on a 30 s poll and on
+  any job status change; `RunsPage` invalidates it when its own paused set changes, since a
+  paused run's cancel emits no job event. The chip ("Run paused" / "N runs paused", `title` naming
+  the runs) links to the Runs page of the newest paused run's dataset. A restart pauses every
+  running run, which is what it is for (`runs.spec.ts` "a paused run shows an amber dot").
 - Past runs are listed below, with Resume for a failed one, Delete, **Use these
   settings**, and **Raise caps and continue** where `RunOut.can_extend`
   (`docs/dev/comfyui/run-budgets.md` § Raising a cap and carrying on). The last two are not

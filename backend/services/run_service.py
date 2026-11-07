@@ -652,6 +652,8 @@ async def _end_stage(db: AsyncSession, run: Run, idx: int, status: str, *, note:
         if run_status in FINISHED_STATUSES:
             run.finished_at = datetime.utcnow()
     await db.commit()
+    if run_status in ("failed", "cancelled"):
+        await _release_gpu(db, run)
 
 
 async def _begin_stage(db: AsyncSession, run: Run, idx: int, key: str) -> _Outcome:
@@ -969,6 +971,107 @@ async def _handoff(direction: str, comfy_url: str | None) -> str:
     except Exception as e:
         logger.warning("ComfyUI /free failed during a run's handoff: %s", e)
         return f"ComfyUI did not free its models ({type(e).__name__}); continuing"
+
+
+# The stage that loads a model, paired with the stage that unloads it again. Only
+# `generate` loads anything into ComfyUI; `handoff_to_comfy` frees the other side.
+_LOADS = (
+    ("generate", "handoff_to_local"),
+    ("rewrite", "free_rewrite_model"),
+    ("caption", "free_caption_model"),
+)
+
+
+async def _gpu_debts(db: AsyncSession, run: Run) -> tuple[bool, list[str]]:
+    """What a run that ends here left on the GPU: whether ComfyUI may still hold its
+    models, and the LLM models (as `_free_llm` names them) still loaded.
+
+    A load is owed when its stage ran — `done`, or its child job actually started — and
+    no later unloading stage finished. A failed or cancelled run never reaches the
+    unloading stage, so without this ComfyUI kept its models and the next local LLM
+    loaded into what was left: on a 16 GB card Strata got 10.2 GB instead of 15.6
+    (measured 2026-11-07). A stage cancelled while its job was still queued loaded
+    nothing and owes nothing.
+    """
+    stages = run.stages or []
+    job_ids = [s["job_id"] for s in stages if s.get("job_id")]
+    started_jobs = set()
+    if job_ids:
+        started_jobs = set((await db.execute(
+            select(BackgroundJob.id).where(BackgroundJob.id.in_(job_ids), BackgroundJob.started_at.is_not(None))
+        )).scalars())
+
+    def ran(s: dict) -> bool:
+        return s["status"] == "done" or (s["status"] != "pending" and s.get("job_id") in started_jobs)
+
+    def owed(load: str, unload: str) -> bool:
+        anchor = max((i for i, s in enumerate(stages) if s["key"] == load and ran(s)), default=None)
+        if anchor is None:
+            return False
+        return not any(i > anchor and s["key"] == unload and s["status"] == "done" for i, s in enumerate(stages))
+
+    comfy = owed(*_LOADS[0])
+    recipe = RunRecipe.model_validate(run.recipe)
+    llms: list[str] = []
+    if recipe.rewrite is not None and owed(*_LOADS[1]):
+        llms.append(f"openai_compat:{recipe.rewrite.provider_id}:{recipe.rewrite.model_name.strip()}")
+    if recipe.caption is not None and owed(*_LOADS[2]):
+        llms.append(recipe.caption.model)
+    return comfy, list(dict.fromkeys(llms))
+
+
+async def _release_gpu(db: AsyncSession, run: Run) -> None:
+    """A run that ended failed or cancelled frees what it left loaded (the user's ruling,
+    2026-11-07): ComfyUI's models, and the rewrite or caption model, by the same calls
+    the unloading stages make.
+
+    A queued job of its own, never work in the hook: `advance_run` runs inside the
+    worker, and the single worker also orders it. After a cancel the job waits behind
+    the child still stopping, so a generate job that sends one more row cannot load the
+    models again after they were freed. Its config carries no `run_id`, so its end
+    steps nothing. Best effort and after the run's commit: a failure is logged and
+    changes nothing (PM-013).
+    """
+    try:
+        comfy, llms = await _gpu_debts(db, run)
+        if not comfy and not llms:
+            return
+        comfy_url = None
+        if comfy:
+            from backend.services.threshold_service import get_thresholds
+
+            comfy_url = ((await get_thresholds(db)).comfyui_url or "").strip() or None
+            comfy = comfy_url is not None
+        if not comfy and not llms:
+            return
+        job = BackgroundJob(
+            job_type="run_handoff",
+            label=run_job_label(f'Run "{run.name}" · ', "free the GPU"),
+            dataset_id=run.dataset_id,
+            total_items=1,
+            config={"direction": "release", "after_run": run.id, "comfy": comfy, "llm_models": llms},
+        )
+        db.add(job)
+        await db.commit()
+
+        async def _run(job_id: str) -> None:
+            notes = []
+            if comfy:
+                notes.append(await _handoff("to_local", comfy_url))
+            for model in llms:
+                notes.append(await _free_llm(model))
+            from backend.database import AsyncSessionLocal
+
+            async with AsyncSessionLocal() as session:
+                row = await session.get(BackgroundJob, job_id)
+                if row is not None:
+                    row.result_data = {"note": "; ".join(notes)}
+                    row.done_items = 1
+                    await session.commit()
+
+        await job_queue.enqueue(job, _run)
+    except Exception:
+        logger.exception("Run %s could not queue the job that frees the GPU", run.id)
 
 
 # The transport every LLM-server call here goes through; tests set a MockTransport.
@@ -1724,6 +1827,8 @@ async def cancel_run(db: AsyncSession, run_id: str) -> Run:
                     job.status = "cancelled"
                     await db.commit()
                 job_queue.request_cancel(child_id)
+        # Queued behind the child still stopping, so it frees the GPU once that child is done.
+        await _release_gpu(db, run)
         return run
 
 
@@ -1864,4 +1969,9 @@ async def reconcile_interrupted_runs() -> int:
                 run.status = "completed"
                 run.finished_at = datetime.utcnow()
         await db.commit()
+        # Queued before the worker starts, so it runs first. A crash leaves ComfyUI holding
+        # whatever it loaded; a paused run keeps its state for the resume.
+        for run in runs:
+            if run.status in ("failed", "cancelled"):
+                await _release_gpu(db, run)
         return len(runs)

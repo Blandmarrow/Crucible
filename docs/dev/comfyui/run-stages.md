@@ -24,6 +24,10 @@ stages are `docs/dev/comfyui/run-loop.md` and the `gate` stage is
 | `free_caption_model` | A `run_handoff` job (direction `after_caption`): `_free_caption_model` unloads whatever captioned, best effort. Skipped with a note when the recipe has no caption stage, and the page only sends it when Caption is on. See below. |
 | `export` | `start_export_job` with `image_ids=None`: the whole dataset through the form's filters. `ExportSettings` is named after the export requests, with `exclude_flags` a list joined for them (`_export_body`); duplicates are left out by default. Loss masks, the license and label filters and the subfolder limit are not in it yet. |
 
+A run that ends `failed` or `cancelled` never reaches its unloading stages, so it frees
+the GPU with a job of its own, `_release_gpu` (`docs/dev/comfyui/automation.md` § Cancel,
+pause, resume, restart).
+
 **A stage with nothing in scope is skipped, never started with `[]`.** Score, caption and
 export read `image_ids: []` as the whole dataset (`if body.image_ids:`; the HTTP routes keep
 that). So the image stages skip when the run produced no images, and treat a start

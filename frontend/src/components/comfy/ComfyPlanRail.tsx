@@ -2,14 +2,19 @@ import { useState } from "react";
 import { MoreHorizontal, Plus } from "lucide-react";
 import ContextMenu from "../common/ContextMenu";
 import type { ComfyPlanSummary } from "../../api/comfy";
+import { LIVE_RUN_REASON } from "../../api/runs";
 import DndRow from "./DndRow";
 import { DROP_RING, dropId } from "./dnd";
 
 interface Props {
   plans: ComfyPlanSummary[];
   activePlanId: string | null;
-  /** Plans with a run this page launched and is still tracking. */
+  /** Plans with a run this page launched and is still tracking, or an automated Run that is running. */
   runningPlanIds: Set<string>;
+  /** Plans whose automated Run is paused: it holds no job, so only this shows it. */
+  pausedPlanIds: Set<string>;
+  /** Plans whose automated Run is running or paused: the server refuses a delete (409). */
+  liveRunPlanIds: Set<string>;
   /** Plans that refuse a delete now: a live run or a generate/prompts/rewrite job. */
   busyPlanIds: Set<string>;
   onSelect: (planId: string) => void;
@@ -21,9 +26,11 @@ interface Props {
   onDelete: (plan: ComfyPlanSummary) => void;
 }
 
-/** The dot beside a plan: running wins over failed, since a run may yet retry. */
-function planDot(p: ComfyPlanSummary, running: boolean): { color: string; label: string } | null {
+/** The dot beside a plan: running wins over paused, and paused over failed, since a run
+ *  may yet retry (a paused one waits on the user). */
+function planDot(p: ComfyPlanSummary, running: boolean, paused: boolean): { color: string; label: string } | null {
   if (running || (p.status_counts.running ?? 0) > 0) return { color: "var(--info)", label: "Running" };
+  if (paused) return { color: "var(--warn)", label: "An automated run is paused" };
   if ((p.status_counts.failed ?? 0) > 0) return { color: "var(--bad)", label: `${p.status_counts.failed} failed` };
   return null;
 }
@@ -31,7 +38,7 @@ function planDot(p: ComfyPlanSummary, running: boolean): { color: string; label:
 /** The Rows tab's plan list (M6 §8b): one entry per plan with its row count, a status
  *  dot, and a ⋯ menu for Rename, Duplicate and Delete. *New plan* sits under it. */
 export default function ComfyPlanRail({
-  plans, activePlanId, runningPlanIds, busyPlanIds, onSelect, onCreate, creating, onRename, renaming, onDuplicate, onDelete,
+  plans, activePlanId, runningPlanIds, pausedPlanIds, liveRunPlanIds, busyPlanIds, onSelect, onCreate, creating, onRename, renaming, onDuplicate, onDelete,
 }: Props) {
   const [menu, setMenu] = useState<{ plan: ComfyPlanSummary; x: number; y: number } | null>(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -57,7 +64,7 @@ export default function ComfyPlanRail({
     <section className="comfy-rail-panel" data-testid="comfy-plan-rail" aria-label="Plans">
       <div className="comfy-rail-h">Plans</div>
       {plans.map((p) => {
-        const dot = planDot(p, runningPlanIds.has(p.id));
+        const dot = planDot(p, runningPlanIds.has(p.id), pausedPlanIds.has(p.id));
         const active = p.id === activePlanId;
         if (renameId === p.id) {
           return (
@@ -153,7 +160,9 @@ export default function ComfyPlanRail({
             {
               label: "Delete…", danger: true,
               disabled: busyPlanIds.has(menu.plan.id),
-              title: busyPlanIds.has(menu.plan.id) ? "Wait for this plan's run or job to finish" : undefined,
+              title: liveRunPlanIds.has(menu.plan.id)
+                ? LIVE_RUN_REASON
+                : busyPlanIds.has(menu.plan.id) ? "Wait for this plan's run or job to finish" : undefined,
               onClick: () => onDelete(menu.plan),
             },
           ]}

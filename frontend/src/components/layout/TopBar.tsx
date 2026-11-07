@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { datasetsApi } from "../../api/datasets";
 import { jobsApi } from "../../api/jobs";
+import { runsApi, PAUSED_RUNS_KEY } from "../../api/runs";
 import { useJobStore } from "../../store/jobStore";
 import { useUploadStore } from "../../store/uploadStore";
 import { useAllJobsSSE } from "../../hooks/useSSE";
@@ -110,6 +111,25 @@ export default function TopBar() {
   const runningJob = [...jobs.values()].find((j) => j.status === "running");
   const pendingJobs = [...jobs.values()].filter((j) => j.status === "pending");
   const uploadProgress = useUploadStore((s) => s.progress);
+
+  // A paused automated run holds no job, so nothing else on screen shows it, and a
+  // server restart pauses every running run. Slow poll, plus a refetch whenever a job
+  // changes status (statuses only, so progress ticks do not refetch). RunsPage refreshes
+  // this key when its own list changes.
+  const { data: pausedRuns = [] } = useQuery({
+    queryKey: PAUSED_RUNS_KEY,
+    queryFn: () => runsApi.list(undefined, "paused"),
+    refetchInterval: 30_000,
+  });
+  const jobStatusKey = useJobStore((s) => {
+    let key = "";
+    for (const j of s.activeJobs.values()) key += `${j.job_id}:${j.status};`;
+    return key;
+  });
+  useEffect(() => {
+    if (jobStatusKey) qc.invalidateQueries({ queryKey: PAUSED_RUNS_KEY });
+  }, [jobStatusKey, qc]);
+
   const [showConfirm, setShowConfirm] = useState(false);
   const [shuttingDown, setShuttingDown] = useState(false);
   const [showRestartConfirm, setShowRestartConfirm] = useState(false);
@@ -620,6 +640,17 @@ export default function TopBar() {
               Cancel all
             </button>
           </div>
+        )}
+        {pausedRuns.length > 0 && (
+          <Link
+            to={`/datasets/${pausedRuns[0].dataset_id}/runs`}
+            className="badge dot"
+            data-testid="topbar-paused-runs"
+            style={{ color: "var(--warn)", textDecoration: "none" }}
+            title={`Paused: ${pausedRuns.map((r) => r.name).join(", ")}. Open the Runs page to resume or cancel.`}
+          >
+            {pausedRuns.length === 1 ? "Run paused" : `${pausedRuns.length} runs paused`}
+          </Link>
         )}
         {!runningJob && !uploadProgress && pendingJobs.length === 0 && (
           <span style={{ fontSize: 12, color: "var(--fg-dim)" }}>

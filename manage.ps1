@@ -1035,6 +1035,8 @@ function Cmd-Dev {
 
         if (Test-Path "$root\.restart") { Remove-Item "$root\.restart" -Force }
 
+        # Under --reload the app restarts via the reloader, not .restart (docs/dev/http-edge.md).
+        $env:CRUCIBLE_DEV_RELOAD = "1"
         :restart_loop while ($true) {
             & "$root\venv\Scripts\python.exe" -m uvicorn backend.main:app --host $bindHost --port $port --reload --reload-dir backend
             if (Test-Path "$root\.restart") {

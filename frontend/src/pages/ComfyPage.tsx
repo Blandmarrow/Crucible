@@ -8,6 +8,7 @@ import toast from "react-hot-toast";
 import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
 import { useJobSSE } from "../hooks/useSSE";
 import { useJobStore } from "../store/jobStore";
+import { runsApi, isLiveRun, LIVE_RUN_REASON } from "../api/runs";
 import { comfyApi, type ComfyPlanSummary, type ComfyRow, type LibraryPrompt, type LinkedMode } from "../api/comfy";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import MenuButton from "../components/common/MenuButton";
@@ -232,6 +233,38 @@ export default function ComfyPage() {
   });
 
   const activeJobs = useJobStore((s) => s.activeJobs);
+
+  // The dataset's automated Runs (the Runs page's query key, so its invalidations apply).
+  // A paused Run holds no job, so the jobs above never show it; the server still refuses
+  // many plan writes while one is running or paused (`_refuse_live_run`).
+  const { data: datasetRuns = [] } = useQuery({
+    queryKey: ["runs", datasetId],
+    queryFn: () => runsApi.list(datasetId!),
+    enabled: !!datasetId,
+    refetchInterval: 30_000,
+  });
+  // Refetch when one of the dataset's jobs starts, ends or changes status (statuses only,
+  // so progress ticks do not): a run stepping or ending moves a plan's dot and locks.
+  const datasetJobsKey = useJobStore((s) => {
+    let key = "";
+    for (const j of s.activeJobs.values()) if (j.dataset_id === datasetId) key += `${j.job_id}:${j.status};`;
+    return key;
+  });
+  useEffect(() => {
+    if (datasetId && datasetJobsKey) qc.invalidateQueries({ queryKey: ["runs", datasetId] });
+  }, [datasetJobsKey, datasetId, qc]);
+  const { liveRunPlanIds, pausedPlanIds, stepRunPlanIds } = useMemo(() => {
+    const live = new Set<string>();
+    const paused = new Set<string>();
+    const stepping = new Set<string>();
+    for (const r of datasetRuns) {
+      if (!r.plan_id || !isLiveRun(r)) continue;
+      live.add(r.plan_id);
+      if (r.status === "paused") paused.add(r.plan_id);
+      else stepping.add(r.plan_id);
+    }
+    return { liveRunPlanIds: live, pausedPlanIds: paused, stepRunPlanIds: stepping };
+  }, [datasetRuns]);
 
   useEffect(() => {
     for (const [jobId, planId] of activeRuns) {
@@ -525,17 +558,20 @@ export default function ComfyPage() {
   }
   const selectedRows = useMemo(() => rows.filter((r) => selected.has(r.id)), [rows, selected]);
   // A plan the server would refuse to delete rows from or to delete: a run this page
-  // tracks, or a live generate / prompts / rewrite job (GeneratePromptsModal's check). A
-  // paused Run has no job; the server's 409 is its backstop.
+  // tracks, a live generate / prompts / rewrite job (GeneratePromptsModal's check), or an
+  // automated Run, running or paused (the latter holds no job). The server's 409 is the backstop.
   const busyPlanIds = useMemo(() => {
-    const ids = new Set(activeRuns.values());
+    const ids = new Set([...activeRuns.values(), ...liveRunPlanIds]);
     for (const p of activeJobs.values()) {
       if (p.plan_id && BUSY_JOB_TYPES.includes(p.job_type) && !TERMINAL_STATUSES.includes(p.status)) ids.add(p.plan_id);
     }
     return ids;
-  }, [activeRuns, activeJobs]);
+  }, [activeRuns, activeJobs, liveRunPlanIds]);
   const planBusy = isRunning || (!!effectivePlanId && busyPlanIds.has(effectivePlanId));
-  const runningPlanIds = useMemo(() => new Set(activeRuns.values()), [activeRuns]);
+  // A running automated Run counts as running between its child jobs too.
+  const runningPlanIds = useMemo(() => new Set([...activeRuns.values(), ...stepRunPlanIds]), [activeRuns, stepRunPlanIds]);
+  // The shown plan has an automated Run, running or paused: the server's 409 on the writes below.
+  const liveRun = !!effectivePlanId && liveRunPlanIds.has(effectivePlanId);
   // Each folder's rows on show, in run order (the API returns rows in run order), for the
   // row menu's Move entries and their bounds. The rows on show, not all of them: under a
   // text or status filter, Move up past a hidden row would look like nothing happened.
@@ -885,6 +921,7 @@ export default function ComfyPage() {
           datasetId={datasetId}
           hasPromptPin={hasPromptPin}
           running={isRunning}
+          liveRun={liveRun}
           subfolder={subfolder}
           setCaption={setCaption}
           onRunStarted={(jobId, pid) => setActiveRuns((prev) => new Map(prev).set(jobId, pid))}
@@ -914,6 +951,8 @@ export default function ComfyPage() {
               plans={plans}
               activePlanId={effectivePlanId}
               runningPlanIds={runningPlanIds}
+              pausedPlanIds={pausedPlanIds}
+              liveRunPlanIds={liveRunPlanIds}
               busyPlanIds={busyPlanIds}
               onSelect={selectPlan}
               onCreate={(name) => createPlanMutation.mutate(name)}
@@ -1003,21 +1042,21 @@ export default function ComfyPage() {
                 {
                   label: "Add row",
                   onClick: () => addRowMutation.mutate(),
-                  disabled: plan.pinned_params.length === 0,
-                  title: plan.pinned_params.length === 0 ? "Pin a workflow parameter first" : "Add one empty row",
+                  disabled: plan.pinned_params.length === 0 || liveRun,
+                  title: liveRun ? LIVE_RUN_REASON : plan.pinned_params.length === 0 ? "Pin a workflow parameter first" : "Add one empty row",
                 },
                 {
                   label: "Paste prompts…",
                   onClick: () => setShowPaste(true),
-                  disabled: !hasPromptPin,
-                  title: hasPromptPin ? "Add one row per line of prompt text" : PROMPT_PIN_REASON,
+                  disabled: !hasPromptPin || liveRun,
+                  title: liveRun ? LIVE_RUN_REASON : hasPromptPin ? "Add one row per line of prompt text" : PROMPT_PIN_REASON,
                 },
                 {
                   label: "Import .txt…",
                   // Synchronous inside the click, so the file picker keeps its user activation.
                   onClick: () => txtFilesRef.current?.click(),
-                  disabled: !hasPromptPin || bulkAddMutation.isPending,
-                  title: hasPromptPin ? "Add one row per selected .txt file, in the folder in view" : PROMPT_PIN_REASON,
+                  disabled: !hasPromptPin || bulkAddMutation.isPending || liveRun,
+                  title: liveRun ? LIVE_RUN_REASON : hasPromptPin ? "Add one row per selected .txt file, in the folder in view" : PROMPT_PIN_REASON,
                 },
                 {
                   label: "Generate prompts…",
@@ -1056,6 +1095,7 @@ export default function ComfyPage() {
             hasPromptPin={hasPromptPin}
             isRunning={isRunning}
             planBusy={planBusy}
+            liveRunReason={liveRun ? LIVE_RUN_REASON : undefined}
             onSetFolder={() => setShowSetFolder(true)}
             onCopyToPlan={() => setCopyToPlan({})}
             onSaveToLibrary={() => setShowSaveToLibrary(true)}
@@ -1093,6 +1133,7 @@ export default function ComfyPage() {
               tab={libTab}
               onTabChange={setLibTab}
               onClose={() => setLibOpen(false)}
+              liveRunPlanIds={liveRunPlanIds}
             />
           )}
         </div>
@@ -1184,6 +1225,7 @@ export default function ComfyPage() {
           initialTargetId={copyToPlan.targetId}
           initialMove={copyToPlan.move}
           onMoved={() => setSelected(new Set())}
+          liveRunPlanIds={liveRunPlanIds}
           onClose={() => setCopyToPlan(null)}
         />
       )}

@@ -204,8 +204,9 @@ export interface RunPlanReport {
 }
 
 export const runsApi = {
-  list: (datasetId: string) =>
-    client.get<Run[]>("/runs/", { params: { dataset_id: datasetId } }).then((r) => r.data),
+  /** One dataset's runs, newest first; without a dataset, every dataset's. */
+  list: (datasetId?: string, status?: RunStatus) =>
+    client.get<Run[]>("/runs/", { params: { dataset_id: datasetId, status } }).then((r) => r.data),
   get: (id: string) => client.get<Run>(`/runs/${id}`).then((r) => r.data),
   start: (body: RunStartBody) => client.post<Run>("/runs/", body).then((r) => r.data),
   dryRun: (body: RunStartBody) => client.post<RunPlanReport>("/runs/dry-run", body).then((r) => r.data),
@@ -218,6 +219,15 @@ export const runsApi = {
 };
 
 export const isLiveRun = (r: Run) => r.status === "running" || r.status === "paused";
+
+/** The TopBar chip's query: every dataset's paused runs. Its own key, so a dataset's
+ *  `["runs", datasetId]` invalidation leaves it alone; RunsPage refreshes it by hand. */
+export const PAUSED_RUNS_KEY = ["runs", "paused-chip"] as const;
+
+/** The server's reason for refusing a plan write while an automated run holds the plan
+ *  (`_refuse_live_run` in `routers/comfy.py`); the greyed-out controls show it as a tooltip. */
+export const LIVE_RUN_REASON =
+  "An automated run on this plan is running or paused — finish or cancel it on the Runs page first";
 
 /** A recipe in the library (M6 §6). Its recipe may lack what only one machine can
  *  fill (an export folder, a provider), so loading it can need finishing. */

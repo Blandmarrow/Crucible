@@ -67,13 +67,19 @@ async def dry_run(body: RunStartRequest, db: AsyncSession = Depends(get_db)):
 
 @router.get("/", response_model=list[RunOut])
 async def list_runs(
-    dataset_id: str = Query(...),
+    dataset_id: str | None = Query(default=None),
+    status: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
 ):
-    rows = (await db.execute(
-        select(Run).where(Run.dataset_id == dataset_id).order_by(Run.created_at.desc()).limit(limit)
-    )).scalars().all()
+    """Newest first. Without `dataset_id` it lists every dataset's runs (the TopBar's
+    paused-run chip); `status` narrows to one status."""
+    stmt = select(Run)
+    if dataset_id is not None:
+        stmt = stmt.where(Run.dataset_id == dataset_id)
+    if status is not None:
+        stmt = stmt.where(Run.status == status)
+    rows = (await db.execute(stmt.order_by(Run.created_at.desc()).limit(limit))).scalars().all()
     return [_out(r) for r in rows]
 
 

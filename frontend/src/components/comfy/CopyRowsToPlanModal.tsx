@@ -1,6 +1,7 @@
 import { useState } from "react";
 import ModalShell from "../common/ModalShell";
 import type { ComfyPlanSummary, ComfyRow, LinkedMode } from "../../api/comfy";
+import { LIVE_RUN_REASON } from "../../api/runs";
 import { useCopyRowsMutation } from "./copyRows";
 
 interface Props {
@@ -16,6 +17,9 @@ interface Props {
   initialMove?: boolean;
   /** A move empties the source of these rows: the page clears its selection. */
   onMoved?: () => void;
+  /** Plans whose automated Run is running or paused: the server refuses rows into one,
+   *  and a move out of one (`_refuse_live_run`). */
+  liveRunPlanIds?: Set<string>;
   onClose: () => void;
 }
 
@@ -23,7 +27,7 @@ interface Props {
  *  keeps each row's folder and the values the target also has per row; a move takes them
  *  out of this plan, and asks first about rows the blueprint counts. */
 export default function CopyRowsToPlanModal({
-  sourcePlanId, datasetId, plans, rows, initialTargetId, initialMove = false, onMoved, onClose,
+  sourcePlanId, datasetId, plans, rows, initialTargetId, initialMove = false, onMoved, liveRunPlanIds, onClose,
 }: Props) {
   const targets = plans.filter((p) => p.id !== sourcePlanId);
   const [targetId, setTargetId] = useState(initialTargetId ?? targets[0]?.id ?? "");
@@ -35,6 +39,7 @@ export default function CopyRowsToPlanModal({
     onClose();
   });
   const target = targets.find((p) => p.id === targetId);
+  const liveReason = liveRunPlanIds?.has(targetId) || (move && liveRunPlanIds?.has(sourcePlanId)) ? LIVE_RUN_REASON : undefined;
 
   function send(linked: LinkedMode) {
     if (!target || mutation.isPending) return;
@@ -45,6 +50,7 @@ export default function CopyRowsToPlanModal({
   }
 
   function apply() {
+    if (liveReason) return;
     if (move && linkedCount > 0) setAsking(true);
     else send("refuse");
   }
@@ -67,6 +73,9 @@ export default function CopyRowsToPlanModal({
             {targets.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
         </label>
+      )}
+      {liveReason && (
+        <p role="status" style={{ fontSize: 12, color: "var(--warn)", margin: "8px 0 0" }}>{liveReason}</p>
       )}
       <div role="radiogroup" aria-label="Copy or move" style={{ display: "flex", gap: 14, fontSize: 12.5, marginTop: 10 }}>
         <label style={{ display: "flex", alignItems: "center", gap: 5 }}>
@@ -100,7 +109,8 @@ export default function CopyRowsToPlanModal({
       ) : (
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
           <button className="btn ghost" onClick={onClose}>Cancel</button>
-          <button className="btn primary" disabled={!target || mutation.isPending} onClick={apply}>
+          <button className="btn primary" disabled={!target || mutation.isPending}
+            aria-disabled={liveReason ? true : undefined} title={liveReason} onClick={apply}>
             {mutation.isPending ? (move ? "Moving…" : "Copying…") : (move ? "Move" : "Copy")}
           </button>
         </div>

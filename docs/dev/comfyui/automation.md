@@ -147,10 +147,25 @@ check. The order is always run lock, then dataset or plan lock, never the revers
   runs no shutdown code: ComfyUI finishes the in-flight prompt on its own, its output is
   never imported, and Resume renders that row again. No image is imported twice.
 - **Cancel from `TopBar`** (`DELETE /jobs/{id}` on a child, not the run) fails the stage and
-  the run with "… cancelled outside the run", and Resume re-runs the stage. On a child still
-  queued behind another job the hook fires only when the worker reaches it (the
-  cancelled-while-queued branch above), so until then the run reads `running` with a
-  cancelled child: never stuck, but it can look live for as long as the job ahead runs.
+  the run with "… cancelled outside the run", and Resume re-runs the stage. **A child still
+  queued is stepped at once:** `cancel_job` calls `advance_run` right after writing the job
+  `cancelled`. The hook alone fires only when the worker reaches the job (the
+  cancelled-while-queued branch above), so the run read `running` with nothing in flight
+  for as long as the job ahead ran (found on the box, 2026-11-07). The worker's later call
+  finds the stage already ended and does nothing.
+- **A run that ends `failed` or `cancelled` frees the GPU** (the user's ruling,
+  2026-11-07). It never reaches its unloading stages, so ComfyUI kept its models and the
+  next local LLM loaded into what was left (Strata got 10.2 GB of 16 instead of 15.6).
+  `_release_gpu` runs after `_end_stage`'s commit for a failed run, at the end of
+  `cancel_run`, and for a run the startup reconcile ends failed or cancelled. It reads what
+  is owed from the stage list (`_gpu_debts`): ComfyUI when `generate` ran and no later
+  `handoff_to_local` finished, the rewrite or caption model when its stage ran and its free
+  stage did not. A stage "ran" when it is `done` or its child job really started, so a
+  generate cancelled while queued owes nothing. The freeing is a queued `run_handoff` job
+  (config `direction: "release"`, `after_run`, no `run_id`, so its end steps nothing), never
+  work in the hook; the single worker also puts it behind a child still stopping after a
+  cancel, so a generate cannot load the models again after they were freed. It makes the
+  same calls as `handoff_to_local` and the free stages, best effort.
 - **Delete** (`DELETE /runs/{id}`) refuses a live run with a 409.
 
 ## Testing

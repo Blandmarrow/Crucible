@@ -6,7 +6,7 @@ import { useJobSSE } from "../hooks/useSSE";
 import { useJobStore } from "../store/jobStore";
 import { comfyApi } from "../api/comfy";
 import { providersApi } from "../api/providers";
-import { runsApi, isLiveRun, HEAD_STAGES, RUN_STAGES, RUN_STAGE_LABELS } from "../api/runs";
+import { runsApi, isLiveRun, PAUSED_RUNS_KEY, HEAD_STAGES, RUN_STAGES, RUN_STAGE_LABELS } from "../api/runs";
 import type { Run, RunPlanReport, RunRecipe, RunStage, RunStageKey, RunStartBody, StageStatus } from "../api/runs";
 import RecipeBar from "../components/runs/RecipeBar";
 import ExtendRunDialog from "../components/runs/ExtendRunDialog";
@@ -63,6 +63,12 @@ export default function RunsPage() {
   useEffect(() => {
     if (datasetId && datasetJobsKey) qc.invalidateQueries({ queryKey: ["runs", datasetId] });
   }, [datasetJobsKey, datasetId, qc]);
+
+  // A pause, resume or cancel here moves the TopBar's paused-run chip.
+  const pausedKey = runs.filter((r) => r.status === "paused").map((r) => r.id).join(",");
+  useEffect(() => {
+    qc.invalidateQueries({ queryKey: PAUSED_RUNS_KEY });
+  }, [pausedKey, qc]);
 
   const active = runs.find(isLiveRun) ?? null;
   const history = runs.filter((r) => !isLiveRun(r));

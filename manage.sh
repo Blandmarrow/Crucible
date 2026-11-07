@@ -936,7 +936,8 @@ cmd_dev() {
         _uvicorn_pid=""
         trap 'kill "$_uvicorn_pid" 2>/dev/null' EXIT INT TERM
         while true; do
-            python -m uvicorn backend.main:app --host "$BIND_HOST" --port "$CRUCIBLE_PORT_RESOLVED" --reload --reload-dir backend &
+            # CRUCIBLE_DEV_RELOAD: under --reload the app restarts via the reloader, not .restart
+            CRUCIBLE_DEV_RELOAD=1 python -m uvicorn backend.main:app --host "$BIND_HOST" --port "$CRUCIBLE_PORT_RESOLVED" --reload --reload-dir backend &
             _uvicorn_pid=$!
             wait "$_uvicorn_pid" || true
             if [ -f "$ROOT/.restart" ]; then

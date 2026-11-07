@@ -24,6 +24,7 @@ frontend/node_modules/
 .DS_Store
 Thumbs.db
 .restart
+backend/_dev_reload_trigger.py
 .splash-ready
 *.egg-info/
 .pytest_cache/

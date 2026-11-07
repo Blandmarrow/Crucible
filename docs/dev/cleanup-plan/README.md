@@ -57,15 +57,26 @@ and no e2e journey can run an upscale. What stays true lives in the files named 
    inside it. Same section.
 6. **The detail-page race closed** with a generation ref per tool. Same section.
 
+Items 8, 10 and 11 landed on `fix/m8-edit-job-followups`, each backend fix with a test that
+failed first. What stays true lives in the files named beside them:
+
+8. **Every in-place edit job keeps a refusal's reason**: detection crop, batch resize and crop,
+   inpaint and re-extraction write `failed_count` and `failure_summary`, through
+   `job_outcome.note_failure`, and the three forms with a UI toast it.
+   `docs/dev/frontend-jobs.md` § The partial-failure line on the Logs page.
+10. **Batch resize and crop, and detection crop, refresh stats on a partway failure** through
+    item 5's `_run_with_stats` wrapper. `docs/dev/bulk-image-jobs.md`,
+    `docs/dev/detection-crop.md`.
+11. **A dataset joins `touched` before its commit** at every replace site, which closes the
+    hard-cancel edge. The shutdown edge is accepted rather than fixed:
+    `docs/dev/backend-infrastructure.md` § Shutdown: stopping the job queue, and
+    `refresh_stats_after_abort`'s docstring.
+
 Still open:
 
 7. **Crop+upscale's replace job** completes with `processed: 0` when its row vanished mid-run,
    and the detail page still toasts "Crop & upscale applied". An edge case; stage 6 replaces
    that effect.
-8. **Only upscale and LUT keep a refusal's reason.** Detection crop, batch resize and crop,
-   inpaint and re-extraction say why only in the live `Failed:` message and the log. Stage 3's
-   shared loop took only upscale and LUT, so each of the others needs its own change, and
-   `InpaintForm` and `CropToDetectionForm` would need to toast the new field.
 9. **The rest of the unchunked `IN` class**, left out of item 3 by choice. Client id lists
    still reach one `Image.id.in_()` in `quality.py` (`score_quality`, style similarity and the
    reference-image lookups), `captioning.py` (`run_captioning`, `run_pipeline` and the pipeline
@@ -75,16 +86,6 @@ Still open:
    and `tag_consolidation_service`. The comment above
    `SELECT_ALL_ID_CAP` in `images.py` is stale too: it calls `batch_delete` unchunked. Batch move
    and copy to another dataset wait for M4, which changes both routes.
-10. **Batch resize and crop, and detection crop, share item 5's gap.** `images.py`'s two jobs and
-    `detection.py`'s `crop_to_detection` refresh stats after the loop with no guard for a raise
-    out of it; detection crop's `protect_file_before_overwrite` sits outside its per-image `try`.
-    Item 5's wrapper, `refresh_stats_after_abort` around `_run`, closes each.
-11. **Two hard-cancel edges in item 5's wrapper**, both minor and both corrected by the next
-    refresh. On shutdown the refresh runs inside `JobQueue.stop()`'s `STOP_UNWIND_SECONDS`, so a
-    SQLite lock held past it abandons the worker and leaves the job row `running` until the
-    next startup's sweep. And a hard cancel landing inside the `commit()` just before
-    `touched.add` leaves that one dataset out of the refresh. Moving `touched.add` above the
-    commit closes the second.
 12. **After navigating away mid-job, the detail page refreshes the wrong image.** The upscale and
     LUT completion effects invalidate `["image", imageId]` for the image now on screen, not the
     one edited, and the stale-outcome branch item 6 added skips `injectNavId` for a copy-mode

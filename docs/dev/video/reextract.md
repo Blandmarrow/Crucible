@@ -120,7 +120,10 @@ disk still publishes its progress event before `require_free_space` raises out o
 A circuit breaker mirroring `EXTRACT_MAX_CONSECUTIVE_FAILURES` aborts a run whose video has
 gone unreadable mid-job; frames already rewritten stay, and the job ends `failed`, not
 `cancelled`. `_rewrite` returns `(reason, is_fault)` rather than a bare reason so the
-breaker can tell a decode fault from a refusal — see § The extension change. **`is_fault` is
+breaker can tell a decode fault from a refusal — see § The extension change. The loop keeps
+each failed frame's reason through `job_outcome.note_failure` and writes `failed_count` and
+`failure_summary` beside the counts, which `ReextractFramesForm` appends to its warning
+(`docs/dev/frontend-jobs.md` § The partial-failure line on the Logs page). **`is_fault` is
 a prediction that the next frame will fail the same way, not a severity or readability
 claim**: it belongs to a condition that will still hold a millisecond later. `False` is for a
 refusal specific to *this* frame — including the first check `_rewrite` makes, before the

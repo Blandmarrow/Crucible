@@ -76,9 +76,10 @@ run the script. Tests that need a real symlink carry `conftest.needs_symlinks`
 
 **Every item is wrapped, too** (GPT-013). The dequeue, the session open and the `running` write used to sit outside the job's `try`, so one failure there killed the only worker and every later job sat `pending` forever. Now `_run_item` covers the whole lifecycle. A failed start fails just that job ("Could not start job: …"), and a failed final write gets one fallback write as `failed`. The terminal event is emitted either way, and `task_done()` sits in the worker's `finally`. A done-callback logs at CRITICAL if the worker task ends while not stopping; there is no auto-restart, because the only exits left are ones a restart would not cure.
 
-Two limits follow, both by design:
+Three limits follow, all by design:
 
 - **An executor thread cannot be stopped.** A forced cancel abandons the `run_in_executor` future, and the job is recorded interrupted, but the thread runs on: the interpreter's exit waits for one in-flight blocking call such as an inference or a write.
+- **A job's abort refresh spends the unwind window.** The edit jobs' `_run_with_stats` wrappers run `dataset_service.refresh_stats_after_abort` in their `except BaseException`, before the cancel reaches `_run_item`. A refresh held past `STOP_UNWIND_SECONDS` (a SQLite lock) gets the worker abandoned, and the row reads `running` until the next startup's `mark_interrupted_jobs` writes the same `failed`. Accepted: a timeout on the refresh would trade that delayed status for a missed refresh.
 - **The shutdown's own terminal events reach nobody.** sse-starlette closes the streams as shutdown begins, before the lifespan's `stop()` runs. The UI learns how those jobs ended from the client reconcile after it reconnects (`docs/dev/frontend-jobs.md` § Reconciling from the durable rows).
 
 `backend/tests/test_job_queue_lifecycle.py` pins all of it: idle and cooperative stops, the forced stop, a cancel in the completion bookkeeping, the executor limit, a user cancel that stays `cancelled`, the long grace, restart after stop, and the GPT-013 start failure.

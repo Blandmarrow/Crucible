@@ -52,8 +52,8 @@ restates its stages.
      `sql_has_path_prefix` for the file browser's full paths, and an AST guard. The sweep also
      found the gallery subfolder filter (feeding select-all) and a Linux-only wrong-rows
      delete in `POST /filesystem/delete`. Record: PM-034.
-   - [x] **One stored spelling for the datasets root**, found in PM-034's review: fixed on
-     `fix/root-spelling` (2026-11-07). The root is respelled to its on-disk case at startup,
+   - [x] **One stored spelling for the datasets root**, found in PM-034's review: merged as
+     PR #113 (2026-11-07). The root is respelled to its on-disk case at startup,
      stored rows are rewritten after a backup, and the file browser's exact matches take
      `utils.sql_path_equals`. Detail: `docs/dev/database.md` § The datasets root's one
      spelling.

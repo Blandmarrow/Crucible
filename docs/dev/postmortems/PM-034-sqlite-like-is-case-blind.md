@@ -75,7 +75,7 @@ pins the root-spelling drift with the flag forced on, so Linux CI runs it too; a
 `backend/tests/test_sql_prefix_guard.py` is an AST guard, whose docstring says which
 shapes it cannot see.
 
-The deeper fix followed on `fix/root-spelling`. At startup the root's on-disk case is
+The deeper fix followed on `fix/root-spelling` (PR #113). At startup the root's on-disk case is
 worked out (`utils.on_disk_spelling`, which follows no link), and
 `services/root_spelling.py` rewrites every stored row whose root is a case variant of it
 and the same folder on disk (`os.path.samefile`), after an integrity-checked backup. The

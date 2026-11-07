@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import stat
+import sys
 import time
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from datetime import datetime, timezone
@@ -15,6 +16,7 @@ from typing import TYPE_CHECKING, TypeVar
 
 import regex as _regex
 from fastapi import HTTPException
+from sqlalchemy import func
 
 if TYPE_CHECKING:  # `models/image.py` imports this module, so a runtime import cycles.
     from backend.models.image import Image
@@ -335,6 +337,48 @@ def remap_declared_paths(declared: Iterable[str] | None, path: str, new_path: st
 def drop_declared_paths(declared: Iterable[str] | None, path: str) -> list[str]:
     """A NEW declared-folder list without `path` or any of its descendants. Pure."""
     return [p for p in (declared or []) if p != path and not p.startswith(path + "/")]
+
+
+def sql_has_prefix(col, prefix: str):
+    """SQL: `col` starts with `prefix`, compared exactly — case and all.
+
+    The one way to write a path-prefix test in a query. Never `LIKE` and never the
+    column's `.startswith()` (which compiles to `LIKE`): SQLite's `LIKE` ignores ASCII
+    case, so `knight/%` also matched `Knight/a`, and a rename or delete of one folder
+    reached another's rows (PM-034). `=` is case-sensitive and has no wildcards, so
+    `_` and `%` in the prefix need no escaping either. Python's `len` and SQLite's
+    `substr` both count characters, so a non-ASCII prefix lines up.
+    """
+    return func.substr(col, 1, len(prefix)) == prefix
+
+
+def sql_subtree(col, path: str, sep: str = "/"):
+    """SQL: `col` is `path` or sits anywhere below it (see `sql_has_prefix`)."""
+    return (col == path) | sql_has_prefix(col, path + sep)
+
+
+# Whether stored absolute paths compare case-blind: True where the filesystem is
+# (Windows, and macOS's default APFS). Read at call time, so a test can flip it.
+PATHS_FOLD_CASE = os.name == "nt" or sys.platform == "darwin"
+
+
+def sql_has_path_prefix(col, prefix: str):
+    """SQL: absolute-path column `col` lies under `prefix`, matched the way the
+    filesystem matches names — case-blind where it is (`PATHS_FOLD_CASE`), exact
+    on Linux.
+
+    For **full stored paths** (`file_path`, `thumbnail_path`, `poster_path`,
+    `folder_path`), never for folder labels, which take `sql_has_prefix`. Exact is
+    wrong on Windows: every stored path begins with `settings.datasets_dir`, whose
+    spelling follows the launch folder's typed case (`c:\\crucible` vs
+    `C:\\Crucible`) or a `.env` edit, so rows written under one launch's spelling
+    must still match the next launch's requests. Case-blind is wrong on Linux,
+    where `MY_DS/` and `my_ds/` are two folders (PM-034). The case-blind form is an
+    escaped LIKE, which folds ASCII only — the behaviour these sites always had.
+    """
+    if PATHS_FOLD_CASE:
+        return col.startswith(prefix, autoescape=True)
+    return sql_has_prefix(col, prefix)
 
 
 def _is_unsafe_url_char(c: str) -> bool:

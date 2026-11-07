@@ -141,6 +141,33 @@ def test_like_wildcards_in_a_path_are_escaped(tmp_path):
     run(scenario())
 
 
+def test_rename_and_delete_match_the_subtree_case_sensitively(tmp_path):
+    """SQLite's LIKE ignores ASCII case, so `knight/%` also matched `Knight/a`: a
+    rename of `knight` re-pathed the other folder's images, and a delete filed them
+    at the root. Folders are case-sensitive everywhere else (the collision check is
+    an exact `in`), so the subtree match has to be too."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("repath-case")
+            for sf in ("knight", "knight/b", "Knight", "Knight/a"):
+                await upload_image(env, ds["id"], name=f"{sf.replace('/', '_')}.png", subfolder=sf)
+            before = await _by_subfolder(env, ds["id"])
+
+            r = await _repath(env, ds["id"], "knight", "monk")
+            assert r.status_code == 200, r.text
+            assert r.json()["images_updated"] == 2
+            assert await _paths(env, ds["id"]) == {"monk", "monk/b", "Knight", "Knight/a"}
+
+            r = await env.client.delete(f"{API}/datasets/{ds['id']}/subfolders", params={"path": "monk"})
+            assert r.status_code == 200, r.text
+            after = await _by_subfolder(env, ds["id"])
+            assert after["Knight"] == before["Knight"]
+            assert after["Knight/a"] == before["Knight/a"]
+            assert after[""] == before["knight"] | before["knight/b"]
+
+    run(scenario())
+
+
 def test_guards(tmp_path):
     async def scenario():
         async with api_env(tmp_path) as env:

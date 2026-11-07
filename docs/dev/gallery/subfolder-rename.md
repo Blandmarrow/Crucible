@@ -37,12 +37,14 @@ set, and both stay in the **router** rather than the service (no HTTP in service
 restore rewrites this exact column. `create_subfolder` and `remove_subfolder` still do
 not guard — left alone rather than drive-by edited.
 
-`dataset_service.repath_subfolder` does two UPDATEs — an exact match and a
-`LIKE prefix + "/%"` for the descendants, splicing the tail on with
-`literal(new_path) + func.substr(Image.subfolder, len(path) + 1)` (`substr` is 1-based, so
-`len(path)+1` keeps the leading `/`). The LIKE escaping is copied verbatim from
-`delete_subfolder` and **both halves matter**: `_` is a LIKE wildcard *and* an ordinary
-character, so unescaped, re-pathing `a_b` would rewrite every image in `axb`. It then
+`dataset_service.repath_subfolder` does two UPDATEs — an exact match and
+`utils.sql_has_prefix(Image.subfolder, path + "/")` for the descendants, splicing the tail
+on with `literal(new_path) + func.substr(Image.subfolder, len(path) + 1)` (`substr` is
+1-based, so `len(path)+1` keeps the leading `/`). The descendant match is **never a LIKE**,
+here or in `delete_subfolder` or the gallery's subfolder filter: LIKE ignores ASCII case,
+so renaming `knight` also re-pathed `Knight/a`, and it reads `_` as a wildcard, so
+re-pathing `a_b` would also rewrite `axb` (PM-034). Folders are case-sensitive everywhere
+else — the collision check is an exact `in` — so `knight` and `Knight` are two folders. It then
 rebuilds `declared_subfolders` — re-pathing every entry in the subtree, appending the
 destination's ancestors (mirroring `declare_subfolder`, or an empty folder moved under a
 merely-declared folder vanishes from the sidebar), dedupe preserving order — and

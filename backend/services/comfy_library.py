@@ -8,8 +8,9 @@ category label should not grow a twin `studio ` beside `studio`), and `..` has n
 meaning, since nothing is ever resolved against it.
 
 Subtree tests are exact, case-sensitive prefix compares. Never `LIKE`: SQLite's `LIKE`
-ignores ASCII case, which is how a §8b folder delete of `knight` took `Knight/a` with it.
-The SQL twin of `in_category` is `category_subtree_clause` in `routers/comfy.py`.
+ignores ASCII case, which is how a §8b folder delete of `knight` took `Knight/a` with it
+(PM-034). The SQL twin of `in_category` is `_category_subtree_clause` in `routers/comfy.py`,
+built on `utils.sql_subtree`.
 """
 from collections.abc import Iterable
 

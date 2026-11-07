@@ -141,6 +141,32 @@ def test_count_matches_the_grid_paged_to_exhaustion(tmp_path):
     run(scenario())
 
 
+def test_the_subfolder_filter_matches_its_subtree_case_sensitively(tmp_path):
+    """SQLite's LIKE ignores ASCII case, so `knight/%` also matched `Knight/a`. Gallery
+    folders are case-sensitive (`knight` and `Knight` can both exist), and `/ids` feeds
+    select-all, so the over-match handed a bulk delete the other folder's images."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            folders = ["knight", "knight/b", "Knight", "Knight/a", "knightx"]
+            async with env.Session() as db:
+                rows = [_mk(ds["id"], i, subfolder=sf) for i, sf in enumerate(folders)]
+                db.add_all(rows)
+                await db.flush()
+                ids_by_folder = {r.subfolder: r.id for r in rows}
+                await db.commit()
+
+            params = {"dataset_id": ds["id"], "subfolder": "knight"}
+            want = {ids_by_folder["knight"], ids_by_folder["knight/b"]}
+            assert set(await _page_all(env, params)) == want
+            r = await env.client.get(f"{API}/images/count", params=params)
+            assert r.json() == {"count": 2}
+            r = await env.client.get(f"{API}/images/ids", params=params)
+            assert set(r.json()["ids"]) == want
+
+    run(scenario())
+
+
 def test_count_is_scoped_to_its_dataset(tmp_path):
     async def scenario():
         async with api_env(tmp_path) as env:

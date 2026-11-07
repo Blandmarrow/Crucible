@@ -69,6 +69,8 @@ from backend.utils import (
     regex_sub_deadline,
     sanitize_abs_path,
     slugify_filename,
+    sql_has_prefix,
+    sql_subtree,
     subfolder_ancestors,
     thumbnail_path_for,
     unique_filename_with_thumb,
@@ -390,12 +392,12 @@ BLUEPRINT_FOLDER_MSG = "This folder comes from the blueprint. Rename it in the B
 def _descendant_clause(path: str):
     """Rows strictly below `path`. A prefix compare, not a LIKE: SQLite's LIKE ignores
     ASCII case, so `knight/%` also matched `Knight/a`, and a delete of `knight` took the
-    other folder's rows with it. `=` compares case-sensitively and needs no escaping."""
-    return func.substr(ComfyRow.subfolder, 1, len(path) + 1) == path + "/"
+    other folder's rows with it (PM-034)."""
+    return sql_has_prefix(ComfyRow.subfolder, path + "/")
 
 
 def _subtree_clause(path: str):
-    return (ComfyRow.subfolder == path) | _descendant_clause(path)
+    return sql_subtree(ComfyRow.subfolder, path)
 
 
 async def _folder_state(db: AsyncSession, plan: ComfyPlan) -> tuple[set[str], list[str]]:
@@ -767,9 +769,7 @@ def _category_or_400(raw: str) -> str:
 def _category_subtree_clause(path: str):
     """SQL twin of `comfy_library.in_category`: the category or anything below it. A
     prefix compare, never LIKE, which ignores ASCII case (see `_descendant_clause`)."""
-    return (ComfyLibraryPrompt.category == path) | (
-        func.substr(ComfyLibraryPrompt.category, 1, len(path) + 1) == path + "/"
-    )
+    return sql_subtree(ComfyLibraryPrompt.category, path)
 
 
 def _library_out(p: ComfyLibraryPrompt) -> dict:

@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import undefer
 
 from backend.config import settings
-from backend.utils import ALLOWED_FLAG_KEYS, OUT_OF_TREE_MSG, InsufficientDiskSpaceError, replace_retrying, chunked, contained_path, copy_with_sidecar, normalize_image_format, normalize_subfolder, parse_id_list_param, parse_license_filter_param, poster_path_for, record_in_place, rename_with_sidecar, require_free_space, safe_dataset_path, slugify_filename, thumbnail_path_for, unique_filename_with_thumb, validate_label_filter_params
+from backend.utils import ALLOWED_FLAG_KEYS, OUT_OF_TREE_MSG, InsufficientDiskSpaceError, replace_retrying, chunked, contained_path, copy_with_sidecar, normalize_image_format, normalize_subfolder, parse_id_list_param, parse_license_filter_param, poster_path_for, record_in_place, rename_with_sidecar, require_free_space, safe_dataset_path, slugify_filename, sql_subtree, thumbnail_path_for, unique_filename_with_thumb, validate_label_filter_params
 from backend.database import get_db
 from backend.media_types import media_kind_for
 from backend.licenses import (
@@ -244,11 +244,9 @@ def _apply_image_filters(q, f: ImageFilterParams):
         q = q.where(Image.format == f.format_filter)
 
     if f.subfolder is not None:
-        escaped_subfolder = f.subfolder.replace("%", r"\%").replace("_", r"\_")
-        q = q.where(
-            (Image.subfolder == f.subfolder)
-            | Image.subfolder.like(escaped_subfolder + "/%", escape="\\")
-        )
+        # Exact, never LIKE: LIKE ignores case, so `knight` also listed `Knight/a`,
+        # and `/images/ids` handed those rows to select-all's bulk ops (PM-034).
+        q = q.where(sql_subtree(Image.subfolder, f.subfolder))
 
     # Frame lineage — every frame this video produced, wherever curation has since
     # filed it. The column is indexed, so this is a plain equality: no join, no

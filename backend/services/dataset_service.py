@@ -34,6 +34,8 @@ from backend.utils import (
     read_caption_sidecar,
     remap_declared_paths,
     require_free_space,
+    sql_has_prefix,
+    sql_subtree,
     thumbnail_path_for,
     unique_filename_with_thumb,
     unique_poster_path,
@@ -653,10 +655,6 @@ async def repath_subfolder(
     Both paths arrive already normalized and validated by the router. Returns the
     number of image rows updated.
     """
-    # Both escapes matter: `_` is a LIKE wildcard *and* an ordinary character, so
-    # without it re-pathing `a_b` would rewrite every image in `axb` too.
-    escaped = path.replace("%", r"\%").replace("_", r"\_")
-
     exact = await db.execute(
         sa_update(Image)
         .where(Image.dataset_id == dataset_id, Image.subfolder == path)
@@ -664,11 +662,12 @@ async def repath_subfolder(
     )
     # substr() is 1-based, so starting at len(path)+1 keeps the leading "/" and
     # splices the remainder onto the new prefix. literal(...) forces SQLite's `||`
-    # concatenation rather than a numeric `+`.
+    # concatenation rather than a numeric `+`. The match is `sql_has_prefix`, never
+    # LIKE: LIKE ignores case, so `knight/%` re-pathed `Knight/a` too (PM-034).
     descendants = await db.execute(
         sa_update(Image)
         .where(Image.dataset_id == dataset_id)
-        .where(Image.subfolder.like(escaped + "/%", escape="\\"))
+        .where(sql_has_prefix(Image.subfolder, path + "/"))
         .values(
             subfolder=literal(new_path, type_=String)
             + func.substr(Image.subfolder, len(path) + 1)
@@ -691,11 +690,10 @@ async def repath_subfolder(
 
 async def delete_subfolder(db: AsyncSession, dataset_id: str, path: str) -> int:
     """Move all images in the subfolder and its children to root, remove all from declared list."""
-    escaped = path.replace("%", r"\%").replace("_", r"\_")
     result = await db.execute(
         sa_update(Image)
         .where(Image.dataset_id == dataset_id)
-        .where((Image.subfolder == path) | Image.subfolder.like(escaped + "/%", escape="\\"))
+        .where(sql_subtree(Image.subfolder, path))
         .values(subfolder="")
     )
     moved = result.rowcount

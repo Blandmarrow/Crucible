@@ -27,6 +27,7 @@ from backend.utils import (
     contained_path,
     rename_with_sidecar,
     canonical_abs_path,
+    sql_has_path_prefix,
     thumbnail_path_for,
     within_datasets_dir,
 )
@@ -40,6 +41,8 @@ async def _find_dataset_for_path(db: AsyncSession, file_path: Path) -> Dataset |
     """Return the Dataset whose folder contains file_path, or None."""
     path_str = str(file_path)
     # Use a LIKE pre-filter to avoid loading every dataset; relative_to is the authoritative check.
+    # A raw LIKE on purpose (PM-034): its case-blind, `_`-wildcard over-match only loads
+    # an extra candidate, which relative_to (case-blind on Windows, exact on POSIX) rejects.
     result = await db.execute(
         select(Dataset)
         .where(literal(path_str).like(Dataset.folder_path + "%"))
@@ -107,7 +110,7 @@ async def _guard_directory_rename(db: AsyncSession, p: Path) -> None:
         select(Dataset.folder_path).where(
             or_(
                 Dataset.folder_path == str(p),
-                Dataset.folder_path.startswith(old_prefix, autoescape=True),
+                sql_has_path_prefix(Dataset.folder_path, old_prefix),
             )
         )
         # Shortest first, so an exact match beats a descendant to the one row we
@@ -158,16 +161,15 @@ async def _guard_directory_rename(db: AsyncSession, p: Path) -> None:
                 "would split the dataset across two folders.",
             )
 
-    # A — rows under the prefix. `autoescape=True` for the reason `/move` and
-    # `/delete` both document at length: `_` is a LIKE wildcard *and* the
-    # character `_name_to_slug` puts in every multi-word dataset folder, so
-    # unescaped, `{ds}/my_dataset/…` matches `{ds}/myxdataset/…`. Here an
-    # over-match is an over-*refusal* rather than a delete, but it is still a
-    # refusal of somebody else's perfectly good rename.
+    # A — rows under the prefix, through `sql_has_path_prefix` for the reason
+    # `/move` and `/delete` both document: no `_` wildcard (and `_name_to_slug`
+    # puts one in every multi-word dataset folder), and case matched the way the
+    # filesystem matches it. Here an over-match is an over-*refusal* rather than
+    # a delete, and an under-match lets a rename strand rows.
     for model in (Image, Video):
         hit = (await db.execute(
             select(model.id).where(
-                model.file_path.startswith(old_prefix, autoescape=True)
+                sql_has_path_prefix(model.file_path, old_prefix)
             ).limit(1)
         )).first()
         if hit is not None:
@@ -187,8 +189,8 @@ async def _guard_directory_rename(db: AsyncSession, p: Path) -> None:
         col = getattr(model, derived)
         stranded = (await db.execute(
             select(model.id).where(
-                col.startswith(old_prefix, autoescape=True),
-                ~model.file_path.startswith(old_prefix, autoescape=True),
+                sql_has_path_prefix(col, old_prefix),
+                ~sql_has_path_prefix(model.file_path, old_prefix),
             ).limit(1)
         )).first()
         if stranded is not None:
@@ -381,16 +383,20 @@ async def move_path(req: MoveRequest, db: AsyncSession = Depends(get_db)):
     # nowhere to put a containment check.
     if src_is_dir:
         for model in (Image, Video):
-            # autoescape=True: `startswith` compiles to a SQL LIKE, where `_` is a
-            # single-character wildcard — and `_` is the *normal* case in a dataset
-            # folder path, since `_name_to_slug` collapses whitespace to it and the
-            # collision fallback appends `_{ds_id[:8]}`. Unescaped, `{ds}/my_dataset`
-            # matches `{ds}/myXdataset`; the over-match is an over-*refusal* rather
-            # than a wrong rewrite, but it is still a refusal of somebody else's
-            # perfectly good move. Same reasoning as `_guard_directory_rename`'s A.
+            # `sql_has_path_prefix`, never a bare column `startswith`, which
+            # compiles to a SQL LIKE. LIKE reads `_` as a single-character
+            # wildcard — and `_` is the *normal* case in a dataset folder path,
+            # since `_name_to_slug` collapses whitespace to it and the collision
+            # fallback appends `_{ds_id[:8]}` — so `{ds}/my_dataset` matched
+            # `{ds}/myXdataset`. LIKE also ignores ASCII case, which is right on
+            # Windows (the stored root's spelling drifts between launches) and
+            # wrong on Linux (PM-034); the helper picks per platform. The
+            # over-match is an over-*refusal* rather than a wrong rewrite, but it is
+            # still a refusal of somebody else's perfectly good move. Same
+            # reasoning as `_guard_directory_rename`'s A.
             hit = (await db.execute(
                 select(model.id).where(
-                    model.file_path.startswith(old_prefix, autoescape=True)
+                    sql_has_path_prefix(model.file_path, old_prefix)
                 ).limit(1)
             )).first()
             if hit is not None:
@@ -442,8 +448,8 @@ async def move_path(req: MoveRequest, db: AsyncSession = Depends(get_db)):
             col = getattr(model, derived)
             stranded = (await db.execute(
                 select(model.id).where(
-                    col.startswith(old_prefix, autoescape=True),
-                    ~model.file_path.startswith(old_prefix, autoescape=True),
+                    sql_has_path_prefix(col, old_prefix),
+                    ~sql_has_path_prefix(model.file_path, old_prefix),
                 ).limit(1)
             )).first()
             if stranded is not None:
@@ -669,11 +675,13 @@ async def delete_path(req: DeleteRequest, db: AsyncSession = Depends(get_db)):
     old_prefix = str(p) + os.sep if is_dir else None
 
     def _scope(model):
-        # autoescape=True for the same reason as in `/move`: `_` is a LIKE
-        # wildcard and the normal case in a dataset folder name, so an unescaped
-        # prefix let this DELETE reach a *different* dataset's rows.
+        # `sql_has_path_prefix` for the same reason as in `/move`. Both ways of
+        # getting case wrong are data loss here: a case-blind match on Linux let
+        # `MY_DS/` take `my_ds/`'s rows, and an exact one on Windows missed rows
+        # stored under another spelling of the root, so the bytes went and the
+        # rows and their backup did not (PM-034, PM-014's shape).
         if is_dir:
-            return model.file_path.startswith(old_prefix, autoescape=True)
+            return sql_has_path_prefix(model.file_path, old_prefix)
         return model.file_path == str(p)
 
     # ORM entities, loaded before anything is touched: the guards below have to be

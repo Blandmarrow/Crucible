@@ -15,14 +15,16 @@ Two properties are load-bearing and easy to lose in a refactor:
   failed filesystem delete still leaves the rows intact, because nothing was
   committed; that is the guarantee `test_a_failed_filesystem_delete_leaves_the_rows_intact`
   pins from the other side.
-- **The prefix match is an escaped LIKE.** `_` is a single-character LIKE
-  wildcard *and* the character `_name_to_slug` puts in every multi-word dataset
-  folder, so an unescaped prefix let one dataset's delete take another's rows.
+- **The prefix match is exact, never a LIKE** (`utils.sql_has_prefix`). LIKE
+  reads `_` as a wildcard — the character `_name_to_slug` puts in every
+  multi-word dataset folder — and ignores case (PM-034), and either over-match
+  let one dataset's delete take another's rows.
 """
 
 import shutil
 from pathlib import Path
 
+import pytest
 from sqlalchemy import select
 
 from backend.models import Image, Video
@@ -252,6 +254,47 @@ def test_a_failed_filesystem_delete_leaves_the_rows_intact(tmp_path, monkeypatch
             assert Path(row.file_path).exists()
             assert Path(row.thumbnail_path).exists()
             assert await _row(env, Image, img["id"]) is not None
+
+    run(scenario())
+
+
+def _case_sensitive_fs(where: Path) -> bool:
+    probe = where / "case_probe"
+    probe.mkdir()
+    try:
+        return not (where / "CASE_PROBE").exists()
+    finally:
+        probe.rmdir()
+
+
+def test_a_case_variant_folder_does_not_delete_a_datasets_rows(tmp_path, monkeypatch):
+    """SQLite's LIKE ignores ASCII case, so the old `startswith` prefix for
+    `{root}/MY_DS/images/` also matched `{root}/my_ds/images/…`, and deleting a
+    hand-made folder took a real dataset's rows. Only a case-sensitive filesystem
+    can hold both folders, which is also where `utils.PATHS_FOLD_CASE` is False;
+    the opposite half, a case-blind match on Windows, is
+    `test_filesystem_root_case.py`."""
+    if not _case_sensitive_fs(tmp_path):
+        pytest.skip("needs a case-sensitive filesystem")
+    from backend import utils
+    monkeypatch.setattr(utils, "PATHS_FOLD_CASE", False)
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("my ds")
+            mine = await upload_image(env, ds["id"], "mine.png")
+            row = await _row(env, Image, mine["id"])
+
+            twin = Path(ds["folder_path"]).parent / "MY_DS" / "images"
+            twin.mkdir(parents=True)
+            (twin / "stray.png").write_bytes(b"x")
+            r = await env.client.post(f"{FS}/delete", json={"path": str(twin)})
+            assert r.status_code == 200, r.text
+
+            assert not twin.exists()
+            assert await _row(env, Image, mine["id"]) is not None
+            assert Path(row.file_path).exists()
+            assert Path(row.thumbnail_path).exists()
 
     run(scenario())
 

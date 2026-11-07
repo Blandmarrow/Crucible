@@ -47,10 +47,16 @@ restates its stages.
    checklist and the last session's notes are archived in
    [roadmap-archive/m6-comfy-automation.md](roadmap-archive/m6-comfy-automation.md). What
    stays open, none of it blocking:
-   - **The gallery's case-blind subtree match**, found in the §8b review:
-     `dataset_service.repath_subfolder` matches a folder's subtree with SQLite's case-blind
-     `LIKE`, so renaming `knight` also re-paths `Knight/a`; `filesystem.py`'s
-     `startswith(autoescape=True)` has the same shape. Now a fix for `main`.
+   - [x] **The gallery's case-blind subtree match**, found in the §8b review: fixed on
+     `fix/case-blind-subtree` (2026-11-07) with `utils.sql_has_prefix`/`sql_subtree`,
+     `sql_has_path_prefix` for the file browser's full paths, and an AST guard. The sweep also
+     found the gallery subfolder filter (feeding select-all) and a Linux-only wrong-rows
+     delete in `POST /filesystem/delete`. Record: PM-034.
+   - **One stored spelling for the datasets root**, found in PM-034's review: on Windows
+     `settings.datasets_dir` follows the launch folder's typed case, so stored paths can
+     carry two spellings of the root. The file browser now tolerates it, and the file arm of
+     `/delete` (`file_path == str(p)`) still does not. The fix is to normalise the root at
+     startup and migrate existing rows; nothing blocks it.
    - **Whitespace inside a folder segment**, found in the §8 review and left open on
      purpose: `utils.normalize_subfolder` keeps it, so a hand-typed `knight ` (or
      `knight /  `) is a folder of its own, which blueprint leaf `knight` (whose segments are

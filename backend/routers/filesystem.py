@@ -27,7 +27,10 @@ from backend.utils import (
     contained_path,
     rename_with_sidecar,
     canonical_abs_path,
+    path_str_equals,
+    path_str_has_prefix,
     sql_has_path_prefix,
+    sql_path_equals,
     thumbnail_path_for,
     within_datasets_dir,
 )
@@ -35,6 +38,37 @@ from backend.utils import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/filesystem", tags=["filesystem"])
+
+
+def _same_file(a: str, b: str) -> bool:
+    """`os.path.samefile`, False when either side cannot be stat'ed. A seam for tests."""
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
+
+
+def _rows_naming(rows, p: Path) -> list:
+    """The rows among `rows` (matched by `sql_path_equals`) whose `file_path` names
+    `p` itself: the exact spelling, or a case variant the filesystem says is the
+    same file.
+
+    The case-blind match is a pre-filter, not the decision (PM-034). On a default
+    Windows or macOS volume `a.png` and `A.PNG` are one file, so a row under either
+    spelling is `p`'s. Under a case-sensitive directory with `PATHS_FOLD_CASE` still
+    set (case-sensitive APFS, a Windows folder with per-directory case sensitivity)
+    they are two files, and taking the variant's row would rename or delete another
+    file's record. Exact rows come first, so a caller wanting one row takes `[0]`.
+    """
+    exact = [r for r in rows if r.file_path == str(p)]
+    return exact + [r for r in rows if r.file_path != str(p) and _same_file(r.file_path, str(p))]
+
+
+async def _row_at(db: AsyncSession, model, p: Path):
+    """The one `model` row whose `file_path` names `p`, or None (see `_rows_naming`)."""
+    rows = (await db.execute(select(model).where(sql_path_equals(model.file_path, str(p))))).scalars().all()
+    named = _rows_naming(rows, p)
+    return named[0] if named else None
 
 
 async def _find_dataset_for_path(db: AsyncSession, file_path: Path) -> Dataset | None:
@@ -109,7 +143,7 @@ async def _guard_directory_rename(db: AsyncSession, p: Path) -> None:
     ds_row = (await db.execute(
         select(Dataset.folder_path).where(
             or_(
-                Dataset.folder_path == str(p),
+                sql_path_equals(Dataset.folder_path, str(p)),
                 sql_has_path_prefix(Dataset.folder_path, old_prefix),
             )
         )
@@ -120,7 +154,7 @@ async def _guard_directory_rename(db: AsyncSession, p: Path) -> None:
         .limit(1)
     )).first()
     if ds_row is not None:
-        if ds_row[0] == str(p):
+        if path_str_equals(ds_row[0], str(p)):
             raise HTTPException(
                 409,
                 "This is a dataset's own folder. Use the Datasets page's edit "
@@ -152,7 +186,7 @@ async def _guard_directory_rename(db: AsyncSession, p: Path) -> None:
     # (`get_video_poster` backfills into a re-derived path).
     if p.name in _DATASET_LAYOUT_DIRS:
         parent_ds = (await db.execute(
-            select(Dataset.id).where(Dataset.folder_path == str(p.parent)).limit(1)
+            select(Dataset.id).where(sql_path_equals(Dataset.folder_path, str(p.parent))).limit(1)
         )).first()
         if parent_ds is not None:
             raise HTTPException(
@@ -332,9 +366,7 @@ async def move_path(req: MoveRequest, db: AsyncSession = Depends(get_db)):
     row = None
     if kind is not None:
         model = Image if kind == "image" else Video
-        row = (
-            await db.execute(select(model).where(model.file_path == str(src)))
-        ).scalar_one_or_none()
+        row = await _row_at(db, model, src)
         if row is not None:
             # Refuse to re-home a registered file. This endpoint knows how to
             # rewrite a path and nothing else, while re-homing means everything
@@ -517,8 +549,8 @@ async def rename_path(req: RenameRequest, db: AsyncSession = Depends(get_db)):
         raise HTTPException(409, "A file or folder with that name already exists")
 
     if p.is_dir():
-        # A directory matches neither arm below (both key on `file_path ==
-        # str(p)`), and a rename has no coherent prefix rewrite to offer in
+        # A directory matches neither arm below (both key on the row's
+        # `file_path` naming `p` itself), and a rename has no coherent prefix rewrite to offer in
         # their place — so every directory that touches a dataset is refused
         # here instead. No `ensure_not_busy`: every dataset-touching case is a
         # refusal, and a permitted rename touches no dataset row at all.
@@ -529,9 +561,9 @@ async def rename_path(req: RenameRequest, db: AsyncSession = Depends(get_db)):
     img: Image | None = None
     vid: Video | None = None
     if p.is_file():
-        img = (await db.execute(select(Image).where(Image.file_path == str(p)))).scalar_one_or_none()
+        img = await _row_at(db, Image, p)
         if img is None:
-            vid = (await db.execute(select(Video).where(Video.file_path == str(p)))).scalar_one_or_none()
+            vid = await _row_at(db, Video, p)
 
     if img is not None:
         ensure_not_busy(img.dataset_id)
@@ -682,13 +714,17 @@ async def delete_path(req: DeleteRequest, db: AsyncSession = Depends(get_db)):
         # rows and their backup did not (PM-034, PM-014's shape).
         if is_dir:
             return sql_has_path_prefix(model.file_path, old_prefix)
-        return model.file_path == str(p)
+        return sql_path_equals(model.file_path, str(p))
 
     # ORM entities, loaded before anything is touched: the guards below have to be
     # able to refuse with the filesystem intact, and the versioning hook needs the
     # rows to still exist.
     img_rows = (await db.execute(select(Image).where(_scope(Image)))).scalars().all()
     vid_rows = (await db.execute(select(Video).where(_scope(Video)))).scalars().all()
+    if not is_dir:
+        # Every row naming this file goes with it, and no row naming another.
+        img_rows = _rows_naming(img_rows, p)
+        vid_rows = _rows_naming(vid_rows, p)
     dataset_ids = {r.dataset_id for r in img_rows} | {r.dataset_id for r in vid_rows}
 
     for ds_id in dataset_ids:
@@ -707,7 +743,7 @@ async def delete_path(req: DeleteRequest, db: AsyncSession = Depends(get_db)):
     orphans: list[Path] = []
 
     def _add_orphan(path_str: str | None) -> None:
-        if not path_str or (is_dir and path_str.startswith(old_prefix)):
+        if not path_str or (is_dir and path_str_has_prefix(path_str, old_prefix)):
             return
         # A stored path is not a client-supplied one: every dataset folder lives
         # under `settings.datasets_dir`, so a derived path outside it was never

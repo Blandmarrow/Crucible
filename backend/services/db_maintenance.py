@@ -16,6 +16,7 @@ a WAL sidecar: copying the `.db` alone captures a torn state.
 """
 
 import logging
+import os
 import sqlite3
 import time
 from datetime import datetime
@@ -110,6 +111,12 @@ def _write_backup(path: Path) -> Path:
     while dest.exists():
         n += 1
         dest = backup_dir / f"{path.stem}-{stamp}-{n:03d}.db"
+    _copy_database(path, dest)
+    return dest
+
+
+def _copy_database(path: Path, dest: Path) -> None:
+    """Copy the live database to `dest` with SQLite's online backup API."""
     src = sqlite3.connect(str(path), timeout=30.0)
     try:
         dst = sqlite3.connect(str(dest))
@@ -119,7 +126,6 @@ def _write_backup(path: Path) -> Path:
             dst.close()
     finally:
         src.close()
-    return dest
 
 
 def _prune_backups(path: Path, keep: int = BACKUP_KEEP) -> int:
@@ -138,6 +144,43 @@ def _prune_backups(path: Path, keep: int = BACKUP_KEEP) -> int:
         except OSError:
             logger.warning("Could not remove old database backup %s", old, exc_info=True)
     return removed
+
+
+def write_named_backup_sync(tag: str) -> Path:
+    """Integrity-check the database, then copy it to `<db dir>/backups/<stem>.pre-<tag>.db`.
+
+    For a startup step about to rewrite rows (`services/root_spelling.py`), which
+    wants a copy from *before* its change whatever the newest rotating copy's age.
+    Deliberately **outside the rotation**: the name does not match the
+    `<stem>-*.db` glob that `_prune_backups` and `_newest_backup_age` read, so a
+    step that fails and retries at every boot (or every `--reload`) overwrites its
+    one copy instead of flushing the pre-session backups out of `BACKUP_KEEP`, and
+    never postpones the next `quick_check`. Written to a temp name and swapped in,
+    so an interrupted copy never replaces a good one.
+
+    Raises when there is no database file, when `quick_check` fails (a corrupt
+    database is not copied, and its owner should not proceed), or when the copy
+    does — so the caller can decline to go ahead. Synchronous — call in an executor.
+    """
+    path = database_file_path()
+    if path is None or not path.exists():
+        raise FileNotFoundError(f"No database file to back up ({settings.database_url})")
+    if not _quick_check(path):
+        raise sqlite3.DatabaseError(f"Integrity check failed for {path}; not backing it up")
+    backup_dir = path.parent / BACKUP_DIR_NAME
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    dest = backup_dir / f"{path.stem}.pre-{tag}.db"
+    tmp = dest.with_name(dest.name + ".tmp")
+    # A leftover temp from an earlier failed copy is not a database, and copying
+    # into it would fail at every boot; clear it first and after any failure.
+    tmp.unlink(missing_ok=True)
+    try:
+        _copy_database(path, tmp)
+        os.replace(tmp, dest)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    return dest
 
 
 def run_startup_maintenance_sync() -> None:

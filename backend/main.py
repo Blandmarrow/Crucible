@@ -66,6 +66,9 @@ _background_tasks: set[asyncio.Task] = set()
 async def lifespan(app: FastAPI):
     settings.ensure_dirs()
     await init_db()
+    # Before anything reads a stored path: the orphan sweep and the queue must see
+    # every row under the root's one spelling (services/root_spelling.py).
+    await _settle_root_spelling()
     await _seed_secret_env()
     await mark_interrupted_jobs()
     # Right after: a run the shutdown left `running` is set `paused`, its child
@@ -82,6 +85,22 @@ async def lifespan(app: FastAPI):
     _background_tasks.add(asyncio.create_task(_startup_db_maintenance()))
     yield
     await job_queue.stop()
+
+
+async def _settle_root_spelling() -> None:
+    """Give the datasets root one spelling, rows included. Never fatal to startup.
+
+    A failure keeps the typed spelling and leaves the rows as they are; the file
+    browser's case-tolerant matches still cope (PM-034).
+    """
+    from backend.database import AsyncSessionLocal
+    from backend.services.root_spelling import settle_root_spelling
+
+    try:
+        async with AsyncSessionLocal() as session:
+            await settle_root_spelling(session)
+    except Exception:
+        logging.getLogger(__name__).exception("Datasets-root spelling repair failed")
 
 
 async def _seed_secret_env() -> None:

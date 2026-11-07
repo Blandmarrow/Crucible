@@ -49,7 +49,7 @@ from backend.schemas.image import (
     ImageResizeRequest,
     RenameImageRequest,
 )
-from backend.services.dataset_service import refresh_stats
+from backend.services.dataset_service import refresh_stats, refresh_stats_after_abort
 from backend.services import version_service
 from backend.services.dataset_busy import ensure_not_busy
 from backend.services.detection_service import remap_detections_for_crop
@@ -1336,6 +1336,20 @@ async def batch_resize(body: BatchResizeRequest, db: AsyncSession = Depends(get_
     db.add(job)
     await db.commit()
 
+    # Every dataset whose stored stats the run moved. Out here so
+    # `_run_with_stats` can still refresh them when `_run` raises.
+    touched: set[str] = set()
+
+    async def _run_with_stats(job_id: str) -> None:
+        # The loop's tail refreshes on completion and on a soft cancel; a raise
+        # outside the per-image `try`, or a hard cancel, skips it with earlier
+        # images already committed.
+        try:
+            await _run(job_id)
+        except BaseException:
+            await refresh_stats_after_abort(touched, context="Batch resize")
+            raise
+
     async def _run(job_id: str) -> None:
         from backend.database import AsyncSessionLocal
         from backend.workers.progress import broadcaster
@@ -1360,7 +1374,6 @@ async def batch_resize(body: BatchResizeRequest, db: AsyncSession = Depends(get_
                 "failed": 0,
                 "thumbnails_stale": 0,
             }
-            touched: set[str] = set()
 
             cancelled = False
             total = len(image_ids)
@@ -1449,7 +1462,7 @@ async def batch_resize(body: BatchResizeRequest, db: AsyncSession = Depends(get_
             if cancelled:
                 job_queue.raise_if_cancelled(job_id)
 
-    await job_queue.enqueue(job, _run)
+    await job_queue.enqueue(job, _run_with_stats)
     return {"job_id": job.id}
 
 
@@ -1466,6 +1479,16 @@ async def batch_crop(body: BatchCropRequest, db: AsyncSession = Depends(get_db))
     )
     db.add(job)
     await db.commit()
+
+    # Out here for `_run_with_stats`, as in the resize twin above.
+    touched: set[str] = set()
+
+    async def _run_with_stats(job_id: str) -> None:
+        try:
+            await _run(job_id)
+        except BaseException:
+            await refresh_stats_after_abort(touched, context="Batch crop")
+            raise
 
     async def _run(job_id: str) -> None:
         from backend.database import AsyncSessionLocal
@@ -1487,7 +1510,6 @@ async def batch_crop(body: BatchCropRequest, db: AsyncSession = Depends(get_db))
                 "failed": 0,
                 "thumbnails_stale": 0,
             }
-            touched: set[str] = set()
 
             cancelled = False
             total = len(image_ids)
@@ -1573,7 +1595,7 @@ async def batch_crop(body: BatchCropRequest, db: AsyncSession = Depends(get_db))
             if cancelled:
                 job_queue.raise_if_cancelled(job_id)
 
-    await job_queue.enqueue(job, _run)
+    await job_queue.enqueue(job, _run_with_stats)
     return {"job_id": job.id}
 
 

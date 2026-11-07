@@ -22,6 +22,7 @@ import pytest
 from sqlalchemy import func, select
 
 from backend.models import Image
+from backend.models.detection import Detection
 from backend.tests.conftest import (
     API,
     api_env,
@@ -501,6 +502,58 @@ def test_inpaint_refreshes_stats_when_it_fails_partway(tmp_path, monkeypatch):
 
             started = await _run_inpaint(env, ds["id"], [a["id"], b["id"]], replace=True)
             job = await wait_for_job(env, started["job_id"], timeout=60)
+            await _assert_refreshed_after_failure(env, ds["id"], job, before)
+
+    run(scenario())
+
+
+# Follow-up 10: batch resize, batch crop and detection crop had the same gap —
+# the backup and its commit sit outside the per-image `try` in all three.
+
+@pytest.mark.parametrize("route,body", [
+    ("resize", {"scale": 0.5}),
+    ("crop", {"target_ar": 1.0}),
+])
+def test_batch_edits_refresh_stats_when_they_fail_partway(tmp_path, monkeypatch, route, body):
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            a = await upload_image(env, ds["id"], "a.png", png_bytes(size=(40, 20)))
+            b = await upload_image(env, ds["id"], "b.png", png_bytes(size=(40, 20)))
+            before = await _stored_stats(env, ds["id"])
+            _raise_on_the_second_backup(monkeypatch)
+
+            r = await env.client.post(
+                f"{API}/images/batch/{route}", json={"image_ids": [a["id"], b["id"]], **body}
+            )
+            assert r.status_code == 200, r.text
+            job = await wait_for_job(env, r.json()["job_id"])
+            await _assert_refreshed_after_failure(env, ds["id"], job, before)
+
+    run(scenario())
+
+
+def test_detection_crop_refreshes_stats_when_it_fails_partway(tmp_path, monkeypatch):
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            a = await upload_image(env, ds["id"], "a.png", png_bytes(size=(40, 20)))
+            b = await upload_image(env, ds["id"], "b.png", png_bytes(size=(40, 20)))
+            async with env.Session() as db:
+                for img in (a, b):
+                    db.add(Detection(
+                        image_id=img["id"], label="face", bbox=[0.25, 0.25, 0.75, 0.75],
+                        score=0.9, model="test", task="detect",
+                    ))
+                await db.commit()
+            before = await _stored_stats(env, ds["id"])
+            _raise_on_the_second_backup(monkeypatch)
+
+            r = await env.client.post(f"{API}/detection/crop", json={
+                "dataset_id": ds["id"], "image_ids": [a["id"], b["id"]], "replace": True,
+            })
+            assert r.status_code == 200, r.text
+            job = await wait_for_job(env, r.json()["job_id"])
             await _assert_refreshed_after_failure(env, ds["id"], job, before)
 
     run(scenario())

@@ -897,6 +897,21 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
 
     cfg = body.model_dump()
 
+    # Every dataset whose stored stats the run moved. Out here so
+    # `_run_with_stats` can still refresh them when `_run` raises.
+    touched_datasets: set[str] = set()
+
+    async def _run_with_stats(job_id: str) -> None:
+        # The loop's tail refreshes on completion and on a soft cancel; a raise
+        # outside the per-image `try` (the backup before a replace), or a hard
+        # cancel, skips it with earlier replaces already committed.
+        try:
+            await _run(job_id)
+        except BaseException:
+            from backend.services.dataset_service import refresh_stats_after_abort
+            await refresh_stats_after_abort(touched_datasets, context="Detection crop")
+            raise
+
     async def _run(job_id: str) -> None:
         from backend.database import AsyncSessionLocal
         from backend.workers.progress import broadcaster
@@ -948,7 +963,6 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
             # deferred `source_meta`) rather than touched expired, which would
             # lazy-load on an async session and raise MissingGreenlet.
             needs_reload = False
-            touched_datasets: set[str] = set()
             for i, image_id in enumerate(image_ids):
                 if job_queue.cancel_requested(job_id):
                     cancelled = True
@@ -1186,7 +1200,7 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
             if cancelled:
                 job_queue.raise_if_cancelled(job_id)
 
-    await job_queue.enqueue(job, _run)
+    await job_queue.enqueue(job, _run_with_stats)
     return {"job_id": job.id, "total": total, "skipped": skipped}
 
 

@@ -57,7 +57,7 @@ The order images travel through the app:
 | Source & license provenance — where images came from, how licenses are inherited and captured | [provenance.md](provenance.md) |
 | Licenses and credits — the license list, commercial-use and attribution rules, and the `CREDITS.md` / `licenses.csv` an export writes | [licenses.md](licenses.md) |
 | Statistics dashboard — histograms, tag frequency, detection audit, CSV export | [statistics.md](statistics.md) |
-| Settings reference — all seven tabs | [settings.md](settings.md) |
+| Settings reference — all nine tabs | [settings.md](settings.md) |
 | Background jobs, hardware meters, split view, dialog keyboard behavior, logs, booru lookup | [workspace.md](workspace.md) |
 | Starting the server, restart & shutdown, database backups | [server.md](server.md) |
 

@@ -3,7 +3,7 @@
 ### Symptom
 
 Under `manage.ps1 dev` on Windows, TopBar **Restart** returned 204 and wrote
-`backend/_dev_reload_trigger.py`, but the backend never came back: `GET /api/v1/health`
+the reload trigger file `_dev_reload_trigger.py`, but the backend never came back: `GET /api/v1/health`
 kept answering with the old `start_time`, so the restart overlay waited for ever. The same
 hang follows any saved `.py` under `backend/`, since a reload is a reload whatever starts it.
 A Shutdown sent after the hang killed the stuck worker, but the reloader survived and
@@ -43,7 +43,7 @@ Hot reload had seemingly never worked on Windows dev, and no one had noticed it.
 around Vite closes that window's tree with `taskkill /T` when Vite exits or gets Ctrl+C.
 It was checked in a real console window on 2026-11-07: two Restarts each back in ~2 s
 with Vite unharmed and still proxying, Shutdown ending the backend, and the backend window
-closed when Vite exited. See `docs/dev/http-edge.md` § Dev mode.
+closed when Vite exited. See `docs/dev/http-edge.md` § Server control endpoints, its **Dev mode** paragraph.
 
 ### Status & date
 

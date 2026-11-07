@@ -78,7 +78,7 @@ they'd fail at run time. `output_node_ids` are deliberately untouched; the panel
 `missingOutputNodes` warning covers stale ones (no-auto-heal stance).
 
 **Apply commits immediately** (user decision): the dialog's *Replace workflow* runs the
-alias guards and calls `onSave({workflow_json, pinned_params: keptPins, output_node_ids})`
+alias guards and calls `onSave({workflow_json, pinned_params, output_node_ids, output_is_synthetic})` with only the pins that still resolve
 — one `PATCH /comfy/plans/{id}` through `ComfyPage`'s existing `updatePlanMutation`
 (invalidates `["comfy","plan",id]` + `["comfy","plans",datasetId]`; the panel remounts via
 `key={plan.id + plan.updated_at}`). Note this also commits any unsaved pin edits sitting in

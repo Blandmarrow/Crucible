@@ -217,8 +217,8 @@ NULL, `'[]'`): folders made by hand, kept while empty. Every `_plan_out` returns
 - Move and delete 409 when the subtree holds a `blueprint_linked` row ("This folder comes
   from the blueprint…"). All three share `_plan_write_guard` (named `_folder_write_guard`
   until the 2026-11-05 review gave it the deletes too): `_plan_lock`, then `_refuse_live_run`,
-  then a 409 while a `_ROW_JOB_TYPES` job is queued or running for the plan. The 400 checks
-  run first, outside the lock; the 404 and the 409s run inside it. `set-subfolder` and the
+  then a 409 while a `_ROW_JOB_TYPES` job is queued or running for the plan. The request's own 400s
+  run first, outside the lock; the 404, the 409s and the length 400 below run inside it. `set-subfolder` and the
   `PATCH` folder branch take the plan lock in every `linked` mode and the run guard above;
   an unlink also refuses a live automated run, as Apply does.
 - **A move cannot make a path over 512 characters** (`utils.SUBFOLDER_MAX_LEN`). The request

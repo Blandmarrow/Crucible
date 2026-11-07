@@ -106,7 +106,7 @@ not a see-also, and says which part of the code it owns.
 | `backend/tests/test_blueprint_http.py`, `backend/tests/test_blueprint_top_up_http.py` | `docs/dev/comfyui/structured.md` § Testing and § Top up |
 | `backend/tests/test_blueprint_outline_http.py`, `backend/tests/test_parse_outline.py` | `docs/dev/comfyui/structured-llm.md` § The outline call |
 | `backend/tests/test_prompt_rewrite.py`, `backend/tests/test_blueprint_rewrite.py`, `backend/tests/test_blueprint_rewrite_http.py` | `docs/dev/comfyui/structured-llm.md` § The rewrite pass |
-| `backend/tests/test_run_stepping.py`, `backend/tests/test_caption_start_scope.py`, `backend/tests/test_run_snapshot.py`, `backend/tests/test_run_dry_run.py`, `frontend/e2e/runs.spec.ts` | `docs/dev/comfyui/automation.md` § Testing; the dry run's tests: `docs/dev/comfyui/run-start.md` § Testing |
+| `backend/tests/test_run_stepping.py`, `backend/tests/test_caption_start_scope.py`, `backend/tests/test_run_snapshot.py`, `backend/tests/test_run_dry_run.py`, `backend/tests/test_run_list_http.py`, `frontend/e2e/runs.spec.ts` | `docs/dev/comfyui/automation.md` § Testing; the dry run's and the run list's tests: `docs/dev/comfyui/run-start.md` § Testing |
 | `backend/tests/test_run_loop.py` | `docs/dev/comfyui/run-loop.md` § Testing |
 | `backend/tests/test_run_extend.py` | `docs/dev/comfyui/run-budgets.md` § Testing |
 | `backend/tests/test_run_recipes_http.py` | `docs/dev/comfyui/recipes.md` § Testing |

@@ -127,3 +127,7 @@ The dry run and the start check have their own tests. The stepping tests are
   caption provider, the model list (listed, absent, unreachable), warnings not blocking,
   and the dry run's first-pass count equal to what the run generates, clamp included.
 - `frontend/e2e/runs.spec.ts`'s dry-run journey.
+
+The paused-run indicators (2026-11-07) added `backend/tests/test_run_list_http.py`:
+`GET /runs/` for one dataset and across every dataset, and the `status` filter the
+`TopBar`'s paused-run chip reads.

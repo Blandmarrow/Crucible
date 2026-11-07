@@ -80,7 +80,7 @@ stored count would quietly go wrong.
   - Because targets are absolute, a second Apply adds nothing.
   - Neither does pressing it before a run, since the new rows are open.
 - **`exclude_leaf_ids`** (on `apply`, `prepare_top_up` and `fill_blueprint`) gives leaves
-  an automated run abandoned no rows, and leaves their pending rows unlisted.
+  an automated run abandoned or already filled no rows, and leaves their pending rows unlisted.
   `leaf_progress` reads each current leaf's kept count with no expansion, for the loop's
   `next_pass` (`docs/dev/comfyui/run-loop.md`).
 - These rules are the user's. On 2026-11-03: targets count images, rows needed are the

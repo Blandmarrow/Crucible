@@ -35,7 +35,7 @@ another job on it. A run therefore **is not a job**. It is a `Run` row
   `current_job_id` has no FK, because finished job rows are swept after 30 days.
 
 Each stage that does work queues an **ordinary child job** through a start function, and
-the child keeps its own job type: `comfy_generate`, `quality_score`, `caption`, `export`,
+the child keeps its own job type: `comfy_generate`, `comfy_rewrite`, `quality_score`, `run_gate`, `caption`, `create_snapshot`, `export`,
 or `run_handoff` for the VRAM handoff. `job_queue.run_job_config` adds `run_id` and
 `run_stage` to its config, and `run_job_label` puts `Run "<name>" · <stage> — ` before its
 label. That prefix is how `TopBar` tags a child without any per-type code. With no run,
@@ -146,7 +146,7 @@ check. The order is always run lock, then dataset or plan lock, never the revers
   prompt from ComfyUI as the cancelled generate job ends, so nothing runs twice. A hard kill
   runs no shutdown code: ComfyUI finishes the in-flight prompt on its own, its output is
   never imported, and Resume renders that row again. No image is imported twice.
-- **Cancel from `TopBar`** (`DELETE /jobs/{id}` on a child, not the run) fails the stage and
+- **Cancel from `TopBar`** (`DELETE /jobs/{id}` on a child, not the run) marks the stage `cancelled` and fails
   the run with "… cancelled outside the run", and Resume re-runs the stage. **A child still
   queued is stepped at once:** `cancel_job` calls `advance_run` right after writing the job
   `cancelled`. The hook alone fires only when the worker reaches the job (the

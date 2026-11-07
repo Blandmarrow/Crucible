@@ -53,9 +53,9 @@ Three endpoints are registered directly in `backend/main.py` (not via a router),
 
 | Endpoint | Behaviour |
 |---|---|
-| `POST /api/v1/shutdown` | Touches `.shutdown` sentinel, then spawns a daemon thread that sends `SIGTERM` to the current process, triggering uvicorn's graceful shutdown (under `manage dev`, see § Dev mode below). The sentinel lets the manage script distinguish a clean shutdown from a crash. |
+| `POST /api/v1/shutdown` | Touches `.shutdown` sentinel, then spawns a daemon thread that sends `SIGTERM` to the current process, triggering uvicorn's graceful shutdown (under `manage dev`, see the **Dev mode** paragraph below). The sentinel lets the manage script distinguish a clean shutdown from a crash. |
 | `GET /api/v1/health` | Returns `{"status": "ok", "start_time": <float>}`. `start_time` is `time.time()` captured once at module load (`_START_TIME`). Used by the frontend to detect when a restarted server is a *new* process. |
-| `POST /api/v1/restart` | Removes `.shutdown` (if present), creates `.restart` sentinel file (`_RESTART_SENTINEL = Path(__file__).parent.parent / ".restart"`), then sends `SIGTERM`. The manage-script restart loop detects the sentinel after uvicorn exits and re-launches the server. Under `manage dev` it does neither (§ Dev mode below). |
+| `POST /api/v1/restart` | Removes `.shutdown` (if present), creates `.restart` sentinel file (`_RESTART_SENTINEL = Path(__file__).parent.parent / ".restart"`), then sends `SIGTERM`. The manage-script restart loop detects the sentinel after uvicorn exits and re-launches the server. Under `manage dev` it does neither (the **Dev mode** paragraph below). |
 
 Both `SIGTERM`s end in `main.py`'s lifespan, which awaits `job_queue.stop()` before uvicorn exits, so a running job gets its grace first: see `docs/dev/backend-infrastructure.md` § Shutdown: stopping the job queue.
 

@@ -14,8 +14,8 @@
   of quiet failures came from its waiting parent: a long-lived session that never sees the
   child finish, a second queue the test harness must rebuild or the suite hangs, and a parent
   cancelled while its child still runs. A run that steps forward has none of them. Cancel
-  cancels the current child and marks the run; resume calls `advance_run()` again from the
-  first stage not done.
+  cancels the current child and marks the run; resume starts again from the
+  first stage not done (through `_start_next`; until 2026-11-07 this said `advance_run()`, which handles only a finished child).
 - **Rejected alternatives:**
   - **A second `JobQueue` whose parent job polls each child** (the August plan). It keeps the
     worker's lifecycle for the parent, but it needs a shared cancel set, fresh sessions per

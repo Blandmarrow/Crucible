@@ -49,7 +49,7 @@ writer. A new writer of `Image.subfolder` belongs in that list.
 
 **The gate job honours a cancel.** `_stage_gate`'s job checks `raise_if_cancelled` before
 the work and again before its one commit (rolling back first), so a cancel commits nothing.
-**The stage needs no plan**: only `rewrite` and `next_pass` refuse a deleted plan.
+**The stage needs no plan**, unlike the ComfyUI stages (`prompts`, `generate`, `handoff_to_local`) and `rewrite` and `next_pass`, which refuse a deleted plan.
 
 **A known edge:** the duplicate scan does not know about the gate. A group's root can be
 a rejected image, which leaves that group with nothing kept. That is accepted.

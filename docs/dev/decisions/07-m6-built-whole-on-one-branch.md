@@ -7,7 +7,7 @@
 - **Decision:** every M6 stage is built on `feat/m6-comfy-automation`, from the per-row folder
   port to the dry run and recipes, and nothing merges to `main` until the whole build is done.
   The old `comfy-per-row-subfolders` branch is deleted once its commit is verified on the new
-  one. Numbers 7 to 9 are held on this branch, as 4 is on M4's.
+  one. Numbers 7 to 10 are held on this branch, as 4 is on M4's.
 - **Rationale:** the user wants to judge the feature as a whole before any of it ships. The
   per-row folders alone change how a ComfyUI run files its images, and structured generation
   is what makes that worth having.

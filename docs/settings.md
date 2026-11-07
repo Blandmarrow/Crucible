@@ -1,6 +1,6 @@
 # Settings
 
-Route: `/settings` — accessible from the sidebar. Settings are grouped into eight tabs.
+Route: `/settings` — accessible from the sidebar. Settings are grouped into nine tabs. The Labels tab is covered in [labels.md](labels.md).
 
 ## Gallery
 

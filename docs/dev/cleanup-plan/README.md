@@ -57,13 +57,17 @@ and no e2e journey can run an upscale. What stays true lives in the files named 
    inside it. Same section.
 6. **The detail-page race closed** with a generation ref per tool. Same section.
 
-Items 8, 10 and 11 landed on `fix/m8-edit-job-followups`, each backend fix with a test that
+Items 8–11 merged on 2026-11-07 as PRs #114 and #115, each backend fix with a test that
 failed first. What stays true lives in the files named beside them:
 
 8. **Every in-place edit job keeps a refusal's reason**: detection crop, batch resize and crop,
    inpaint and re-extraction write `failed_count` and `failure_summary`, through
    `job_outcome.note_failure`, and the three forms with a UI toast it.
    `docs/dev/frontend-jobs.md` § The partial-failure line on the Logs page.
+9. **Every client id list is chunked or capped** before it reaches an `IN`, except batch move
+   and copy to another dataset, which wait for M4. `_apply_bulk_filters` answers 422 above
+   `SELECT_ALL_ID_CAP` instead of chunking. `docs/dev/shared-utilities.md` (`chunked`),
+   `docs/dev/bulk-ops.md`.
 10. **Batch resize and crop, and detection crop, refresh stats on a partway failure** through
     item 5's `_run_with_stats` wrapper. `docs/dev/bulk-image-jobs.md`,
     `docs/dev/detection-crop.md`.
@@ -77,15 +81,8 @@ Still open:
 7. **Crop+upscale's replace job** completes with `processed: 0` when its row vanished mid-run,
    and the detail page still toasts "Crop & upscale applied". An edge case; stage 6 replaces
    that effect.
-9. **The rest of the unchunked `IN` class**, left out of item 3 by choice. Client id lists
-   still reach one `Image.id.in_()` in `quality.py` (`score_quality`, style similarity and the
-   reference-image lookups), `captioning.py` (`run_captioning`, `run_pipeline` and the pipeline
-   job), `images.py`'s `batch_reorder`, `_apply_bulk_filters` and `batch_move_subfolder`,
-   `detection.py`'s `bulk_delete_detections` (whose comment calls a literal `IN` safe because the
-   request body bounds it, B3's mistaken assumption), and `caption_service`, `export_service`
-   and `tag_consolidation_service`. The comment above
-   `SELECT_ALL_ID_CAP` in `images.py` is stale too: it calls `batch_delete` unchunked. Batch move
-   and copy to another dataset wait for M4, which changes both routes.
+9. **Batch move and copy to another dataset** still bind every id in one `IN` and are not
+   capped. They wait for M4, which rewrites both routes.
 12. **After navigating away mid-job, the detail page refreshes the wrong image.** The upscale and
     LUT completion effects invalidate `["image", imageId]` for the image now on screen, not the
     one edited, and the stale-outcome branch item 6 added skips `injectNavId` for a copy-mode

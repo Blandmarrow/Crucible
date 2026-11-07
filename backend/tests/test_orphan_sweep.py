@@ -9,6 +9,7 @@ that is not mounted. Then every folder looks orphaned. These tests pin the refus
 import os
 from pathlib import Path
 
+from backend import utils
 from backend.models import Dataset
 from backend.services.dataset_service import sweep_orphan_dataset_folders
 from backend.tests.conftest import api_env, run
@@ -123,5 +124,27 @@ def test_an_empty_database_still_clears_folders_that_hold_no_dataset(tmp_path):
             stray.mkdir()
             assert await _sweep(env) == ["stray"]
             assert not stray.exists()
+
+    run(go())
+
+
+def test_a_row_naming_a_folder_in_another_case_keeps_it(tmp_path, monkeypatch):
+    """A dataset folder renamed by case outside the app (`Mixed` on disk, `mixed` in the
+    row). Where the filesystem folds case the row still names it; swept, a live dataset
+    would be rmtree'd. The exact `kept` row satisfies the "folders exist" guard, so the
+    case fold is what decides. On Linux `mixed` is not on disk and the fold is forced."""
+    monkeypatch.setattr(utils, "PATHS_FOLD_CASE", True)
+
+    async def go():
+        async with api_env(tmp_path) as env:
+            kept = _folder(env.datasets_dir, "kept")
+            mixed = _folder(env.datasets_dir, "Mixed")
+            orphan = _folder(env.datasets_dir, "orphan")
+            await _add(env, "kept", str(kept))
+            await _add(env, "mixed", str(env.datasets_dir / "mixed"))
+
+            assert await _sweep(env) == ["orphan"]
+            assert mixed.is_dir()
+            assert not orphan.exists()
 
     run(go())

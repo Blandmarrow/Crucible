@@ -155,6 +155,16 @@ async def sweep_orphan_dataset_folders(db: AsyncSession) -> list[str]:
     # Windows); resolve() would join it to the working directory, so judge it unresolved.
     outside = sorted(p for p in stored if not Path(p).is_absolute() or not Path(p).resolve().is_relative_to(root))
     known = {Path(p).resolve() for p in stored if Path(p).is_absolute()}
+    # Where the filesystem folds case, compare folded: macOS's `resolve()` keeps the
+    # spelling it was given, so a row naming `foo` would not protect the folder `Foo`
+    # renamed by case outside the app, and the sweep would rmtree a live dataset
+    # (PM-034's review). Folding more than the filesystem does can only keep a folder.
+    from backend import utils as _utils
+
+    def _key(p: Path) -> str:
+        return str(p).casefold() if _utils.PATHS_FOLD_CASE else str(p)
+
+    known_keys = {_key(k) for k in known}
     if not stored:
         holding = sorted(c.name for c in datasets_dir.iterdir() if (c / "images").is_dir())
         if holding:
@@ -186,7 +196,7 @@ async def sweep_orphan_dataset_folders(db: AsyncSession) -> list[str]:
     for child in datasets_dir.iterdir():
         if not child.is_dir():
             continue
-        if child.resolve() in known:
+        if _key(child.resolve()) in known_keys:
             continue
         remove_dataset_dir(child)
         removed.append(child.name)

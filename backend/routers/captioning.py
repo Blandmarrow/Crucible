@@ -843,16 +843,19 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
         select(Image.id, Image.file_path, Image.filename, Image.subfolder)
         .where(Image.dataset_id == body.dataset_id)
     )
-    if body.image_ids:
-        query = query.where(Image.id.in_(body.image_ids))
-    elif body.subfolder is not None:
+    # With `image_ids`, the id filter is applied per chunk below.
+    if not body.image_ids and body.subfolder is not None:
         query = query.where(Image.subfolder == normalize_subfolder(body.subfolder))
     if body.min_aesthetic_score is not None:
         query = query.where(Image.aesthetic_score >= body.min_aesthetic_score)
     for clause in flag_exclusions(body.exclude_flags):
         query = query.where(clause)
-    result = await db.execute(query)
-    rows = result.all()
+    if body.image_ids:
+        rows = []
+        for chunk in chunked(list(dict.fromkeys(body.image_ids))):
+            rows.extend((await db.execute(query.where(Image.id.in_(chunk)))).all())
+    else:
+        rows = (await db.execute(query)).all()
 
     if not rows:
         return {"job_id": None, "message": "No images to caption"}
@@ -1011,11 +1014,12 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
             )
             if needs_current:
                 async with AsyncSessionLocal() as _cs:
-                    ids = [r[0] for r in image_data]
-                    caption_result = await _cs.execute(
-                        select(Image.id, Image.caption_text).where(Image.id.in_(ids))
-                    )
-                    prev_captions = {row.id: (row.caption_text or "") for row in caption_result}
+                    ids = list(dict.fromkeys(r[0] for r in image_data))
+                    for chunk in chunked(ids):
+                        caption_result = await _cs.execute(
+                            select(Image.id, Image.caption_text).where(Image.id.in_(chunk))
+                        )
+                        prev_captions.update({row.id: (row.caption_text or "") for row in caption_result})
 
             async with AsyncSessionLocal() as session:
                 cached_vram_mb = 0

@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models import Image
 from backend.services.image_scope import flag_exclusions
-from backend.utils import normalize_subfolder
+from backend.utils import chunked, normalize_subfolder
 
 
 def _maybe_clear_ai_artifact(img: Image, caption_text: str | None) -> None:
@@ -89,16 +89,20 @@ async def bulk_edit_captions(
     subfolder: str | None = None,
 ) -> dict:
     query = select(Image).where(Image.dataset_id == dataset_id)
-    if image_ids is not None:
-        query = query.where(Image.id.in_(image_ids))
-    elif subfolder is not None:
+    if image_ids is None and subfolder is not None:
         query = query.where(Image.subfolder == normalize_subfolder(subfolder))
     exclusions = flag_exclusions(quality_flags)
     if exclusions:
         query = query.where(and_(*exclusions))
 
-    result = await db.execute(query)
-    images = result.scalars().all()
+    if image_ids is not None:
+        # An empty list selects nothing (no chunks); a long one is chunked under
+        # SQLite's bind limit.
+        images = []
+        for chunk in chunked(list(dict.fromkeys(image_ids))):
+            images.extend((await db.execute(query.where(Image.id.in_(chunk)))).scalars().all())
+    else:
+        images = (await db.execute(query)).scalars().all()
 
     affected = 0
     skipped = 0
@@ -199,9 +203,11 @@ async def find_replace_captions(
 ) -> int:
     query = select(Image).where(Image.dataset_id == dataset_id)
     if image_ids:
-        query = query.where(Image.id.in_(image_ids))
-    result = await db.execute(query)
-    images = result.scalars().all()
+        images = []
+        for chunk in chunked(list(dict.fromkeys(image_ids))):
+            images.extend((await db.execute(query.where(Image.id.in_(chunk)))).scalars().all())
+    else:
+        images = (await db.execute(query)).scalars().all()
     updated = 0
 
     if use_regex:

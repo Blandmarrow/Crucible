@@ -147,6 +147,15 @@ _NULLS_LAST_SORT_FIELDS = frozenset({"source_timestamp_ms", "source_shot_index"}
 
 def _apply_bulk_filters(query, image_ids, subfolder, quality_flags, include_flagged: bool = False):
     if image_ids is not None:
+        # One literal `IN`, so the list is capped rather than chunked (the
+        # callers build a single statement). Read at call time: tests patch it.
+        image_ids = list(dict.fromkeys(image_ids))
+        if len(image_ids) > SELECT_ALL_ID_CAP:
+            raise HTTPException(
+                422,
+                f"Too many images selected ({len(image_ids):,}); at most "
+                f"{SELECT_ALL_ID_CAP:,} can be sent at once. Narrow the selection or use a subfolder.",
+            )
         query = query.where(Image.id.in_(image_ids))
     elif subfolder is not None:
         query = query.where(Image.subfolder == normalize_subfolder(subfolder))
@@ -164,13 +173,13 @@ def _apply_bulk_filters(query, image_ids, subfolder, quality_flags, include_flag
 # Cap on `GET /images/ids`. It bounds the response *and* every batch request
 # body that follows from the selection it hands back — a 200k-id POST is a
 # different problem from a 200k-id GET, and this is the one place both are
-# bounded. The six endpoints that consume such a selection still bind every id
-# in one statement — an unchunked `Image.id.in_(...)` over the whole list, in
-# `batch_delete` (695, 718), `batch/resize` (1266), `batch/crop` (1367),
-# `batch/move-subfolder` (1900), `batch/move-dataset` (1974) and
-# `batch/copy-dataset` (2134) — so the cap also has to stay under SQLite's
-# 32,766 bind-parameter ceiling. 20,000 is twice `utils.chunked`'s default with
-# a 1.6× margin to that ceiling; raising it means chunking those six first.
+# bounded. `_apply_bulk_filters` (bulk-count, bulk-provenance, bulk-rename,
+# bulk-delete, bulk-thumbnails) binds the whole id list in one `IN`, so it
+# refuses a longer list with a 422 at this value; that is why the cap must stay
+# under SQLite's 32,766 bind-parameter ceiling. `batch/move-dataset` and
+# `batch/copy-dataset` still bind every id in one unchunked statement too, so
+# the same ceiling applies to them. 20,000 is twice `utils.chunked`'s default
+# with a 1.6x margin to that ceiling; raising it means chunking those first.
 SELECT_ALL_ID_CAP = 20_000
 
 
@@ -869,14 +878,14 @@ async def bulk_rename(body: BulkRenameRequest, db: AsyncSession = Depends(get_db
     images_dir = Path(rows[0].file_path).parent
     thumb_dir = images_dir.parent / "thumbnails"
 
-    batch_ids = [r.id for r in rows]
+    # The rest of the dataset's filenames. Filtered in Python, not with
+    # `~Image.id.in_(batch_ids)`: the batch can be a whole dataset, past SQLite's
+    # bind-parameter limit.
+    batch_ids = {r.id for r in rows}
     existing = await db.execute(
-        select(Image.filename).where(
-            Image.dataset_id == body.dataset_id,
-            ~Image.id.in_(batch_ids),
-        )
+        select(Image.id, Image.filename).where(Image.dataset_id == body.dataset_id)
     )
-    db_names: set[str] = {r[0] for r in existing.all()}
+    db_names: set[str] = {r[1] for r in existing.all() if r[0] not in batch_ids}
     # The **sanctioned exception** to `unique_filename_with_thumb`'s "never exclude
     # the stems of images being renamed" contract: the batch's own thumbnails and
     # image files are excluded from the occupancy checks, because without that a
@@ -988,11 +997,14 @@ async def bulk_rename(body: BulkRenameRequest, db: AsyncSession = Depends(get_db
 async def batch_reorder(body: BatchReorderRequest, db: AsyncSession = Depends(get_db)):
     if not body.updates:
         return {"updated": 0}
-    ids = [u.id for u in body.updates]
-    count_result = await db.execute(
-        select(func.count()).where(Image.id.in_(ids), Image.dataset_id == body.dataset_id)
-    )
-    if count_result.scalar() != len(ids):
+    ids = list(dict.fromkeys(u.id for u in body.updates))
+    found = 0
+    for chunk in chunked(ids):
+        count_result = await db.execute(
+            select(func.count()).where(Image.id.in_(chunk), Image.dataset_id == body.dataset_id)
+        )
+        found += count_result.scalar() or 0
+    if found != len(ids):
         raise HTTPException(400, "Some image IDs do not belong to the specified dataset")
     await db.execute(
         sa_update(Image),
@@ -1084,8 +1096,10 @@ async def bulk_thumbnails(body: BulkThumbnailRequest, db: AsyncSession = Depends
         counts = {"regenerated": 0, "failed": 0, "skipped": 0}
         async with AsyncSessionLocal() as session:
             # Chunked so the bind-parameter count stays under SQLite's ceiling
-            # (utils.chunked) — `_apply_bulk_filters` above builds one query and
-            # does not chunk, but it never binds the ids: only this loader does.
+            # (utils.chunked) — `_apply_bulk_filters` above builds one query that
+            # binds the ids in one `IN`, which is why it caps them (SELECT_ALL_ID_CAP);
+            # this loader is chunked separately, since the ids it gets are the
+            # scope's own rows.
             image_rows: list[Image] = []
             for chunk in chunked(image_ids):
                 image_rows.extend(

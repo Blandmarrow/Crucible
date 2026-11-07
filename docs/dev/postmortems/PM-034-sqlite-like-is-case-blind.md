@@ -35,7 +35,7 @@ file-browser case needed a case-sensitive filesystem to reach.
 every platform, and the review caught it. Every stored path begins with
 `settings.datasets_dir`, whose spelling on Windows follows the launch folder's typed case
 (`config.py` derives it from `__file__`, and `manage.ps1` sets the working folder from
-`$PSScriptRoot`, so `b:\crucible` and `B:\Crucible` are both possible) or a `.env` edit.
+`$PSScriptRoot`, so `c:\crucible` and `C:\Crucible` are both possible) or a `.env` edit.
 `canonical_abs_path` folds a request's case below the root, never the root itself (and on
 macOS it folds nothing). So rows written under one launch's spelling missed the next
 launch's exact prefix: renaming a dataset's own folder returned 200 instead of 409, and

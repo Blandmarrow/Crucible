@@ -370,8 +370,8 @@ def sql_has_path_prefix(col, prefix: str):
     For **full stored paths** (`file_path`, `thumbnail_path`, `poster_path`,
     `folder_path`), never for folder labels, which take `sql_has_prefix`. Exact is
     wrong on Windows: every stored path begins with `settings.datasets_dir`, whose
-    spelling follows the launch folder's typed case (`b:\\crucible` vs
-    `B:\\Crucible`) or a `.env` edit, so rows written under one launch's spelling
+    spelling follows the launch folder's typed case (`c:\\crucible` vs
+    `C:\\Crucible`) or a `.env` edit, so rows written under one launch's spelling
     must still match the next launch's requests. Case-blind is wrong on Linux,
     where `MY_DS/` and `my_ds/` are two folders (PM-034). The case-blind form is an
     escaped LIKE, which folds ASCII only — the behaviour these sites always had.

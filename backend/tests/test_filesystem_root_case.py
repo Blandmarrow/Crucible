@@ -1,7 +1,7 @@
 """The File Browser's prefix tests must survive a change in the root's spelling.
 
 Every stored path begins with `settings.datasets_dir`, and on Windows that spelling
-follows the launch folder's typed case (`b:\\crucible` vs `B:\\Crucible`) or a `.env`
+follows the launch folder's typed case (`c:\\crucible` vs `C:\\Crucible`) or a `.env`
 edit, while `canonical_abs_path` rebases each request onto the *current* spelling.
 So rows written under one launch must still match the next launch's requests.
 

@@ -226,3 +226,6 @@ Detail, hazards and what to leave alone:
 - [ ] Stage 7: `StatsPage` into files. Needs M4 merged.
 - [ ] Stage 8: split `images.py` by section. Needs M4 merged and stage 2.
 - [ ] Any time: fix the coverage config, and correct CLAUDE.md § Data flow.
+- [ ] Remove the `minimatch` override in `frontend/package.json` (PR #111, for
+  GHSA-g3hv-75wg-m249) once `eslint` and `typescript-eslint` depend on `minimatch ^11`
+  themselves. Waits on upstream; check with `npm view eslint dependencies.minimatch`.

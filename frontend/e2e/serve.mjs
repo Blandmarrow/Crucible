@@ -8,10 +8,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { fileURLToPath } from 'node:url'
-
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
-const isWin = process.platform === 'win32'
+import { ROOT, findPython, tieLifetime } from './python.mjs'
 
 // `realpathSync.native` expands what `os.tmpdir()` may abbreviate — the
 // `RUNNER~1` 8.3 form on Windows, `/var` -> `/private/var` on macOS — so the
@@ -30,20 +27,7 @@ const env = {
 // stats.spec.ts finds the DB from a dataset's folder_path (three levels up), to
 // seed scores no route writes; moving either path breaks it loudly, not silently.
 
-// Works both locally (the repo venv) and in CI (setup-python + pip, no venv, so
-// `python` on PATH). The venv is put first on PATH too, as `activate` would, so
-// anything the backend spawns by name resolves inside it.
-const venvBin = path.join(ROOT, 'venv', isWin ? 'Scripts' : 'bin')
-const venvPython = path.join(venvBin, isWin ? 'python.exe' : 'python')
-let python = 'python'
-if (fs.existsSync(venvPython)) {
-  python = venvPython
-  env.VIRTUAL_ENV = path.join(ROOT, 'venv')
-  // Windows env keys are case-insensitive but a spread object's are not: reuse
-  // whichever spelling of PATH is already there rather than adding a second.
-  const pathKey = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH'
-  env[pathKey] = [venvBin, env[pathKey]].filter(Boolean).join(path.delimiter)
-}
+const python = findPython(env)
 
 if (!fs.existsSync(path.join(ROOT, 'frontend', 'dist', 'index.html'))) {
   console.error('frontend/dist missing — run npm run build')
@@ -69,26 +53,4 @@ const server = spawn(
   ['-m', 'uvicorn', 'backend.main:app', '--port', process.env.E2E_PORT ?? '8199'],
   { cwd: ROOT, env, stdio: 'inherit' },
 )
-server.on('error', (err) => {
-  console.error(`could not start uvicorn: ${err.message}`)
-  process.exit(1)
-})
-
-// Playwright stops the webServer by killing its whole process tree (a process-
-// group SIGKILL on POSIX, `taskkill /T` on Windows), which reaches uvicorn
-// directly. A signal sent to this process alone — `kill <pid>`, or Ctrl-C from a
-// manual run — is forwarded, so uvicorn never outlives its launcher.
-for (const sig of ['SIGINT', 'SIGTERM']) {
-  process.on(sig, () => {
-    if (server.exitCode === null && server.signalCode === null) server.kill(sig)
-  })
-}
-server.on('exit', (code, signal) => {
-  if (signal) {
-    // Die of the same signal, so the parent sees how the server ended.
-    process.removeAllListeners(signal)
-    process.kill(process.pid, signal)
-    return
-  }
-  process.exit(code ?? 1)
-})
+tieLifetime(server, 'uvicorn')

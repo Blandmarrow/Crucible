@@ -1,0 +1,94 @@
+import type { BlueprintEntity, BlueprintSpec } from "../../api/comfy";
+import BlueprintNameField from "./BlueprintNameField";
+import BlueprintSection, { type SectionControl, type SectionRef } from "./BlueprintSection";
+import { BLUEPRINT_LIMITS, freshName } from "./blueprintKeys";
+
+function newEntityId(): string {
+  return Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+}
+
+interface Props {
+  axes: BlueprintSpec["axes"];
+  onChange: (axes: BlueprintSpec["axes"]) => void;
+  /** Rename an axis and every scenario reference to it. */
+  onRename: (from: string, to: string) => void;
+  section: SectionControl;
+  ref?: SectionRef;
+}
+
+export default function BlueprintAxesEditor({ axes, onChange, onRename, section, ref }: Props) {
+  const names = Object.keys(axes);
+
+  function setEntities(axis: string, entities: BlueprintEntity[]) {
+    onChange({ ...axes, [axis]: entities });
+  }
+
+  const entityCount = names.reduce((n, a) => n + axes[a].length, 0);
+  const summary = `${names.length} ax${names.length === 1 ? "is" : "es"} · ${entityCount} entit${entityCount === 1 ? "y" : "ies"}`;
+
+  return (
+    <BlueprintSection
+      ref={ref} title="Axes" summary={summary} control={section}
+      action={
+        <button className="btn ghost sm" disabled={names.length >= BLUEPRINT_LIMITS.axes}
+          title={names.length >= BLUEPRINT_LIMITS.axes ? `A blueprint holds at most ${BLUEPRINT_LIMITS.axes} axes` : undefined}
+          onClick={() => { section.setOpen(true); onChange({ ...axes, [freshName(axes, "axis")]: [] }); }}>+ Add axis</button>
+      }
+    >
+        {names.length === 0 && (
+          <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: 0 }}>
+            An axis is a kind of thing you vary, such as characters or biomes. Each entity on it
+            becomes a folder, or part of one.
+          </p>
+        )}
+        {names.map((axis) => (
+          <div key={axis} data-testid={`axis-${axis}`}
+            style={{ border: "1px solid var(--border)", borderRadius: 6, padding: 10 }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+              <BlueprintNameField
+                value={axis} label="Axis name" placeholder="letters, digits, _"
+                onCommit={(n) => {
+                  if (n in axes) return false;
+                  onRename(axis, n);
+                  return true;
+                }}
+              />
+              <span style={{ fontSize: 12, color: "var(--fg-mute)" }}>
+                {axes[axis].length} entit{axes[axis].length === 1 ? "y" : "ies"}
+              </span>
+              <div style={{ flex: 1 }} />
+              <button className="btn ghost sm" disabled={axes[axis].length >= BLUEPRINT_LIMITS.entitiesPerAxis}
+                title={axes[axis].length >= BLUEPRINT_LIMITS.entitiesPerAxis ? `An axis holds at most ${BLUEPRINT_LIMITS.entitiesPerAxis} entities` : undefined}
+                onClick={() => setEntities(axis, [...axes[axis], { id: newEntityId(), label: "", descriptor: "" }])}>
+                + Add entity
+              </button>
+              <button className="btn ghost sm" style={{ color: "var(--bad)" }} aria-label={`Remove axis ${axis}`}
+                onClick={() => {
+                  const next = { ...axes };
+                  delete next[axis];
+                  onChange(next);
+                }}>Remove axis</button>
+            </div>
+            {axes[axis].map((ent, i) => (
+              <div key={ent.id} style={{ display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 6 }}>
+                <input
+                  className="input" style={{ width: 170, height: 30, fontSize: 12 }}
+                  aria-label={`${axis} entity label`} maxLength={BLUEPRINT_LIMITS.label} placeholder="Label (names the folder)"
+                  value={ent.label}
+                  onChange={(e) => setEntities(axis, axes[axis].map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))}
+                />
+                <textarea
+                  className="input" style={{ flex: 1, minHeight: 30, height: 30, fontSize: 12, resize: "vertical" }}
+                  aria-label={`${axis} entity descriptor`} maxLength={BLUEPRINT_LIMITS.descriptor} placeholder="Descriptor (goes into the prompt)"
+                  value={ent.descriptor}
+                  onChange={(e) => setEntities(axis, axes[axis].map((x, j) => (j === i ? { ...x, descriptor: e.target.value } : x)))}
+                />
+                <button className="btn ghost sm" aria-label={`Remove ${ent.label || "entity"}`}
+                  onClick={() => setEntities(axis, axes[axis].filter((_, j) => j !== i))}>×</button>
+              </div>
+            ))}
+          </div>
+        ))}
+    </BlueprintSection>
+  );
+}

@@ -1,6 +1,6 @@
 # Settings
 
-Route: `/settings` — accessible from the sidebar. Settings are grouped into eight tabs.
+Route: `/settings` — accessible from the sidebar. Settings are grouped into nine tabs. The Labels tab is covered in [labels.md](labels.md).
 
 ## Gallery
 
@@ -69,14 +69,16 @@ Add, edit, and delete OpenAI-compatible API provider configurations for use as c
 - Default model — selected from a hardcoded preset list for well-known cloud APIs (Gemini, Groq, OpenAI, Together.ai), or fetched live from local servers (LM Studio, llama.cpp) via a refresh button, or typed freely
 - Max image resolution — the long edge images are JPEG-encoded to before being sent (minimum 128 px, no upper limit, default 1024). Encoding only ever shrinks, so a value above an image's own long edge sends it untouched
 - Max tokens — the response budget for one caption (minimum 1, no upper limit). Reasoning models spend most of it thinking before they write anything, so raise it freely for those
-- Timeout — seconds to wait for one response before giving up (10–3600, default 300). A slow local reasoning model on a large image can need more than the default. It is one attempt, not a retried one, so it is also how long **Stop** can take: a captioning run is only interrupted between images, so pressing Stop waits out the request already in flight. When the timeout is exceeded the images are recorded as failed, the Captioning page's amber badge names the provider and its timeout, and the job's row on the Logs page carries the same sentence as an amber line — which survives a page reload, so you can find out afterwards why a run came back short. The same value bounds the ComfyUI page's prompt generation
+- Timeout — seconds to wait for one response before giving up (10–3600, default 300). A slow local reasoning model on a large image can need more than the default. It is one attempt, not a retried one, so it is also how long **Stop** can take: a captioning run is only interrupted between images, so pressing Stop waits out the request already in flight. When the timeout is exceeded the images are recorded as failed, the Captioning page's amber badge names the provider and its timeout, and the job's row on the Logs page carries the same sentence as an amber line — which survives a page reload, so you can find out afterwards why a run came back short. The same value bounds the ComfyUI page's prompt generation, its blueprint drafts and its prompt rewrites.
+- Billed — tick it for a provider that charges per call. An automated run caps LLM calls only on billed providers. Until you tick or untick it, it follows the URL: any address that is not this machine (`localhost`, `127.0.0.1` or `::1`) counts as billed. That guess is wrong for a LAN server such as LM Studio on another machine, so untick it there. Once saved, the setting cannot be reset to "follow the URL"; it stays on whatever you chose
 
 ## ComfyUI
 
-Server-side settings for the ComfyUI generation page, shared across all datasets (each requires Save; see [ComfyUI Generation](comfyui.md)):
+Server-side settings for the ComfyUI generation page, shared across all datasets (see [ComfyUI Generation](comfyui.md)). The two fields require Save; the checkbox saves when you tick it:
 
 - Server URL — base URL of your ComfyUI server (default port 8188). **Test connection** checks reachability before saving. The server is contacted by the Crucible backend, so it must be reachable from the machine running Crucible
 - Workflow folder — default folder scanned by the **Scan folder…** button on the ComfyUI page, with a **Browse…** picker; a path on the machine running Crucible
+- Unload a local Strata server while ComfyUI generates — off by default. For a graphics card too small for a Strata LLM server and ComfyUI together: before each generation Strata drops its model, and loads it again by itself on the next caption or prompt request → [details](comfyui.md#setup)
 
 ## API Keys
 

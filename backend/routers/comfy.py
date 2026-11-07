@@ -3,33 +3,50 @@
 A plan stores an API-format ComfyUI workflow plus pinned parameters; rows hold
 per-run values. The run endpoint queues a background job that submits each row
 to the ComfyUI server sequentially, downloads the outputs, and ingests them
-into the dataset. See docs/dev/comfyui.md.
+into the dataset. See docs/dev/comfyui.md, and docs/dev/comfyui/run.md for the
+job.
 """
 import asyncio
+import contextlib
 import copy
 import json
 import logging
 import math
+import random
 import time
 from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
-from sqlalchemy import delete as sa_delete, func, select, update
+from pydantic import BaseModel, Field, ValidationError
+from sqlalchemy import String, delete as sa_delete, func, literal, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
 from backend.licenses import FIELD_MAX_LEN
 from backend.models import BackgroundJob, Dataset, Image
-from backend.models.comfy import ComfyLibraryPrompt, ComfyPlan, ComfyRow
+from backend.models.comfy import ComfyBlueprint, ComfyLeaf, ComfyLibraryPrompt, ComfyPlan, ComfyRow
 from backend.schemas.app_data import ComfyGenSettings
+from backend.schemas.comfy_blueprint import BlueprintSpec
+from backend.services import blueprint_rewrite, blueprint_service
+from backend.services.comfy_rows import place_rows
+from backend.services.comfy_library import (
+    CATEGORY_MAX_LEN,
+    dedupe_key,
+    in_category,
+    normalize_category,
+    plan_category_move,
+    remap_category,
+)
 from backend.services.comfy_service import (
     MAX_CONSECUTIVE_CONNECT_ERRORS,
     PER_ROW_TIMEOUT_S,
     ComfyClient,
+    ComfyPartialRejection,
     ComfyRowError,
     check_history_error,
     effective_prompt,
@@ -40,17 +57,23 @@ from backend.services.comfy_service import (
 )
 from backend.services.threshold_service import get_thresholds
 from backend.utils import (
+    chunked,
     REGEX_TIMEOUT_SECONDS,
+    SUBFOLDER_MAX_LEN,
     compile_user_regex,
+    drop_declared_paths,
+    join_subfolder,
     normalize_subfolder,
+    remap_declared_paths,
     regex_error,
     regex_sub_deadline,
     sanitize_abs_path,
     slugify_filename,
+    subfolder_ancestors,
     thumbnail_path_for,
     unique_filename_with_thumb,
 )
-from backend.workers.job_queue import job_queue
+from backend.workers.job_queue import job_queue, run_job_config, run_job_label
 
 router = APIRouter(prefix="/comfy", tags=["comfy"])
 logger = logging.getLogger(__name__)
@@ -108,17 +131,65 @@ class RowCreate(BaseModel):
     values: dict = Field(default_factory=dict)
 
 
+# What a folder write does with rows that came from the blueprint (they have a current
+# leaf): refuse the whole write, move them and cut the link, or leave them where they are.
+LinkedMode = Literal["refuse", "unlink", "skip"]
+
+
+class FolderPathRequest(BaseModel):
+    path: str = Field(max_length=512)
+
+
+class FolderMoveRequest(BaseModel):
+    path: str = Field(max_length=512)
+    new_path: str = Field(max_length=512)
+
+
+class PlanDuplicateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    include_rows: bool = False
+
+
 class RowUpdate(BaseModel):
     values: dict | None = None
     sort_order: int | None = None
+    # Per-row destination folder, nested under the run's base folder. `leaf_id` is
+    # deliberately not settable — it is written by structured generation, not by hand.
+    subfolder: str | None = Field(default=None, max_length=512)
+    # What to do if this row came from the blueprint and the folder changes.
+    linked: LinkedMode = "refuse"
 
 
 class BulkLinesRequest(BaseModel):
     lines: list[str]
+    # The folder the new rows are filed in ("" = the run's base folder): the folder in
+    # view, for a library drop or an import (M6 §8c).
+    subfolder: str = Field(default="", max_length=512)
 
 
 class RowIdsRequest(BaseModel):
     row_ids: list[str]
+
+
+class RowPlaceRequest(BaseModel):
+    row_ids: list[str] = Field(min_length=1)
+    # Land before or after this row; None = after the target folder's last row, or at
+    # the end of the plan when no folder is given.
+    anchor_row_id: str | None = None
+    position: Literal["before", "after"] = "before"
+    # None keeps each row's folder; a string, even "", re-files every row there.
+    subfolder: str | None = Field(default=None, max_length=512)
+    linked: LinkedMode = "refuse"
+
+
+class RowCopyRequest(BaseModel):
+    source_plan_id: str
+    row_ids: list[str] = Field(min_length=1)
+    move: bool = False
+    # None keeps each row's own folder; a string, even "", files every copy there.
+    subfolder: str | None = Field(default=None, max_length=512)
+    # A move takes rows the source's blueprint counts out of it, as a folder move does.
+    linked: LinkedMode = "refuse"
 
 
 class RowResetRequest(BaseModel):
@@ -131,18 +202,38 @@ class SetValueRequest(BaseModel):
     value: str | int | float | bool | None = None
 
 
+class SetSubfolderRequest(BaseModel):
+    # "" files the selected rows straight into the run's base folder.
+    subfolder: str = Field(default="", max_length=512)
+    row_ids: list[str] | None = None  # None = every row of the plan; [] = none
+    linked: LinkedMode = "refuse"
+
+
 class LibraryAddRequest(BaseModel):
-    category: str = Field(max_length=100)
+    category: str = Field(max_length=CATEGORY_MAX_LEN)
     prompts: list[str]
 
 
 class LibraryMoveRequest(BaseModel):
     ids: list[str]
-    category: str = Field(max_length=100)
+    category: str = Field(max_length=CATEGORY_MAX_LEN)
 
 
 class LibraryIdsRequest(BaseModel):
     ids: list[str]
+
+
+class LibraryPromptUpdate(BaseModel):
+    text: str
+
+
+class LibraryCategoryRequest(BaseModel):
+    path: str = Field(max_length=CATEGORY_MAX_LEN)
+
+
+class LibraryCategoryMoveRequest(BaseModel):
+    path: str = Field(max_length=CATEGORY_MAX_LEN)
+    new_path: str = Field(max_length=CATEGORY_MAX_LEN)
 
 
 class GeneratePromptsRequest(BaseModel):
@@ -204,6 +295,160 @@ class RunRequest(BaseModel):
     label: str | None = None
 
 
+_SEED = Field(ge=0, le=2**31 - 1)
+
+
+class BlueprintPut(BaseModel):
+    spec: BlueprintSpec
+    seed: int = _SEED
+
+
+class BlueprintPreviewRequest(BaseModel):
+    spec: BlueprintSpec
+    seed: int = _SEED
+    allow_over_cap: bool = False
+
+
+class BlueprintApplyRequest(BlueprintPreviewRequest):
+    # The preview's `rows_to_add`. A mismatch is a 409, so an edit that lands between
+    # review and Apply cannot turn a reviewed 300 rows into 30,000.
+    confirm_total: int = Field(ge=0)
+    delete_orphan_pending: bool = False
+
+
+class BlueprintTopUpRequest(BlueprintApplyRequest):
+    """Apply, then run what the blueprint's folders still need. The run fields mirror
+    RunRequest's, since Top up queues the same `comfy_generate` run."""
+
+    subfolder: str = Field(default="", max_length=512)
+    set_caption: bool = True
+    label: str | None = Field(default=None, max_length=200)
+
+
+class OutlineRequest(BaseModel):
+    """Body of the outline job: one LLM call turning a brief into a draft blueprint.
+
+    Bounded like GeneratePromptsJobRequest, because `model_dump()` lands in the job's
+    `config`, which JobOut returns verbatim — the provider's api_key never may.
+    """
+
+    provider_id: str = Field(max_length=36)
+    model_name: str = Field(default="", max_length=500)  # empty → provider default_model
+    brief: str = Field(min_length=1, max_length=20000)
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    label: str | None = Field(default=None, max_length=200)
+
+
+class RewriteRequest(BaseModel):
+    """Body of the §3 rewrite job. Bounded and secret-free, like OutlineRequest, for
+    the same reason: `model_dump()` lands in the job's config."""
+
+    provider_id: str = Field(max_length=36)
+    model_name: str = Field(default="", max_length=500)  # empty → provider default_model
+    batch_size: int = Field(default=5, ge=1, le=10)
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    # The budget the user was shown (GET …/blueprint/rewrite). A mismatch is a 409, as
+    # Apply's `confirm_total` is: rows edited in between change what the run may spend.
+    confirm_budget: int = Field(ge=0)
+    label: str | None = Field(default=None, max_length=200)
+
+
+# Every job that writes or runs a plan's rows. A rewrite changes row text, so it may
+# overlap none of them: a run loads its rows when it starts, and Apply and Top up
+# count rows a rewrite is about to change.
+_ROW_JOB_TYPES = ("comfy_generate", "comfy_prompts", "comfy_rewrite")
+
+
+async def _current_leaf_ids(db: AsyncSession, plan_id: str) -> set[str]:
+    """Ids of the plan's CURRENT blueprint leaves. A row whose `leaf_id` is not in this
+    set is either hand-made (NULL) or an orphan of a deleted leaf; neither is "linked"."""
+    return set((await db.execute(
+        select(ComfyLeaf.id)
+        .join(ComfyBlueprint, ComfyLeaf.blueprint_id == ComfyBlueprint.id)
+        .where(ComfyBlueprint.plan_id == plan_id)
+    )).scalars().all())
+
+
+async def _refuse_linked_subtree(db: AsyncSession, plan_id: str, path: str) -> None:
+    """409 if any row in the folder's subtree came from the blueprint."""
+    linked = await _current_leaf_ids(db, plan_id)
+    if linked and (await db.execute(
+        select(ComfyRow.id).where(
+            ComfyRow.plan_id == plan_id, ComfyRow.leaf_id.in_(linked), _subtree_clause(path)
+        ).limit(1)
+    )).first():
+        raise HTTPException(409, BLUEPRINT_FOLDER_MSG)
+
+
+def _linked_refusal(n: int) -> str:
+    return f"{n} of these rows came from the blueprint. Moving them unlinks them from it."
+
+
+BLUEPRINT_FOLDER_MSG = "This folder comes from the blueprint. Rename it in the Blueprint tab."
+
+
+def _descendant_clause(path: str):
+    """Rows strictly below `path`. A prefix compare, not a LIKE: SQLite's LIKE ignores
+    ASCII case, so `knight/%` also matched `Knight/a`, and a delete of `knight` took the
+    other folder's rows with it. `=` compares case-sensitively and needs no escaping."""
+    return func.substr(ComfyRow.subfolder, 1, len(path) + 1) == path + "/"
+
+
+def _subtree_clause(path: str):
+    return (ComfyRow.subfolder == path) | _descendant_clause(path)
+
+
+async def _folder_state(db: AsyncSession, plan: ComfyPlan) -> tuple[set[str], list[str]]:
+    """(every folder that exists, declared list). A folder exists if a row sits in it or
+    below it, or the plan declares it or something below it."""
+    subs = (await db.execute(
+        select(ComfyRow.subfolder).where(ComfyRow.plan_id == plan.id).distinct()
+    )).scalars().all()
+    declared = list(plan.declared_folders or [])
+    found: set[str] = set()
+    for p in [*subs, *declared]:
+        if p:
+            found.add(p)
+            found.update(subfolder_ancestors(p))
+    return found, declared
+
+
+@contextlib.asynccontextmanager
+async def _plan_write_guard(db: AsyncSession, plan_id: str):
+    """Apply's guard, for a folder write or a delete: under the plan lock, refuse while an
+    automated run is live or a row job (run, prompt generation, rewrite) is queued or
+    running. Not re-entrant: never take `_plan_lock` for the same plan inside it."""
+    async with _plan_lock(plan_id):
+        await _refuse_live_run(db, plan_id)
+        if await _plan_job_active(db, plan_id, _ROW_JOB_TYPES):
+            raise HTTPException(409, "A run, prompt-generation or rewrite job for this plan is queued or running — wait for it to finish")
+        yield
+
+
+async def _commit_plan_unique(db: AsyncSession, name: str, *, flush: bool = False) -> None:
+    """Commit (or, with `flush`, only flush), turning a lost race on the plan-name unique
+    index into the pre-check's 400. The index fires at the *first* flush of the new plan, so
+    a route that flushes before its commit (`duplicate_plan`) must guard that flush too."""
+    try:
+        if flush:
+            await db.flush()
+        else:
+            await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(400, f"Plan '{name}' already exists in this dataset")
+
+
+def _plan_summary(plan: ComfyPlan, status_counts: dict[str, int]) -> dict:
+    return {
+        "id": plan.id,
+        "dataset_id": plan.dataset_id,
+        "name": plan.name,
+        "row_count": sum(status_counts.values()),
+        "status_counts": status_counts,
+    }
+
+
 def _plan_out(plan: ComfyPlan) -> dict:
     return {
         "id": plan.id,
@@ -213,6 +458,7 @@ def _plan_out(plan: ComfyPlan) -> dict:
         "pinned_params": plan.pinned_params or [],
         "output_node_ids": plan.output_node_ids or [],
         "output_is_synthetic": bool(plan.output_is_synthetic),
+        "declared_folders": list(plan.declared_folders or []),
         "created_at": plan.created_at,
         "updated_at": plan.updated_at,
     }
@@ -223,6 +469,9 @@ def _row_out(row: ComfyRow) -> dict:
         "id": row.id,
         "plan_id": row.plan_id,
         "sort_order": row.sort_order,
+        "subfolder": row.subfolder or "",
+        "leaf_id": row.leaf_id,
+        "prompt_origin": row.prompt_origin,
         "values": row.values or {},
         "status": row.status,
         "error_msg": row.error_msg,
@@ -380,7 +629,7 @@ async def canvas_workflow(db: AsyncSession = Depends(get_db)):
 
     Tries the ComfyUI-CrucibleBridge snapshot (the live canvas, pushed by the
     browser extension) first; falls back to the last-queued history entry when
-    the bridge is not installed or has no snapshot. See docs/dev/comfyui-sync.md.
+    the bridge is not installed or has no snapshot. See docs/dev/comfyui/sync.md.
     """
     thresholds = await get_thresholds(db)
     base_url = (thresholds.comfyui_url or "").strip()
@@ -503,11 +752,39 @@ async def load_workflow_file(path: str):
 
 
 # ── Prompt library ────────────────────────────────────────────────────────────
-# Global (no dataset/plan FK): saved prompt texts grouped by free-text category,
-# reusable across plans and datasets.
+# Global (no dataset/plan FK): saved prompt texts grouped by category, reusable across
+# plans and datasets. A category is a `/` path shown as a tree (M6 §8c), normalized by
+# `services.comfy_library.normalize_category`; texts are unique per category by
+# `dedupe_key`, a rule every write here upholds.
 
-def _dedupe_key(text: str) -> str:
-    return " ".join(text.split()).lower()
+def _category_or_400(raw: str) -> str:
+    category = normalize_category(raw)
+    if not category:
+        raise HTTPException(400, "Category must not be empty")
+    return category
+
+
+def _category_subtree_clause(path: str):
+    """SQL twin of `comfy_library.in_category`: the category or anything below it. A
+    prefix compare, never LIKE, which ignores ASCII case (see `_descendant_clause`)."""
+    return (ComfyLibraryPrompt.category == path) | (
+        func.substr(ComfyLibraryPrompt.category, 1, len(path) + 1) == path + "/"
+    )
+
+
+def _library_out(p: ComfyLibraryPrompt) -> dict:
+    # created_at is naive UTC (repo-wide convention) — currently ordering-only;
+    # if it is ever displayed, treat it as UTC at the display point.
+    return {"id": p.id, "category": p.category, "text": p.text, "created_at": p.created_at.isoformat()}
+
+
+async def _library_by_ids(db: AsyncSession, ids: list[str]) -> list[ComfyLibraryPrompt]:
+    out: list[ComfyLibraryPrompt] = []
+    for chunk in chunked(list(dict.fromkeys(ids))):
+        out.extend((await db.execute(
+            select(ComfyLibraryPrompt).where(ComfyLibraryPrompt.id.in_(chunk))
+        )).scalars().all())
+    return out
 
 
 @router.get("/library")
@@ -519,34 +796,25 @@ async def list_library_prompts(db: AsyncSession = Depends(get_db)):
             )
         )
     ).scalars().all()
-    return {
-        # created_at is naive UTC (repo-wide convention) — currently ordering-only;
-        # if it is ever displayed, treat it as UTC at the display point.
-        "prompts": [
-            {"id": p.id, "category": p.category, "text": p.text, "created_at": p.created_at.isoformat()}
-            for p in prompts
-        ]
-    }
+    return {"prompts": [_library_out(p) for p in prompts]}
 
 
 @router.post("/library")
 async def add_library_prompts(body: LibraryAddRequest, db: AsyncSession = Depends(get_db)):
     """Add prompts to a category; case/whitespace-insensitive duplicates are skipped."""
-    category = body.category.strip()
-    if not category:
-        raise HTTPException(400, "Category must not be empty")
+    category = _category_or_400(body.category)
     existing = (
         await db.execute(
             select(ComfyLibraryPrompt.text).where(ComfyLibraryPrompt.category == category)
         )
     ).scalars().all()
-    seen = {_dedupe_key(t) for t in existing}
+    seen = {dedupe_key(t) for t in existing}
     created = skipped = 0
     for raw in body.prompts:
         text = raw.strip()
         if not text:
             continue
-        key = _dedupe_key(text)
+        key = dedupe_key(text)
         if key in seen:
             skipped += 1
             continue
@@ -557,35 +825,57 @@ async def add_library_prompts(body: LibraryAddRequest, db: AsyncSession = Depend
     return {"created": created, "skipped": skipped}
 
 
+@router.patch("/library/{prompt_id}")
+async def update_library_prompt(
+    prompt_id: str, body: LibraryPromptUpdate, db: AsyncSession = Depends(get_db)
+):
+    """Edit a saved prompt's text. Text only: re-filing is `library/move`, so there is one
+    set of merge rules. An edit that would duplicate another prompt in the same category
+    is refused (409) rather than merged — the user is typing, not filing."""
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(400, "Prompt text must not be empty")
+    prompt = await db.get(ComfyLibraryPrompt, prompt_id)
+    if prompt is None:
+        raise HTTPException(404, "Library prompt not found")
+    key = dedupe_key(text)
+    others = (await db.execute(
+        select(ComfyLibraryPrompt.text).where(
+            ComfyLibraryPrompt.category == prompt.category, ComfyLibraryPrompt.id != prompt.id
+        )
+    )).scalars().all()
+    if any(dedupe_key(t) == key for t in others):
+        raise HTTPException(409, "That prompt is already in this category")
+    prompt.text = text
+    await db.commit()
+    return _library_out(prompt)
+
+
 @router.post("/library/move")
 async def move_library_prompts(body: LibraryMoveRequest, db: AsyncSession = Depends(get_db)):
     """Re-categorize prompts, upholding the same per-category uniqueness as the add
     path: a moved prompt whose text already exists in the target category (or arrives
     twice in one batch) is deleted instead — merged, since it exists there either way."""
-    category = body.category.strip()
-    if not category:
-        raise HTTPException(400, "Category must not be empty")
-    prompts = (
-        await db.execute(select(ComfyLibraryPrompt).where(ComfyLibraryPrompt.id.in_(body.ids)))
-    ).scalars().all()
-    target_texts = (
+    category = _category_or_400(body.category)
+    prompts = await _library_by_ids(db, body.ids)
+    moving = {p.id for p in prompts}
+    target = (
         await db.execute(
-            select(ComfyLibraryPrompt.text).where(
-                ComfyLibraryPrompt.category == category,
-                ComfyLibraryPrompt.id.notin_(body.ids),
+            select(ComfyLibraryPrompt.id, ComfyLibraryPrompt.text).where(
+                ComfyLibraryPrompt.category == category
             )
         )
-    ).scalars().all()
-    seen = {_dedupe_key(t) for t in target_texts}
+    ).all()
+    seen = {dedupe_key(t) for pid, t in target if pid not in moving}
     # Selected prompts already in the target stay put and occupy their keys.
     for p in prompts:
         if p.category == category:
-            seen.add(_dedupe_key(p.text))
+            seen.add(dedupe_key(p.text))
     moved = merged = 0
     for p in prompts:
         if p.category == category:
             continue
-        key = _dedupe_key(p.text)
+        key = dedupe_key(p.text)
         if key in seen:
             await db.delete(p)
             merged += 1
@@ -599,13 +889,64 @@ async def move_library_prompts(body: LibraryMoveRequest, db: AsyncSession = Depe
 
 @router.post("/library/delete")
 async def delete_library_prompts(body: LibraryIdsRequest, db: AsyncSession = Depends(get_db)):
-    prompts = (
-        await db.execute(select(ComfyLibraryPrompt).where(ComfyLibraryPrompt.id.in_(body.ids)))
-    ).scalars().all()
+    prompts = await _library_by_ids(db, body.ids)
     for p in prompts:
         await db.delete(p)
     await db.commit()
     return {"deleted": len(prompts)}
+
+
+@router.post("/library/categories/move")
+async def move_library_category(
+    body: LibraryCategoryMoveRequest, db: AsyncSession = Depends(get_db)
+):
+    """Rename or re-nest a category with everything below it. Landing on a category
+    that already exists **merges** into it (a duplicate text is deleted, as in
+    `library/move`), where a folder move 409s: a category is only a label on prompts, so
+    there is no second thing to collide with. The UI says it merges."""
+    path = _category_or_400(body.path)
+    new_path = _category_or_400(body.new_path)
+    if new_path == path:
+        return {"moved": 0, "merged": 0}
+    if in_category(new_path, path):
+        raise HTTPException(400, "A category cannot move inside itself")
+    prompts = (await db.execute(
+        select(ComfyLibraryPrompt)
+        .where(_category_subtree_clause(path) | _category_subtree_clause(new_path))
+        .order_by(ComfyLibraryPrompt.created_at, ComfyLibraryPrompt.id)
+    )).scalars().all()
+    if not any(in_category(p.category, path) for p in prompts):
+        raise HTTPException(404, "No such category")
+    moves, merges = plan_category_move(
+        ((p.id, p.category, p.text) for p in prompts), path, new_path
+    )
+    longest = max(
+        (len(remap_category(p.category, path, new_path)) for p in prompts if in_category(p.category, path)),
+        default=0,
+    )
+    if longest > CATEGORY_MAX_LEN:
+        raise HTTPException(400, f"Moving it makes a category path longer than {CATEGORY_MAX_LEN} characters")
+    merge_ids = set(merges)
+    for p in prompts:
+        if p.id in merge_ids:
+            await db.delete(p)
+        elif p.id in moves:
+            p.category = moves[p.id]
+    await db.commit()
+    return {"moved": len(moves), "merged": len(merges)}
+
+
+@router.post("/library/categories/delete")
+async def delete_library_category(
+    body: LibraryCategoryRequest, db: AsyncSession = Depends(get_db)
+):
+    """Delete every prompt in a category and below it."""
+    path = _category_or_400(body.path)
+    result = await db.execute(
+        sa_delete(ComfyLibraryPrompt).where(_category_subtree_clause(path))
+    )
+    await db.commit()
+    return {"deleted": result.rowcount or 0}
 
 
 # ── Plan CRUD ─────────────────────────────────────────────────────────────────
@@ -659,7 +1000,7 @@ async def create_plan(body: PlanCreate, db: AsyncSession = Depends(get_db)):
         output_is_synthetic=body.output_is_synthetic,
     )
     db.add(plan)
-    await db.commit()
+    await _commit_plan_unique(db, body.name)
     return _plan_out(plan)
 
 
@@ -717,9 +1058,153 @@ async def update_plan(plan_id: str, body: PlanUpdate, db: AsyncSession = Depends
 
 @router.delete("/plans/{plan_id}", status_code=204)
 async def delete_plan(plan_id: str, db: AsyncSession = Depends(get_db)):
+    """Refused whenever a folder write is: a live run/prompt/rewrite job, or a running or
+    paused automated Run."""
     plan = await _get_plan(db, plan_id)
-    await db.delete(plan)
-    await db.commit()
+    async with _plan_write_guard(db, plan_id):
+        await db.delete(plan)
+        await db.commit()
+
+
+@router.post("/plans/{plan_id}/duplicate")
+async def duplicate_plan(plan_id: str, body: PlanDuplicateRequest, db: AsyncSession = Depends(get_db)):
+    """Copy a plan: workflow, pins, outputs, settings, folders and the blueprint's spec
+    (not its draft). With `include_rows`, also the leaves and the rows, reset to pending.
+    Never runs, jobs or images."""
+    src = await _get_plan(db, plan_id)
+    dup = await db.execute(
+        select(ComfyPlan.id).where(ComfyPlan.dataset_id == src.dataset_id, ComfyPlan.name == body.name)
+    )
+    if dup.first():
+        raise HTTPException(400, f"Plan '{body.name}' already exists in this dataset")
+    plan = ComfyPlan(
+        dataset_id=src.dataset_id,
+        name=body.name,
+        workflow_json=copy.deepcopy(src.workflow_json or {}),
+        pinned_params=copy.deepcopy(src.pinned_params or []),
+        output_node_ids=list(src.output_node_ids or []),
+        output_is_synthetic=bool(src.output_is_synthetic),
+        gen_settings=copy.deepcopy(src.gen_settings),
+        declared_folders=list(src.declared_folders or []),
+    )
+    db.add(plan)
+    await _commit_plan_unique(db, body.name, flush=True)
+    leaf_map: dict[str, str] = {}
+    src_bp = (await db.execute(select(ComfyBlueprint).where(ComfyBlueprint.plan_id == plan_id))).scalars().first()
+    if src_bp:
+        bp = ComfyBlueprint(
+            plan_id=plan.id, spec=copy.deepcopy(src_bp.spec or {}), seed=src_bp.seed, brief=src_bp.brief,
+        )
+        db.add(bp)
+        await db.flush()
+        if body.include_rows:
+            leaves = (await db.execute(
+                select(ComfyLeaf).where(ComfyLeaf.blueprint_id == src_bp.id).order_by(ComfyLeaf.sort_order)
+            )).scalars().all()
+            new_leaves: list[tuple[str, ComfyLeaf]] = []
+            for lf in leaves:
+                new = ComfyLeaf(
+                    blueprint_id=bp.id, scenario=lf.scenario, path=lf.path, target=lf.target,
+                    entity_ids=copy.deepcopy(lf.entity_ids or {}), cursor=lf.cursor, sort_order=lf.sort_order,
+                )
+                db.add(new)
+                new_leaves.append((lf.id, new))
+            await db.flush()  # ids are minted at flush
+            leaf_map = {old_id: lf.id for old_id, lf in new_leaves}
+    counts: dict[str, int] = {}
+    if body.include_rows:
+        rows = (await db.execute(
+            select(ComfyRow).where(ComfyRow.plan_id == plan_id).order_by(ComfyRow.sort_order, ComfyRow.created_at)
+        )).scalars().all()
+        # Renumbered in the source's (sort_order, created_at) order: the copies all get a
+        # fresh created_at, so tied sort_orders would otherwise come back in any order.
+        for i, r in enumerate(rows):
+            db.add(ComfyRow(
+                plan_id=plan.id, sort_order=i, subfolder=r.subfolder or "",
+                leaf_id=leaf_map.get(r.leaf_id) if r.leaf_id else None,
+                prompt_origin=r.prompt_origin, values=copy.deepcopy(r.values or {}),
+                status="pending", error_msg=None, image_id=None, image_ids=[], prompt_id=None,
+            ))
+        if rows:
+            counts["pending"] = len(rows)
+    await _commit_plan_unique(db, body.name)
+    return _plan_summary(plan, counts)
+
+
+@router.post("/plans/{plan_id}/folders")
+async def create_folder(plan_id: str, body: FolderPathRequest, db: AsyncSession = Depends(get_db)):
+    plan = await _get_plan(db, plan_id)
+    path = normalize_subfolder(body.path)
+    if not path:
+        raise HTTPException(400, "Folder name is required")
+    async with _plan_write_guard(db, plan_id):
+        # Loaded before the lock: re-read, or two writes racing on it lose one's folders.
+        await db.refresh(plan, ["declared_folders"])
+        existing, declared = await _folder_state(db, plan)
+        if path in existing:
+            raise HTTPException(409, f"Folder '{path}' already exists")
+        plan.declared_folders = list(dict.fromkeys([*declared, *subfolder_ancestors(path), path]))
+        await db.commit()
+    return _plan_out(plan)
+
+
+@router.post("/plans/{plan_id}/folders/move")
+async def move_folder(plan_id: str, body: FolderMoveRequest, db: AsyncSession = Depends(get_db)):
+    """Re-path a folder and its subtree: rows, and the declared list. A label change only."""
+    plan = await _get_plan(db, plan_id)
+    path = normalize_subfolder(body.path)
+    new_path = normalize_subfolder(body.new_path)
+    if not path or not new_path:
+        raise HTTPException(400, "Folder path and new path are required")
+    if new_path == path or new_path.startswith(path + "/"):
+        raise HTTPException(400, "A folder cannot be moved onto itself or into itself")
+    async with _plan_write_guard(db, plan_id):
+        await db.refresh(plan, ["declared_folders"])
+        existing, declared = await _folder_state(db, plan)
+        if path not in existing:
+            raise HTTPException(404, f"Folder '{path}' not found")
+        if new_path in existing:
+            raise HTTPException(409, f"Folder '{new_path}' already exists")
+        longest = max(
+            len(new_path) + len(p) - len(path)
+            for p in existing if p == path or p.startswith(path + "/")
+        )
+        if longest > SUBFOLDER_MAX_LEN:
+            raise HTTPException(400, f"Moving it makes a folder path longer than {SUBFOLDER_MAX_LEN} characters")
+        await _refuse_linked_subtree(db, plan_id, path)
+        exact = await db.execute(
+            update(ComfyRow).where(ComfyRow.plan_id == plan_id, ComfyRow.subfolder == path).values(subfolder=new_path)
+        )
+        desc = await db.execute(
+            update(ComfyRow)
+            .where(ComfyRow.plan_id == plan_id)
+            .where(_descendant_clause(path))
+            .values(subfolder=literal(new_path, type_=String) + func.substr(ComfyRow.subfolder, len(path) + 1))
+        )
+        plan.declared_folders = remap_declared_paths(declared, path, new_path)
+        await db.commit()
+    return {"updated": (exact.rowcount or 0) + (desc.rowcount or 0)}
+
+
+@router.post("/plans/{plan_id}/folders/delete")
+async def delete_folder(plan_id: str, body: FolderPathRequest, db: AsyncSession = Depends(get_db)):
+    """Delete a folder's rows and forget it and its subfolders. Images are never touched."""
+    plan = await _get_plan(db, plan_id)
+    path = normalize_subfolder(body.path)
+    if not path:
+        raise HTTPException(400, "Folder path is required")
+    async with _plan_write_guard(db, plan_id):
+        await db.refresh(plan, ["declared_folders"])
+        existing, declared = await _folder_state(db, plan)
+        if path not in existing:
+            raise HTTPException(404, f"Folder '{path}' not found")
+        await _refuse_linked_subtree(db, plan_id, path)
+        res = await db.execute(
+            sa_delete(ComfyRow).where(ComfyRow.plan_id == plan_id, _subtree_clause(path))
+        )
+        plan.declared_folders = drop_declared_paths(declared, path)
+        await db.commit()
+    return {"deleted": res.rowcount or 0}
 
 
 # ── Row CRUD ──────────────────────────────────────────────────────────────────
@@ -732,7 +1217,8 @@ async def list_rows(plan_id: str, db: AsyncSession = Depends(get_db)):
             select(ComfyRow).where(ComfyRow.plan_id == plan_id).order_by(ComfyRow.sort_order, ComfyRow.created_at)
         )
     ).scalars().all()
-    return [_row_out(r) for r in rows]
+    linked = await _current_leaf_ids(db, plan_id)
+    return [{**_row_out(r), "blueprint_linked": r.leaf_id in linked} for r in rows]
 
 
 def _plan_prompt_texts(plan: ComfyPlan, rows: Iterable[ComfyRow]) -> list[tuple[ComfyRow, str]]:
@@ -784,6 +1270,68 @@ async def list_plan_prompts(plan_id: str, db: AsyncSession = Depends(get_db)):
     }
 
 
+_plan_locks: dict[str, asyncio.Lock] = {}
+
+
+def _plan_lock(plan_id: str) -> asyncio.Lock:
+    """Serializes the plan's row writers from their 409 check to their commit.
+
+    Blueprint Apply, `run_plan` and `generate_prompts_job` each check for a live job
+    and then commit; the blueprint PUT takes it too, for the first save's create. Without one lock across all three, two double-clicked Applies
+    both pass and give each leaf its rows twice, and a run created between an Apply's
+    check and its commit loads pending rows that Apply then deletes. One process
+    serves the app, so an in-process lock is enough.
+    """
+    return _plan_locks.setdefault(plan_id, asyncio.Lock())
+
+
+async def _plan_job_active(db: AsyncSession, plan_id: str, job_types: tuple[str, ...]) -> bool:
+    """Is a job of one of these types pending or running for this plan?
+
+    Matched on job type *and* `config["plan_id"]`, so a run on one plan never blocks
+    prompt generation on another (`test_conflict_paths_http.py` pins both directions).
+    """
+    active = (
+        await db.execute(
+            select(BackgroundJob.config).where(
+                BackgroundJob.job_type.in_(job_types),
+                BackgroundJob.status.in_(("pending", "running")),
+            )
+        )
+    ).scalars().all()
+    return any((config or {}).get("plan_id") == plan_id for config in active)
+
+
+_REWRITE_LIVE_MSG = "A prompt rewrite for this plan is queued or running — edit its rows when it finishes"
+
+
+async def _refuse_during_rewrite(db: AsyncSession, plan_id: str) -> None:
+    """409 for a write of row `values` while a rewrite is live. The table builds a PATCH
+    from its cached row, so an edit to any cell would put back the template text the
+    pass just replaced, and mark it `manual` so it is never rewritten again; and the
+    pass's read-then-UPDATE would lose an edit landing between the two."""
+    if await _plan_job_active(db, plan_id, ("comfy_rewrite",)):
+        raise HTTPException(409, _REWRITE_LIVE_MSG)
+
+
+_RUN_LIVE_FOLDER_MSG = "This plan is running — change folders when the run finishes"
+
+
+async def _refuse_folder_change_during_run(db: AsyncSession, plan_id: str) -> None:
+    """409 for a folder change while a `comfy_generate` job is live. The run files each
+    row by the `subfolder` of the row it loaded at start, so a change made now would show
+    a folder the image never went to. Callers hold the plan lock, which `_start_run`
+    takes too, so no run can start between this check and their commit."""
+    if await _plan_job_active(db, plan_id, ("comfy_generate",)):
+        raise HTTPException(409, _RUN_LIVE_FOLDER_MSG)
+
+
+def _mark_manual_if_prompt_changed(row: ComfyRow, alias: str | None, old: dict, new: dict) -> None:
+    """A hand edit of the prompt makes it the user's: the §3 rewrite never touches it."""
+    if alias and old.get(alias) != new.get(alias):
+        row.prompt_origin = blueprint_rewrite.ORIGIN_MANUAL
+
+
 async def _next_sort_order(db: AsyncSession, plan_id: str) -> int:
     max_order = (
         await db.execute(select(func.max(ComfyRow.sort_order)).where(ComfyRow.plan_id == plan_id))
@@ -793,10 +1341,14 @@ async def _next_sort_order(db: AsyncSession, plan_id: str) -> int:
 
 @router.post("/plans/{plan_id}/rows")
 async def create_row(plan_id: str, body: RowCreate, db: AsyncSession = Depends(get_db)):
+    """Add one row. Refused under a live automated Run, as `rows/bulk` and `rows/copy` are:
+    its next pass would take the row as its own."""
     await _get_plan(db, plan_id)
-    row = ComfyRow(plan_id=plan_id, sort_order=await _next_sort_order(db, plan_id), values=body.values)
-    db.add(row)
-    await db.commit()
+    async with _plan_lock(plan_id):
+        await _refuse_live_run(db, plan_id)
+        row = ComfyRow(plan_id=plan_id, sort_order=await _next_sort_order(db, plan_id), values=body.values)
+        db.add(row)
+        await db.commit()
     return _row_out(row)
 
 
@@ -806,11 +1358,20 @@ async def bulk_add_rows(plan_id: str, body: BulkLinesRequest, db: AsyncSession =
     prompt_alias = _prompt_alias(plan)
     if not prompt_alias:
         raise HTTPException(400, NO_PROMPT_PIN_MSG)
+    subfolder = normalize_subfolder(body.subfolder)
     lines = [ln.strip() for ln in body.lines if ln.strip()]
-    order = await _next_sort_order(db, plan_id)
-    for i, line in enumerate(lines):
-        db.add(ComfyRow(plan_id=plan_id, sort_order=order + i, values={prompt_alias: line}))
-    await db.commit()
+    # Under the plan lock, so the check and the insert are one step for this route. An
+    # automated Run is created by `run_service.start_run` under the dataset lock, not this
+    # one, so a Run starting in that gap is not excluded: the same window Apply has.
+    async with _plan_lock(plan_id):
+        await _refuse_live_run(db, plan_id)
+        order = await _next_sort_order(db, plan_id)
+        for i, line in enumerate(lines):
+            db.add(ComfyRow(
+                plan_id=plan_id, sort_order=order + i, subfolder=subfolder,
+                values={prompt_alias: line},
+            ))
+        await db.commit()
     return {"created": len(lines)}
 
 
@@ -820,29 +1381,62 @@ async def update_row(row_id: str, body: RowUpdate, db: AsyncSession = Depends(ge
     if not row:
         raise HTTPException(404, "Row not found")
     if body.values is not None:
+        await _refuse_during_rewrite(db, row.plan_id)
+        _mark_manual_if_prompt_changed(
+            row, _prompt_alias(await _get_plan(db, row.plan_id)), row.values or {}, body.values
+        )
         row.values = dict(body.values)
         # Edited values invalidate a previous result; keep image links for reference.
         if row.status in ("completed", "failed"):
             row.status = "pending"
             row.error_msg = None
             row.prompt_id = None
-    if body.sort_order is not None:
-        row.sort_order = body.sort_order
-    await db.commit()
+    # A folder edit holds the plan lock from its checks to its commit: an unlink clears
+    # `leaf_id`, which Apply counts, and the run guard must not race `_start_run`.
+    lock = _plan_lock(row.plan_id) if body.subfolder is not None else contextlib.nullcontext()
+    async with lock:
+        if body.subfolder is not None:
+            # Deliberately NOT a reset, unlike a `values` edit: a folder change does not
+            # change the image that would be produced, only where the next one is filed.
+            # Resetting would make the next run regenerate an image that is already correct.
+            # Placed after the `values` branch so a combined PATCH still resets.
+            new_folder = normalize_subfolder(body.subfolder)
+            if new_folder != (row.subfolder or ""):
+                await _refuse_folder_change_during_run(db, row.plan_id)
+                linked_ids = await _current_leaf_ids(db, row.plan_id)
+                if row.leaf_id in linked_ids:
+                    if body.linked == "refuse":
+                        raise HTTPException(409, _linked_refusal(1))
+                    if body.linked == "unlink":
+                        # A paused or running automated run would read the leaf short
+                        # on its next pass and queue refills; Apply refuses it too.
+                        await _refuse_live_run(db, row.plan_id)
+                        row.subfolder = new_folder
+                        row.leaf_id = None
+                    # "skip": leave the row where it is.
+                else:
+                    row.subfolder = new_folder
+        if body.sort_order is not None:
+            row.sort_order = body.sort_order
+        await db.commit()
     return _row_out(row)
 
 
 @router.post("/plans/{plan_id}/rows/delete")
 async def delete_rows(plan_id: str, body: RowIdsRequest, db: AsyncSession = Depends(get_db)):
+    """Refused whenever a folder write is (`_plan_write_guard`): a live run, prompt or
+    rewrite job, or a running or paused automated Run. A run holds the rows it loaded at
+    start and commits `status` on each in turn, so deleting one under it fails the job."""
     await _get_plan(db, plan_id)
-    rows = (
-        await db.execute(
-            select(ComfyRow).where(ComfyRow.plan_id == plan_id, ComfyRow.id.in_(body.row_ids))
-        )
-    ).scalars().all()
-    for r in rows:
-        await db.delete(r)
-    await db.commit()
+    async with _plan_write_guard(db, plan_id):
+        rows: list[ComfyRow] = []
+        for chunk in chunked(list(dict.fromkeys(body.row_ids))):
+            rows.extend((await db.execute(
+                select(ComfyRow).where(ComfyRow.plan_id == plan_id, ComfyRow.id.in_(chunk))
+            )).scalars().all())
+        for r in rows:
+            await db.delete(r)
+        await db.commit()
     return {"deleted": len(rows)}
 
 
@@ -860,6 +1454,164 @@ async def reorder_rows(plan_id: str, body: RowIdsRequest, db: AsyncSession = Dep
     await db.commit()
 
 
+@router.post("/plans/{plan_id}/rows/place")
+async def place_rows_endpoint(plan_id: str, body: RowPlaceRequest, db: AsyncSession = Depends(get_db)):
+    """Move rows to a spot in the run order, optionally re-filing them, in one step: the
+    drag between rows and the row menu's Move up/down (M6 §8c). The server computes the
+    whole order, unlike `rows/reorder`, whose full id list goes stale the moment another
+    tab adds a row.
+
+    A folder change takes `set_rows_subfolder`'s rules — the run guard, and `linked` for
+    rows the blueprint counts; a skipped row neither moves folder nor changes place. The
+    plan lock is taken once; never nest `_plan_write_guard` in it (not re-entrant).
+    """
+    await _get_plan(db, plan_id)
+    subfolder = normalize_subfolder(body.subfolder) if body.subfolder is not None else None
+    wanted = list(dict.fromkeys(body.row_ids))
+    async with _plan_lock(plan_id):
+        rows = (await db.execute(
+            select(ComfyRow).where(ComfyRow.plan_id == plan_id)
+            .order_by(ComfyRow.sort_order, ComfyRow.created_at)
+        )).scalars().all()
+        by_id = {r.id: r for r in rows}
+        if any(i not in by_id for i in wanted):
+            raise HTTPException(400, "row_ids must belong to this plan")
+        if body.anchor_row_id is not None:
+            if body.anchor_row_id not in by_id:
+                raise HTTPException(400, "anchor_row_id must belong to this plan")
+            if body.anchor_row_id in wanted:
+                raise HTTPException(400, "The anchor row cannot be one of the rows being placed")
+        moving = wanted
+        unlinked = skipped = 0
+        if subfolder is not None:
+            changing = [by_id[i] for i in wanted if (by_id[i].subfolder or "") != subfolder]
+            if changing:
+                await _refuse_folder_change_during_run(db, plan_id)
+                linked_ids = await _current_leaf_ids(db, plan_id)
+                n_linked = sum(1 for r in changing if r.leaf_id in linked_ids)
+                if n_linked and body.linked == "refuse":
+                    raise HTTPException(409, _linked_refusal(n_linked))
+                if n_linked and body.linked == "unlink":
+                    await _refuse_live_run(db, plan_id)
+                skip: set[str] = set()
+                for r in changing:
+                    if r.leaf_id in linked_ids:
+                        if body.linked == "skip":
+                            skip.add(r.id)
+                            continue
+                        r.leaf_id = None
+                        unlinked += 1
+                    r.subfolder = subfolder
+                skipped = len(skip)
+                moving = [i for i in wanted if i not in skip]
+        end_after = None
+        if body.anchor_row_id is None and subfolder is not None:
+            mv = set(moving)
+            in_target = [r.id for r in rows if (r.subfolder or "") == subfolder and r.id not in mv]
+            end_after = in_target[-1] if in_target else None
+        order = place_rows([r.id for r in rows], moving, body.anchor_row_id, body.position, end_after)
+        for i, rid in enumerate(order):
+            by_id[rid].sort_order = i
+        await db.commit()
+    return {"placed": len(moving), "unlinked": unlinked, "skipped": skipped}
+
+
+_SOURCE_LIVE_MSG = "The source plan has a run or prompt job live — move its rows when it finishes"
+
+
+@router.post("/plans/{plan_id}/rows/copy")
+async def copy_rows(plan_id: str, body: RowCopyRequest, db: AsyncSession = Depends(get_db)):
+    """Copy (or move) rows from another plan, in any dataset, into this one (M6 §8c,
+    ruling 3: a drop on a plan copies, Shift moves).
+
+    Each new row carries what still means something in the target:
+    - the source's **effective** prompt (row → run default → template), under the
+      target's prompt alias — the two plans may name their prompt pins differently;
+    - every other value whose alias is a **per-row** pin in the target. Not a run-default
+      pin: `patch_workflow` applies any alias, so a carried value would silently override
+      that pin's default with no column to show it;
+    - the row's folder, unless `subfolder` overrides it.
+    It starts pending, with no `leaf_id` (the target's blueprint never made it) and no
+    `prompt_origin` (NULL is hand-added, like `rows/bulk`). A row whose effective prompt
+    is empty is skipped, and a move leaves it in the source.
+
+    A move also deletes the source rows, so it takes the source's folder-write checks
+    inline: no automated run, no row job, no running row, and `linked` for rows the
+    source's blueprint counts. Either way the **target** refuses while it has a running or
+    paused automated Run, like Apply and `rows/bulk`; copying *from* such a plan is fine.
+    Each plan's lock is taken once, in id order: `asyncio.Lock` is not re-entrant.
+    """
+    if body.source_plan_id == plan_id:
+        raise HTTPException(400, "Those rows are already in this plan")
+    target = await _get_plan(db, plan_id)
+    source = await _get_plan(db, body.source_plan_id)
+    target_prompt = _prompt_alias(target)
+    if not target_prompt:
+        raise HTTPException(400, NO_PROMPT_PIN_MSG)
+    subfolder = normalize_subfolder(body.subfolder) if body.subfolder is not None else None
+    carried = {
+        p["alias"] for p in (target.pinned_params or []) if p.get("per_row")
+    } - {target_prompt, _prompt_alias(source)}
+    first, second = sorted((plan_id, source.id))
+    async with _plan_lock(first), _plan_lock(second):
+        wanted = list(dict.fromkeys(body.row_ids))
+        rows: list[ComfyRow] = []
+        for chunk in chunked(wanted):
+            rows.extend((await db.execute(
+                select(ComfyRow).where(ComfyRow.plan_id == source.id, ComfyRow.id.in_(chunk))
+            )).scalars().all())
+        if len(rows) != len(wanted):
+            raise HTTPException(400, "row_ids must belong to the source plan")
+        rows.sort(key=lambda r: (r.sort_order, r.created_at))
+        await _refuse_live_run(db, target.id)
+        skipped_linked = skipped_no_prompt = unlinked = 0
+        linked_moved: set[str] = set()
+        if body.move:
+            await _refuse_live_run(db, source.id)
+            if await _plan_job_active(db, source.id, _ROW_JOB_TYPES):
+                raise HTTPException(409, _SOURCE_LIVE_MSG)
+            if any(r.status == "running" for r in rows):
+                raise HTTPException(409, "A running row cannot be moved")
+            linked_ids = await _current_leaf_ids(db, source.id)
+            n_linked = sum(1 for r in rows if r.leaf_id in linked_ids)
+            if n_linked and body.linked == "refuse":
+                raise HTTPException(409, _linked_refusal(n_linked))
+            if body.linked == "skip":
+                skipped_linked = n_linked
+                rows = [r for r in rows if r.leaf_id not in linked_ids]
+            else:
+                linked_moved = {r.id for r in rows if r.leaf_id in linked_ids}
+        workflow = source.workflow_json or {}
+        pinned = source.pinned_params or []
+        order = await _next_sort_order(db, plan_id)
+        done = 0
+        for r in rows:
+            prompt = (effective_prompt(workflow, pinned, r.values or {}) or "").strip()
+            if not prompt:
+                skipped_no_prompt += 1
+                continue
+            values = {a: copy.deepcopy(v) for a, v in (r.values or {}).items() if a in carried}
+            values[target_prompt] = prompt
+            db.add(ComfyRow(
+                plan_id=plan_id, sort_order=order + done,
+                subfolder=subfolder if subfolder is not None else (r.subfolder or ""),
+                values=values,
+            ))
+            done += 1
+            if body.move:
+                if r.id in linked_moved:
+                    unlinked += 1
+                await db.delete(r)
+        await db.commit()
+    return {
+        "moved" if body.move else "copied": done,
+        "skipped": skipped_no_prompt + skipped_linked,
+        "skipped_no_prompt": skipped_no_prompt,
+        "skipped_linked": skipped_linked,
+        "unlinked": unlinked,
+    }
+
+
 @router.post("/plans/{plan_id}/rows/set-value")
 async def set_value_all_rows(plan_id: str, body: SetValueRequest, db: AsyncSession = Depends(get_db)):
     """Set (or clear) one pinned parameter's value on every row of the plan.
@@ -871,7 +1623,9 @@ async def set_value_all_rows(plan_id: str, body: SetValueRequest, db: AsyncSessi
     aliases = {p["alias"] for p in (plan.pinned_params or [])}
     if body.alias not in aliases:
         raise HTTPException(400, f"No pinned parameter with alias {body.alias!r}")
+    await _refuse_during_rewrite(db, plan_id)
     clear = body.value in (None, "")
+    prompt_alias = _prompt_alias(plan)
     rows = (
         await db.execute(select(ComfyRow).where(ComfyRow.plan_id == plan_id))
     ).scalars().all()
@@ -886,6 +1640,7 @@ async def set_value_all_rows(plan_id: str, body: SetValueRequest, db: AsyncSessi
             if vals.get(body.alias) == body.value:
                 continue
             vals[body.alias] = body.value
+        _mark_manual_if_prompt_changed(r, prompt_alias, r.values or {}, vals)
         r.values = vals
         if r.status in ("completed", "failed"):
             r.status = "pending"
@@ -893,6 +1648,55 @@ async def set_value_all_rows(plan_id: str, body: SetValueRequest, db: AsyncSessi
             r.prompt_id = None
         updated += 1
     await db.commit()
+    return {"updated": updated}
+
+
+@router.post("/plans/{plan_id}/rows/set-subfolder")
+async def set_rows_subfolder(
+    plan_id: str, body: SetSubfolderRequest, db: AsyncSession = Depends(get_db)
+):
+    """Set the destination folder on a selection of rows (or every row).
+
+    Deliberately its own endpoint rather than a branch inside `set_value_all_rows`:
+    that one is hard-gated on the plan's pinned aliases and resets any row it
+    changes, and a folder is neither a pinned parameter nor a reason to regenerate.
+
+    Completed rows keep their images and their status — see the carve-out in
+    `update_row`. Nothing is declared on the dataset here: an edit is plan intent,
+    and declaring on every commit would fill `Dataset.declared_subfolders` with
+    typos. Declaration happens once, at run start.
+    """
+    await _get_plan(db, plan_id)
+    subfolder = normalize_subfolder(body.subfolder)
+    stmt = select(ComfyRow).where(ComfyRow.plan_id == plan_id)
+    # The plan lock for every mode, not only unlink: the run guard below must not race
+    # `_start_run`, which takes it too.
+    async with _plan_lock(plan_id):
+        if body.row_ids is not None:
+            rows = []
+            for chunk in chunked(list(dict.fromkeys(body.row_ids))):
+                rows.extend((await db.execute(stmt.where(ComfyRow.id.in_(chunk)))).scalars().all())
+        else:
+            rows = (await db.execute(stmt)).scalars().all()
+        linked_ids = await _current_leaf_ids(db, plan_id)
+        changing = [r for r in rows if (r.subfolder or "") != subfolder]
+        if changing:
+            await _refuse_folder_change_during_run(db, plan_id)
+        n_linked = sum(1 for r in changing if r.leaf_id in linked_ids)
+        if n_linked and body.linked == "refuse":
+            raise HTTPException(409, _linked_refusal(n_linked))
+        if n_linked and body.linked == "unlink":
+            # As in update_row: a live automated run would refill the leaves this empties.
+            await _refuse_live_run(db, plan_id)
+        updated = 0
+        for r in changing:
+            if r.leaf_id in linked_ids:
+                if body.linked == "skip":
+                    continue
+                r.leaf_id = None  # "unlink"
+            r.subfolder = subfolder
+            updated += 1
+        await db.commit()
     return {"updated": updated}
 
 
@@ -936,7 +1740,7 @@ async def generate_prompts_job(
     committed as each batch lands, closing the modal (or navigating away, or a
     Stop) never discards LLM calls already paid for. Runs on the shared
     job_queue, so it serialises behind captioning/ComfyUI runs — see
-    docs/dev/comfyui.md.
+    docs/dev/comfyui/prompts.md.
 
     Everything that could fail predictably is checked here rather than minutes
     later inside the job.
@@ -956,40 +1760,36 @@ async def generate_prompts_job(
         raise HTTPException(400, "No model given and the provider has no default model")
 
     # One prompt-generation job at a time per plan (mirrors the run guard).
-    active = (
-        await db.execute(
-            select(BackgroundJob).where(
-                BackgroundJob.job_type == "comfy_prompts",
-                BackgroundJob.status.in_(("pending", "running")),
+    # Held to the job's commit, like the run's guard, against a blueprint Apply.
+    async with _plan_lock(plan_id):
+        if await _plan_job_active(db, plan_id, ("comfy_prompts",)):
+            raise HTTPException(409, "A prompt-generation job for this plan is already queued or running")
+        if await _plan_job_active(db, plan_id, ("comfy_rewrite",)):
+            raise HTTPException(409, "A prompt rewrite for this plan is queued or running — wait for it to finish")
+
+        existing_count = len(_plan_prompt_texts(plan, await _plan_rows(db, plan_id)))
+        if existing_count >= body.target_count:
+            raise HTTPException(
+                400,
+                f"The plan already holds {existing_count} prompt{'s' if existing_count != 1 else ''} — "
+                f"raise the target above that to generate more",
             )
-        )
-    ).scalars().all()
-    if any((j.config or {}).get("plan_id") == plan_id for j in active):
-        raise HTTPException(409, "A prompt-generation job for this plan is already queued or running")
+        to_generate = body.target_count - existing_count
 
-    existing_count = len(_plan_prompt_texts(plan, await _plan_rows(db, plan_id)))
-    if existing_count >= body.target_count:
-        raise HTTPException(
-            400,
-            f"The plan already holds {existing_count} prompt{'s' if existing_count != 1 else ''} — "
-            f"raise the target above that to generate more",
+        # plan_id is a path param, so model_dump() omits it — but the 409 guard above
+        # reads config["plan_id"], so inject it explicitly.
+        config = body.model_dump()
+        config["plan_id"] = plan_id
+        auto_label = f"Prompts: {plan.name} — {to_generate} more (to {body.target_count})"
+        job = BackgroundJob(
+            job_type="comfy_prompts",
+            label=body.label or auto_label,
+            dataset_id=plan.dataset_id,
+            total_items=to_generate,
+            config=config,
         )
-    to_generate = body.target_count - existing_count
-
-    # plan_id is a path param, so model_dump() omits it — but the 409 guard above
-    # reads config["plan_id"], so inject it explicitly.
-    config = body.model_dump()
-    config["plan_id"] = plan_id
-    auto_label = f"Prompts: {plan.name} — {to_generate} more (to {body.target_count})"
-    job = BackgroundJob(
-        job_type="comfy_prompts",
-        label=body.label or auto_label,
-        dataset_id=plan.dataset_id,
-        total_items=to_generate,
-        config=config,
-    )
-    db.add(job)
-    await db.commit()
+        db.add(job)
+        await db.commit()
 
     dataset_id = plan.dataset_id
     provider_id = body.provider_id
@@ -1190,6 +1990,7 @@ async def bulk_edit_rows(plan_id: str, body: RowsBulkEditRequest, db: AsyncSessi
     prompt_alias = _prompt_alias(plan)
     if not prompt_alias:
         raise HTTPException(400, NO_PROMPT_PIN_MSG)
+    await _refuse_during_rewrite(db, plan_id)
     workflow = plan.workflow_json or {}
 
     stmt = select(ComfyRow).where(ComfyRow.plan_id == plan_id)
@@ -1243,6 +2044,7 @@ async def bulk_edit_rows(plan_id: str, body: RowsBulkEditRequest, db: AsyncSessi
         vals = dict(row.values or {})
         vals[prompt_alias] = new
         row.values = vals
+        row.prompt_origin = blueprint_rewrite.ORIGIN_MANUAL
         if row.status in ("completed", "failed"):
             row.status = "pending"
             row.error_msg = None
@@ -1267,11 +2069,572 @@ async def reset_rows(plan_id: str, body: RowResetRequest, db: AsyncSession = Dep
     return {"reset": len(rows)}
 
 
+# ── Blueprint (structured generation) ─────────────────────────────────────────
+# docs/dev/comfyui/structured.md. Expansion is inline, never a job: it is pure CPU plus
+# one bulk insert under the row cap.
+
+# Pydantic's names for the branches of `Scenario.combine`'s union, which appear in an
+# error's location. Listed exactly: a pattern ("starts uppercase") would also drop a
+# user's invalid key such as an axis named "Character", the very thing to report.
+_UNION_BRANCH_TAGS = {"str", "constrained-str", "CombineItem"}
+
+
+def _blueprint_out(bp) -> dict | None:
+    if bp is None:
+        return None
+    return {"spec": bp.spec or {}, "seed": bp.seed, "brief": bp.brief, "draft": bp.draft, "updated_at": bp.updated_at}
+
+
+@router.get("/plans/{plan_id}/blueprint")
+async def get_blueprint(plan_id: str, db: AsyncSession = Depends(get_db)):
+    await _get_plan(db, plan_id)
+    return {"value": _blueprint_out(await blueprint_service.load_blueprint(db, plan_id))}
+
+
+@router.put("/plans/{plan_id}/blueprint")
+async def put_blueprint(plan_id: str, body: BlueprintPut, db: AsyncSession = Depends(get_db)):
+    """Save the spec as the user edits it. Writes no rows; Apply does that."""
+    plan = await _get_plan(db, plan_id)
+    # Under the plan lock: a plan's first save and an Apply would otherwise both see
+    # no blueprint, both create one, and the second would hit its unique index.
+    async with _plan_lock(plan_id):
+        bp = await blueprint_service.save_spec(db, plan, body.spec, body.seed)
+        await db.commit()
+    return {"value": _blueprint_out(bp)}
+
+
+@router.post("/plans/{plan_id}/blueprint/preview")
+async def preview_blueprint(plan_id: str, body: BlueprintPreviewRequest, db: AsyncSession = Depends(get_db)):
+    """What Apply would do with this spec. Reads the spec from the body, not the saved
+    row, so the live preview follows edits that have not been saved yet."""
+    plan = await _get_plan(db, plan_id)
+    return await blueprint_service.preview(db, plan, body.spec, body.seed, allow_over_cap=body.allow_over_cap)
+
+
+async def _refuse_live_run(db: AsyncSession, plan_id: str) -> None:
+    """409 while an automated run on this plan is running or paused (M6 §5).
+
+    A manual Apply or Top up between its passes would add rows the run then counts as
+    its own, or file them outside its budget. A rewrite stays allowed: a run paused on
+    rows waiting for one sends the user here to run it.
+    """
+    from backend.models import Run
+
+    live = (await db.execute(
+        select(Run.id).where(Run.plan_id == plan_id, Run.status.in_(("running", "paused"))).limit(1)
+    )).first()
+    if live is not None:
+        raise HTTPException(409, "An automated run on this plan is running or paused — finish or cancel it on the Runs page first")
+
+
+@router.post("/plans/{plan_id}/blueprint/apply")
+async def apply_blueprint(plan_id: str, body: BlueprintApplyRequest, db: AsyncSession = Depends(get_db)):
+    plan = await _get_plan(db, plan_id)
+    alias = _prompt_alias(plan)
+    if not alias:
+        raise HTTPException(400, NO_PROMPT_PIN_MSG)
+    async with _plan_lock(plan_id):
+        # Inside the lock: a run starting between a check outside it and the lock
+        # would otherwise find rows added under it.
+        await _refuse_live_run(db, plan_id)
+        # A run loaded its rows at start and must not lose pending ones to the orphan
+        # delete; a prompt job seeds its dedupe set once. Neither may overlap an Apply.
+        if await _plan_job_active(db, plan_id, _ROW_JOB_TYPES):
+            raise HTTPException(409, "A run, prompt-generation or rewrite job for this plan is queued or running — wait for it to finish")
+        try:
+            return await blueprint_service.apply(
+                db, plan, body.spec, body.seed,
+                prompt_alias=alias,
+                start_order=await _next_sort_order(db, plan_id),
+                confirm_total=body.confirm_total,
+                allow_over_cap=body.allow_over_cap,
+                delete_orphan_pending=body.delete_orphan_pending,
+            )
+        except blueprint_service.BlueprintInvalid as e:
+            raise HTTPException(400, f"The blueprint has errors: {e}")
+        except blueprint_service.OverCap as e:
+            raise HTTPException(400, str(e))
+        except blueprint_service.TotalChanged as e:
+            raise HTTPException(409, str(e))
+
+
+async def fill_blueprint(
+    db: AsyncSession, plan: ComfyPlan, spec: BlueprintSpec, seed: int, *,
+    prompt_alias: str, confirm_total: int | None, allow_over_cap: bool, delete_orphan_pending: bool,
+    exclude_leaf_ids: frozenset[str] = frozenset(),
+    run_rewrites: frozenset[str] = frozenset(),
+) -> dict:
+    """Top up's fill, without its run: Apply, then reset the blueprint's failed rows and
+    list its pending ones. Top up and an automated run's `prompts` stage both call it.
+
+    The caller holds the plan lock and has checked that no `_ROW_JOB_TYPES` job is
+    live. Rows a rewrite-enabled scenario has not had rewritten yet would run as
+    template text, so when there are any it stops after Apply: nothing is reset and
+    `pending` is empty. Returns `{created, reset, deleted_rows, awaiting_rewrite,
+    pending}`, raising the HTTPExceptions Apply's errors always mapped to.
+
+    An automated run passes the scenarios it rewrites itself as `run_rewrites`, so
+    their rows do not stop the fill, and the leaves it abandoned as
+    `exclude_leaf_ids`, which get no rows and are not listed (M6 §5).
+    """
+    try:
+        applied = await blueprint_service.apply(
+            db, plan, spec, seed,
+            prompt_alias=prompt_alias,
+            start_order=await _next_sort_order(db, plan.id),
+            confirm_total=confirm_total,
+            allow_over_cap=allow_over_cap,
+            delete_orphan_pending=delete_orphan_pending,
+            exclude_leaf_ids=exclude_leaf_ids,
+        )
+    except blueprint_service.BlueprintInvalid as e:
+        raise HTTPException(400, f"The blueprint has errors: {e}")
+    except blueprint_service.OverCap as e:
+        raise HTTPException(400, str(e))
+    except blueprint_service.TotalChanged as e:
+        raise HTTPException(409, str(e))
+    out = {"created": applied["created"], "reset": 0, "deleted_rows": applied["deleted_rows"], "awaiting_rewrite": 0, "pending": []}
+    awaiting = await blueprint_rewrite.count_awaiting(db, plan.id, prompt_alias, skip_scenarios=run_rewrites)
+    if awaiting:
+        return {**out, "awaiting_rewrite": awaiting}
+    reset, pending = await blueprint_service.prepare_top_up(db, plan, exclude_leaf_ids=exclude_leaf_ids)
+    return {**out, "reset": reset, "pending": pending}
+
+
+@router.post("/plans/{plan_id}/blueprint/top-up")
+async def top_up_blueprint(plan_id: str, body: BlueprintTopUpRequest, db: AsyncSession = Depends(get_db)):
+    """Fill every folder that came up short: Apply, reset the blueprint's failed rows,
+    and run its pending ones.
+
+    Targets are absolute, so pressing it again once the folders are full adds nothing
+    and queues nothing (`job_id: null`). The spec comes from the body, as for Apply, so
+    what runs is what the preview showed (docs/dev/comfyui/structured.md § Top up).
+    """
+    plan = await _get_plan(db, plan_id)
+    alias = _prompt_alias(plan)
+    if not alias:
+        raise HTTPException(400, NO_PROMPT_PIN_MSG)
+    # Before anything is written: a missing ComfyUI URL or a `..` base folder must not
+    # leave rows added for a run that is then refused.
+    await _run_preflight(db, plan)
+    normalize_subfolder(body.subfolder)
+    # One lock from the 409 check to the run's commit. Released in between, a second
+    # press queued on the lock would pass the check (no job yet), add nothing, and then
+    # hit the run's 409 — an error toast over a run that did start.
+    async with _plan_lock(plan_id):
+        await _refuse_live_run(db, plan_id)
+        if await _plan_job_active(db, plan_id, _ROW_JOB_TYPES):
+            raise HTTPException(409, "A run, prompt-generation or rewrite job for this plan is queued or running — wait for it to finish")
+        out = await fill_blueprint(
+            db, plan, body.spec, body.seed,
+            prompt_alias=alias,
+            confirm_total=body.confirm_total,
+            allow_over_cap=body.allow_over_cap,
+            delete_orphan_pending=body.delete_orphan_pending,
+        )
+        pending = out.pop("pending")
+        out.update({"job_id": None, "total": 0})
+        if not pending:
+            return out
+        try:
+            run = await _start_run(db, RunRequest(
+                plan_id=plan_id, row_ids=pending, subfolder=body.subfolder,
+                set_caption=body.set_caption,
+                label=body.label or f"ComfyUI top up: {plan.name} — {len(pending)} row{'s' if len(pending) != 1 else ''}",
+            ), hold_lock=False)
+        except HTTPException as e:
+            # The fill is committed: say so, or the error reads as "nothing happened".
+            raise HTTPException(
+                e.status_code,
+                f"Applied: {out['created']} row{'s' if out['created'] != 1 else ''} added, "
+                f"{out['reset']} reset. Could not start the run: {e.detail}",
+            ) from e
+    return {**out, "job_id": run["job_id"], "total": run["total"]}
+
+
+@router.delete("/plans/{plan_id}/blueprint/draft", status_code=204)
+async def discard_blueprint_draft(plan_id: str, db: AsyncSession = Depends(get_db)):
+    """Clear the outline call's draft: after *Use it* (the client has saved it as the
+    spec) or *Discard*. Idempotent."""
+    await _get_plan(db, plan_id)
+    async with _plan_lock(plan_id):
+        bp = await blueprint_service.load_blueprint(db, plan_id)
+        if bp is not None and bp.draft is not None:
+            bp.draft = None
+            await db.commit()
+
+
+@router.post("/plans/{plan_id}/blueprint/outline")
+async def outline_blueprint(plan_id: str, body: OutlineRequest, db: AsyncSession = Depends(get_db)):
+    """One LLM call: a brief → a draft blueprint, saved on `blueprint.draft` for review.
+
+    Its own job type, since it writes no rows: it never conflicts with a run or a
+    prompt job, and the user reviews the draft before anything expands. The brief
+    goes in the user message and is never written into the plan's saved
+    instructions, which the user owns (docs/dev/comfyui/structured-llm.md § The outline call).
+    """
+    from backend.models.openai_provider import OpenAIProvider
+
+    plan = await _get_plan(db, plan_id)
+    provider = await db.get(OpenAIProvider, body.provider_id)
+    if not provider:
+        raise HTTPException(404, "Provider not found")
+    if not (body.model_name.strip() or provider.default_model):
+        raise HTTPException(400, "No model given and the provider has no default model")
+
+    async with _plan_lock(plan_id):
+        if await _plan_job_active(db, plan_id, ("comfy_outline",)):
+            raise HTTPException(409, "A blueprint draft for this plan is already being written")
+        config = body.model_dump()
+        # A path param, so model_dump() omits it; the guard above and TopBar read it.
+        config["plan_id"] = plan_id
+        job = BackgroundJob(
+            job_type="comfy_outline",
+            label=body.label or f"Blueprint draft: {plan.name}",
+            dataset_id=plan.dataset_id,
+            total_items=1,
+            config=config,
+        )
+        db.add(job)
+        # The brief is kept now, not on success, so a failed draft never costs the
+        # user a long brief they would have to retype.
+        bp = await blueprint_service.load_blueprint(db, plan_id)
+        if bp is None:
+            bp = await blueprint_service.save_spec(db, plan, BlueprintSpec(), random.randrange(2**31))
+        bp.brief = body.brief
+        await db.commit()
+
+    dataset_id = plan.dataset_id
+    provider_id = body.provider_id
+    requested_model = body.model_name.strip()
+    brief = body.brief
+    temperature = body.temperature
+
+    async def _run(job_id: str) -> None:
+        from backend.database import AsyncSessionLocal
+        from backend.ml.prompt_generator import generate_outline
+        from backend.models.openai_provider import OpenAIProvider as Provider
+        from backend.workers.progress import broadcaster
+
+        async with AsyncSessionLocal() as session:
+            # Re-check on dequeue, and raise rather than return: a silent return
+            # is reported as success.
+            plan_row = await session.get(ComfyPlan, plan_id)
+            if not plan_row:
+                raise RuntimeError("The plan was deleted before this job started")
+            prov = await session.get(Provider, provider_id)
+            if not prov:
+                raise RuntimeError("The LLM provider was deleted before this job started")
+            model_name = requested_model or prov.default_model
+            if not model_name:
+                raise RuntimeError("The provider no longer has a default model")
+            instructions = ((plan_row.gen_settings or {}).get("instructions") or "").strip()
+            base_url, api_key = prov.base_url, prov.api_key
+            max_tokens, timeout_s = prov.max_tokens, prov.timeout_s
+
+        # Emitted before the call, which can take the provider's whole timeout: it is
+        # the first event carrying plan_id, which TopBar's invalidation needs.
+        await broadcaster.emit(job_id, {
+            "type": "progress", "job_id": job_id, "job_type": "comfy_outline", "status": "running",
+            "done": 0, "total": 1, "percent": 0.0, "message": "Drafting a blueprint…",
+            "dataset_id": dataset_id, "plan_id": plan_id,
+        })
+        try:
+            raw = await generate_outline(
+                base_url=base_url, api_key=api_key, model_name=model_name, brief=brief,
+                system_instructions=instructions, temperature=temperature,
+                max_tokens=max_tokens, timeout_s=timeout_s,
+            )
+        except Exception as e:
+            raise RuntimeError(f"Blueprint draft failed: {e}") from e
+        # Cancellation is polled after the call, the one slow step. A Stop pressed
+        # during it must not save a draft and report "draft ready".
+        job_queue.raise_if_cancelled(job_id)
+        # Structural validation only: a draft with semantic errors (an unknown
+        # placeholder, a duplicate folder) is still saved, and the review panel
+        # shows its errors. One the schema cannot hold has nothing to review.
+        try:
+            spec = BlueprintSpec.model_validate(raw)
+        except ValidationError as e:
+            # A union field reports one error per branch; the deepest is the one that
+            # names the real problem (`take`, not "should be a string"), and its branch
+            # tags (`CombineItem`, `constrained-str`) mean nothing to a user.
+            worst = max(e.errors(), key=lambda err: len(err["loc"]))
+            where = ".".join(str(p) for p in worst["loc"] if p not in _UNION_BRANCH_TAGS)
+            raise RuntimeError(f"Blueprint draft failed: the model's draft is malformed at {where}: {worst['msg']}") from e
+
+        async with AsyncSessionLocal() as session:
+            plan_row = await session.get(ComfyPlan, plan_id)
+            if not plan_row:
+                raise RuntimeError("The plan was deleted while the draft was being written")
+            async with _plan_lock(plan_id):
+                bp = await blueprint_service.load_blueprint(session, plan_id)
+                if bp is None:
+                    # The spec stays empty: the draft waits for review like any other.
+                    bp = await blueprint_service.save_spec(
+                        session, plan_row, BlueprintSpec(), random.randrange(2**31)
+                    )
+                bp.draft = spec.model_dump()
+                bp.brief = brief
+                job_row = await session.get(BackgroundJob, job_id)
+                if job_row is not None:
+                    job_row.result_data = {
+                        "plan_id": plan_id,
+                        "axes": len(spec.axes),
+                        "scenarios": len(spec.scenarios),
+                    }
+                await session.commit()
+
+    await job_queue.enqueue(job, _run)
+    return {"job_id": job.id}
+
+
+@router.get("/plans/{plan_id}/blueprint/rewrite")
+async def rewrite_estimate(plan_id: str, batch_size: int = 5, db: AsyncSession = Depends(get_db)):
+    """What the §3 rewrite would do now, with this batch size: {rows, leaves, calls,
+    budget}. The Rewrite dialog shows it and sends `budget` back as `confirm_budget`."""
+    plan = await _get_plan(db, plan_id)
+    if not 1 <= batch_size <= 10:
+        raise HTTPException(400, "batch_size must be between 1 and 10")
+    alias = _prompt_alias(plan)
+    if not alias:
+        return blueprint_rewrite.estimate([], batch_size)
+    return blueprint_rewrite.estimate(await blueprint_rewrite.select_targets(db, plan_id, alias), batch_size)
+
+
+@router.post("/plans/{plan_id}/blueprint/rewrite")
+async def rewrite_blueprint(plan_id: str, body: RewriteRequest, db: AsyncSession = Depends(get_db)):
+    """The optional LLM pass (M6 §3): rewrite the template prompts of every scenario
+    that has `rewrite` on into prose, one leaf at a time.
+
+    Its own job type, not `comfy_prompts`: it updates rows rather than appending them
+    and reports different numbers. A leaf that fails keeps its template prompts
+    (docs/dev/comfyui/structured-llm.md § The rewrite pass).
+    """
+    from backend.models.openai_provider import OpenAIProvider
+
+    plan = await _get_plan(db, plan_id)
+    alias = _prompt_alias(plan)
+    if not alias:
+        raise HTTPException(400, NO_PROMPT_PIN_MSG)
+    bp = await blueprint_service.load_blueprint(db, plan_id)
+    if bp is None:
+        raise HTTPException(404, "This plan has no blueprint")
+    provider = await db.get(OpenAIProvider, body.provider_id)
+    if not provider:
+        raise HTTPException(404, "Provider not found")
+    if not (body.model_name.strip() or provider.default_model):
+        raise HTTPException(400, "No model given and the provider has no default model")
+
+    async with _plan_lock(plan_id):
+        if await _plan_job_active(db, plan_id, _ROW_JOB_TYPES):
+            raise HTTPException(409, "A run, prompt-generation or rewrite job for this plan is queued or running — wait for it to finish")
+        # The scenarios the user reviewed. The job rewrites only these, so one switched on
+        # while it waits in the queue is not rewritten against a budget sized without it.
+        scenarios = sorted(blueprint_rewrite.rewrite_scenarios(BlueprintSpec.model_validate(bp.spec or {})))
+        res = await start_rewrite_job(
+            db, plan,
+            provider_id=body.provider_id, model_name=body.model_name, batch_size=body.batch_size,
+            temperature=body.temperature, scenarios=scenarios, confirm_budget=body.confirm_budget,
+            label=body.label,
+        )
+    if res["job_id"] is None:
+        raise HTTPException(
+            400, "Nothing to rewrite — turn on 'Rewrite into prose' on a scenario and Apply it first"
+        )
+    return res
+
+
+async def start_rewrite_job(
+    db: AsyncSession, plan: ComfyPlan, *,
+    provider_id: str, model_name: str, batch_size: int, temperature: float, scenarios: list[str],
+    confirm_budget: int | None = None, label: str | None = None,
+    row_ids: list[str] | None = None, max_requests: int | None = None,
+    run_id: str | None = None, run_stage: str | None = None, label_prefix: str = "",
+    sit_out_failures: bool = False,
+) -> dict:
+    """Queue a `comfy_rewrite` job over `scenarios` (and only `row_ids`, when given).
+
+    The route and an automated run's `rewrite` stage both call it. The caller holds the
+    plan lock and has checked that no `_ROW_JOB_TYPES` job is live; the route has also
+    checked the provider and the blueprint. Returns `{job_id, total, budget}`, with
+    `job_id: None` when nothing is left to rewrite. A `confirm_budget` that no longer
+    matches is a 409, as the route always answered; a run passes none, and caps the
+    calls with `max_requests` instead (its paid-call cap).
+
+    With `sit_out_failures` (a looping run), a pass in which every leaf failed
+    completes rather than raising: those leaves sit out the pass and the next pass
+    retries them (M6 §5). A provider or write error, or a cancel, still fails the job.
+    A run that does not loop has no next pass, so PM-004's rule holds for it: nothing
+    rewritten is a failure.
+
+    The calls made so far are written to the job row after every batch, so a job
+    killed mid-pass still records what it spent (the run's paid-call cap reads it).
+    """
+    alias = _prompt_alias(plan)
+    if not alias:
+        raise HTTPException(400, NO_PROMPT_PIN_MSG)
+    plan_id = plan.id
+    only = set(row_ids) if row_ids is not None else None
+    est = blueprint_rewrite.estimate(
+        await blueprint_rewrite.select_targets(db, plan_id, alias, set(scenarios), row_ids=only), batch_size
+    )
+    if not est["rows"]:
+        return {"job_id": None, "total": 0, "budget": 0}
+    if confirm_budget is not None and est["budget"] != confirm_budget:
+        raise HTTPException(
+            409, f"The rewrite now needs up to {est['budget']} LLM calls, not the {confirm_budget} you reviewed — review it again"
+        )
+    confirmed_budget = est["budget"] if confirm_budget is None else confirm_budget
+    if max_requests is not None:
+        confirmed_budget = min(confirmed_budget, max_requests)
+    config = {
+        "provider_id": provider_id, "model_name": model_name, "batch_size": batch_size,
+        "temperature": temperature, "confirm_budget": confirm_budget, "label": label,
+        # The guards and TopBar read plan_id.
+        "plan_id": plan_id, "scenarios": list(scenarios),
+    }
+    if row_ids is not None:
+        config["row_ids"] = list(row_ids)
+    n, m = est["rows"], est["leaves"]
+    job = BackgroundJob(
+        job_type="comfy_rewrite",
+        label=run_job_label(
+            label_prefix,
+            label or f"Rewrite: {plan.name} — {n} prompt{'s' if n != 1 else ''} in {m} folder{'s' if m != 1 else ''}",
+        ),
+        dataset_id=plan.dataset_id,
+        total_items=n,
+        config=run_job_config(config, run_id, run_stage),
+    )
+    db.add(job)
+    await db.commit()
+
+    dataset_id = plan.dataset_id
+    requested_model = model_name.strip()
+    reviewed = set(scenarios)
+
+    async def _run(job_id: str) -> None:
+        from backend.database import AsyncSessionLocal
+        from backend.ml import prompt_generator
+        from backend.models.openai_provider import OpenAIProvider as Provider
+        from backend.workers.progress import broadcaster
+
+        async with AsyncSessionLocal() as session:
+            # Re-check on dequeue, and raise rather than return: a silent return is
+            # reported as success.
+            plan_row = await session.get(ComfyPlan, plan_id)
+            if not plan_row:
+                raise RuntimeError("The plan was deleted before this job started")
+            alias = _prompt_alias(plan_row)
+            if not alias:
+                raise RuntimeError("The plan's prompt pin was removed before this job started")
+            prov = await session.get(Provider, provider_id)
+            if not prov:
+                raise RuntimeError("The LLM provider was deleted before this job started")
+            model_name = requested_model or prov.default_model
+            if not model_name:
+                raise RuntimeError("The provider no longer has a default model")
+            # The plan's saved "Generate prompts" instructions: read, never written.
+            instructions = ((plan_row.gen_settings or {}).get("instructions") or "").strip()
+            targets = await blueprint_rewrite.select_targets(session, plan_id, alias, reviewed, row_ids=only)
+            if not targets:
+                raise RuntimeError("Prompt rewrite failed: no rows wait for a rewrite any more")
+            base_url, api_key = prov.base_url, prov.api_key
+            max_tokens, timeout_s = prov.max_tokens, prov.timeout_s
+
+        # Rows may have gone while the job waited; never spend more than was confirmed.
+        budget = min(confirmed_budget, blueprint_rewrite.estimate(targets, batch_size)["budget"])
+        requested = sum(len(t.rows) for t in targets)
+
+        async def _emit(done: int, message: str) -> None:
+            await broadcaster.emit(job_id, {
+                "type": "progress", "job_id": job_id, "job_type": "comfy_rewrite", "status": "running",
+                "done": done, "total": requested,
+                "percent": round(done / requested * 100, 1) if requested else 100.0,
+                "message": message, "dataset_id": dataset_id, "plan_id": plan_id,
+            })
+
+        # Before the first call, which can take the provider's whole timeout: it is
+        # the first event carrying plan_id, which TopBar's invalidation needs.
+        await _emit(0, f"Rewriting prompts (0/{requested})")
+
+        async def _write(pairs: list[tuple[str, str]]) -> int:
+            async with AsyncSessionLocal() as s:
+                written = await blueprint_rewrite.write_rewrites(s, alias, pairs)
+                await s.commit()
+            return written
+
+        async def _on_batch(r, path: str) -> None:
+            await _emit(r.rewritten, f"Rewrote {r.rewritten}/{requested} prompts ({path})")
+            # What has been spent so far, in case the job dies before its final write.
+            async with AsyncSessionLocal() as s:
+                job_row = await s.get(BackgroundJob, job_id)
+                if job_row is not None:
+                    job_row.result_data = {**(job_row.result_data or {}), "calls": llm.requests}
+                    await s.commit()
+
+        llm = prompt_generator.RewriteSession(
+            base_url=base_url, api_key=api_key, model_name=model_name,
+            system_instructions=instructions, temperature=temperature,
+            max_tokens=max_tokens, timeout_s=timeout_s, max_requests=budget,
+        )
+        result = await blueprint_rewrite.run_pass(
+            targets, session=llm, write=_write, batch_size=batch_size,
+            cancelled=lambda: job_queue.cancel_requested(job_id), on_batch=_on_batch,
+        )
+
+        async with AsyncSessionLocal() as session:
+            job_row = await session.get(BackgroundJob, job_id)
+            if job_row:
+                job_row.result_data = {
+                    "plan_id": plan_id,
+                    "rewritten": result.rewritten,
+                    "requested": result.requested,
+                    "leaves": result.leaves,
+                    "leaves_done": result.leaves_done,
+                    "leaves_failed": result.leaves_failed,
+                    "failed_paths": result.failed_paths[:50],
+                    "calls": result.calls,
+                    "budget": budget,
+                    "mode": result.mode,
+                    "stop_reason": result.stop_reason,
+                    "error": result.error,
+                }
+                # The worker emits total_items as both done and total at the end.
+                job_row.total_items = result.rewritten
+            await session.commit()
+
+        # Commit first, THEN raise: a plain return would let the worker overwrite the
+        # user's cancel with "completed".
+        if result.stop_reason == "cancelled":
+            job_queue.raise_if_cancelled(job_id)
+        if sit_out_failures and result.stop_reason not in ("provider_error", "write_error"):
+            # Inside a run, folders that failed sit out the pass; the run reads the
+            # result and goes on, and its next pass retries them.
+            return
+        if result.rewritten == 0:
+            # PM-004: returning is not proof that anything was rewritten.
+            reasons = {
+                "call_budget": f"the call budget of {budget} ran out before any batch came back",
+                "too_many_failures": f"{result.leaves_failed} folders failed",
+                "done": f"every folder failed ({result.leaves_failed})",
+            }
+            detail = result.error or reasons.get(result.stop_reason) or "no prompts were rewritten"
+            raise RuntimeError(f"Prompt rewrite failed: {detail}")
+
+    await job_queue.enqueue(job, _run)
+    return {"job_id": job.id, "total": est["rows"], "budget": est["budget"]}
+
+
 # ── Run ───────────────────────────────────────────────────────────────────────
 
-@router.post("/run")
-async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
-    plan = await _get_plan(db, body.plan_id)
+async def _run_preflight(db: AsyncSession, plan: ComfyPlan) -> tuple[str, Dataset]:
+    """What a run needs before anything is queued: the ComfyUI URL and the dataset.
+
+    Its own function so Top up can check it *before* Apply writes rows, rather than
+    write them and then refuse the run.
+    """
     if not plan.workflow_json:
         raise HTTPException(400, "Plan has no workflow — paste an API-format workflow JSON first")
 
@@ -1283,39 +2646,62 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
     dataset = await db.get(Dataset, plan.dataset_id)
     if not dataset:
         raise HTTPException(404, "Dataset not found")
+    return comfy_url, dataset
 
-    # One run at a time per plan.
-    active = (
-        await db.execute(
-            select(BackgroundJob).where(
-                BackgroundJob.job_type == "comfy_generate",
-                BackgroundJob.status.in_(("pending", "running")),
-            )
+
+@router.post("/run")
+async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
+    return await _start_run(db, body)
+
+
+async def _start_run(
+    db: AsyncSession,
+    body: RunRequest,
+    *,
+    hold_lock: bool = True,
+    run_id: str | None = None,
+    run_stage: str | None = None,
+    label_prefix: str = "",
+) -> dict:
+    """Pre-flight, 409 guard and enqueue for a `comfy_generate` run: `POST /comfy/run`,
+    and Top up's run of the pending rows.
+
+    Takes the plan lock unless `hold_lock=False`, which a caller already holding it
+    must pass — `asyncio.Lock` is not re-entrant, so taking it again would deadlock.
+    """
+    plan = await _get_plan(db, body.plan_id)
+    comfy_url, dataset = await _run_preflight(db, plan)
+
+    # One run at a time per plan. The check and the job's commit hold the plan lock,
+    # so a blueprint Apply cannot pass its own guard in between and then delete
+    # pending rows this run is about to load.
+    async with _plan_lock(body.plan_id) if hold_lock else contextlib.nullcontext():
+        if await _plan_job_active(db, body.plan_id, ("comfy_generate",)):
+            raise HTTPException(409, "A generation run for this plan is already queued or running")
+        # A run loads its rows now; a rewrite would change their text under it.
+        if await _plan_job_active(db, body.plan_id, ("comfy_rewrite",)):
+            raise HTTPException(409, "A prompt rewrite for this plan is queued or running — wait for it to finish")
+
+        if body.row_ids:
+            stmt = select(ComfyRow).where(ComfyRow.plan_id == body.plan_id, ComfyRow.id.in_(body.row_ids))
+        else:
+            stmt = select(ComfyRow).where(ComfyRow.plan_id == body.plan_id, ComfyRow.status == "pending")
+        rows = (await db.execute(stmt.order_by(ComfyRow.sort_order, ComfyRow.created_at))).scalars().all()
+        if not rows:
+            raise HTTPException(400, "No rows to run")
+        row_ids = [r.id for r in rows]
+
+        n = len(row_ids)
+        auto_label = f"ComfyUI: {plan.name} — {n} row{'s' if n != 1 else ''}"
+        job = BackgroundJob(
+            job_type="comfy_generate",
+            label=run_job_label(label_prefix, body.label or auto_label),
+            dataset_id=plan.dataset_id,
+            total_items=n,
+            config=run_job_config(body.model_dump(), run_id, run_stage),
         )
-    ).scalars().all()
-    if any((j.config or {}).get("plan_id") == body.plan_id for j in active):
-        raise HTTPException(409, "A generation run for this plan is already queued or running")
-
-    if body.row_ids:
-        stmt = select(ComfyRow).where(ComfyRow.plan_id == body.plan_id, ComfyRow.id.in_(body.row_ids))
-    else:
-        stmt = select(ComfyRow).where(ComfyRow.plan_id == body.plan_id, ComfyRow.status == "pending")
-    rows = (await db.execute(stmt.order_by(ComfyRow.sort_order, ComfyRow.created_at))).scalars().all()
-    if not rows:
-        raise HTTPException(400, "No rows to run")
-    row_ids = [r.id for r in rows]
-
-    n = len(row_ids)
-    auto_label = f"ComfyUI: {plan.name} — {n} row{'s' if n != 1 else ''}"
-    job = BackgroundJob(
-        job_type="comfy_generate",
-        label=body.label or auto_label,
-        dataset_id=plan.dataset_id,
-        total_items=n,
-        config=body.model_dump(),
-    )
-    db.add(job)
-    await db.commit()
+        db.add(job)
+        await db.commit()
 
     plan_id = body.plan_id
     # Captured as a plain str for the stats refresh in `_run_with_stats`: that
@@ -1331,9 +2717,18 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
         from backend.services.dataset_service import (
             RegisteredFile,
             _register_file_sync,
+            declare_subfolders,
             refresh_stats,
         )
+        from backend.services.llm_server import free_local_llm_servers
         from backend.workers.progress import broadcaster
+
+        # With Settings → ComfyUI's GPU handoff on, a local Strata server drops its model
+        # before ComfyUI needs the card — for a run (whose handoff stage has usually done
+        # it already; this is then one /health call) and for a generation started by hand.
+        # Best effort: it never raises.
+        for note in await free_local_llm_servers():
+            logger.info("comfy_generate %s: %s", job_id, note)
 
         async with AsyncSessionLocal() as session:
             plan_row = await session.get(ComfyPlan, plan_id)
@@ -1362,6 +2757,20 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
             occupied_thumb_stems: set[str] = {p.stem for p in thumbs_dir.glob("*.webp")}
             planned_thumb_stems: set[str] = set()
             stem_slug = slugify_filename(plan_row.name) or "comfy"
+
+            # Declared once, before the loop, for two reasons. `declare_subfolders`
+            # **commits**, and inside the row loop that would durably commit a
+            # half-written row and break the per-row atomicity the `except` handler's
+            # rollback depends on — here the session holds only reads, so the commit
+            # writes nothing but `declared_subfolders` (and `expire_on_commit=False`
+            # leaves `ds`/`run_rows` usable). It is also the better behaviour: the whole folder
+            # tree appears in the sidebar as the run starts rather than filling in row
+            # by row. A cancelled run leaves declared-but-empty folders, which
+            # `list_subfolders` already supports and the user can delete.
+            run_targets = {join_subfolder(subfolder, r.subfolder or "") for r in run_rows}
+            run_targets.discard("")  # a "" path would declare a nameless folder, forever
+            if run_targets:
+                await declare_subfolders(session, ds.id, sorted(run_targets))
 
             output_provenance = _comfy_output_provenance(
                 plan_row.output_is_synthetic, plan_row.name
@@ -1406,6 +2815,9 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
                     "current_item": current,
                     "message": message,
                     "dataset_id": ds.id,
+                    # The page's busy set keys on it, so a run it did not start (another
+                    # tab, a reload, an automated Run's stage) still locks its controls.
+                    "plan_id": plan_id,
                 })
 
             for i, row in enumerate(run_rows):
@@ -1431,6 +2843,19 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
                 prompt_id: str | None = None
                 maybe_queued = False
                 history_seen = False
+                # Per-iteration locals, never hoisted: the broad handler's
+                # `populate_existing` re-select repopulates `row.subfolder` after a
+                # rollback, so a value read once before the loop would go stale.
+                row_subfolder = join_subfolder(subfolder, row.subfolder or "")
+                # The row's **own** leaf, not the combined path: naming files after the
+                # combined path would silently rename every future file for a user who
+                # only ever sets a run-level base folder. Guarded explicitly rather than
+                # `slugify_filename(x) or stem_slug` — `slugify_filename` ends in
+                # `or "image"` and can never return something falsy. Taken from the
+                # normalized path, so a stored `a/..`, `a/b/` or `a\b` names the file
+                # after the same folder the image is filed in.
+                own_leaf = join_subfolder(row.subfolder or "").rsplit("/", 1)[-1]
+                row_stem = slugify_filename(own_leaf) if own_leaf else stem_slug
                 try:
                     wf = patch_workflow(workflow, pinned, row.values or {}, i)
                     # Built from `wf` — the graph actually submitted, with this row's
@@ -1440,6 +2865,12 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
                     maybe_queued = True
                     try:
                         prompt_id = await client.submit(wf, client_id=job_id)
+                    except ComfyPartialRejection as e:
+                        # Queued, but with outputs dropped: the row fails like a 400,
+                        # yet ComfyUI holds a prompt, so `maybe_queued` stays True and
+                        # the handler below takes it back out by id.
+                        prompt_id = e.prompt_id
+                        raise
                     except (ComfyRowError, httpx.ConnectError, httpx.ConnectTimeout):
                         # Rejected (400) or never connected: nothing was queued, so
                         # there is nothing to clean — and no reason to let a /queue
@@ -1490,8 +2921,13 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
                             ref["filename"], ref.get("subfolder", ""), ref.get("type", "output")
                         )
                         suffix = Path(ref["filename"]).suffix.lower() or ".png"
+                        # One occupancy set per run, never one per folder: these guard
+                        # `uq_dataset_filename` and the flat `thumbnails/` directory,
+                        # both per-dataset and blind to the virtual subfolder. Two rows
+                        # in `a/close` and `b/close` correctly yield `close.png` and
+                        # `close_001.png`.
                         new_name = unique_filename_with_thumb(
-                            images_dir, stem_slug, suffix, db_filenames,
+                            images_dir, row_stem, suffix, db_filenames,
                             occupied_thumb_stems, planned_thumb_stems,
                         )
                         dest = images_dir / new_name
@@ -1508,7 +2944,7 @@ async def run_plan(body: RunRequest, db: AsyncSession = Depends(get_db)):
                             dataset_id=ds.id,
                             filename=new_name,
                             original_filename=ref["filename"],
-                            subfolder=subfolder,
+                            subfolder=row_subfolder,
                             file_path=str(dest),
                             thumbnail_path=thumb_path,
                             generation_metadata=gen_meta,

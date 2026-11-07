@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Startup splash server: holds :8000 while `manage start` boots the real one.
+"""Startup splash server: holds the app port (8000 by default) while `manage start` boots the real one.
 
 `start` has a long silent stretch before uvicorn answers — Alembic migrations,
 an occasional frontend rebuild, then the `backend.main` import chain (torch and

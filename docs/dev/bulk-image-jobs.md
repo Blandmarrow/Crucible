@@ -16,7 +16,7 @@ through `contained_path` on purpose.
 The metadata side of "bulk" lives in `docs/dev/bulk-ops.md`: `_apply_bulk_filters`, the
 endpoint table, caption find/replace, `BulkEditPage`'s tabs and Renumber's two-phase rename.
 The detector whose geometry the remap rewrites is `docs/dev/detection.md`; the job-completion
-toasts and invalidations are `docs/dev/frontend-jobs.md`; the commit-ordering invariant is
+toasts are `docs/dev/frontend-jobs.md` and invalidations `docs/dev/job-invalidation.md`; the commit-ordering invariant is
 CLAUDE.md § Key invariants and `docs/dev/postmortems/PM-013-fs-mutation-before-the-commit.md`.
 
 ## Batch resize and aspect crop

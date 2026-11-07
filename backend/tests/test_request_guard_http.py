@@ -13,6 +13,7 @@ module, and a positive control shows that patching is what an un-guarded call hi
 import os
 import socket
 import threading
+import time
 
 import httpx
 import pytest
@@ -255,3 +256,54 @@ def test_positive_control_an_unguarded_shutdown_hits_the_patched_kill(_no_real_s
     run(scenario())
     assert killed.wait(5)
     assert (tmp_path / ".shutdown").exists()
+
+
+# --- dev --reload mode (CRUCIBLE_DEV_RELOAD=1) ---------------------------------------
+
+def _post_control(path):
+    async def scenario():
+        async with _client() as c:
+            r = await c.post(f"{API}/{path}", headers={"Origin": "http://localhost"})
+            assert r.status_code == 204
+    run(scenario())
+
+
+def test_restart_outside_dev_mode_writes_the_sentinel_and_signals(_no_real_shutdown, tmp_path, monkeypatch):
+    monkeypatch.delenv("CRUCIBLE_DEV_RELOAD", raising=False)
+    trigger = tmp_path / "trigger.py"
+    monkeypatch.setattr(main_mod, "_DEV_RELOAD_TRIGGER", trigger)
+    _post_control("restart")
+    assert _no_real_shutdown.wait(5)
+    assert (tmp_path / ".restart").exists()
+    assert not trigger.exists()
+
+
+def test_restart_in_dev_mode_touches_the_reloader_trigger_and_never_signals(_no_real_shutdown, tmp_path, monkeypatch):
+    monkeypatch.setenv("CRUCIBLE_DEV_RELOAD", "1")
+    trigger = tmp_path / "trigger.py"
+    monkeypatch.setattr(main_mod, "_DEV_RELOAD_TRIGGER", trigger)
+    _post_control("restart")
+    for _ in range(100):
+        if trigger.exists():
+            break
+        time.sleep(0.05)
+    assert trigger.exists() and trigger.read_text().startswith("# touched by POST /restart")
+    assert not _no_real_shutdown.is_set()
+    assert not (tmp_path / ".restart").exists()
+
+
+def test_shutdown_in_dev_mode_signals_the_reloader_parent_then_the_worker(tmp_path, monkeypatch):
+    monkeypatch.setenv("CRUCIBLE_DEV_RELOAD", "1")
+    monkeypatch.setattr(main_mod.time, "sleep", lambda _s: None)
+    calls = []
+    done = threading.Event()
+
+    def fake_kill(pid, sig):
+        calls.append(pid)
+        if len(calls) == 2:
+            done.set()
+
+    monkeypatch.setattr(os, "kill", fake_kill)
+    _post_control("shutdown")
+    assert done.wait(5)
+    assert calls == [os.getppid(), os.getpid()]

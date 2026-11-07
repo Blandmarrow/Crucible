@@ -9,7 +9,7 @@ which replays that same memo out of the stored nav context
 (`docs/dev/gallery/nav.md`), the Statistics page's bar click-through
 into `BucketPanel` (`docs/dev/statistics.md`), the video frame-lineage deep link
 (`docs/dev/video/ui.md`), the license filters shared with export
-(`docs/dev/provenance.md`, `docs/dev/export-licensing.md`), and the two endpoints in
+(`docs/dev/provenance-api.md`, `docs/dev/export-licensing.md`), and the two endpoints in
 § The same filters over the whole result set below.
 
 Every param is optional and additive (AND), and an **absent** value is *no filter*, never

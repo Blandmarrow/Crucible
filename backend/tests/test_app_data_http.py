@@ -156,6 +156,28 @@ def test_workflow_put_refuses_null_and_oversized_values(tmp_path):
     run(scenario())
 
 
+def test_the_run_form_round_trips_apart_from_the_captioning_workflow(tmp_path):
+    """The Runs page's remembered form (M6 §6): its own column, NULL until saved, back
+    to SQL NULL on delete, and never touching the captioning workflow beside it."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            url = f"{BASE}/run-form"
+            assert (await env.client.get(url)).json() == {"value": None}
+            await env.client.put(f"{BASE}/captioning-workflow", json={"value": {"customPrompt": "keep"}})
+            form = {"v": 1, "form": {"stages": ["generate"]}, "byDataset": {"d1": {"planId": "p", "subfolder": "s"}}}
+            r = await env.client.put(url, json={"value": form})
+            assert r.status_code == 200, r.text
+            assert (await env.client.get(url)).json() == {"value": form}
+            assert (await env.client.put(url, json={"value": {"x": "y" * MAX_WORKFLOW_BYTES}})).status_code == 413
+            assert (await env.client.delete(url)).status_code == 200
+            assert (await env.client.get(url)).json() == {"value": None}
+            assert await _is_sql_null(env, "threshold_settings", "run_form")
+            r = await env.client.get(f"{BASE}/captioning-workflow")
+            assert r.json() == {"value": {"customPrompt": "keep"}}
+
+    run(scenario())
+
+
 def test_workflow_save_leaves_thresholds_alone(tmp_path):
     """The workflow lives on the singleton settings row, so writing it first must seed
     that row with the real defaults rather than leaving other settings blank."""

@@ -127,8 +127,12 @@ MAINTENANCE_RULES = ".claude/skills/doc-maintenance/SKILL.md"
 # Raised 5400 -> 6000 (2026-10-29, decision 2, docs/dev/decisions/02-claude-md-budget-
 # and-hub-routing.md): at 5,400 every split would have forced an invariant out to pay for
 # its own Map row. Hubs make the Map grow by family; the raise covers families without one.
-MAX_CLAUDE_WORDS = 6000
-NOTE_CLAUDE_WORDS = 6000   # = MAX: no NOTE tier (2026-10-29); the queue does that job
+# Raised 6000 -> 6500 (2026-11-04, the user's call): the split batch that cleared the
+# 90%-full files added six flat topic files (provenance-api, image-edit-job,
+# frontend-constants, job-invalidation, server-start, dataset-operations), each needing a
+# Map row, with ~215 words of headroom left.
+MAX_CLAUDE_WORDS = 6500
+NOTE_CLAUDE_WORDS = 6500   # = MAX: no NOTE tier (2026-10-29); the queue does that job
 # Topic files load on demand: one subsystem per file.
 MAX_TOPIC_WORDS = 3500
 NOTE_TOPIC_WORDS = 3500    # = MAX: no NOTE tier (2026-10-29)
@@ -166,6 +170,7 @@ SPLIT_INDEXES = {
     "docs/dev/gallery": "docs/dev/gallery.md",
     "docs/dev/video": "docs/dev/video.md",
     "docs/dev/versioning": "docs/dev/versioning.md",
+    "docs/dev/comfyui": "docs/dev/comfyui.md",
 }
 
 # docs/dev/*.md files that are not topic files and need no Documentation Map row
@@ -180,6 +185,7 @@ GENERATED_DOCS: set[str] = set()
 # then the folder is deleted.
 TRANSIENT_DIRS: set[str] = {
     "docs/dev/cleanup-plan",
+    "docs/dev/comfy-automation-plan",
     "docs/dev/gpt-review",
     "docs/dev/rating-plan",
     "docs/dev/server-state-plan",

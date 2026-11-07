@@ -1,324 +1,114 @@
-# ComfyUI generation queue
+# ComfyUI — the queue, runs, prompts and blueprints
 
-Per-dataset prompt/parameter queues run against a remote ComfyUI server via its native HTTP
-API, with outputs auto-imported into the dataset. Covers `ComfyPage`, the `comfy` router,
-`comfy_service.py`, and the `comfy_generate` job.
+`ComfyPage` drives a ComfyUI server the user runs: a per-dataset **plan** (a workflow
+template plus pinned params) holds a queue of prompt **rows**, a run sends each row to
+ComfyUI and imports what comes back into the dataset, an LLM can write the prompts, and a
+**blueprint** expands one described dataset into foldered rows, and an automated **run**
+steps from filling a blueprint through generating, scoring, captioning and exporting,
+pass after pass until every folder is full, its settings kept as recipes. This file is the family's
+entry point: the tables below route from a code path to whichever file in
+`docs/dev/comfyui/` owns it. LLM providers themselves are `docs/dev/llm-providers.md`; the
+user-facing guides are `docs/comfyui.md`, `docs/comfy-queue.md`, `docs/comfy-structured.md`, `docs/runs.md`,
+`docs/run-setup.md` and `docs/repeating-runs.md`. M6's plan is
+`docs/dev/comfy-automation-plan/README.md`.
 
-### Concepts & data model
+## The family
 
-A **plan** (`comfy_plans`, `backend/models/comfy.py`) belongs to a dataset and stores:
+| File | Covers |
+|---|---|
+| [queue.md](comfyui/queue.md) | The data model (plans, pins, rows, the per-row folder, the prompt library), `comfy_service.py`, ComfyClient, the `comfy` router's queue endpoints, and the gotchas shared by all of it |
+| [run.md](comfyui/run.md) | The `comfy_generate` job behind `POST /comfy/run`: per-row folders and file stems, per-row `refresh_stats`, removing our prompt from ComfyUI's queue, and the fake ComfyUI it is tested against |
+| [page.md](comfyui/page.md) | `ComfyPage` and `frontend/src/components/comfy/`: the plan rail, the folder tree, the grouped rows table and the Folder cell's lock, `activeRuns`, the remembered plan and tab, the layout (scroller, sticky header, the Rows tab's rail) |
+| [library-dnd.md](comfyui/library-dnd.md) | The Rows tab's library side panel (`ComfyLibraryPanel`: the category tree, prompt edits, *Other plans*), Copy to plan, the row menu, and drag and drop with the button route behind every drag |
+| [blueprint-tab.md](comfyui/blueprint-tab.md) | `BlueprintPanel`: saving, the seed, the editors, the outline draft and its review, `BlueprintPreview`, Apply and Top up, the rewrite button, their e2e, and the tab's two columns, jump bar and collapsible sections |
+| [prompts.md](comfyui/prompts.md) | Writing queue prompts with an LLM: the one-shot endpoint, the `comfy_prompts` job, `parse_prompts`, `GeneratePromptsModal` |
+| [structured.md](comfyui/structured.md) | Blueprints and leaves in the DB, fill accounting, orphans and adoption, Apply's guard rails and the plan lock, Top up |
+| [structured-expansion.md](comfyui/structured-expansion.md) | `BlueprintSpec` and the pure `blueprint_expand.py`: combinations, budgets, sampling and sha256 seeds, folder paths, templates and the template walk |
+| [structured-llm.md](comfyui/structured-llm.md) | The LLM calls of structured generation: the outline call (`comfy_outline`, `generate_outline`, `parse_outline`), the order of standing instructions in every call, and the optional rewrite pass (`comfy_rewrite`, `RewriteSession`, `blueprint_rewrite.py`) |
+| [automation.md](comfyui/automation.md) | Automated runs: the `Run` row, `advance_run` and the worker's post-terminal hook, cancel (and the cancel that waits for a snapshot), pause, resume and restart |
+| [run-stages.md](comfyui/run-stages.md) | What each stage of a run does: the skip-on-empty rule, the snapshot stage, the VRAM handoffs, chunked id lists, rows waiting for a rewrite, unloading the caption model |
+| [run-start.md](comfyui/run-start.md) | The shared start check and the dry run (`plan_run`), and the Runs page: the start form, the stage list, past runs |
+| [run-loop.md](comfyui/run-loop.md) | The goal loop (M6 §5): the head, the body and the tail, `pass_no` and `next_pass`, abandoning a folder, the rewrite stage, the Runs page's Repeat and Rewrite sections |
+| [run-gate.md](comfyui/run-gate.md) | The run gate: `run_gate.py` and its job, `rejects/`, `gate_rejected` and its clearing (`gate_flags.py`), the Gate section |
+| [run-budgets.md](comfyui/run-budgets.md) | The budgets and the paid-call cap, carrying on past a cap (`extend_run`, `_tail_rows`), the seed check |
+| [recipes.md](comfyui/recipes.md) | The run recipe library (`run_recipes`, `/run-recipes`, the export document and what never travels), `RunFormState` and the form ↔ recipe converters, the recipe bar, the remembered start form (`run_form`) |
+| [sync.md](comfyui/sync.md) | Workflow sync: "Sync from canvas", `GET /comfy/canvas-workflow`, the bridge extension and ComfyUI's API constraints |
 
-- `gen_settings` — the "Generate prompts" form, NULL until first saved. See
-  `docs/dev/comfy-prompts.md`.
-- `workflow_json` — a ComfyUI **API-format** workflow (`{node_id: {class_type, inputs, _meta?}}`),
-  exported in ComfyUI via *Workflow → Export (API)*. The UI-format editor export (`nodes`/`links`
-  keys) is rejected client-side with a hint.
-- `pinned_params` — JSON list of `{node_id, input, alias, is_prompt, per_row, value, int_mode}`.
-  **Two-tier model**: a pin with `per_row=False` is a *run default* — its `value` (null =
-  template) applies to every row, no queue column; `per_row=True` gives it a queue-table
-  column whose blank cells fall back to the run default, then the template. At most one pin
-  has `is_prompt=True` (enforced in `_validate_pins`, and forced `per_row=True`) — it drives
-  bulk prompt paste, .txt import, caption text, and the progress-bar preview. `int_mode`
-  (`null/fixed|random|increment`, integer params) applies when a row has no value:
-  `random.randint(0, 2**48)` / `base + row_index_within_run` where base = run default or
-  template. Replaces the old plan-level `seed_mode`.
-- `output_node_ids` — JSON list of workflow node ids whose history outputs are imported
-  regardless of image type (so PreviewImage nodes work as import sources; their temp files
-  are downloaded before ComfyUI clears them, and nothing accumulates in ComfyUI's output
-  folder). `[]` = auto: all `type=="output"` images (SaveImage nodes). In `PATCH /comfy/plans`
-  `[]` clears back to auto (absent = unchanged).
-- `output_is_synthetic` — bool, `NOT NULL DEFAULT true` (migration `c3f7a9e1d4b6`): the plan's own
-  declaration that its output is self-created. `POST` defaults it to `true`, `PATCH` treats
-  `null`/absent as unchanged. Drives `_comfy_output_provenance` — see `docs/dev/provenance.md`.
+## Where things live
 
-A **row** (`comfy_rows`) holds `values` (`{alias: json-native value}`; absent/blank → template
-value), `status` (`pending|running|completed|failed`), `error_msg`, `sort_order`, `prompt_id`
-(last ComfyUI prompt id), and output links: `image_id` (FK → images, `SET NULL`, first output)
-plus `image_ids` (JSON list — multi-SaveImage workflows produce several images per row).
-Plan names are unique per dataset (`uq_comfy_plan_dataset_name`).
+Each row names the file that **owns** that code. A `+` clause is a second genuine owner,
+not a see-also, and says which part of the code it owns.
 
-The ComfyUI server URL is the global `ThresholdSettings.comfyui_url` (Settings → ComfyUI tab,
-with a Test-connection button → `GET /comfy/ping`, which hits `{url}/system_stats`). The same
-tab also holds `ThresholdSettings.comfy_workflow_dir` — the default folder scanned for
-workflow `.json` exports (with a Browse button via `DirPickerModal`); a path on the machine
-running the backend.
+### Backend
 
-### Backend (`backend/routers/comfy.py`, `backend/services/comfy_service.py`)
+| Editing… | Read |
+|---|---|
+| `backend/models/comfy.py` (`ComfyPlan`, `ComfyRow`, `ComfyLibraryPrompt`) | `docs/dev/comfyui/queue.md` § Concepts & data model, including `prompt_origin` and its writers; + `docs/dev/comfyui/structured.md` § Tables for the blueprint and leaf tables, and the `leaf_id` column |
+| `backend/services/comfy_service.py` (`ComfyClient`, `patch_workflow`, `extract_output_images`, `workflow_format`) | `docs/dev/comfyui/queue.md` § Backend; + `docs/dev/comfyui/run.md` § Removing our prompt for `cancel_prompt`; + `docs/dev/comfyui/sync.md` § Backend for `bridge_snapshot`, `last_history_entry` and `history_entry_workflow` |
+| `backend/routers/comfy.py` (plans, rows, library, bulk-edit, `/ping`, workflow-file scan) | `docs/dev/comfyui/queue.md` § Backend; + `docs/dev/comfyui/sync.md` § Backend for `GET /comfy/canvas-workflow` |
+| `backend/services/comfy_library.py` (`normalize_category`, `plan_category_move`), migration `e7d1c5a9b3f2` | `docs/dev/comfyui/queue.md` § Backend, the prompt library's nested categories |
+| `backend/services/comfy_rows.py` (`place_rows`) | `docs/dev/comfyui/queue.md` § Backend (`rows/place`) |
+| `backend/routers/comfy.py` (`POST /comfy/run`, `_run_preflight`, `_start_run`, `_run_with_stats`) | `docs/dev/comfyui/run.md` § The `comfy_generate` job; + `docs/dev/comfyui/structured.md` § Top up for `_start_run`'s second caller; + `docs/dev/comfyui/run-stages.md` § The stages for its run keywords |
+| `backend/routers/comfy.py` (`generate-prompts` and the `comfy_prompts` job) | `docs/dev/comfyui/prompts.md` § Generating and § The `comfy_prompts` job |
+| `backend/routers/comfy.py` (blueprint GET/PUT/preview/apply/top-up, `fill_blueprint`, `_plan_lock`, `_plan_job_active`) | `docs/dev/comfyui/structured.md` § Endpoints and Apply's guard rails and § Top up; + `docs/dev/comfyui/run.md` § The `comfy_generate` job for the `_plan_lock` that `run_plan` shares |
+| `backend/routers/comfy.py` (`…/blueprint/outline`, `DELETE …/blueprint/draft`, the `comfy_outline` job) | `docs/dev/comfyui/structured-llm.md` § The outline call |
+| `backend/routers/comfy.py` (`GET`/`POST …/blueprint/rewrite`, the `comfy_rewrite` job, `_ROW_JOB_TYPES`, `_mark_manual_if_prompt_changed`) | `docs/dev/comfyui/structured-llm.md` § The rewrite pass; + `docs/dev/comfyui/structured.md` § Top up for Top up's refusal |
+| `backend/ml/prompt_generator.py` | `docs/dev/comfyui/prompts.md` § Generating for `generate_prompts` and `parse_prompts`; + `docs/dev/comfyui/structured-llm.md` § The outline call for `generate_outline`, `parse_outline`, `_strip_reasoning` and `_with_standing`, and § The rewrite pass for `RewriteSession`; outside this family: `docs/dev/llm-providers.md` for the provider row and client settings |
+| `backend/schemas/comfy_blueprint.py` | `docs/dev/comfyui/structured-expansion.md` § The spec |
+| `backend/services/blueprint_expand.py` | `docs/dev/comfyui/structured-expansion.md` § Expansion; + `docs/dev/comfyui/structured.md` § Fill accounting for `plan_fill`'s rules |
+| `backend/services/blueprint_service.py` | `docs/dev/comfyui/structured.md` § Fill accounting and § Orphans |
+| `backend/services/blueprint_rewrite.py` | `docs/dev/comfyui/structured-llm.md` § The rewrite pass |
+| `backend/models/run.py`, `backend/schemas/run.py`, `backend/services/run_service.py`, `backend/routers/runs.py` | `docs/dev/comfyui/automation.md`; + `docs/dev/comfyui/run-stages.md` for the stage functions and `docs/dev/comfyui/run-start.md` for `plan_run`; + `docs/dev/comfyui/run-loop.md` for `LoopSettings`, `RewriteSettings`, `HEAD_STAGES`/`BODY_STAGES`, `next_pass` and `RunOut.outcome`/`leaves`; + `docs/dev/comfyui/run-gate.md` for `GateSettings`; + `docs/dev/comfyui/run-budgets.md` for `_spent`/`_budget_stop`, `extend_run`, `check_seeds` and `RunOut.can_extend`; + `docs/dev/comfyui/recipes.md` for `RunRecipeDraft` and the `Recipe*` schemas; outside this family: `docs/dev/backend-infrastructure.md` § After a job ends: the run hook for `_after_terminal` |
+| `backend/services/run_gate.py` | `docs/dev/comfyui/run-gate.md` § The gate |
+| `backend/services/llm_server.py`, `ThresholdSettings.llm_gpu_handoff`, migration `a3c7e9b1d5f2` | `docs/dev/comfyui/gpu-handoff.md` |
+| `backend/models/run_recipe.py`, `backend/services/run_recipe_service.py`, `backend/routers/run_recipes.py` | `docs/dev/comfyui/recipes.md` |
+| `backend/routers/versioning.py` (`start_snapshot_job`) | `docs/dev/comfyui/run-stages.md` § The stages; outside this family: `docs/dev/versioning.md` for the snapshot itself |
+| `backend/services/blueprint_service.py` (`fill_plan`) | `docs/dev/comfyui/run-start.md` § Starting, and the checks it runs first |
+| `backend/routers/comfy.py` (`start_rewrite_job`, `_refuse_live_run`) | `docs/dev/comfyui/run-loop.md` § The rewrite stage and § Manual Apply and Top up during a run |
+| `extras/ComfyUI-CrucibleBridge/__init__.py`, `extras/ComfyUI-CrucibleBridge/js/crucible_bridge.js` | `docs/dev/comfyui/sync.md` § `extras/ComfyUI-CrucibleBridge/` |
+| `backend/utils.py` (`join_subfolder`, `normalize_subfolder`) | outside this family: `docs/dev/shared-utilities.md`; the ComfyUI-specific rule is `docs/dev/comfyui/queue.md` § Gotchas |
 
-`comfy_service.py` is pure (no DB/HTTP routing): `ComfyClient` wraps the ComfyUI endpoints
-(`POST /prompt`, `GET /history/{id}`, `GET /view`, and `GET`/`POST /queue` plus a
-prompt-targeted `POST /interrupt` for `cancel_prompt`, below); it takes an optional httpx
-`transport` so tests can drive it over `httpx.MockTransport`;
-`patch_workflow(workflow, pinned, row_values, row_index)` deep-copies the template and
-resolves each pin as: row value (coerced to the template value's JSON type) → `int_mode`
-roll (random/increment) → run default `value` → template. Coercion is
-backend-authoritative: the frontend's `coerceCellValue` deliberately keeps big or
-non-round-tripping numerics (seeds > 2^53, `'1e5'`, `'1.0'`) as strings, and `_coerce` /
-the increment base both accept them via `_lenient_int` (`int()` → `int(float())`
-fallback; garbage still raises `ComfyRowError`); `effective_prompt` follows the
-same row → default → template chain; `extract_output_images(entry, output_node_ids=None)` —
-default/empty: all `type == "output"` images (skips `temp` previews; a workflow with only a
-PreviewImage node and no output-node selection fails its rows with a "add a SaveImage node or
-select an output node" message); with the plan's `output_node_ids`: those nodes' images
-regardless of type, in list order; `check_history_error` reads `status.status_str == "error"`
-**only when `status` is present** (older ComfyUI omits it — entry presence alone means
-completion); `workflow_format(obj)` classifies parsed workflow JSON as
-`"api" | "ui" | "invalid"` (server-side mirror of the client's `isApiFormat`).
+### Frontend
 
-Router endpoints: plan CRUD (`/comfy/plans…`), row CRUD (`…/rows`, `…/rows/bulk` one row per
-non-empty line into the `is_prompt` alias, `…/rows/delete`, `…/rows/reorder`, `…/rows/reset`
-failed→pending, `GET …/rows` — full rows; `GET /comfy/plans/{id}/prompts` returns
-`{prompts: [{row_id, prompt, status}]}` — the **effective** prompt (row→default→template) of
-each non-empty row, used to browse/reuse prompts across plans and datasets (the
-`PromptLibraryModal`), `…/rows/set-value` set/clear one pinned alias on **every** row of the plan —
-`{alias, value}`, `value: null|""` clears back to the default/template), and `POST /comfy/run`. Editing a
-completed/failed row's `values` via `PATCH /comfy/rows/{id}` (or touching it via
-`rows/set-value`) resets it to `pending` and clears `error_msg`/`prompt_id` (image links are
-kept). `workflow_json` is returned only by `GET /comfy/plans/{id}` — never in the plan list
-or row responses.
+| Editing… | Read |
+|---|---|
+| `frontend/src/pages/ComfyPage.tsx` | `docs/dev/comfyui/page.md` § Frontend for routing, the header, the plan rail and `activeRuns`; + `docs/dev/comfyui/prompts.md` § Frontend for the generate-prompts start mutation, which passes `planId` through its variables |
+| `frontend/src/api/comfy.ts` | `docs/dev/comfyui/page.md` § Frontend |
+| `frontend/src/components/comfy/ComfyRowsTable.tsx`, `ComfyRowsSelectionBar.tsx`, `ComfyDefaultsStrip.tsx`, `ComfyRunBar.tsx`, `SetRowFolderModal.tsx`, `BulkEditRowsModal.tsx` | `docs/dev/comfyui/page.md` § Frontend |
+| `frontend/src/components/comfy/ComfyPlanRail.tsx`, `ComfyFolderTree.tsx`, `folderTree.ts`, `rowsView.ts`, `DuplicatePlanModal.tsx`, `FolderNameModal.tsx` | `docs/dev/comfyui/page.md` § The plan rail, the folder tree and the grouped table; the endpoints behind them are `docs/dev/comfyui/queue.md` § Backend |
+| `frontend/src/hooks/useStickyOffsets.ts`, the `.comfy-head` and `.comfy-rail*`/`.comfy-rows-*` rules in `frontend/src/index.css` | `docs/dev/comfyui/page.md` § The layout |
+| `frontend/src/components/comfy/BlueprintSection.tsx`, the `.bp-*` rules in `frontend/src/index.css` | `docs/dev/comfyui/blueprint-tab.md` § The layout |
+| `frontend/src/components/comfy/WorkflowPinPanel.tsx`, `WorkflowScanModal.tsx` | `docs/dev/comfyui/page.md` § Frontend; + `docs/dev/comfyui/sync.md` § Frontend for the *Sync from canvas* button |
+| `frontend/src/components/comfy/SyncCanvasModal.tsx` | `docs/dev/comfyui/sync.md` § Frontend |
+| `frontend/src/components/comfy/ComfyLibraryPanel.tsx`, `CopyRowsToPlanModal.tsx`, `copyRows.ts`, `dnd.ts`, `DndRow.tsx`, `LinkedAskDialog.tsx`, the row menu and drop targets in `ComfyRowsTable.tsx`, `frontend/e2e/comfy-library.spec.ts`, `comfy-dnd.spec.ts` | `docs/dev/comfyui/library-dnd.md`; the endpoints they call are `docs/dev/comfyui/queue.md` § Backend |
+| `frontend/src/components/comfy/SaveToLibraryModal.tsx` | `docs/dev/comfyui/page.md` § Frontend |
+| `frontend/src/components/comfy/GeneratePromptsModal.tsx` | `docs/dev/comfyui/prompts.md` § Frontend |
+| `frontend/src/components/comfy/BlueprintPanel.tsx`, `BlueprintPreview.tsx`, `BlueprintAxesEditor.tsx`, `BlueprintVariationsEditor.tsx`, `BlueprintScenariosEditor.tsx`, `BlueprintNameField.tsx`, `blueprintKeys.ts` | `docs/dev/comfyui/blueprint-tab.md` § The panel; + `docs/dev/comfyui/structured.md` § Endpoints and Apply's guard rails for what Apply and Top up send and the server guards behind the buttons; + `docs/dev/comfyui/structured-expansion.md` § Expansion for the `defaultPath`/`defaultTemplate` mirrors |
+| `frontend/src/components/comfy/OutlineModal.tsx`, `DraftReview.tsx` | `docs/dev/comfyui/structured-llm.md` § The outline call for the job; + `docs/dev/comfyui/blueprint-tab.md` § The panel for the modal, the draft review, the draft query and *Use it* |
+| `frontend/src/components/comfy/RewriteModal.tsx` | `docs/dev/comfyui/blueprint-tab.md` § The panel for the modal and the estimate query; + `docs/dev/comfyui/structured-llm.md` § The rewrite pass for the job and `confirm_budget` |
+| `frontend/src/pages/RunsPage.tsx`, `frontend/src/api/runs.ts`, `frontend/src/components/runs/RunCaptionFields.tsx`, `RunExportFields.tsx`, `runForms.ts`, `DryRunReport.tsx` | `docs/dev/comfyui/run-start.md` § The Runs page; + `docs/dev/comfyui/run-loop.md` § The Runs page for the pass headings and `LoopOutcome`; + `docs/dev/comfyui/run-gate.md` § The Runs page's Gate section; + `docs/dev/comfyui/recipes.md` for the form state, `recipesApi` and the remembered form |
+| `frontend/src/components/runs/runRecipeForm.ts`, `RecipeBar.tsx` | `docs/dev/comfyui/recipes.md` |
+| `frontend/src/components/runs/ExtendRunDialog.tsx` | `docs/dev/comfyui/run-budgets.md` § Raising a cap and carrying on |
+| `frontend/src/components/runs/RunLoopFields.tsx`, `runLoopForms.ts` | `docs/dev/comfyui/run-loop.md` § The Runs page; + `docs/dev/comfyui/run-gate.md` § The Runs page's Gate section |
+| `frontend/src/components/layout/TopBar.tsx` (the `comfy_prompts`, `comfy_outline` and `comfy_rewrite` branches, and `comfy_generate` in `LIVE_IMAGE_JOB_TYPES`) | `docs/dev/comfyui/prompts.md` § Frontend for the `comfy_prompts` branch; + `docs/dev/comfyui/page.md` § Frontend for the `comfy_generate` live refresh and the `comfy_outline` and `comfy_rewrite` branches; outside this family: `docs/dev/job-invalidation.md` |
 
-Prompt tooling — `POST /comfy/generate-prompts` (one LLM batch call),
-`POST /comfy/plans/{id}/generate-prompts` (the durable `comfy_prompts` job), the output
-parser and `GeneratePromptsModal`: `docs/dev/comfy-prompts.md`.
+### Tests
 
-`POST /comfy/plans/{id}/rows/bulk-edit` (`{operation: prepend|append|remove|find_replace,
-text, replacement, use_regex, row_ids?}`) mirrors caption bulk-edit semantics on the prompt
-column: base = effective prompt (row → default → template), result written into row values
-(changed completed/failed rows reset to pending), regex bounded like caption bulk-edit — one
-30 s batch deadline enforced inside the `regex` engine via `regex_sub_deadline` (408 on timeout).
-An invalid pattern is a 400 `Invalid regex: …` here and on both caption routes alike
-(`backend/tests/test_comfy_bulk_edit_regex_http.py`; GPT-031 brought the caption side into line).
-So is an invalid replacement template (`\9`), which only fails on a match, inside the executor:
-that `regex_error` used to escape the route as a 500.
-
-Prompt library: `comfy_library_prompts` (`ComfyLibraryPrompt`) is a **global** store of
-prompt texts grouped by a free-text `category` (≤100 chars, indexed) — deliberately no
-dataset/plan FK, so prompts are reusable everywhere without duplicating plans.
-`GET /comfy/library` (all prompts, ordered category → created_at; client groups),
-`POST /comfy/library` (`{category, prompts[]}` — blanks dropped, case/whitespace-insensitive
-dedupe against the target category → `{created, skipped}`), `POST /comfy/library/move`
-(`{ids, category}` re-categorize; upholds the same per-category uniqueness — a moved
-prompt whose text already exists in the target is deleted instead → `{moved, merged}`),
-`POST /comfy/library/delete` (`{ids}`).
-
-Workflow sync: `GET /comfy/canvas-workflow` pulls the current workflow from ComfyUI (bridge
-snapshot, else last-queued history entry) — `docs/dev/comfyui-sync.md`.
-Workflow folder scan: `GET /comfy/workflow-files?dir=…` (dir falls back to
-`comfy_workflow_dir`) recursively lists `.json` files (cap 500, >5 MB skipped as invalid) with
-a `format` sniff via `workflow_format`; `GET /comfy/workflow-file?path=…` returns the parsed
-workflow, 400 with an "Export (API)" hint for UI-format files. Both validate paths with
-`utils.sanitize_abs_path` (shared with the `filesystem` router).
-
-### The `comfy_generate` job
-
-`POST /comfy/run` (`{plan_id, row_ids?, subfolder, set_caption, label?}`): explicit `row_ids`
-run regardless of status; otherwise all `pending` rows in `sort_order`. A 409 guards against a
-second pending/running run for the same plan — matched on `job_type` **and**
-`config["plan_id"]`, so a prompt-generation job never blocks a run (see
-`docs/dev/comfy-prompts.md`). Standard job pattern (nested `_run(job_id)`
-closure, own `AsyncSessionLocal`, auto label `ComfyUI: {plan} — N rows`).
-
-Per row, sequentially (one of ours outstanding at a time — a failed or cancelled row's prompt is
-taken out of ComfyUI before the next is submitted, see § Removing our prompt): mark `running` →
-`patch_workflow` → submit → poll history every 1 s (30-min deadline, `PER_ROW_TIMEOUT_S`) →
-download each output image → write into `{dataset}/images/` named
-`{plan_slug}_001.ext` via `unique_filename_with_thumb` → `_register_file_sync` in an executor
-(it returns a `RegisteredFile` NamedTuple `(info, gen_meta, provenance)`, read by **attribute, never
-unpacked** — that was PM-005; the ComfyUI path ignores `.provenance` and stamps its own)
-(metadata + thumbnail; the PNG's embedded `prompt`/`workflow` chunks give `generation_metadata`
-provenance for free) → optional caption (effective prompt = row override or template value,
-assigned **via ORM attribute** + `_write_txt_sidecar`, `captioned_by="comfyui"`) → row
-`completed`, commit per row, then `refresh_stats` for that row (whenever it put image rows in
-play — including a failed row whose images were rolled back, where the recount corrects the column).
-`result_data` (`{created_image_ids, failed_row_ids, completed, failed}`) at the end.
-
-**Stats are refreshed per row, not once at the end.** `Dataset.image_count` is a stored column
-that `GET /datasets/{id}` returns verbatim, so the sidebar and gallery counters can only move
-while a run is in flight if the column is rewritten as it goes — and a cancel then finds it
-already correct rather than stale by however many rows landed. The call sits *before* the row's
-`_emit`, so the SSE event the frontend invalidates on arrives after the column is fresh. The
-raise paths are covered separately: `enqueue` receives `_run_with_stats`, a wrapper that re-runs
-`refresh_stats` against `run_dataset_id` (a plain str captured in the router, not an ORM read)
-only when `_run` raises — cancel and the connect-error abort; a normal return is already covered
-by the last row's refresh — in its **own** session, outside `_run`'s `async with`, so no second
-writer opens while the first session is live, guarded by `except Exception`, which cannot
-swallow `CancelledError` and so cannot turn a cancelled job into a failed one. Regression test:
-`backend/tests/test_comfy_cancel_stats.py`.
-
-Imported rows get their provenance from `_comfy_output_provenance(plan_row.output_is_synthetic,
-plan_row.name)` and their `source_meta` from `_comfy_source_meta(plan_row, row, wf)` — built from `wf`,
-the graph actually submitted rather than the plan template, computed once per row and deep-copied per
-image. See `docs/dev/provenance.md` § ComfyUI synthetic stamping.
-
-Failure/cancel semantics:
-
-- Per-row failures are caught by a deliberately broad `except Exception` — a narrow error list
-  let an unexpected exception skip the very cleanup that exists for it (see
-  `docs/dev/postmortems/PM-005-tuple-return-widened-broke-caller.md`). The row is marked
-  `failed` with a readable message (400 `node_errors` are flattened by `_format_node_errors`)
-  and the run continues. **Per-row atomicity**: `row_files`/`row_image_ids` track every file +
-  Image the row produces — files are tracked *before* they are written (a corrupt download can
-  fail inside `_write_and_register` after the file is on disk) — and the handler runs
-  **DB-error-first**: `session.rollback()` (after a failed flush the session is unusable, so any
-  DB work before the rollback would raise inside the handler), then unlink the files, then a
-  separately-guarded delete-by-id plus row update and commit, then `refresh(ds)` /
-  `refresh(plan_row)` and a `populate_existing=True` re-select of the rows — a rollback expires
-  every object, and the loop keeps reading them, so an expired load on an async session would
-  raise `MissingGreenlet`. A hard `CancelledError` (server shutdown; normal cancel is
-  cooperative and never reaches here with files written) is a separate branch: unlink, delete
-  the tracked `Image` objects, reset the row to `pending`, re-raise.
-- **3 consecutive connect errors abort the run** with a job-level error; untouched rows stay
-  `pending`. Like cancel, this raises straight out of `_run` — which is why the stats refresh
-  lives in the `_run_with_stats` wrapper's `finally` and per row, not after the loop.
-- Cancel (`DELETE /jobs/{id}`) is cooperative: checked before each row and inside the poll
-  loop, which reverts the in-flight row to `pending` and raises; the `CancelledError` branch
-  then takes our prompt out of ComfyUI. `DELETE /jobs` only flips a still-*pending* job to
-  `cancelled`; a running one just gets the cooperative flag and is marked `cancelled` when the
-  worker unwinds, so a row can briefly read `running` until the next check (~1 s).
-
-#### Removing our prompt
-
-ComfyUI is shared: the sync-from-canvas workflow (`docs/dev/comfyui-sync.md`) assumes the
-user also queues prompts from the canvas against the same server. A bare `POST /interrupt`
-stops *whatever is executing* — which, with a canvas prompt running and ours pending, killed
-the user's prompt and left ours queued; and a row timeout that merely raised left our prompt
-in ComfyUI's queue with the next row stacked on top. So the job never sends a global
-interrupt. `ComfyClient.cancel_prompt(prompt_id, client_id)` reads `GET /queue` (items are
-`[number, prompt_id, prompt, extra_data, outputs]`; `extra_data.client_id` is our job id,
-passed at submit), deletes ours from the pending queue (`POST /queue {"delete": [...]}`, by
-id **and** by client_id — the second catches a cancel that landed mid-submit, before we
-learned the id), sends `POST /interrupt {"prompt_id": ours}` only if ours is the one
-running, and re-reads to confirm — the **whole** call, every request included, bounded by
-`CANCEL_CONFIRM_WINDOW_S` (5 s). It never raises; it returns `not_found | removed |
-interrupted | still_running | unreachable`. Only a failed *connection* is `unreachable`;
-an unreadable `/queue`, a `ReadTimeout` or any other stall after connecting is
-`still_running` — unconfirmed is not gone, and a slow server reported as down let the next
-row stack on a prompt still sitting there.
-
-The router runs it only while ComfyUI may still hold the row's prompt — from submit until
-`/history` reports it finished (`maybe_queued and not history_seen`); a 400-rejected or
-never-connected submit queued nothing and skips it. Bounded by `REMOTE_CLEANUP_BUDGET_S`
-(6 s, just above the client's window), or `REMOTE_CLEANUP_HARD_CANCEL_BUDGET_S` (1.5 s) when
-`current_task().cancelling() > 0` — a hard cancel from `JobQueue.stop()`, which then allows
-only `STOP_UNWIND_SECONDS`; the cooperative path fits inside `STOP_GRACE_SECONDS`
-(`docs/dev/backend-infrastructure.md`). In the `CancelledError` branch it runs **last**, after
-the row reset commits, inside `except Exception` with a bare `raise` (PM-027). In the generic
-branch a non-clean outcome is appended to `row.error_msg`, and `still_running` on a non-connect
-error **aborts the run** (remaining rows stay `pending`) rather than stack the next row on a
-prompt we could not remove; `unreachable` does not abort, leaving the 3-strike connect breaker
-to decide as before.
-
-Residual risk, accepted: an old ComfyUI ignores the interrupt body and interrupts globally,
-so if our prompt finishes in the milliseconds between the `GET /queue` and the interrupt,
-whatever runs next is stopped.
-
-### Frontend (`frontend/src/pages/ComfyPage.tsx`, `frontend/src/components/comfy/`)
-
-Dataset-scoped page at `/datasets/:datasetId/comfy` (PageType `"comfy"`, registered in App
-routes, `PageRenderer`, `PaneHeader` `PAGE_OPTIONS`+`NEEDS_DATASET`, Sidebar). Job type
-`comfy_generate` is in TopBar's `IMAGE_MODIFYING_JOB_TYPES` and `LIVE_IMAGE_JOB_TYPES`; it is
-the one job type whose live branch also invalidates `["dataset", id]`, because it is the one
-whose worker refreshes the stored counters per row (see `docs/dev/frontend-jobs.md`). API module
-`frontend/src/api/comfy.ts` (`comfyApi`).
-
-`frontend/e2e/comfy.spec.ts` covers the two journeys that need no ComfyUI server: the empty
-state → create a plan (which selects it and jumps to *Workflow & Pins*), and *Paste prompts…*
-→ rows. It deliberately never starts a run — CI has no ComfyUI and no torch; the run body is
-covered request-level by `backend/tests/test_comfy_cancel_stats.py`.
-
-- **Plan bar** — plan `<select>` (query `["comfy","plans",datasetId]`), inline create/rename,
-  delete via `ConfirmDialog`; section tabs *Rows* / *Workflow & Pins*.
-- **`WorkflowPinPanel`** — paste textarea + `.json` file loader + *Scan folder…* button
-  (opens `WorkflowScanModal`) + *Sync from canvas* button (`canvas-workflow` →
-  `SyncCanvasModal`, see `docs/dev/comfyui-sync.md`); validates API-format client-side; warns (non-blocking) when no
-  node's `class_type` matches `/save/i` **and** no output node is selected, and when selected
-  output nodes no longer exist in the workflow (runs then fail with a review-the-workflow row
-  error — deliberate, no auto-heal). *Import images from*: toggle chips for Save/Preview-type
-  nodes plus an "+ other node…" select → `output_node_ids` (none selected = Auto). An **Output is
-  synthetic (self-created)** checkbox (`plan.output_is_synthetic`) sits below those chips, and rides
-  in **both** the Save patch and the *Sync from canvas* patch so a sync never resets it. Pinned
-  parameters render **grouped by source node** with per-pin: alias input, run-default value
-  editor (placeholder = template value), `int_mode` select on integer params, single ★ prompt
-  radio (forces per-row), and a *per row* toggle; *Pin node (n)* in the node browser pins all
-  remaining scalar inputs of a node as run defaults in one click. Node browser shows every
-  node (connection-only nodes like PreviewImage get a "no editable inputs" note) with Pin
-  toggles and a search box filtering by id/class_type/title/input name/value. Saves via
-  `PATCH /comfy/plans/{id}`.
-- **`WorkflowScanModal`** — lists `GET /comfy/workflow-files` for the settings folder (or a
-  per-scan override via `DirPickerModal`), format badge per file. Load fetches
-  `workflow-file` and feeds the JSON through the panel's normal paste/validate flow (still
-  needs Save). The Load button is always visible but disabled for non-API files (tooltip
-  explains why); when a scan finds no API-format file at all, an explanation line tells the
-  user that normal ComfyUI saves are UI-format and to use *Workflow → Export (API)* —
-  ComfyUI workflow folders typically contain only UI-format saves.
-- **`ComfyDefaultsStrip`** — chips above the rows table for run-default pins (`per_row=False`):
-  `#node · alias — value` with a click-to-edit modal that PATCHes the plan's `pinned_params`.
-  Hidden when every pin is per-row.
-- **`ComfyRowsTable`** — `@tanstack/react-virtual` grid (same mechanics as
-  `TagConsolidatePage`); columns are the `per_row` pins only. Two-line headers: alias (★ marks
-  the prompt column) + a source chip (`#6 KSampler · seed`) + ✎ bulk-edit (modal → 
-  `rows/set-value`, set or clear-to-default on all rows). Cell placeholders show the effective
-  fallback (run default / template / "🎲 random" / "auto +n"); `number` input when the template
-  value is numeric; blank cell = use the fallback. The **prompt column renders a `PromptCell`
-  textarea** (`resize: vertical` per-cell drag handle; Enter commits, Shift+Enter newline) instead
-  of the single-line `EditableCell`; a ⤢/⤒ toggle in the prompt column header auto-sizes every
-  prompt cell to its full text (height set to `scrollHeight` in a layout effect; collapsing resets
-  inline heights, wiping manual drags — the virtualizer's `measureElement` ResizeObserver absorbs
-  the variable row heights). Status badge with the error as tooltip,
-  View button → image detail via `usePaneNavigate`. Cell edits PATCH on blur.
-- **`ComfyRunBar`** — subfolder select (`["subfolders", datasetId]`), "Prompt as caption"
-  toggle, *Run pending (n)* / *Run selected (n)* / *Run all (n)* (runs every row regardless of
-  status — re-runs completed prompts and regenerates images; passes all row ids to `/comfy/run`,
-  which runs explicit `row_ids` regardless of status). The page tracks runs in an
-  `activeRuns: Map<jobId, planId>` (planId captured at **mutate** time, so switching the plan
-  select mid-POST can't retag a run); one `JobSSESubscriber` component per entry keeps a
-  dedicated `useJobSSE` subscription, and the run bar / `isRunning` gating applies only to the
-  plan being viewed — other plans stay interactive and can start their own concurrent runs
-  (the backend 409 is per-plan). While a run is live the page invalidates
-  `["comfy","rows",planId]` (that run's plan, not the viewed one) on each progress event so
-  row statuses update in place; on terminal status it also invalidates `["images", datasetId]`,
-  `["subfolders", datasetId]`, `["comfy","plans",datasetId]`, and `["datasets"]`, fires the
-  completion/failure toast, and drops the run from the map — every tracked run gets its
-  invalidations and toast even if a different plan is selected when it finishes. **Live gallery refresh during a run is driven by TopBar**, not this page:
-  `comfy_generate` is in TopBar's `LIVE_IMAGE_JOB_TYPES`, so TopBar re-invalidates
-  `["images", datasetId]` (+ `["subfolders"]`) each time the job's `done` count advances — the
-  gallery updates per-row as images import, regardless of which pane is showing it.
-- **`PromptLibraryModal`** (Rows toolbar *Library…*, disabled until a pin is marked as
-  prompt) — two tabs. **Library**: the global prompt library (`GET /comfy/library`), category
-  sidebar (derived client-side, "All" + per-category counts), checkbox prompt list; *Add n to
-  plan* → `rows/bulk`, *Move to…* (existing category or new) → `library/move`, *Delete* →
-  `library/delete` behind `ConfirmDialog`. **Other plans**: reuse prompts across
-  plans/datasets — pick any dataset → one of its plans (self excluded) → checkbox-list its
-  prompts (`GET /comfy/plans/{id}/prompts`) → *Copy* (adds them to the current plan via
-  `rows/bulk`) or *Move* (also `rows/delete`s them from the source). Both tabs carry only
-  prompt **text** (lands in the current plan's prompt column; other params use this plan's
-  defaults/template). Query key `["comfy","library"]`.
-- **`SaveToLibraryModal`** (Rows toolbar *Save to library (n)*, needs a selection) — category
-  input with a `<datalist>` of existing categories; saves the selected rows' **effective**
-  prompts (via `GET /comfy/plans/{id}/prompts`, backend-authoritative) through
-  `POST /comfy/library`; toast reports created/skipped-duplicates.
-- Rows toolbar: *+ Add row*, *Paste prompts…* (modal, one prompt per line → `rows/bulk`;
-  disabled until a pin is marked as prompt), *Import .txt* (browser file picker, no modal —
-  **one file = one prompt**, inner newlines collapsed to spaces, straight to `rows/bulk`),
-  *✨ Generate prompts…* (`GeneratePromptsModal` — `docs/dev/comfy-prompts.md`),
-  *Edit prompts…* (`BulkEditRowsModal`: find/replace, prepend, append, remove + regex toggle,
-  scope all/selected → `rows/bulk-edit`), *Library…*, *Save to library (n)*, *Reset failed
-  (n)*, *Delete selected (n)* (`ConfirmDialog`).
-
-### Gotchas
-
-- `server_default` strings on these columns are plain (`"pending"`, `""`) — SQLAlchemy quotes
-  them itself. Do **not** copy the `"'off'"` style from `threshold_settings.versioning_mode`;
-  that embeds literal quotes into the DDL default.
-- JSON-column reassignment invariant applies to `row.values`, `row.image_ids`,
-  `plan.pinned_params`, and `plan.output_node_ids` (see CLAUDE.md Key invariants).
-- `/interrupt` stops whatever is executing, not necessarily ours, and `POST /queue
-  {"delete"}` only touches pending prompts — so neither alone removes our prompt, and a bare
-  interrupt is never sent (§ Removing our prompt). Never use `{"clear": true}`.
-- **The mock ComfyUI server is partial.** `backend/tests/test_comfy_queue_cleanup.py`'s
-  `FakeComfy` (over `httpx.MockTransport`) serves `system_stats`, `prompt`, `history`, `view`
-  and `/queue`, and drives the run body through cancel, timeout, abort and connect-breaker
-  paths. It does not serve PNGs carrying an embedded workflow chunk, nor a prompt that fails
-  mid-execution, so import of generation metadata and the history-error path are still
-  uncovered end to end.
-- Workflow sync (bridge extension, sync button, history-pull): `docs/dev/comfyui-sync.md`.
+| Editing… | Read |
+|---|---|
+| `backend/tests/fake_comfy.py`, `backend/tests/test_comfy_run_body.py`, `backend/tests/test_comfy_queue_cleanup.py`, `frontend/e2e/serve-comfy.mjs` | `docs/dev/comfyui/run.md` § Testing the run |
+| `backend/tests/test_comfy_cancel_stats.py`, `backend/tests/test_comfy_subfolder.py` | `docs/dev/comfyui/run.md` § The `comfy_generate` job (the per-row stats refresh; the per-row folder and stem) |
+| `backend/tests/test_comfy_rows_place.py`, `test_comfy_rows_copy.py`, `test_comfy_plan_duplicate.py` | `docs/dev/comfyui/queue.md` § Backend (`rows/place`, `rows/copy`, plan duplicate, and the live run's locks) |
+| `backend/tests/test_comfy_library_http.py`, `test_comfy_library_service.py`, `test_migration_nest_library_categories.py` | `docs/dev/comfyui/queue.md` § Backend (the prompt library) |
+| `backend/tests/test_comfy_bulk_edit_regex_http.py` | `docs/dev/comfyui/queue.md` § Backend (the `rows/bulk-edit` regex handling) |
+| `backend/tests/test_parse_prompts.py`, `backend/tests/test_conflict_paths_http.py` | `docs/dev/comfyui/prompts.md` § Generating (the parser) and § The `comfy_prompts` job (the per-plan 409s) |
+| `backend/tests/test_blueprint_expand.py` | `docs/dev/comfyui/structured-expansion.md` § Testing |
+| `backend/tests/test_blueprint_http.py`, `backend/tests/test_blueprint_top_up_http.py` | `docs/dev/comfyui/structured.md` § Testing and § Top up |
+| `backend/tests/test_blueprint_outline_http.py`, `backend/tests/test_parse_outline.py` | `docs/dev/comfyui/structured-llm.md` § The outline call |
+| `backend/tests/test_prompt_rewrite.py`, `backend/tests/test_blueprint_rewrite.py`, `backend/tests/test_blueprint_rewrite_http.py` | `docs/dev/comfyui/structured-llm.md` § The rewrite pass |
+| `backend/tests/test_run_stepping.py`, `backend/tests/test_caption_start_scope.py`, `backend/tests/test_run_snapshot.py`, `backend/tests/test_run_dry_run.py`, `backend/tests/test_run_list_http.py`, `frontend/e2e/runs.spec.ts` | `docs/dev/comfyui/automation.md` § Testing; the dry run's and the run list's tests: `docs/dev/comfyui/run-start.md` § Testing |
+| `backend/tests/test_run_loop.py` | `docs/dev/comfyui/run-loop.md` § Testing |
+| `backend/tests/test_run_extend.py` | `docs/dev/comfyui/run-budgets.md` § Testing |
+| `backend/tests/test_run_recipes_http.py` | `docs/dev/comfyui/recipes.md` § Testing |
+| `frontend/e2e/comfy.spec.ts` | `docs/dev/comfyui/page.md` § Frontend |
+| `frontend/e2e/comfy-run.spec.ts` | `docs/dev/comfyui/page.md` § Frontend for the journeys and the blueprint spec; + `docs/dev/comfyui/run.md` § Testing the run for the fake ComfyUI it points at |

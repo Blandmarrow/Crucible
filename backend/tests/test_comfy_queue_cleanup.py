@@ -6,7 +6,8 @@ ComfyUI canvas against the same server is *their* prompt, while ours stayed queu
 and to do nothing at all on a per-row timeout, so the next row was stacked on top of
 a prompt still waiting in ComfyUI's queue.
 
-`FakeComfy` is an in-process ComfyUI behind `httpx.MockTransport`: a queue with a
+`FakeComfy` (`backend/tests/fake_comfy.py`) is an in-process ComfyUI behind
+`httpx.MockTransport`: a queue with a
 running and a pending list, a pending-only `POST /queue {"delete"}`, and a
 body-aware `POST /interrupt` that stops only the named prompt — and records a
 body-less (global) interrupt as a violation, mimicking an old server by killing
@@ -14,125 +15,13 @@ whatever runs.
 """
 import asyncio
 import functools
-import json
 
 import httpx
 
 import backend.services.comfy_service as comfy_service
 from backend.services.comfy_service import ComfyClient
-from backend.tests.conftest import API, api_env, png_bytes, run, wait_for_job
-
-CANVAS_CLIENT = "canvas-browser-tab"
-CANVAS_PROMPT = "CANVAS-1"
-
-
-class FakeComfy:
-    """Minimal ComfyUI. Queue entries are [prompt_id, client_id] pairs."""
-
-    def __init__(
-        self,
-        *,
-        canvas_running: bool = True,
-        ours_start_running: bool = False,
-        honour_cleanup: bool = True,
-        unreachable: bool = False,
-        queue_status: int = 200,
-        complete: bool = False,
-        down_after_submits: int | None = None,
-    ):
-        self.complete = complete
-        # Goes unreachable for every request once this many prompts were accepted.
-        self.down_after_submits = down_after_submits
-        self.running: list[list] = [[CANVAS_PROMPT, CANVAS_CLIENT]] if canvas_running else []
-        self.pending: list[list] = []
-        self.history: dict[str, dict] = {}
-        self.ours_start_running = ours_start_running
-        self.honour_cleanup = honour_cleanup
-        self.unreachable = unreachable
-        self.queue_status = queue_status
-        self.submitted: list[str] = []
-        # How many prompts with the submitting client_id were still in ComfyUI's
-        # queue at each submit — anything above 0 is a row stacked on a leftover.
-        self.ours_outstanding_at_submit: list[int] = []
-        self.delete_requests: list[list] = []
-        self.deleted: list[str] = []
-        self.interrupts: list[str] = []
-        self.violations: list[str] = []
-        self.calls: list[tuple[str, str]] = []
-
-    def queue_ids(self, client_id: str | None = None) -> list[str]:
-        return [pid for pid, cid in self.running + self.pending if client_id is None or cid == client_id]
-
-    def handler(self, request: httpx.Request) -> httpx.Response:
-        method, path = request.method, request.url.path
-        self.calls.append((method, path))
-        if self.unreachable:
-            raise httpx.ConnectError("connection refused", request=request)
-        body = json.loads(request.content) if request.content else None
-
-        if method == "POST" and path == "/prompt":
-            cid = body.get("client_id")
-            self.ours_outstanding_at_submit.append(len(self.queue_ids(cid)))
-            pid = f"OURS-{len(self.submitted) + 1}"
-            self.submitted.append(pid)
-            if self.complete:  # finished instantly: straight into history
-                self.history[pid] = {"outputs": {"9": {"images": [
-                    {"filename": "out.png", "subfolder": "", "type": "output"}
-                ]}}}
-            elif self.ours_start_running and not self.running:
-                self.running.append([pid, cid])
-            else:
-                self.pending.append([pid, cid])
-            if self.down_after_submits is not None and len(self.submitted) >= self.down_after_submits:
-                self.unreachable = True
-            return httpx.Response(200, json={"prompt_id": pid, "number": len(self.submitted)})
-
-        if method == "GET" and path.startswith("/history/"):
-            pid = path.rsplit("/", 1)[1]
-            return httpx.Response(200, json={pid: self.history[pid]} if pid in self.history else {})
-
-        if method == "GET" and path == "/queue":
-            if self.queue_status != 200:
-                return httpx.Response(self.queue_status, text="boom")
-
-            def items(entries):
-                return [[n, pid, {}, {"client_id": cid}, []] for n, (pid, cid) in enumerate(entries)]
-
-            return httpx.Response(200, json={
-                "queue_running": items(self.running),
-                "queue_pending": items(self.pending),
-            })
-
-        if method == "POST" and path == "/queue":
-            if not isinstance(body, dict) or "clear" in body:
-                self.violations.append(f"/queue body {body!r}")
-                return httpx.Response(200)
-            ids = list(body.get("delete") or [])
-            self.delete_requests.append(ids)
-            if self.honour_cleanup:
-                for entry in [e for e in self.pending if e[0] in ids]:
-                    self.pending.remove(entry)
-                    self.deleted.append(entry[0])
-            return httpx.Response(200)
-
-        if method == "POST" and path == "/interrupt":
-            pid = (body or {}).get("prompt_id") if isinstance(body, dict) else None
-            if not pid:
-                # What an old ComfyUI does with any interrupt — and a new one with a
-                # body-less one: stop whatever is executing, whoever submitted it.
-                self.violations.append("global /interrupt")
-                if self.running:
-                    self.interrupts.append(self.running.pop(0)[0])
-                return httpx.Response(200)
-            if self.honour_cleanup and self.running and self.running[0][0] == pid:
-                self.interrupts.append(self.running.pop(0)[0])
-            return httpx.Response(200)
-
-        if method == "GET" and path == "/view":
-            return httpx.Response(200, content=png_bytes())
-        if path == "/system_stats":
-            return httpx.Response(200, json={})
-        return httpx.Response(404)
+from backend.tests.conftest import API, api_env, run, wait_for_job
+from backend.tests.fake_comfy import CANVAS_CLIENT, CANVAS_PROMPT, FakeComfy
 
 
 def _client(fake: FakeComfy) -> ComfyClient:

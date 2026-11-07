@@ -47,6 +47,8 @@ export interface ComfyPlan {
   output_node_ids: string[];
   /** True = stamp imported images as self-created (synthetic/ComfyUI); false = inherit the dataset's provenance defaults. */
   output_is_synthetic: boolean;
+  /** Folders made by hand in the folder tree, kept even while no row is filed there. */
+  declared_folders: string[];
   created_at: string;
   updated_at: string;
 }
@@ -55,13 +57,27 @@ export interface ComfyRow {
   id: string;
   plan_id: string;
   sort_order: number;
+  /** Destination folder for this row's outputs, nested under the run's base folder. */
+  subfolder: string;
+  /** The blueprint leaf that minted this row. Never set by the client; a move with
+   *  `linked: "unlink"` clears it. */
+  leaf_id: string | null;
+  /** `leaf_id` names a leaf the plan's blueprint still makes: its folder is what the
+   *  blueprint counts, so moving it needs `linked` (docs/dev/comfyui/structured.md). */
+  blueprint_linked: boolean;
   values: Record<string, unknown>;
   status: "pending" | "running" | "completed" | "failed";
   error_msg: string | null;
   image_id: string | null;
   image_ids: string[];
   prompt_id: string | null;
+  /** "template" | "rewritten" | "manual"; null on rows that predate the field. */
+  prompt_origin: string | null;
 }
+
+/** How a folder move treats rows the blueprint still counts: `refuse` (409, the
+ *  default), `unlink` them as they move, or `skip` them. */
+export type LinkedMode = "refuse" | "unlink" | "skip";
 
 export interface PlanPrompt {
   row_id: string;
@@ -118,6 +134,106 @@ export const COMFY_GEN_DEFAULTS: ComfyGenSettings = {
 /** Under `/api/v1`, for `writeToServer`: this form saves as the user types. */
 export const genSettingsPath = (planId: string) => `/comfy/plans/${planId}/gen-settings`;
 
+// ── Blueprint (structured generation, docs/dev/comfyui/structured.md) ──────────
+
+export interface BlueprintEntity {
+  /** Stable identity a leaf records; generated client-side and never shown. */
+  id: string;
+  label: string;
+  /** Substituted verbatim wherever a template names this entity's axis. */
+  descriptor: string;
+}
+
+/** A bare axis name takes one entity; `take > 1` combines that many, unordered. */
+export type BlueprintCombineItem = string | { axis: string; take: number };
+
+export interface BlueprintScenario {
+  name: string;
+  combine: BlueprintCombineItem[];
+  /** "full" or "sample:K". */
+  mode: string;
+  /** Images each leaf (folder) should hold. */
+  count: number;
+  /** Folder pattern, e.g. "{biome}/{character}". */
+  path: string;
+  /** Prompt pattern; null/"" joins the combined descriptors. */
+  template: string | null;
+  /** Opt in to the LLM rewrite pass for this scenario's template-composed prompts. */
+  rewrite: boolean;
+}
+
+export interface BlueprintSpec {
+  axes: Record<string, BlueprintEntity[]>;
+  variations: Record<string, string[]>;
+  scenarios: BlueprintScenario[];
+}
+
+/** The saved blueprint body; also the PUT body `writeToServer` sends. */
+export interface BlueprintValue {
+  spec: BlueprintSpec;
+  seed: number;
+}
+
+export interface SavedBlueprint extends BlueprintValue {
+  brief: string | null;
+  draft: BlueprintSpec | null;
+  updated_at: string;
+}
+
+export interface BlueprintPreviewLeaf {
+  path: string;
+  scenario: string;
+  target: number;
+  /** Images that still exist for this leaf. */
+  kept: number;
+  /** Pending, running and failed rows, each counted as `yield` future images. */
+  open: number;
+  failed: number;
+  /** Images per completed row. */
+  yield: number;
+  to_add: number;
+  /** Images the folder still lacks (target − kept): what Top up reports as short. */
+  short: number;
+  /** The next prompts this leaf's rows would get; only the first 20 leaves carry them. */
+  samples: string[];
+}
+
+export interface BlueprintPreview {
+  /** At most 500; `leaf_count` is the true total. */
+  leaves: BlueprintPreviewLeaf[];
+  leaf_count: number;
+  rows_to_add: number;
+  /** Over every leaf (not just the listed 500): images missing, and the current
+   *  leaves' pending and failed rows, which Top up runs (failed ones reset first). */
+  images_short: number;
+  rows_pending: number;
+  rows_failed: number;
+  row_cap: number;
+  over_cap: boolean;
+  /** Any error blocks Apply. */
+  errors: string[];
+  warnings: string[];
+  /** Rows (and their images) whose leaf this spec no longer makes. */
+  orphans: { leaves: number; pending: number; running: number; failed: number; completed: number; images: number };
+  /** Rows the rewrite pass would touch once applied, the LLM calls it expects at the
+   *  plan's saved batch size, and its hard call budget. */
+  rewrite_rows: number;
+  rewrite_calls: number;
+  rewrite_call_budget: number;
+}
+
+/** The live rewrite estimate over the rows that exist now. */
+export interface RewriteEstimate {
+  rows: number;
+  leaves: number;
+  calls: number;
+  budget: number;
+}
+
+export const blueprintPath = (planId: string) => `/comfy/plans/${planId}/blueprint`;
+
+export const EMPTY_BLUEPRINT_SPEC: BlueprintSpec = { axes: {}, variations: {}, scenarios: [] };
+
 export const comfyApi = {
   ping: (url?: string) =>
     client.get<{ ok: boolean; error?: string }>("/comfy/ping", { params: url ? { url } : {} }).then((r) => r.data),
@@ -151,9 +267,11 @@ export const comfyApi = {
     client.get<{ prompts: PlanPrompt[] }>(`/comfy/plans/${planId}/prompts`).then((r) => r.data.prompts),
   createRow: (planId: string, values: Record<string, unknown> = {}) =>
     client.post<ComfyRow>(`/comfy/plans/${planId}/rows`, { values }).then((r) => r.data),
-  bulkAddRows: (planId: string, lines: string[]) =>
-    client.post<{ created: number }>(`/comfy/plans/${planId}/rows/bulk`, { lines }).then((r) => r.data),
-  updateRow: (rowId: string, data: { values?: Record<string, unknown>; sort_order?: number }) =>
+  /** One row per non-empty line, into the prompt alias, filed in `subfolder` ("" = the
+   *  run's base folder). */
+  bulkAddRows: (planId: string, lines: string[], subfolder = "") =>
+    client.post<{ created: number }>(`/comfy/plans/${planId}/rows/bulk`, { lines, subfolder }).then((r) => r.data),
+  updateRow: (rowId: string, data: { values?: Record<string, unknown>; sort_order?: number; subfolder?: string; linked?: LinkedMode }) =>
     client.patch<ComfyRow>(`/comfy/rows/${rowId}`, data).then((r) => r.data),
   deleteRows: (planId: string, rowIds: string[]) =>
     client.post<{ deleted: number }>(`/comfy/plans/${planId}/rows/delete`, { row_ids: rowIds }).then((r) => r.data),
@@ -161,6 +279,41 @@ export const comfyApi = {
     client.post<{ reset: number }>(`/comfy/plans/${planId}/rows/reset`, { row_ids: rowIds }).then((r) => r.data),
   setValueAllRows: (planId: string, alias: string, value: string | number | boolean | null) =>
     client.post<{ updated: number }>(`/comfy/plans/${planId}/rows/set-value`, { alias, value }).then((r) => r.data),
+  /** Set the destination folder on a selection of rows (omit `rowIds` for every row).
+   *  Its own endpoint, not a `set-value` branch: a folder is not a pinned parameter,
+   *  and unlike a value edit it never resets a completed row. */
+  setRowsSubfolder: (planId: string, subfolder: string, rowIds?: string[], linked: LinkedMode = "refuse") =>
+    client.post<{ updated: number }>(`/comfy/plans/${planId}/rows/set-subfolder`, { subfolder, row_ids: rowIds, linked }).then((r) => r.data),
+
+  /** Move rows to a spot in the run order, re-filing them when `subfolder` is given.
+   *  The server computes the order; an anchor must not be one of the moving rows. */
+  placeRows: (planId: string, body: {
+    row_ids: string[]; anchor_row_id?: string | null; position?: "before" | "after";
+    subfolder?: string | null; linked?: LinkedMode;
+  }) =>
+    client.post<{ placed: number; unlinked: number; skipped: number }>(`/comfy/plans/${planId}/rows/place`, body).then((r) => r.data),
+  /** Copy (or move) rows from another plan, in any dataset, into `targetPlanId`, keeping
+   *  each row's folder unless `subfolder` overrides it (docs/dev/comfyui/queue.md). */
+  copyRows: (targetPlanId: string, body: {
+    source_plan_id: string; row_ids: string[]; move?: boolean; subfolder?: string | null; linked?: LinkedMode;
+  }) =>
+    // `skipped` is the sum of the two reasons, kept for older callers.
+    client.post<{
+      copied?: number; moved?: number; skipped: number; skipped_no_prompt: number; skipped_linked: number; unlinked: number;
+    }>(
+      `/comfy/plans/${targetPlanId}/rows/copy`, body).then((r) => r.data),
+
+  // ── The folder tree (a plan's row folders plus its declared_folders) ──
+  createFolder: (planId: string, path: string) =>
+    client.post<ComfyPlan>(`/comfy/plans/${planId}/folders`, { path }).then((r) => r.data),
+  /** Rename or re-nest a folder with its rows. A 409 when its subtree is the blueprint's. */
+  moveFolder: (planId: string, path: string, newPath: string) =>
+    client.post<{ updated: number }>(`/comfy/plans/${planId}/folders/move`, { path, new_path: newPath }).then((r) => r.data),
+  /** Deletes the subtree's rows; their images stay in the gallery. */
+  deleteFolder: (planId: string, path: string) =>
+    client.post<{ deleted: number }>(`/comfy/plans/${planId}/folders/delete`, { path }).then((r) => r.data),
+  duplicatePlan: (planId: string, body: { name: string; include_rows: boolean }) =>
+    client.post<ComfyPlanSummary>(`/comfy/plans/${planId}/duplicate`, body).then((r) => r.data),
 
   /** One batch, synchronously. `signal` lets the caller abandon a call that can run
    *  for the provider's full timeout (120 s) — without it the UI has to sit on it. */
@@ -183,7 +336,8 @@ export const comfyApi = {
   }) =>
     client.post<{ affected: number; skipped: number }>(`/comfy/plans/${planId}/rows/bulk-edit`, body).then((r) => r.data),
 
-  /** Global prompt library (not dataset-scoped), grouped by free-text category. */
+  /** Global prompt library (not dataset-scoped). A category is a `/` path the server
+   *  normalizes (segments trimmed); the client builds the tree. */
   libraryList: () =>
     client.get<{ prompts: LibraryPrompt[] }>("/comfy/library").then((r) => r.data.prompts),
   libraryAdd: (category: string, prompts: string[]) =>
@@ -193,6 +347,14 @@ export const comfyApi = {
     client.post<{ moved: number; merged: number }>("/comfy/library/move", { ids, category }).then((r) => r.data),
   libraryDelete: (ids: string[]) =>
     client.post<{ deleted: number }>("/comfy/library/delete", { ids }).then((r) => r.data),
+  /** Edit a saved prompt's text. 409 when it would duplicate another in its category. */
+  libraryUpdate: (id: string, text: string) =>
+    client.patch<LibraryPrompt>(`/comfy/library/${id}`, { text }).then((r) => r.data),
+  /** Rename or re-nest a category with its subtree. Landing on an existing category merges. */
+  libraryMoveCategory: (path: string, newPath: string) =>
+    client.post<{ moved: number; merged: number }>("/comfy/library/categories/move", { path, new_path: newPath }).then((r) => r.data),
+  libraryDeleteCategory: (path: string) =>
+    client.post<{ deleted: number }>("/comfy/library/categories/delete", { path }).then((r) => r.data),
 
   listWorkflowFiles: (dir?: string) =>
     client.get<{ dir: string; files: WorkflowFile[] }>("/comfy/workflow-files", { params: dir ? { dir } : {} }).then((r) => r.data),
@@ -204,4 +366,58 @@ export const comfyApi = {
 
   run: (params: ComfyRunParams) =>
     client.post<{ job_id: string; total: number }>("/comfy/run", params).then((r) => r.data),
+
+  /** `null` means no blueprint yet. */
+  getBlueprint: (planId: string) =>
+    client.get<{ value: SavedBlueprint | null }>(blueprintPath(planId)).then((r) => {
+      // The SPA catch-all can answer with 200 HTML, which must not read as "none yet".
+      if (typeof r.data !== "object" || r.data === null || !("value" in r.data)) {
+        throw new Error("Unexpected blueprint response");
+      }
+      return r.data.value;
+    }),
+  /** A save the caller awaits. The form's autosave goes through `writeToServer` instead,
+   *  which never rejects; use this where a failed save must stop what comes next. */
+  putBlueprint: (planId: string, value: BlueprintValue) =>
+    client.put<{ value: SavedBlueprint }>(blueprintPath(planId), value).then((r) => r.data.value),
+  /** What Apply would do with this (possibly unsaved) spec. */
+  previewBlueprint: (planId: string, body: BlueprintValue & { allow_over_cap?: boolean }, signal?: AbortSignal) =>
+    client.post<BlueprintPreview>(`${blueprintPath(planId)}/preview`, body, { signal }).then((r) => r.data),
+  /** `confirm_total` is the reviewed preview's `rows_to_add`; a mismatch is a 409. */
+  applyBlueprint: (planId: string, body: BlueprintValue & {
+    confirm_total: number; allow_over_cap?: boolean; delete_orphan_pending?: boolean;
+  }) =>
+    client.post<{ created: number; leaves: number; deleted_rows: number }>(`${blueprintPath(planId)}/apply`, body)
+      .then((r) => r.data),
+  /** Apply, reset the blueprint's failed rows, and run its pending ones as a normal
+   *  `comfy_generate` run. `job_id` is null when every folder is full and nothing is
+   *  pending. Same 400/409s as Apply, plus the run's pre-flight 400s. */
+  topUpBlueprint: (planId: string, body: BlueprintValue & {
+    confirm_total: number; allow_over_cap?: boolean; delete_orphan_pending?: boolean;
+    subfolder: string; set_caption: boolean;
+  }) =>
+    client.post<{ created: number; reset: number; deleted_rows: number; job_id: string | null; total: number; awaiting_rewrite: number }>(
+      `${blueprintPath(planId)}/top-up`, body,
+    ).then((r) => r.data),
+  /** One LLM call in a `comfy_outline` job: the brief → `SavedBlueprint.draft`, for
+   *  review. Writes no rows and never touches the spec. 409 while one is live. */
+  outlineBlueprint: (planId: string, body: {
+    provider_id: string; model_name?: string; brief: string; temperature?: number;
+  }) =>
+    client.post<{ job_id: string }>(`${blueprintPath(planId)}/outline`, body).then((r) => r.data),
+  /** What a rewrite would do to the rows that exist now, at this batch size (1..10). */
+  rewriteEstimate: (planId: string, batchSize: number, signal?: AbortSignal) =>
+    client.get<RewriteEstimate>(`${blueprintPath(planId)}/rewrite`, { params: { batch_size: batchSize }, signal })
+      .then((r) => r.data),
+  /** Start the `comfy_rewrite` job. `confirm_budget` is the reviewed estimate's `budget`;
+   *  a mismatch is a 409. Also 409 while a run, generation or rewrite is live. */
+  rewriteBlueprint: (planId: string, body: {
+    provider_id: string; model_name: string; batch_size: number; temperature: number;
+    confirm_budget: number; label?: string;
+  }) =>
+    client.post<{ job_id: string; total: number; budget: number }>(`${blueprintPath(planId)}/rewrite`, body)
+      .then((r) => r.data),
+  /** Clear the draft, after *Use it* (once the spec holding it is saved) or *Discard*. */
+  discardBlueprintDraft: (planId: string) =>
+    client.delete(`${blueprintPath(planId)}/draft`),
 };

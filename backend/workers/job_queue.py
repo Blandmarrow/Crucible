@@ -41,6 +41,29 @@ NON_COOPERATIVE_GRACE: dict[str, float] = {
 }
 
 
+def run_job_config(config: dict[str, Any], run_id: str | None, run_stage: str | None) -> dict[str, Any]:
+    """A job's stored config, tagged with the automated run that started it.
+
+    The run keys are added only when a run started the job, so a job started over
+    HTTP stores exactly what it always did. The post-terminal hook reads `run_id` to
+    step the run, and `run_stage` to ignore a job from a stage the run has left
+    (docs/dev/comfyui/automation.md).
+    """
+    if run_id is None:
+        return config
+    return {**config, "run_id": run_id, "run_stage": run_stage}
+
+
+def run_job_label(prefix: str, label: str) -> str:
+    """A child job's label behind its run's prefix, cut to the column's 200 chars.
+
+    With no prefix the label is returned untouched, as the routes always stored it.
+    """
+    if not prefix:
+        return label
+    return (prefix + label)[:200]
+
+
 async def mark_interrupted_jobs() -> int:
     """Fail any job rows left 'running'/'pending' by a previous process.
 
@@ -266,6 +289,10 @@ class JobQueue:
                     "status": "cancelled",
                     "message": "Cancelled before starting.",
                 })
+                # This path never reaches `_finish`, so the hook is called here too:
+                # a run's child cancelled before it started would otherwise leave
+                # its run `running` with nothing in flight.
+                await self._after_terminal(job)
                 return
             if self._stopping:
                 await self._finish(job, "failed", INTERRUPTED_MSG)
@@ -373,6 +400,28 @@ class JobQueue:
             event["message"] = error
         # Through the module attribute every time: tests monkeypatch `emit`.
         await broadcaster.emit(job.id, event)
+        await self._after_terminal(job)
+
+    async def _after_terminal(self, job: BackgroundJob) -> None:
+        """Step the automated run that started this job, if one did (M6 §4).
+
+        Runs after the job's terminal status is committed and emitted, so nothing it
+        does can change the job's outcome or delay its event: an exception is logged
+        and swallowed (PM-013's rule for work after a commit). `CancelledError` is
+        not caught, so a forced stop still propagates. Skipped while the queue is
+        stopping — the run is left `running`, and the next startup's
+        `reconcile_interrupted_runs` sets it `paused`. `job.config` is the one the
+        start function built, which is where `run_id` was written.
+        """
+        run_id = (job.config or {}).get("run_id")
+        if not run_id or self._stopping:
+            return
+        try:
+            from backend.services import run_service
+
+            await run_service.advance_run(run_id, job.id)
+        except Exception:
+            logger.exception("Could not step run %s after job %s ended", run_id, job.id)
 
 
 job_queue = JobQueue()

@@ -8,10 +8,11 @@ opts in to LAN access. The launchers call this before starting anything:
     python scripts/bind_host.py [--lan] --urls PORT -> prints the http:// URL(s) other
                                                        devices can use, one per line;
                                                        nothing for a loopback host
-    python scripts/bind_host.py [--lan] --describe  -> three lines: the bind host; the
+    python scripts/bind_host.py [--lan] --describe  -> five lines: the bind host; the
                                                        host a browser on this machine
                                                        (and the Vite proxy) must use;
-                                                       `loopback` or `lan`
+                                                       `loopback` or `lan`; the backend
+                                                       port; the Vite dev-server port
 
 The launchers read `--describe` and decide nothing themselves: every loopback test and
 "where do I point the browser" rule lives here, so the two shells cannot drift from it
@@ -25,7 +26,13 @@ Precedence, first match wins:
     3. a CRUCIBLE_HOST= line in the repo-root .env
     4. 127.0.0.1
 
-An empty value at step 2 or 3 counts as unset. Stdlib only, and it must stay that way:
+An empty value at step 2 or 3 counts as unset.
+
+The two ports follow the same pattern without the flag: CRUCIBLE_PORT (the backend,
+default 8000) and CRUCIBLE_VITE_PORT (the Vite dev server, default 5173) come from the
+environment, then the last non-empty `KEY=` line in .env, then the default. A value that
+is not an integer from 1 to 65535 is an error (exit status 2, a message on stderr), never
+a silent fallback, so a typo cannot start a second install on the wrong port. Stdlib only, and it must stay that way:
 `setup` and `start` run it before (or regardless of whether) the backend's packages are
 installed, and importing `backend.config` would drag in pydantic. The .env reader is
 deliberately small — `KEY=value`, optional `export `, quotes, `#` comments — and the
@@ -47,6 +54,10 @@ from pathlib import Path
 DEFAULT_HOST = "127.0.0.1"
 LAN_HOST = "0.0.0.0"
 ENV_KEY = "CRUCIBLE_HOST"
+PORT_KEY = "CRUCIBLE_PORT"
+VITE_PORT_KEY = "CRUCIBLE_VITE_PORT"
+DEFAULT_PORT = 8000
+DEFAULT_VITE_PORT = 5173
 ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 
 
@@ -88,6 +99,29 @@ def resolve_host(lan: bool, environ=os.environ, env_file: Path = ENV_FILE) -> st
     if value:
         return value
     return read_env_file(env_file) or DEFAULT_HOST
+
+
+def _resolve_port(key: str, default: int, environ, env_file: Path) -> int:
+    value = _clean(environ.get(key, "")) or read_env_file(env_file, key)
+    if not value:
+        return default
+    try:
+        port = int(value)
+    except ValueError:
+        port = 0
+    if not 1 <= port <= 65535:
+        raise ValueError(f"{key}={value!r} is not a valid port (an integer from 1 to 65535)")
+    return port
+
+
+def resolve_port(environ=os.environ, env_file: Path = ENV_FILE) -> int:
+    """The backend port: CRUCIBLE_PORT in the environment, then .env, then 8000."""
+    return _resolve_port(PORT_KEY, DEFAULT_PORT, environ, env_file)
+
+
+def resolve_vite_port(environ=os.environ, env_file: Path = ENV_FILE) -> int:
+    """The Vite dev-server port: CRUCIBLE_VITE_PORT, then .env, then 5173."""
+    return _resolve_port(VITE_PORT_KEY, DEFAULT_VITE_PORT, environ, env_file)
 
 
 def is_loopback(host: str) -> bool:
@@ -147,13 +181,21 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--urls", type=int, metavar="PORT",
                       help="print the LAN URL(s) for PORT instead of the host")
     mode.add_argument("--describe", action="store_true",
-                      help="print the bind host, the browse host and loopback|lan")
+                      help="print the bind host, the browse host, loopback|lan, "
+                           "the backend port and the Vite port")
     args = ap.parse_args(argv)
     host = resolve_host(args.lan)
     if args.describe:
+        try:
+            port, vite_port = resolve_port(), resolve_vite_port()
+        except ValueError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
         print(host)
         print(browse_host(host))
         print("loopback" if is_loopback(host) else "lan")
+        print(port)
+        print(vite_port)
     elif args.urls is not None:
         for url in lan_urls(host, args.urls):
             print(url)

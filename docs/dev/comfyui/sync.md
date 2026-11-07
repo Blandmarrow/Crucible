@@ -3,7 +3,7 @@
 Pull a plan's `workflow_json` from ComfyUI instead of re-pasting *Export (API)* after
 every canvas edit. Two transports behind one endpoint: a live-canvas snapshot pushed by
 the `ComfyUI-CrucibleBridge` extension (main path), and the last-queued history entry
-(fallback, requires one real Queue Prompt). See `docs/dev/comfyui.md` for the plan/pin
+(fallback, requires one real Queue Prompt). See `docs/dev/comfyui/queue.md` for the plan/pin
 data model.
 
 ## Background / constraints (verified against a live ComfyUI 0.24 instance)
@@ -78,7 +78,7 @@ they'd fail at run time. `output_node_ids` are deliberately untouched; the panel
 `missingOutputNodes` warning covers stale ones (no-auto-heal stance).
 
 **Apply commits immediately** (user decision): the dialog's *Replace workflow* runs the
-alias guards and calls `onSave({workflow_json, pinned_params: keptPins, output_node_ids})`
+alias guards and calls `onSave({workflow_json, pinned_params, output_node_ids, output_is_synthetic})` with only the pins that still resolve
 — one `PATCH /comfy/plans/{id}` through `ComfyPage`'s existing `updatePlanMutation`
 (invalidates `["comfy","plan",id]` + `["comfy","plans",datasetId]`; the panel remounts via
 `key={plan.id + plan.updated_at}`). Note this also commits any unsaved pin edits sitting in

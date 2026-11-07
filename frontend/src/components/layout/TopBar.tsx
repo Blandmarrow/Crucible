@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { datasetsApi } from "../../api/datasets";
 import { jobsApi } from "../../api/jobs";
+import { runsApi, PAUSED_RUNS_KEY } from "../../api/runs";
 import { useJobStore } from "../../store/jobStore";
 import { useUploadStore } from "../../store/uploadStore";
 import { useAllJobsSSE } from "../../hooks/useSSE";
@@ -23,12 +24,15 @@ import { Columns2, RefreshCw } from "lucide-react";
 const RESTART_SLOW_MS = 25_000;
 
 const LIVE_IMAGE_JOB_TYPES = new Set(["caption", "caption_pipeline", "comfy_generate", "video_extract", "video_reextract"]);
-const IMAGE_MODIFYING_JOB_TYPES = new Set(["batch_upscale", "batch_lut", "crop_upscale", "crop_to_detection", "batch_inpaint", "quality_score", "caption", "caption_pipeline", "comfy_generate", "video_extract", "video_reextract"]);
+// `run_gate`: an automated run's gate flags images and moves them to `rejects/`.
+const IMAGE_MODIFYING_JOB_TYPES = new Set(["batch_upscale", "batch_lut", "crop_upscale", "crop_to_detection", "batch_inpaint", "quality_score", "caption", "caption_pipeline", "comfy_generate", "video_extract", "video_reextract", "run_gate"]);
 const DATASET_MODIFYING_JOB_TYPES = new Set(["duplicate", "import"]);
 // Deliberately in neither set above: comfy_prompts writes queue rows, not images,
 // so the image/dataset invalidations would all be pointless. It gets its own
 // branch below because its whole point is surviving the modal that started it.
 const PROMPT_JOB_TYPE = "comfy_prompts";
+const OUTLINE_JOB_TYPE = "comfy_outline";
+const REWRITE_JOB_TYPE = "comfy_rewrite";
 // The eight jobs that re-cut an image thumbnail as a best-effort post-commit
 // epilogue. Each reports a `thumbnails_stale` count; the branch below is the one
 // place that turns it into something the user sees. It lives here rather than in
@@ -107,6 +111,25 @@ export default function TopBar() {
   const runningJob = [...jobs.values()].find((j) => j.status === "running");
   const pendingJobs = [...jobs.values()].filter((j) => j.status === "pending");
   const uploadProgress = useUploadStore((s) => s.progress);
+
+  // A paused automated run holds no job, so nothing else on screen shows it, and a
+  // server restart pauses every running run. Slow poll, plus a refetch whenever a job
+  // changes status (statuses only, so progress ticks do not refetch). RunsPage refreshes
+  // this key when its own list changes.
+  const { data: pausedRuns = [] } = useQuery({
+    queryKey: PAUSED_RUNS_KEY,
+    queryFn: () => runsApi.list(undefined, "paused"),
+    refetchInterval: 30_000,
+  });
+  const jobStatusKey = useJobStore((s) => {
+    let key = "";
+    for (const j of s.activeJobs.values()) key += `${j.job_id}:${j.status};`;
+    return key;
+  });
+  useEffect(() => {
+    if (jobStatusKey) qc.invalidateQueries({ queryKey: PAUSED_RUNS_KEY });
+  }, [jobStatusKey, qc]);
+
   const [showConfirm, setShowConfirm] = useState(false);
   const [shuttingDown, setShuttingDown] = useState(false);
   const [showRestartConfirm, setShowRestartConfirm] = useState(false);
@@ -121,6 +144,9 @@ export default function TopBar() {
   const captionDoneRef = useRef<Map<string, number>>(new Map());
   const promptDoneRef = useRef<Map<string, number>>(new Map());
   const promptTerminalRef = useRef<Set<string>>(new Set());
+  const outlineTerminalRef = useRef<Set<string>>(new Set());
+  const rewriteTerminalRef = useRef<Set<string>>(new Set());
+  const rewriteDoneRef = useRef<Map<string, number>>(new Map());
   useEffect(() => {
     jobs.forEach((progress, jobId) => {
       // Prompt-generation jobs (ComfyUI "generate until N"): rows land per batch,
@@ -162,6 +188,88 @@ export default function TopBar() {
           }
         }
       }
+      // Blueprint outline (ComfyUI "Draft from a description"): the job saves a draft on
+      // the blueprint, so the Blueprint tab's banner needs a refetch and the user a toast.
+      if (progress.job_type === OUTLINE_JOB_TYPE) {
+        if (TERMINAL_JOB_STATUSES.has(progress.status) && !progress.optimistic && !outlineTerminalRef.current.has(jobId)) {
+          outlineTerminalRef.current.add(jobId);
+          if (progress.plan_id) {
+            qc.invalidateQueries({ queryKey: ["comfy", "blueprint", progress.plan_id] });
+            qc.invalidateQueries({ queryKey: ["comfy", "blueprint-draft", progress.plan_id] });
+          }
+          if (progress.status === "completed") {
+            toast.success("Blueprint draft ready — review it on the Blueprint tab");
+          } else if (progress.status === "failed") {
+            toast.error(progress.message || "Blueprint draft failed");
+          } else {
+            toast("Blueprint draft stopped");
+          }
+        }
+      }
+      // Prompt rewrite (ComfyUI blueprint "Rewrite"): rows change in place and the modal
+      // that started it may be closed, so the refresh and the toast live here. Its own
+      // type, never read as comfy_prompts: it writes `rewritten`, not `created`.
+      if (progress.job_type === REWRITE_JOB_TYPE) {
+        // Rows change per batch: refresh the table as each lands, as the comfy_prompts
+        // branch does, so it never shows template text the pass has already replaced.
+        // The Rewrite button's count and the preview's "N to rewrite" read the same rows,
+        // so they refresh per batch too, or they sit on the starting count until the end.
+        const done = progress.done ?? 0;
+        if (progress.status === "running" && done > (rewriteDoneRef.current.get(jobId) ?? -1)) {
+          rewriteDoneRef.current.set(jobId, done);
+          if (progress.plan_id) {
+            qc.invalidateQueries({ queryKey: ["comfy", "rows", progress.plan_id] });
+            qc.invalidateQueries({ queryKey: ["comfy", "blueprint-rewrite", progress.plan_id] });
+            qc.invalidateQueries({ queryKey: ["comfy", "blueprint-preview", progress.plan_id] });
+          }
+        }
+        if (TERMINAL_JOB_STATUSES.has(progress.status) && !progress.optimistic && !rewriteTerminalRef.current.has(jobId)) {
+          rewriteTerminalRef.current.add(jobId);
+          const planId = progress.plan_id;
+          if (planId) {
+            qc.invalidateQueries({ queryKey: ["comfy", "rows", planId] });
+            qc.invalidateQueries({ queryKey: ["comfy", "blueprint-preview", planId] });
+            qc.invalidateQueries({ queryKey: ["comfy", "blueprint-rewrite", planId] });
+            qc.invalidateQueries({ queryKey: ["comfy", "prompts", planId] });
+          }
+          const status = progress.status;
+          const plural = (n: number, w: string) => `${n} ${w}${n !== 1 ? "s" : ""}`;
+          jobsApi.get(jobId).then((job) => {
+            const r = job.result_data ?? {};
+            const rewritten = Number(r.rewritten ?? 0);
+            if (status === "completed") {
+              const kept = Number(r.leaves_failed ?? 0);
+              const leaves = Number(r.leaves_done ?? 0);
+              const left = Number(r.requested ?? rewritten) - rewritten;
+              const msg = `Rewrote ${plural(rewritten, "prompt")} in ${plural(leaves, "folder")}`
+                + (kept > 0 ? `; ${plural(kept, "folder")} kept their templates` : "");
+              // A run that stopped early, or left prompts behind, is not a plain success:
+              // Top up refuses while those prompts wait, so say why and how many.
+              const why: Record<string, string> = {
+                call_budget: "the LLM call budget ran out",
+                provider_error: String(r.error || "the provider refused"),
+                too_many_failures: "too many folders failed",
+                write_error: String(r.error || "saving a batch failed"),
+              };
+              const reason = why[String(r.stop_reason)];
+              if (reason || left > 0) {
+                toast(`${msg}. Stopped: ${reason || "some prompts could not be rewritten"} — `
+                  + `${plural(left, "prompt")} still wait${left === 1 ? "s" : ""}; press Rewrite to try again`,
+                  { icon: "⚠️", duration: 9000 });
+              } else {
+                toast.success(msg);
+              }
+            } else if (status === "failed") {
+              toast.error(job.error_msg || progress.message || "Prompt rewrite failed");
+            } else {
+              toast(`Rewrite stopped — ${plural(rewritten, "prompt")} rewritten`);
+            }
+          }).catch(() => {
+            if (status === "failed") toast.error(progress.message || "Prompt rewrite failed");
+            else toast(status === "completed" ? "Prompt rewrite finished" : "Rewrite stopped");
+          });
+        }
+      }
       // Every terminal status, not just "completed": these jobs commit per item, so
       // a cancelled or failed run has still changed real images (a ComfyUI run
       // cancelled after 3 of 10 rows imported 3 images). Only invalidating on
@@ -179,6 +287,7 @@ export default function TopBar() {
       ) {
         processedJobsRef.current.add(jobId);
         captionDoneRef.current.delete(jobId);
+        rewriteDoneRef.current.delete(jobId);
         // A stale thumbnail is the one outcome of these four jobs that leaves no
         // trace in the UI: the image is correct and committed, but the gallery
         // keeps drawing the old tile. Read after the `processedJobsRef` add, so
@@ -281,6 +390,10 @@ export default function TopBar() {
         ) {
           qc.invalidateQueries({ queryKey: ["image"] });
           invalidateDetectionQueries(qc, progress.dataset_id);
+        }
+        // The gate moves rejected images into `rejects/`, a subfolder that may be new.
+        if (progress.job_type === "run_gate" && progress.dataset_id) {
+          qc.invalidateQueries({ queryKey: ["subfolders", progress.dataset_id] });
         }
         // video_extract writes three things the generic image invalidations above
         // do not cover: a subfolder (all three modes can create one), the Video
@@ -527,6 +640,17 @@ export default function TopBar() {
               Cancel all
             </button>
           </div>
+        )}
+        {pausedRuns.length > 0 && (
+          <Link
+            to={`/datasets/${pausedRuns[0].dataset_id}/runs`}
+            className="badge dot"
+            data-testid="topbar-paused-runs"
+            style={{ color: "var(--warn)", textDecoration: "none" }}
+            title={`Paused: ${pausedRuns.map((r) => r.name).join(", ")}. Open the Runs page to resume or cancel.`}
+          >
+            {pausedRuns.length === 1 ? "Run paused" : `${pausedRuns.length} runs paused`}
+          </Link>
         )}
         {!runningJob && !uploadProgress && pendingJobs.length === 0 && (
           <span style={{ fontSize: 12, color: "var(--fg-dim)" }}>

@@ -7,7 +7,10 @@ This file covers the conventions for writing or fixing a backend pytest test: wh
 ## Which harness
 
 Request-level tests drive `backend.main.app` over httpx (see
-`backend/tests/conftest.py`); everything else is service-level. Anything needing a
+`backend/tests/conftest.py`); everything else is service-level. A fake shared across test
+files lives in a non-`test_` module beside them, so pytest does not collect it, and imports no
+`conftest` if anything outside pytest runs it: `fake_comfy.py` is the example
+(`docs/dev/comfyui/run.md` § Testing the run). Anything needing a
 decodable video is gated on cv2 — see `docs/dev/video/tests.md` (§ cv2 in CI, and the skip
 convention) before adding a test or a CI dependency there.
 
@@ -23,9 +26,22 @@ suite's collection path goes there, not into a workflow's install line.
 Torch is the one
 dependency that will never arrive, so a test importing anything under `backend/ml/` past the
 pure-numpy modules carries `conftest.needs_torch` (the sibling of `needs_cv2`) — without it
-the module *errors* on the runner rather than skipping; a test that creates a real symlink
+the module *errors* on the runner rather than skipping. A test of the job *machinery* that
+merely passes through such an import takes the `conftest.stub_aesthetic_scorer` fixture
+instead of skipping: a `quality_score` job imports `backend.ml.aesthetic_scorer` even for a
+technical-only check, so an automated run's Score stage failed nine run tests on CI, while a
+developer machine with torch passed. The stub's functions fail if called. A test that
+creates a real symlink
 likewise carries `conftest.needs_symlinks` (Windows refuses one without privilege, and
 `backend-tests-windows` runs the suite there).
+
+## No real LLM server
+
+The autouse fixture `_no_real_llm_server` in `backend/tests/conftest.py` points
+`run_service._LLM_TRANSPORT` at a transport that refuses every connection, for every test.
+Test providers use `127.0.0.1:1234`, which is LM Studio's real port on a developer's
+machine, so a run test could otherwise list or unload real models, and pass or fail by
+what is running. A test that wants a server sets its own transport with `monkeypatch`.
 
 ## Foreign keys in api_env
 

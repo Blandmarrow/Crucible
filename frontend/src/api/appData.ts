@@ -31,6 +31,9 @@ export interface LegacyImportReport {
 /** Under `/api/v1`, for `writeToServer`: this page saves as the user types. */
 export const CAPTIONING_WORKFLOW_PATH = "/app-data/captioning-workflow";
 
+/** Under `/api/v1`, for `writeToServer`: the Runs page saves its form as it changes. */
+export const RUN_FORM_PATH = "/app-data/run-form";
+
 /** The one-time carry-over waits at most this long. The shared axios client sets no
  *  timeout, and every query for this data waits on the import. */
 const LEGACY_IMPORT_TIMEOUT_MS = 15_000;
@@ -70,6 +73,15 @@ export const appDataApi = {
     }),
   putCaptioningWorkflow: (value: Partial<CaptioningWorkflow>) =>
     client.put(CAPTIONING_WORKFLOW_PATH, { value }).then((r) => r.data),
+  /** The Runs page's start form as last left (M6 §6); `null` means never saved. */
+  getRunForm: () =>
+    client.get<{ value: unknown }>(RUN_FORM_PATH).then((r) => {
+      // The SPA catch-all can answer with 200 HTML, which must not read as "never saved".
+      if (typeof r.data !== "object" || r.data === null || !("value" in r.data)) {
+        throw new Error("Unexpected run form response");
+      }
+      return r.data.value;
+    }),
   legacyImport: (body: LegacyImportBody) =>
     client
       .post<LegacyImportReport>("/app-data/legacy-import", body, { timeout: LEGACY_IMPORT_TIMEOUT_MS })

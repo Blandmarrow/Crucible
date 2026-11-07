@@ -11,6 +11,7 @@ User-written data that must follow the install rather than the browser lives in 
 | Caption prompt presets | `caption_prompt_presets` | `GET`/`POST /app-data/presets`, `DELETE /app-data/presets/{id}` |
 | Declared empty categories | `declared_categories` | `GET`/`POST`/`DELETE /app-data/categories`, `POST /app-data/categories/rename` |
 | Captioning workflow | `ThresholdSettings.captioning_workflow` | `GET`/`PUT`/`DELETE /app-data/captioning-workflow` |
+| Runs page start form (M6 §6; `docs/dev/comfyui/recipes.md` § The remembered form) | `ThresholdSettings.run_form` | `GET`/`PUT`/`DELETE /app-data/run-form` |
 | ComfyUI "Generate prompts" form | `ComfyPlan.gen_settings` | `GET`/`PUT /comfy/plans/{id}/gen-settings` |
 
 Three rules a change here has to keep:

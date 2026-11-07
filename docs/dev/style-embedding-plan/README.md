@@ -4,10 +4,10 @@
 with M7 on 2026-11-03. Its place in the order is M7 in [roadmap.md](../roadmap.md); the
 ruling that keeps layer 7 and adds no model is
 [decision 6](../decisions/06-layer-7-default-and-no-new-style-model.md). When a stage lands,
-move its durable rationale into `docs/dev/quality/style-similarity.md` and delete the stage
+move its durable rationale into `docs/dev/quality/style-evaluation.md` and delete the stage
 from here; delete the folder when everything is done or dropped.
 
-Read `docs/dev/quality/style-similarity.md` and `backend/scripts/style_gate_report.md`
+Read `docs/dev/quality/style-similarity.md`, `docs/dev/quality/style-evaluation.md` and `backend/scripts/style_gate_report.md`
 first. The published numbers in both remain correct for the configuration they were
 measured in; what follows shows that configuration was narrower than it looked. Dates below are
 as of the August campaign, and "the roadmap" in them means this file.
@@ -109,7 +109,7 @@ below), so **the robust unit is the band, roughly layers 5–11, not any single 
 
 ### 3. This revises a published claim
 
-`docs/dev/quality/style-similarity.md` and `styleModes.ts` both state that per-layer scoring below
+`docs/dev/quality/style-evaluation.md` and `styleModes.ts` both state that per-layer scoring below
 layer ~10 cannot be thresholded, because layers 1–8 compress every image into 0.90–0.99.
 That is true of DINOv2 and does not generalise. DINOv3 @512 layer 7 has a range of 0.129 —
 narrow — and a best-threshold accuracy of **0.9909**. A narrow band with clean ordering
@@ -256,7 +256,7 @@ complaint about the final embedding was that it *drifts toward subject and frami
 fix would be doubling down on the failure mode.
 
 **The label is not evidence.** `frontend/src/constants/dinoLabels.ts` arrived in `16ca82f`
-("Bug & efficiency fixes") with no citation, and `docs/dev/frontend-core.md` describes it
+("Bug & efficiency fixes") with no citation, and `docs/dev/frontend-constants.md` describes it
 only as "a human-readable description". All twelve strings are a gloss on the generic
 low-level→semantic depth intuition. Nothing in either campaign measured a layer and
 concluded "composition". See the trap below — the label should not survive in that form.
@@ -384,7 +384,7 @@ top? The margin between the last two columns is the whole finding:
 - **The absolute ceiling with subject held fixed is ~0.66**, for every layer, CLIP included.
   Three unmistakably different art styles, matched subject, and nothing measured does better
   than two calls in three. The layer argument is over a small part of a weak signal, and
-  § What to promise in `docs/dev/quality/style-similarity.md` now says so.
+  § What to promise in `docs/dev/quality/style-evaluation.md` now says so.
 
 ### Why one layer and not all twelve
 
@@ -442,7 +442,7 @@ The illustration equivalent no longer needs curation, because the app can genera
 images**, where style and subject are crossed *by construction* and neither label is
 inferred. That removes every caveat in the list above except the backbone one. It is the
 natural next experiment and it costs GPU time rather than judgement — see
-`docs/dev/comfyui.md` for plans and pinned params.
+`docs/dev/comfyui/queue.md` for plans and pinned params.
 
 ## The photo dataset that settled it
 
@@ -500,14 +500,14 @@ shipped together on 2026-08-04 and are deleted from here per this file's lifecyc
 `DEFAULT_DINO_LAYER`, and no mode description quotes an AUC. `DEFAULT_DINO_LAYER` was
 retuned once more the same day, from 9 to **7**, on § The crossed runs; the blend weights
 did not move. Their durable rationale is in
-`docs/dev/quality/style-similarity.md` and, for users, `docs/style-similarity.md`. They shipped
+`docs/dev/quality/style-evaluation.md` and, for users, `docs/style-similarity.md`. They shipped
 together because a default the UI argued against would have been worse than either alone.
 
 ### Stage 2 — DINOv3 as a second embedding source
 
 **Not built** ([decision 6](../decisions/06-layer-7-default-and-no-new-style-model.md)). The
 2026-11-02 pre-registered runs found DINOv3 tied DINOv2 layer 7 on seven illustrators once
-the files were made identical; see `docs/dev/quality/style-similarity.md` § DINOv3. The
+the files were made identical; see `docs/dev/quality/style-evaluation.md` § DINOv3. The
 text below is the August proposal, kept for the trap it describes.
 
 Store DINOv3 layer blobs and default the picker to **layer 7**, the pooled winner and the
@@ -544,8 +544,8 @@ Two options, in order of preference:
    individual layer represents.
 
 Whichever, the labels must stop implying a per-layer semantics the evidence does not carry.
-Touchpoints: `frontend/src/constants/dinoLabels.ts`, its line in
-`docs/dev/frontend-core.md`, and `frontend/e2e/quality.spec.ts` if a label is asserted on.
+Touchpoints: `frontend/src/constants/dinoLabels.ts`, its section in
+`docs/dev/frontend-constants.md`, and `frontend/e2e/quality.spec.ts` if a label is asserted on.
 
 ### Stage 3 — dense features
 
@@ -595,7 +595,7 @@ the above measures it.
 and the three constants (`STYLE_CLIP_WEIGHT`, `STYLE_DINO_WEIGHT`, `DEFAULT_DINO_LAYER`) in
 `backend/ml/similarity_scorer.py` — they moved there out of `dino_scorer` so the router's
 combined branch stays torch-free; the layer table and findings in
-`docs/dev/quality/style-similarity.md`; the scorer row in `docs/dev/quality/scoring.md`; `STYLE_MODES`,
+`docs/dev/quality/style-evaluation.md`; the scorer row in `docs/dev/quality/scoring.md`; `STYLE_MODES`,
 `STYLE_MODE_NOTE`, `DINO_LAYER_NOTE` and the frontend's own `DEFAULT_DINO_LAYER` in
 `frontend/src/constants/styleModes.ts` (a backend test asserts the last agrees with
 Python's); the per-layer picker in `QualityPage` and `SelectionToolbar`; and

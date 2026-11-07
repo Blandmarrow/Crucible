@@ -3,6 +3,7 @@ import logging
 import re
 import shutil
 import statistics
+from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
 from typing import NamedTuple
@@ -31,6 +32,7 @@ from backend.utils import (
     copy_with_sidecar,
     poster_path_for,
     read_caption_sidecar,
+    remap_declared_paths,
     require_free_space,
     thumbnail_path_for,
     unique_filename_with_thumb,
@@ -131,13 +133,52 @@ async def sweep_orphan_dataset_folders(db: AsyncSession) -> list[str]:
     behind if the row disappeared by another route (DB reset/migration/swap) so the
     delete endpoint never ran for it. This reconciles disk against the DB at startup.
     Returns the names of the folders removed.
+
+    It removes nothing when the DB and the tree visibly disagree, because then "no row"
+    means the wrong tree, not an orphan: a row whose folder lies outside datasets_dir
+    (a DB copied from another machine, or DATASETS_DIR changed under it), rows none of
+    whose folders exist (a network share that is not mounted), or no rows at all beside
+    folders that hold datasets (a second install given another one's DATASETS_DIR, or a
+    fresh database next to a copied tree). Each time every folder would look orphaned and
+    the sweep would delete a whole tree of real datasets.
     """
     datasets_dir = settings.datasets_dir
     if not datasets_dir.exists():
         return []
 
     result = await db.execute(select(Dataset.folder_path))
-    known = {Path(p).resolve() for (p,) in result.all()}
+    stored = [p for (p,) in result.all()]
+    root = datasets_dir.resolve()
+    # A path written on another OS is not absolute here (`D:\...` on Linux, `/mnt/...` on
+    # Windows); resolve() would join it to the working directory, so judge it unresolved.
+    outside = sorted(p for p in stored if not Path(p).is_absolute() or not Path(p).resolve().is_relative_to(root))
+    known = {Path(p).resolve() for p in stored if Path(p).is_absolute()}
+    if not stored:
+        holding = sorted(c.name for c in datasets_dir.iterdir() if (c / "images").is_dir())
+        if holding:
+            logger.warning(
+                "Orphan dataset-folder sweep skipped: the database has no datasets, but %s "
+                "holds %d dataset folder(s) (first: %s). Is this install pointed at another "
+                "one's datasets folder? Nothing was removed.",
+                root, len(holding), holding[0],
+            )
+            return []
+    if outside:
+        logger.warning(
+            "Orphan dataset-folder sweep skipped: %d dataset folder(s) lie outside the "
+            "datasets folder %s (first: %s). Was the database moved, or DATASETS_DIR "
+            "changed? Nothing was removed.",
+            len(outside), root, outside[0],
+        )
+        return []
+    if known and not any(p.is_dir() for p in known):
+        logger.warning(
+            "Orphan dataset-folder sweep skipped: none of the %d dataset folders exist "
+            "under %s. Is the datasets folder (or its network share) missing? Nothing "
+            "was removed.",
+            len(known), root,
+        )
+        return []
 
     removed: list[str] = []
     for child in datasets_dir.iterdir():
@@ -564,18 +605,36 @@ async def list_subfolders(db: AsyncSession, dataset_id: str) -> list[dict]:
 
 
 async def declare_subfolder(db: AsyncSession, dataset_id: str, path: str) -> None:
+    await declare_subfolders(db, dataset_id, [path])
+
+
+async def declare_subfolders(db: AsyncSession, dataset_id: str, paths: Iterable[str]) -> None:
+    """Declare `paths` and every ancestor of each on the dataset, in one commit.
+
+    **This commits.** Never call it from inside a per-item loop that relies on a
+    rollback for atomicity — a commit mid-item makes half-written state durable.
+    Collect the distinct targets and declare them once, up front.
+
+    An empty path is skipped rather than declared: `""` would append a nameless
+    entry that `list_subfolders` then merges into every listing forever.
+    """
     ds = await db.get(Dataset, dataset_id)
     if not ds:
         return
     current: list[str] = list(ds.declared_subfolders or [])
-    parts = path.split("/")
     changed = False
-    for i in range(1, len(parts) + 1):
-        ancestor = "/".join(parts[:i])
-        if ancestor not in current:
-            current.append(ancestor)
-            changed = True
+    for path in paths:
+        if not path:
+            continue
+        parts = path.split("/")
+        for i in range(1, len(parts) + 1):
+            ancestor = "/".join(parts[:i])
+            if ancestor and ancestor not in current:
+                current.append(ancestor)
+                changed = True
     if changed:
+        # Reassigned, not mutated in place: SQLAlchemy compares JSON columns by
+        # equality, so an in-place append to the loaded list looks unchanged.
         ds.declared_subfolders = current
         await db.commit()
 
@@ -616,27 +675,15 @@ async def repath_subfolder(
         )
     )
     updated = (exact.rowcount or 0) + (descendants.rowcount or 0)
+    # A rename can take a reject out of `rejects/` (or a folder into it).
+    from backend.services.gate_flags import clear_gate_flags_outside_rejects
+    await clear_gate_flags_outside_rejects(db, dataset_id)
 
     ds = await db.get(Dataset, dataset_id)
     if ds:
-        rebuilt: list[str] = []
-        for p in (ds.declared_subfolders or []):
-            if p == path:
-                rebuilt.append(new_path)
-            elif p.startswith(path + "/"):
-                rebuilt.append(new_path + p[len(path):])
-            else:
-                rebuilt.append(p)
-        # Mirror declare_subfolder: the destination's ancestors have to exist, or an
-        # empty folder moved under a merely-declared parent vanishes from the sidebar.
-        parts = new_path.split("/")
-        for i in range(1, len(parts)):
-            rebuilt.append("/".join(parts[:i]))
-        seen: set[str] = set()
-        deduped = [p for p in rebuilt if not (p in seen or seen.add(p))]
         # Reassign, never mutate in place: SQLAlchemy compares JSON columns by
         # equality, so an in-place edit is a silently skipped UPDATE.
-        ds.declared_subfolders = deduped
+        ds.declared_subfolders = remap_declared_paths(ds.declared_subfolders, path, new_path)
 
     await db.commit()
     return updated
@@ -652,6 +699,9 @@ async def delete_subfolder(db: AsyncSession, dataset_id: str, path: str) -> int:
         .values(subfolder="")
     )
     moved = result.rowcount
+    # Deleting `rejects` (or a folder above it) files its images at the root.
+    from backend.services.gate_flags import clear_gate_flags_outside_rejects
+    await clear_gate_flags_outside_rejects(db, dataset_id)
 
     ds = await db.get(Dataset, dataset_id)
     if ds:
@@ -1667,6 +1717,7 @@ async def get_dataset_stats(db: AsyncSession, dataset_id: str, subfolder: str | 
             _flag_sum("is_duplicate").label("duplicate"),
             _flag_sum("is_nsfw").label("nsfw"),
             _flag_sum("has_ai_artifacts").label("ai_artifacts"),
+            _flag_sum("gate_rejected").label("gate_rejected"),
         ).where(*_base_where)
     )).one()
     flag_counts = {
@@ -1677,6 +1728,7 @@ async def get_dataset_stats(db: AsyncSession, dataset_id: str, subfolder: str | 
         "duplicate": flag_row.duplicate,
         "nsfw": flag_row.nsfw,
         "ai_artifacts": flag_row.ai_artifacts,
+        "gate_rejected": flag_row.gate_rejected,
     }
 
     # Embedding coverage — separate count query to avoid loading blobs (async, done before
@@ -2007,7 +2059,7 @@ async def duplicate_dataset(
             # `create_all` on its own engine and so never gets the
             # `PRAGMA foreign_keys=ON` that backend/database.py installs on the
             # app engine (the same blind spot as the delete cascade — see
-            # docs/dev/video.md § What is free, and what is not).
+            # docs/dev/video/storage.md § What is free, and what is not).
             await db.flush()
 
         # Items actually processed, which is what the last emit reported — so a

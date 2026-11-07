@@ -36,6 +36,18 @@ class ComfyRowError(Exception):
     """Per-row failure (bad workflow patch, ComfyUI rejection, no outputs, timeout)."""
 
 
+class ComfyPartialRejection(ComfyRowError):
+    """ComfyUI queued the prompt but dropped outputs that failed validation.
+
+    Unlike a 400, something *was* queued: `prompt_id` names it, so the caller can
+    take it back out of ComfyUI's queue rather than leave it running.
+    """
+
+    def __init__(self, message: str, prompt_id: str):
+        super().__init__(message)
+        self.prompt_id = prompt_id
+
+
 @dataclass(frozen=True)
 class QueueItem:
     """One entry of ComfyUI's GET /queue: the prompt id and the submitting client_id."""
@@ -84,7 +96,13 @@ class ComfyClient:
             return resp.json()
 
     async def submit(self, workflow: dict, client_id: str) -> str:
-        """POST /prompt — returns the ComfyUI prompt_id, or raises ComfyRowError."""
+        """POST /prompt — returns the ComfyUI prompt_id, or raises ComfyRowError.
+
+        A 200 with a non-empty `node_errors` is a failure too: ComfyUI queued only
+        the outputs that passed validation and silently dropped the rest, so the row
+        would complete with fewer images than its workflow makes. That raises
+        `ComfyPartialRejection`, which carries the queued prompt's id.
+        """
         async with httpx.AsyncClient(timeout=_TIMEOUT, transport=self._transport) as client:
             resp = await client.post(
                 f"{self.base_url}/prompt",
@@ -97,7 +115,26 @@ class ComfyClient:
         prompt_id = data.get("prompt_id")
         if not prompt_id:
             raise ComfyRowError(f"ComfyUI /prompt returned no prompt_id: {data}")
+        if data.get("node_errors"):
+            raise ComfyPartialRejection(
+                f"ComfyUI dropped output(s) that failed validation: {_format_node_errors(resp)}",
+                prompt_id,
+            )
         return prompt_id
+
+    async def free(self, *, unload_models: bool = True, free_memory: bool = True) -> None:
+        """POST /free — ask ComfyUI to unload its models and release cached VRAM.
+
+        Raises httpx errors on failure. Its only caller, an automated run's VRAM
+        handoff (M6 §4), treats any failure as a note: an older build without the
+        endpoint must never fail a run.
+        """
+        async with httpx.AsyncClient(timeout=10.0, transport=self._transport) as client:
+            resp = await client.post(
+                f"{self.base_url}/free",
+                json={"unload_models": unload_models, "free_memory": free_memory},
+            )
+            resp.raise_for_status()
 
     async def poll_history(self, prompt_id: str) -> dict | None:
         """GET /history/{prompt_id} — the entry dict once execution finished, else None."""

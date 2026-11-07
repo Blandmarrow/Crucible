@@ -21,6 +21,9 @@ class ThresholdSettings(Base):
     auto_unload_after_scoring: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="1")
     comfyui_url: Mapped[str] = mapped_column(String(500), nullable=False, server_default="")
     comfy_workflow_dir: Mapped[str] = mapped_column(String(1000), nullable=False, server_default="")
+    # Unload a local Strata LLM server before ComfyUI generates (M6 §9,
+    # backend/services/llm_server.py). Off by default: only a card too small for both needs it.
+    llm_gpu_handoff: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="0")
 
     # Secrets, editable from Settings -> API Keys. The column names MUST equal the
     # backend.config.Settings field names of the same secrets: secrets_service uses one
@@ -34,3 +37,6 @@ class ThresholdSettings(Base):
     # never saved, which is what lets Settings' caption defaults apply; none_as_null keeps
     # a Python None from being stored as JSON `null`, which is not NULL.
     captioning_workflow: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    # The Runs page's start form as last left (M6 §6), its shape owned by the frontend.
+    # NULL means never saved: the form starts from its defaults.
+    run_form: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), nullable=True)

@@ -46,6 +46,21 @@ staleness sweep while still recording the seam.
 
 ## Queue
 
+## docs/dev/comfyui/queue.md
+
+- **Moves:** the row endpoints of § Backend that M6 §8b and §8c grew: the folder's exemption
+  and `set-subfolder`, the `linked` modes, "A live run locks its plan's folders and rows",
+  `rows/place`, `rows/copy`, the folder tree's endpoints and plan duplicate.
+- **New file:** docs/dev/comfyui/rows-api.md, with a row in the hub `docs/dev/comfyui.md`;
+  queue.md keeps the data model, `comfy_service.py`, ComfyClient, plan CRUD, the library and
+  the gotchas.
+- **Why here:** §8c took it to 3,141 of 3,500 words (2026-11-05). Every §8 stage added a row
+  endpoint to one section; §8d added none, and the 2026-11-05 review fixes' guards took it
+  over budget, to ~3,530.
+- **Watch for:** `prompt_origin`'s writer table names `rows/copy`; `docs/dev/comfyui/page.md`,
+  `library-dnd.md` and `structured.md` point at `queue.md` § Backend for these endpoints, so
+  grep `queue.md` across docs/dev and repoint each that means a row endpoint.
+
 ## docs/scoring.md
 
 - **Moves:** § Quality flags (162 words) and § Stale scores (320) — only if the file grows
@@ -63,6 +78,42 @@ staleness sweep while still recording the seam.
   `docs/captioning.md`; both are user-doc markdown links, so a move FAILs the checker
   until they are repointed. Do **not** take `### VRAM after a run` as the seam: it is six
   lines and belongs exactly where it is, under § Running a scoring run.
+
+A batch of thirteen splits was executed on 2026-11-04 on `feat/m6-comfy-automation`, after
+an audit found ten files at 90%+ of budget with no entry here. Four had recorded seams
+(`docs/dev/comfyui/automation.md`, `docs/runs.md`, `docs/dev/quality/style-similarity.md`,
+`docs/dev/image-processing-models.md`), and **all four were re-cut on execution**, because
+the recorded seam moved too little to reach 60%. automation.md needed § The stages out as
+well (`docs/dev/comfyui/run-stages.md`) and took the whole Runs page into
+`docs/dev/comfyui/run-start.md`. runs.md also gave up § Repeating until every folder is
+full (`docs/repeating-runs.md`). style-similarity's § Other models measured 754 words, not
+the ~950 recorded, so the other measurement sections went with it into
+`docs/dev/quality/style-evaluation.md`. image-processing-models' five job paragraphs were
+867 words, not ~1,250, so the output-mode paragraphs, LUT job lines and the ImageDetailPage
+outcome bullet joined them in `docs/dev/image-edit-job.md`. The unrecorded seams:
+run-loop.md → `docs/dev/comfyui/run-gate.md` + `docs/dev/comfyui/run-budgets.md` (the seed
+check went with the budgets, not the gate); provenance → `docs/dev/provenance-api.md` and
+`docs/licenses.md`; frontend-core → `docs/dev/frontend-constants.md`; frontend-jobs →
+`docs/dev/job-invalidation.md` (moving invalidation out beat moving reporting out, which
+only reached 62%); environment-setup → `docs/dev/server-start.md` (remainder accepted at
+64%); the video hub → `docs/dev/video/storage.md`; and datasets-page, which first gained
+`##` headings, → `docs/dev/dataset-operations.md`. `MAX_CLAUDE_WORDS` went to 6,500 for the
+six new Map rows. The lesson matches the earlier re-cuts: a recorded word count goes stale
+as fast as the file grows, so re-measure the seam before moving anything.
+
+The old flat docs/dev/comfy-structured.md → `docs/dev/comfyui/structured-llm.md` **and**
+`docs/dev/comfyui/structured-expansion.md` was executed on 2026-11-03 on
+`feat/m6-comfy-automation`, ahead of M6 §3, and was **re-cut on execution**. Re-measured at
+3,160 words, the recorded seam (§ The outline call, 575 words) would have left ~2,585 behind,
+74% of budget. So § The spec and § Expansion went too, along the module line: the pure
+`blueprint_expand.py`, with no DB and no HTTP, against the blueprint tables, fill accounting,
+orphans, Apply and Top up that stayed. The recorded filename held for the LLM half, which
+§3's rewrite pass joins. With eight ComfyUI files the family also went behind a hub in the
+same change (decision 2's "past about three files"): `docs/dev/comfyui.md` became the hub and
+its old content `docs/dev/comfyui/queue.md`, and the five other files moved into
+`docs/dev/comfyui/` under shorter names. The entry's Watch-for was right; it missed only
+`backend/services/blueprint_expand.py`'s docstring and `backend/ml/prompt_generator.py`'s
+banner comment, which now point at the two new halves.
 
 `docs/workspace.md` → `docs/server.md` **and** `docs/file-browser.md` was executed on 2026-10-29
 as an M3 task, the second of the user-docs queue, and was **re-cut on execution**, taking the
@@ -171,37 +222,18 @@ utilities → `docs/dev/shared-utilities.md`.
   do not is a fact to move *there* rather than lose. A handful of Features bullets name
   things with no topic doc at all (verify each against the Docs table before cutting).
 
-## docs/dev/quality/style-similarity.md
+## docs/dev/comfyui/page.md
 
-- **Moves:** § Other models were measured and not adopted — its three `###` parts (DINOv3;
-  Kaloscope, CSD and PE-Core; How to test the next candidate), about 950 words
-- **New file:** docs/dev/quality/style-models.md, with a row in `docs/dev/quality.md`'s
-  routing table rather than in CLAUDE.md's Map (the Quality family is hubbed)
-- **Why here:** recorded at 3,198 words (91% of budget) by the M7 port, which folded in the
-  deleted `style-model-research/` folder. That section is about *which model*, not about how
-  the shipped modes work: it is research history plus a test protocol, and it grows every
-  time a candidate is tried, where the rest of the file changes only when the code does.
-  Moving it leaves the producing half near 2,250 words, under the 60% target.
-- **Watch for:** decision 6 and `docs/dev/roadmap.md` § M7 cite § Other models were
-  measured and not adopted and § Kaloscope, CSD and PE-Core by name, and § Which layer, and
-  why it moved twice points at "the later model runs (below)" — that pointer becomes
-  cross-file. `docs/dev/style-embedding-plan/README.md` Stage 2 cites § DINOv3.
-
-## docs/dev/image-processing-models.md
-
-- **Moves:** from § Upscaling, the five job paragraphs (Replace mode follows the PNG fallback;
-  Copy mode's occupied-stem sets; The run reports what it did; The stored path is a gate;
-  Upscale and LUT share one job loop), about 1,250 words, plus the LUT section's matching
-  job-behaviour lines
-- **New file:** docs/dev/image-edit-job.md, named after the module it documents
-  (`backend/services/image_edit_job.py`), with a Map row
-- **Why here:** recorded at 3,449 words (98% of budget) by M8 stage 3, which moved the
-  upscale and LUT job bodies into one shared loop. Those paragraphs now describe that loop,
-  not the models: the rest of the file (spandrel, the `.cube`/`.3dl` parsers, LaMa) changes
-  only when a model does. Moving them leaves about 2,200 words, near the 60% target; if it
-  lands over, move the LUT section's replace-mode paragraphs too.
-- **Watch for:** § Upscaling is cited for the job's behaviour by `docs/dev/inpaint.md`,
-  `docs/dev/frontend-jobs.md`, `docs/dev/shared-utilities.md` and the cleanup plan, and
-  PM-009/PM-013 cite § Upscaling and § LUT grading; repoint the ones that mean the job.
-  `docs/dev/video/reextract.md` cites § LUT Color Grading for the PNG fallback.
-  The intro's sentence naming the shared loop points at "§ Upscaling's last paragraphs".
+- **Moves:** § The plan rail, the folder tree and the grouped table, plus the Rows toolbar,
+  `ComfyRowsSelectionBar` and the selection-prune bullets out of § Frontend
+- **New file:** docs/dev/comfyui/rows-tab.md (mirrors docs/comfy-queue.md, the Rows tab's user guide)
+- **Why here:** the §8 review fixes took it to ~3,520 of 3,500 words (2026-11-05). § Frontend
+  is ~2,200 words of which about half is the Rows tab (toolbar, selection bar, table,
+  selection and busy rules); the rest is the page shell (routing, header, `WorkflowPinPanel`,
+  the defaults strip, the run bar, `activeRuns`) and § The layout. The Rows-tab half is one
+  subsystem with its own user doc, so it splits cleanly and leaves both near 60%.
+- **Watch for:** `library-dnd.md`, `blueprint-tab.md`, `persistence.md` (the
+  `COMFY_ROWS_VIEW_KEY` row) and the hub's routing table point at `page.md` § The plan rail,
+  the folder tree and the grouped table; `styling.md` points at `page.md` for the rail and
+  tree's `ContextMenu`. The `planBusy` bullet sits inside the run-bar bullet but belongs with
+  the Rows tab's controls.

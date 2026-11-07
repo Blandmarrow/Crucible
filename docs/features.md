@@ -12,6 +12,9 @@ The order images travel through the app:
 | 1 | Browse, filter, select and sort a dataset's images | [Gallery](gallery.md) |
 | 1 | File images into subfolders; rename and re-nest them | [Subfolders](subfolders.md) |
 | 1 | Generate images with your own ComfyUI workflow | [ComfyUI Generation](comfyui.md) |
+| 1 | Fill a ComfyUI queue: paste, import or generate prompts, file each row in a folder, reuse prompts from a shared library, duplicate plans and copy rows between them, by menu or drag and drop | [ComfyUI Queue](comfy-queue.md) |
+| 1 | Describe a whole foldered dataset once and expand it into a ComfyUI queue | [ComfyUI Blueprints](comfy-structured.md) |
+| 1–7 | Run a plan end to end in one press: fill, generate, score, caption, export, repeating until every folder holds enough images that pass a quality gate; check it first with a dry run, and keep its settings as shareable recipes | [Automated Runs](runs.md) · [Setting up a run](run-setup.md) · [Repeating a run](repeating-runs.md) |
 | 1 | Hold videos as sources for frame extraction | [Videos](video.md) |
 | 1 | Extract frames from videos, shot by shot | [Frame Extraction](video-extraction.md) |
 | 2 | Caption with local ML models or any OpenAI-compatible API | [AI Captioning](captioning.md) |
@@ -39,7 +42,8 @@ The order images travel through the app:
 | Bulk Edit | [editing.md](editing.md) · [detection.md](detection.md) |
 | Consolidate Tags | [tag-consolidation.md](tag-consolidation.md) |
 | Versions | [versioning.md](versioning.md) |
-| ComfyUI | [comfyui.md](comfyui.md) |
+| ComfyUI | [comfyui.md](comfyui.md) · [comfy-queue.md](comfy-queue.md) · [comfy-structured.md](comfy-structured.md) |
+| Runs | [runs.md](runs.md) · [run-setup.md](run-setup.md) · [repeating-runs.md](repeating-runs.md) |
 | Export | [export.md](export.md) |
 | Booru Browser | [workspace.md](workspace.md#booru-tag-lookup) |
 | File Browser | [file-browser.md](file-browser.md) |
@@ -50,9 +54,10 @@ The order images travel through the app:
 
 | Topic | |
 |---|---|
-| Source & license provenance — where images came from, what you may do with them, export credits | [provenance.md](provenance.md) |
+| Source & license provenance — where images came from, how licenses are inherited and captured | [provenance.md](provenance.md) |
+| Licenses and credits — the license list, commercial-use and attribution rules, and the `CREDITS.md` / `licenses.csv` an export writes | [licenses.md](licenses.md) |
 | Statistics dashboard — histograms, tag frequency, detection audit, CSV export | [statistics.md](statistics.md) |
-| Settings reference — all seven tabs | [settings.md](settings.md) |
+| Settings reference — all nine tabs | [settings.md](settings.md) |
 | Background jobs, hardware meters, split view, dialog keyboard behavior, logs, booru lookup | [workspace.md](workspace.md) |
 | Starting the server, restart & shutdown, database backups | [server.md](server.md) |
 

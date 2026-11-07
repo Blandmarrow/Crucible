@@ -14,6 +14,13 @@ def _is_remote(base_url: str) -> bool:
         return True
 
 
+def provider_is_billed(row: object) -> bool:
+    """Whether calls to this provider count as paid: the explicit `billed` setting,
+    else (NULL) whether its URL is remote. Automated runs cap paid calls only."""
+    billed = getattr(row, "billed", None)
+    return billed if billed is not None else _is_remote(row.base_url)
+
+
 class OpenAIProviderCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     base_url: str = Field(..., min_length=1, max_length=1024)
@@ -28,6 +35,8 @@ class OpenAIProviderCreate(BaseModel):
     # than an OverflowError out of the SQLite integer bind on commit.
     max_tokens: int = Field(default=2048, ge=1, le=2**31 - 1)
     timeout_s: int = Field(default=300, ge=10, le=3600)
+    # None = unset, follow the URL (NULL in the column).
+    billed: bool | None = None
 
     @field_validator("base_url")
     @classmethod
@@ -45,6 +54,9 @@ class OpenAIProviderUpdate(BaseModel):
     # Same ceiling as OpenAIProviderCreate — a 422 instead of an OverflowError.
     max_tokens: int | None = Field(default=None, ge=1, le=2**31 - 1)
     timeout_s: int | None = Field(default=None, ge=10, le=3600)
+    # None = unchanged (PATCH uses exclude_none), so it can be set true/false but
+    # not cleared back to NULL.
+    billed: bool | None = None
 
     @field_validator("base_url")
     @classmethod
@@ -62,6 +74,8 @@ class OpenAIProviderOut(BaseModel):
     max_tokens: int
     timeout_s: int
     is_remote: bool
+    billed: bool | None
+    is_billed: bool
     created_at: UtcDatetime
 
     model_config = {"from_attributes": True}
@@ -82,5 +96,7 @@ class OpenAIProviderOut(BaseModel):
             max_tokens=getattr(row, "max_tokens", 2048),
             timeout_s=getattr(row, "timeout_s", 300),
             is_remote=_is_remote(row.base_url),
+            billed=getattr(row, "billed", None),
+            is_billed=provider_is_billed(row),
             created_at=row.created_at,
         )

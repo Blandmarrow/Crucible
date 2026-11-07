@@ -21,12 +21,14 @@ import {
   SettingsPage,
   VersionsPage,
   ComfyPage,
+  RunsPage,
   LogsPage,
 } from "./pages/lazyPages";
 import PaneContainer from "./components/pane/PaneContainer";
 import ErrorBoundary from "./components/common/ErrorBoundary";
 import ErrorConsole from "./components/common/ErrorConsole";
 import LegacyConflictsDialog from "./components/common/LegacyConflictsDialog";
+import FileDropGuard from "./components/common/FileDropGuard";
 import { usePaneStore } from "./store/paneStore";
 import type { PaneView, PageType } from "./contexts/PaneContext";
 
@@ -94,6 +96,7 @@ function MainContent() {
         <Route path="/datasets/:datasetId/consolidate" element={<ErrorBoundary><TagConsolidatePage /></ErrorBoundary>} />
         <Route path="/datasets/:datasetId/versions" element={<ErrorBoundary><VersionsPage /></ErrorBoundary>} />
         <Route path="/datasets/:datasetId/comfy" element={<ErrorBoundary><ComfyPage /></ErrorBoundary>} />
+        <Route path="/datasets/:datasetId/runs" element={<ErrorBoundary><RunsPage /></ErrorBoundary>} />
         <Route path="/file-browser" element={<ErrorBoundary><FileBrowserPage /></ErrorBoundary>} />
         <Route path="/settings" element={<ErrorBoundary><SettingsPage /></ErrorBoundary>} />
         <Route path="/logs" element={<ErrorBoundary><LogsPage /></ErrorBoundary>} />
@@ -108,6 +111,7 @@ export default function App() {
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <RouteSyncer />
+        <FileDropGuard />
         <div style={{ "--sidebar-w": "240px", display: "grid", gridTemplateColumns: "var(--sidebar-w) 1fr", height: "100vh", overflow: "hidden" } as any}>
           <Sidebar />
           <div style={{ display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0, overflow: "hidden" }}>

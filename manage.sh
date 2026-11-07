@@ -267,6 +267,10 @@ BIND_HOST="127.0.0.1"
 # localhost for a loopback or wildcard bind, the address itself otherwise.
 BROWSE_HOST="localhost"
 BIND_MODE="loopback"
+# The backend and Vite ports (CRUCIBLE_PORT / CRUCIBLE_VITE_PORT, resolved by
+# scripts/bind_host.py with the bind host so no shell re-reads .env).
+CRUCIBLE_PORT_RESOLVED="8000"
+CRUCIBLE_VITE_PORT_RESOLVED="5173"
 
 _parse_run_args() {
     # $1 = command name, the rest = its arguments. Only `start` and `dev` take any.
@@ -291,11 +295,15 @@ _resolve_bind_host() {
     # "--lan". Needs the venv's python (or any python 3) - the script is stdlib only.
     local desc
     # shellcheck disable=SC2086
+    # Its stderr is left visible: a bad CRUCIBLE_PORT is explained there.
     desc="$(python "$ROOT/scripts/bind_host.py" $CRUCIBLE_LAN_ARG --describe)" || desc=""
     BIND_HOST="$(printf '%s\n' "$desc" | sed -n 1p)"
     BROWSE_HOST="$(printf '%s\n' "$desc" | sed -n 2p)"
     BIND_MODE="$(printf '%s\n' "$desc" | sed -n 3p)"
-    if [ -z "$BIND_HOST" ] || [ -z "$BROWSE_HOST" ] || [ -z "$BIND_MODE" ]; then
+    CRUCIBLE_PORT_RESOLVED="$(printf '%s\n' "$desc" | sed -n 4p)"
+    CRUCIBLE_VITE_PORT_RESOLVED="$(printf '%s\n' "$desc" | sed -n 5p)"
+    if [ -z "$BIND_HOST" ] || [ -z "$BROWSE_HOST" ] || [ -z "$BIND_MODE" ] \
+        || [ -z "$CRUCIBLE_PORT_RESOLVED" ] || [ -z "$CRUCIBLE_VITE_PORT_RESOLVED" ]; then
         echo "ERROR: could not resolve the bind address (scripts/bind_host.py failed)." >&2
         exit 1
     fi
@@ -323,7 +331,7 @@ _print_access() {
 # --- Startup splash --------------------------------------------------------
 # `start` is silent for a long stretch before uvicorn answers: migrations, an
 # occasional frontend rebuild, then the torch/transformers import chain. A
-# stdlib-only placeholder server holds :8000 for that stretch and serves the
+# stdlib-only placeholder server holds the backend port (8000 by default) for that stretch and serves the
 # animated mark, so the browser can be opened straight away on the real URL; it
 # is stopped before uvicorn binds, and the page swaps itself for the app on the
 # first healthy response. See scripts/splash_server.py.
@@ -359,7 +367,7 @@ _start_splash() {
 
     # Silenced: the only thing it has to say is "port taken", and uvicorn says
     # that far more clearly further down. Run it by hand to see the message.
-    python "$ROOT/scripts/splash_server.py" --host "$BIND_HOST" --parent-pid $$ \
+    python "$ROOT/scripts/splash_server.py" --host "$BIND_HOST" --port "$CRUCIBLE_PORT_RESOLVED" --parent-pid $$ \
         --ready-file "$ready" >/dev/null 2>&1 &
     _SPLASH_PID=$!
 
@@ -390,8 +398,8 @@ _start_splash() {
         return 0
     fi
 
-    if ! _open_browser "http://$BROWSE_HOST:8000"; then
-        echo "  (no browser opener found - open http://$BROWSE_HOST:8000 yourself)"
+    if ! _open_browser "http://$BROWSE_HOST:$CRUCIBLE_PORT_RESOLVED"; then
+        echo "  (no browser opener found - open http://$BROWSE_HOST:$CRUCIBLE_PORT_RESOLVED yourself)"
     fi
     return 0
 }
@@ -728,8 +736,8 @@ cmd_start() {
     fi
 
     echo ""
-    echo "Starting server at http://$BROWSE_HOST:8000"
-    _print_access 8000 start
+    echo "Starting server at http://$BROWSE_HOST:$CRUCIBLE_PORT_RESOLVED"
+    _print_access "$CRUCIBLE_PORT_RESOLVED" start
     echo "Press Ctrl+C to stop."
     echo ""
 
@@ -739,13 +747,13 @@ cmd_start() {
     rm -f "$ROOT/.restart"
     rm -f "$ROOT/.shutdown"
 
-    # Hand :8000 over. Must complete before uvicorn binds - and the restart loop
+    # Hand the port over. Must complete before uvicorn binds - and the restart loop
     # below never brings the splash back, because a restart is already covered
     # in-app by the TopBar overlay.
     _stop_splash
 
     while true; do
-        python -m uvicorn backend.main:app --host "$BIND_HOST" --port 8000 || true
+        python -m uvicorn backend.main:app --host "$BIND_HOST" --port "$CRUCIBLE_PORT_RESOLVED" || true
         if [ -f "$ROOT/.restart" ]; then
             rm -f "$ROOT/.restart"
             echo ""
@@ -913,9 +921,9 @@ cmd_dev() {
     _resolve_bind_host
     _migrate
 
-    echo "Starting backend on :8000 and frontend dev server on :5173..."
-    echo "Open http://$BROWSE_HOST:5173 in your browser."
-    _print_access 5173 dev
+    echo "Starting backend on :$CRUCIBLE_PORT_RESOLVED and frontend dev server on :$CRUCIBLE_VITE_PORT_RESOLVED..."
+    echo "Open http://$BROWSE_HOST:$CRUCIBLE_VITE_PORT_RESOLVED in your browser."
+    _print_access "$CRUCIBLE_VITE_PORT_RESOLVED" dev
     echo ""
 
     rm -f "$ROOT/.restart"
@@ -928,7 +936,8 @@ cmd_dev() {
         _uvicorn_pid=""
         trap 'kill "$_uvicorn_pid" 2>/dev/null' EXIT INT TERM
         while true; do
-            python -m uvicorn backend.main:app --host "$BIND_HOST" --port 8000 --reload --reload-dir backend &
+            # CRUCIBLE_DEV_RELOAD: under --reload the app restarts via the reloader, not .restart
+            CRUCIBLE_DEV_RELOAD=1 python -m uvicorn backend.main:app --host "$BIND_HOST" --port "$CRUCIBLE_PORT_RESOLVED" --reload --reload-dir backend &
             _uvicorn_pid=$!
             wait "$_uvicorn_pid" || true
             if [ -f "$ROOT/.restart" ]; then
@@ -947,11 +956,13 @@ cmd_dev() {
     cd "$ROOT/frontend"
     # vite.config.ts proxies /api here. A server bound to one LAN address does
     # not answer on localhost, so the proxy must follow the bind.
-    export CRUCIBLE_API_TARGET="http://$BROWSE_HOST:8000"
+    export CRUCIBLE_API_TARGET="http://$BROWSE_HOST:$CRUCIBLE_PORT_RESOLVED"
+    # --strictPort: if the Vite port is taken, fail rather than drift to the next
+    # one, which would be another install's.
     if [ "$BIND_MODE" = "loopback" ]; then
-        npm run dev
+        npm run dev -- --port "$CRUCIBLE_VITE_PORT_RESOLVED" --strictPort
     else
-        npm run dev -- --host "$BIND_HOST"
+        npm run dev -- --host "$BIND_HOST" --port "$CRUCIBLE_VITE_PORT_RESOLVED" --strictPort
     fi
 }
 
@@ -964,7 +975,7 @@ _menu() {
     echo "=== Crucible ==="
     echo ""
     echo "  1) Setup   - First-time install (creates venv, installs deps, builds frontend)"
-    echo "  2) Start   - Launch the app at http://localhost:8000"
+    echo "  2) Start   - Launch the app (http://localhost:8000 by default)"
     echo "  3) Update  - Pull latest changes and rebuild"
     echo ""
     printf "Enter choice [1-3]: "

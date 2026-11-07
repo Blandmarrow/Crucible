@@ -22,10 +22,16 @@ export default function SaveToLibraryModal({ planId, rowIds, onClose }: Props) {
     queryKey: ["comfy", "library"],
     queryFn: comfyApi.libraryList,
   });
-  const categories = useMemo(
-    () => [...new Set(library.map((p) => p.category))].sort((a, b) => a.localeCompare(b)),
-    [library],
-  );
+  // Every category path and its ancestors: a category is a `/` path shown as a tree
+  // (M6 §8c), so `portraits` is offered even when only `portraits/studio` holds prompts.
+  const categories = useMemo(() => {
+    const all = new Set<string>();
+    for (const p of library) {
+      const parts = p.category.split("/");
+      for (let i = 1; i <= parts.length; i++) all.add(parts.slice(0, i).join("/"));
+    }
+    return [...all].sort((a, b) => a.localeCompare(b));
+  }, [library]);
 
   const saveMutation = useMutation({
     mutationFn: async (cat: string) => {
@@ -70,8 +76,8 @@ export default function SaveToLibraryModal({ planId, rowIds, onClose }: Props) {
           <label style={{ fontSize: 12, color: "var(--fg-mute)", display: "flex", flexDirection: "column", gap: 4 }}>
             Category
             <input
-              className="input" autoFocus list="library-categories" maxLength={100}
-              placeholder={categories.length > 0 ? "Pick or type a new category" : "e.g. Fantasy scenes"}
+              className="input" autoFocus list="library-categories" maxLength={512}
+              placeholder={categories.length > 0 ? "Pick or type a new category, e.g. a/b" : "e.g. portraits/studio"}
               value={category} onChange={(e) => setCategory(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && trimmed && !saveMutation.isPending) saveMutation.mutate(trimmed);

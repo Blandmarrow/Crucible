@@ -5,6 +5,9 @@ export const GALLERY_PAGE_SIZE_KEY = "gallery-page-size"; // 25 | 50 | 100 | 200
 export const SUBFOLDER_RENAME_KEY = "subfolder-auto-rename"; // "on" | "off"
 export const GALLERY_CHECKBOX_SIZE_KEY = "gallery-checkbox-size"; // px, 14..32
 export const VIDEO_STRIP_COLLAPSED_KEY = "gallery-videos-collapsed"; // prefix; append `-${datasetId}` for the full key
+export const COMFY_BLUEPRINT_SECTIONS_KEY = "comfy-blueprint-sections"; // prefix; append `-${planId}`. JSON {axes, variations, scenarios}: which Blueprint editor sections are open
+export const COMFY_ROWS_VIEW_KEY = "comfy-rows-view"; // prefix; append `-${planId}`. JSON {closedFolders, closedGroups}: the folder tree's and the grouped Rows table's collapsed folders
+export const COMFY_LIBRARY_VIEW_KEY = "comfy-library-view"; // JSON {closed}: the prompt library panel's collapsed category paths (global, not per dataset)
 export const DECLARED_CATEGORIES_KEY = "crucible-declared-categories"; // string[]. Moved to the server; only the one-time browser import reads this
 export const LEGACY_IMPORT_MARKER_KEY = "crucible-legacy-import-v1"; // JSON: what this browser has copied to the server
 
@@ -23,7 +26,7 @@ export const PERSIST_DEBOUNCE_MS = 350;
 // Gallery default filters (applied when no session state exists for a dataset)
 export const GALLERY_DEFAULT_SORT_KEY    = "gallery-default-sort";    // number (index into SORT_OPTIONS)
 export const GALLERY_DEFAULT_CAPTION_KEY = "gallery-default-caption"; // "all" | "captioned" | "uncaptioned"
-export const GALLERY_DEFAULT_QUALITY_KEY = "gallery-default-quality"; // "" | "is_blurry" | "is_noisy" | "is_uniform" | "has_watermark" | "is_duplicate"
+export const GALLERY_DEFAULT_QUALITY_KEY = "gallery-default-quality"; // "" | "is_blurry" | "is_noisy" | "is_uniform" | "has_watermark" | "is_duplicate" | "gate_rejected"
 export const GALLERY_LICENSE_BADGE_KEY   = "gallery-license-badge";   // "true" | "false" (off by default)
 export const GALLERY_STYLE_METER_KEY     = "gallery-style-meter";     // "true" | "false" (ON by default — read with !== "false")
 export const LABEL_HOTKEYS_KEY           = "label-hotkeys-enabled";   // "true" | "false" (ON by default — read with !== "false")
@@ -54,6 +57,7 @@ export const EXPORT_FILTERS_PREFIX     = "export-filters";
 export const QUALITY_FILTERS_PREFIX    = "quality-filters";
 export const BULK_EDIT_FILTERS_PREFIX  = "bulk-edit-filters";
 export const STATS_FILTERS_PREFIX      = "stats-filters";
+export const COMFY_PAGE_STATE_PREFIX   = "comfy-page"; // {planId, section}: the ComfyUI page's last plan and tab, plus libOpen and libTab (the library side panel)
 
 const GALLERY_PAGE_SIZE_DEFAULT = 100;
 

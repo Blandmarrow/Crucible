@@ -55,7 +55,7 @@ from backend.utils import FileInUseError
 from backend.services.secrets_service import sync_env
 
 sync_env(None)
-from backend.routers import app_data, booru, captions, captioning, comfy, datasets, detection, export, filesystem, images, inpaint, jobs, labels, lut, models, providers, quality, settings as settings_router, system, tag_consolidation, upscaling, versioning, videos
+from backend.routers import app_data, booru, captions, captioning, comfy, datasets, detection, export, filesystem, images, inpaint, jobs, labels, lut, models, providers, quality, run_recipes, runs, settings as settings_router, system, tag_consolidation, upscaling, versioning, videos
 from backend.workers.job_queue import job_queue, mark_interrupted_jobs, sweep_old_jobs
 
 
@@ -68,6 +68,10 @@ async def lifespan(app: FastAPI):
     await init_db()
     await _seed_secret_env()
     await mark_interrupted_jobs()
+    # Right after: a run the shutdown left `running` is set `paused`, its child
+    # having just been failed above, for an explicit resume
+    # (docs/dev/comfyui/automation.md).
+    await _reconcile_interrupted_runs()
     await _sweep_old_jobs()
     await _sweep_orphan_dataset_folders()
     await job_queue.start()
@@ -107,6 +111,16 @@ async def _startup_db_maintenance() -> None:
         logging.getLogger(__name__).exception("Startup database maintenance failed")
     finally:
         _background_tasks.discard(asyncio.current_task())
+
+
+async def _reconcile_interrupted_runs() -> None:
+    """Pause every automated run a shutdown cut off. Never fatal to startup."""
+    from backend.services.run_service import reconcile_interrupted_runs
+
+    try:
+        await reconcile_interrupted_runs()
+    except Exception:
+        logging.getLogger(__name__).exception("Run reconciliation failed")
 
 
 async def _sweep_old_jobs() -> None:
@@ -222,6 +236,8 @@ app.include_router(labels.router, prefix=PREFIX)
 app.include_router(versioning.router, prefix=PREFIX)
 app.include_router(tag_consolidation.router, prefix=PREFIX)
 app.include_router(comfy.router, prefix=PREFIX)
+app.include_router(runs.router, prefix=PREFIX)
+app.include_router(run_recipes.router, prefix=PREFIX)
 app.include_router(app_data.router, prefix=PREFIX)
 
 _RESTART_SENTINEL = Path(__file__).parent.parent / ".restart"
@@ -229,10 +245,41 @@ _SHUTDOWN_SENTINEL = Path(__file__).parent.parent / ".shutdown"
 _START_TIME = time.time()
 
 
+# `manage.* dev` sets CRUCIBLE_DEV_RELOAD=1 because it runs uvicorn with --reload. There
+# `os.getpid()` is the reloader's *worker*: killing it leaves the reloader parent alive and
+# idle, so the manage script's restart loop never sees uvicorn end (docs/dev/http-edge.md).
+_DEV_RELOAD_TRIGGER = Path(__file__).parent / "_dev_reload_trigger.py"
+
+
+def _dev_reload() -> bool:
+    return os.environ.get("CRUCIBLE_DEV_RELOAD") == "1"
+
+
+def _dev_reload_restart() -> None:
+    """Ask uvicorn's own reloader to respawn the worker, by changing a watched file.
+
+    Non-hidden `*.py` under `backend/`: --reload ignores dotfiles by default. The file is
+    gitignored and never imported; only its mtime and content matter to the reloader.
+    """
+    _DEV_RELOAD_TRIGGER.write_text(f"# touched by POST /restart at {time.time()!r}\n", encoding="utf-8")
+
+
+def _dev_reload_shutdown() -> None:
+    """End the whole dev backend: the reloader parent first, then this worker.
+
+    Signalling the parent alone would orphan the worker on Windows (os.kill there is
+    TerminateProcess, which does not reach children), so the worker also ends itself.
+    """
+    time.sleep(0.5)  # let the 204 reach the client first; Windows kills are not graceful
+    os.kill(os.getppid(), signal.SIGTERM)
+    os.kill(os.getpid(), signal.SIGTERM)
+
+
 @app.post("/api/v1/shutdown", status_code=204)
 async def shutdown():
     _SHUTDOWN_SENTINEL.touch()
-    threading.Thread(target=lambda: os.kill(os.getpid(), signal.SIGTERM), daemon=True).start()
+    target = _dev_reload_shutdown if _dev_reload() else (lambda: os.kill(os.getpid(), signal.SIGTERM))
+    threading.Thread(target=target, daemon=True).start()
 
 
 @app.get("/api/v1/health", status_code=200)
@@ -244,6 +291,9 @@ async def health():
 async def restart():
     def _do_restart():
         _SHUTDOWN_SENTINEL.unlink(missing_ok=True)
+        if _dev_reload():
+            _dev_reload_restart()
+            return
         _RESTART_SENTINEL.touch()
         os.kill(os.getpid(), signal.SIGTERM)
     threading.Thread(target=_do_restart, daemon=True).start()

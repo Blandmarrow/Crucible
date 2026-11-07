@@ -6,10 +6,11 @@ Available from: the **ComfyUI** sidebar item on any dataset page.
 
 ## Setup
 
-Settings → **ComfyUI** tab. Both fields are global (shared by every dataset) and require **Save**:
+Settings → **ComfyUI** tab. The two fields are global (shared by every dataset) and require **Save**:
 
 - **Server URL** — base URL of your ComfyUI server, default port 8188 (e.g. `http://127.0.0.1:8188`). **Test connection** reports whether it is reachable before you save. The server is contacted by Crucible's backend, not by your browser — a ComfyUI on another machine, or in a container, needs an address that resolves from wherever Crucible is running.
 - **Workflow folder** — the folder **Scan folder…** searches by default. **Browse…** picks it. This is a path on the machine running Crucible.
+- **Unload a local Strata server while ComfyUI generates** — a checkbox, saved as soon as you tick it, and off by default. Turn it on when you caption or write prompts with a Strata LLM server on the same computer and your graphics card is too small for it and ComfyUI together (Strata takes almost all of a 16 GB card). Before every generation, by hand or in a run, Crucible asks Strata to drop its model from the graphics card; Strata keeps running and loads the model again by itself on the next caption or prompt request, which takes about a minute. Give that Strata provider a timeout of at least a few minutes (600 s works) so the first request after a generation does not time out. Only a Strata provider whose address is this computer's own (`localhost`, `127.0.0.1`) is unloaded; other LLM servers are not affected. Leave it off when your card has room for both.
 
 Optionally, install the **CrucibleBridge** extension into ComfyUI so **Sync from canvas** can pull the workflow you currently have open — see [extras/ComfyUI-CrucibleBridge/README.md](../extras/ComfyUI-CrucibleBridge/README.md). Without it, syncing falls back to the last prompt you queued in ComfyUI.
 
@@ -17,8 +18,12 @@ Optionally, install the **CrucibleBridge** extension into ComfyUI so **Sync from
 
 A **plan** holds one workflow template, the parameters pinned on it, and a queue of rows. A dataset can have as many plans as you like — typically one per workflow, or one per experiment.
 
-- **+ New plan** creates one; plan names are unique within a dataset. **Rename** and **Delete** act on the selected plan (deleting a plan discards its rows, but never the images it generated).
-- The plan splits into two sections: **Rows** (the queue) and **Workflow & Pins** (the template).
+- Plans are listed on the left of the **Rows** section, each with its row count. A blue dot means it is running, a red one that some rows failed. Click a plan to open it. The list shows on the Rows tab only, so go back to Rows to switch plans.
+- **New plan** creates one; plan names are unique within a dataset. A plan's **⋯** menu has **Rename…**, **Duplicate…** and **Delete…**. Deleting a plan discards its rows, but never the images it generated. **Delete…** is off while the plan is running or generating prompts, and refused while an automated run on it is running or paused.
+- **Duplicate…** copies the workflow, the pins, the folders and the blueprint into a new plan, and its rows too if you leave **Include its N rows, reset to pending** ticked. Copied rows start again as pending. Runs and images are not copied.
+- The plan splits into three sections: **Rows** (the queue), **Workflow & Pins** (the template) and **Blueprint** (a way to fill the queue, below).
+- The plan's name, the section tabs and the **Run** bar stay at the top of the page as you scroll, on every section.
+- The page remembers the plan and section you had open in each dataset.
 
 ## Loading a workflow
 
@@ -46,7 +51,7 @@ A pin exposes one workflow input so the queue can drive it. In **Workflow nodes*
 - **Run default** — one value used by every row, edited from the chips above the queue. Good for steps, CFG, sampler, or model name.
 - **per row** — gets its own column in the queue table, so each row can set it. A blank cell falls back to the run default, and then to the workflow's own value.
 
-Exactly one pin can be marked as **★ the prompt** (always per-row). It is the target for everything prompt-shaped: pasting prompts, importing `.txt` files, the prompt library, generated prompts, and **Prompt as caption**. Until a pin is marked as the prompt, those tools stay disabled.
+Exactly one pin can be marked as **★ the prompt** (always per-row). It is the target for everything prompt-shaped: pasting prompts, importing `.txt` files, the [prompt library](comfy-queue.md#prompt-library), generated prompts, and **Prompt as caption**. Until a pin is marked as the prompt, those tools stay disabled.
 
 Integer parameters — seeds above all — take a mode that applies when a row leaves the cell blank:
 
@@ -58,39 +63,22 @@ Integer parameters — seeds above all — take a mode that applies when a row l
 
 ## Building the queue
 
-From the **Rows** toolbar:
-
-- **+ Add row** — one empty row.
-- **Paste prompts…** — one row per line of pasted text.
-- **Import .txt** — one row per selected file; each file becomes a single prompt (internal line breaks collapse to spaces).
-- **✨ Generate prompts…** — write prompts with an LLM using any provider configured under Settings → LLM Providers → [details](settings.md). Two fields do different jobs: **Instructions** describe *how* prompts should be written and are saved with the plan in the app, so they are the same in every browser, while **Request** describes *what* to generate this time. Instructions saved before this change are copied over the first time each browser opens the updated app. If a second browser holds a different copy, you are asked which to keep. The model is told which prompts already exist so it diverges from them, and duplicates are dropped. There are two ways to run it:
-  - **Generate N more** makes one batch and puts it in the review box, where you edit or delete lines before clicking **Add N rows**.
-  - **Generate until N** runs in the background until the queue holds N prompts, adding rows batch by batch **without a review step**. You can close the window, leave the page, or reload — it keeps going, shows up in the progress bar at the top, and can be stopped from either place. Rows already added are always kept when it stops. Because nothing is reviewed by eye first, glance over the new rows before running them.
-- **Edit prompts…** — find/replace, prepend, append, or remove across every row's prompt or just the selected ones, with an optional regex mode.
-- **Delete selected** removes rows; **Reset failed** puts failed rows back to pending.
-
-Cells edit in place. Editing a row that already ran resets it to pending, so it will be picked up by the next run. To set one column across the whole queue at once, use the ✎ in that column's header — including clearing it back to the default.
-
-## Prompt library
-
-A single library shared across every dataset and plan, so a set of prompts written once is reusable everywhere. Open it with **Library…**:
-
-- **Library** tab — prompts grouped into free-text categories you name. Select any and add them to the current plan, move them between categories, or delete them.
-- **Other plans** tab — browse the prompts in any other plan, in any dataset, and copy or move them into this one.
-
-**Save to library** stores the selected rows' prompts under a category. Both directions carry prompt *text* only — the rest of a row's parameters come from the plan you add them to. Duplicates within a category are skipped.
+The **Rows** section is where a plan's queue is filled: by hand, by pasting or importing prompts, with an LLM, from the prompt library, or from another plan. Each row can also carry its own destination folder, so one run builds a whole folder structure → [ComfyUI Queue](comfy-queue.md).
 
 ## Running
 
-The **Run** bar takes a target **Subfolder** for the generated images and a **Prompt as caption** toggle that writes each row's prompt into its image's caption (and its `.txt` sidecar). Then choose:
+The **Run** bar sits at the top of the page on every section. It takes a **Base folder** for the generated images — each row's own Folder nests underneath it — and a **Prompt as caption** toggle that writes each row's prompt into its image's caption (and its `.txt` sidecar). Then choose:
 
 - **Run pending** — every row still waiting to run. The normal case. Failed rows are *not* included until you **Reset failed**.
-- **Run selected** — only the rows you ticked, whatever their status.
 - **Run all** — every row regardless of status; re-runs completed prompts and generates fresh images.
+
+To run only some rows, tick them on the **Rows** section and use **Run selected** in the selection bar above the table → [ComfyUI Queue](comfy-queue.md#building-the-queue).
+
+The whole folder tree appears in the gallery's sidebar as the run starts, before the first image lands, so you can watch it fill in. Cancelling part-way leaves the folders it had not reached empty; delete them from the gallery if you do not want them.
 
 Rows run one at a time, submitted to ComfyUI as ordinary prompts, with live progress on the page and in the top bar. The gallery fills in as images import — you do not have to wait for the run to finish. Each plan runs one job at a time, but different plans can run concurrently.
 
-Anything that goes wrong stops at the row: it is marked failed with the error attached, the run continues, and nothing half-imported is left behind. Cancel from the progress bar to stop the run and return the in-flight row to pending; only Crucible's own prompt is removed from ComfyUI, so anything you queued from the ComfyUI canvas keeps running. If a row times out, its prompt is removed from ComfyUI before the next row is sent, and if ComfyUI will not let go of it the run stops rather than pile prompts up. A run gives up if the server becomes unreachable, leaving untouched rows pending, so fixing the server and re-running costs nothing.
+Anything that goes wrong stops at the row: it is marked failed with the error attached, the run continues, and nothing half-imported is left behind. That includes a workflow ComfyUI only partly accepts: if some of its outputs fail ComfyUI's checks (a missing model, say), ComfyUI quietly runs the rest, so Crucible fails the row with ComfyUI's reasons and removes what it queued, rather than file fewer images than the workflow makes. Cancel from the progress bar to stop the run and return the in-flight row to pending; only Crucible's own prompt is removed from ComfyUI, so anything you queued from the ComfyUI canvas keeps running. If a row times out, its prompt is removed from ComfyUI before the next row is sent, and if ComfyUI will not let go of it the run stops rather than pile prompts up. A run gives up if the server becomes unreachable, leaving untouched rows pending, so fixing the server and re-running costs nothing.
 
 ## Common problems
 

@@ -16,7 +16,8 @@ entry point: the tables below route from a code path to whichever file in
 | [scores-stale.md](quality/scores-stale.md) | The `scores_stale` bit: `record_in_place`, the clear predicate, the surfaces |
 | [duplicate-detection.md](quality/duplicate-detection.md) | `find_duplicates_sync`, and the duplicate flag as a relationship kept true by `duplicate_service.py` |
 | [duplicate-resolution.md](quality/duplicate-resolution.md) | The duplicates read path, same-source groups, the panel's bulk bar and `resolve_duplicates` |
-| [style-similarity.md](quality/style-similarity.md) | The `embedding_type` modes, what each is measurably worth, why the default is layer 7, the models measured and not adopted, embedding coverage, the layer picker, all-layers scoring |
+| [style-similarity.md](quality/style-similarity.md) | The `embedding_type` modes, the constants and the blend, embedding coverage, the layer picker, all-layers scoring |
+| [style-evaluation.md](quality/style-evaluation.md) | What each mode is measurably worth, why the default is layer 7, the models measured and not adopted, how to test the next candidate |
 | [style-match.md](quality/style-match.md) | `StyleSimilarityRun`, the distribution endpoint, the percentile contract, the meters |
 
 ## Where things live
@@ -38,8 +39,8 @@ not a see-also, and says which part of the code it owns.
 | `backend/services/dataset_service.py` (its style half) | `docs/dev/quality/style-match.md` — `get_style_distribution`, `_style_quantiles`, `_style_validator` |
 | `backend/services/threshold_service.py` | `docs/dev/quality/scoring.md` § Flag thresholds; + `docs/dev/settings.md` for the settings surface |
 | `backend/utils.py` (`record_in_place`) | `docs/dev/quality/scores-stale.md` |
-| `backend/scripts/style_gate.py` | `docs/dev/quality/style-similarity.md` § What the modes are actually worth |
-| `backend/scripts/style_crossed_probe.py`, `backend/scripts/dino_embed_offline.py` | `docs/dev/quality/style-similarity.md` § Which layer, and why it moved twice; + § How to test the next candidate |
+| `backend/scripts/style_gate.py` | `docs/dev/quality/style-evaluation.md` § What the modes are actually worth |
+| `backend/scripts/style_crossed_probe.py`, `backend/scripts/dino_embed_offline.py` | `docs/dev/quality/style-evaluation.md` § Which layer, and why it moved twice; + § How to test the next candidate |
 
 ### Frontend
 

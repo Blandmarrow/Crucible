@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     # by backend/request_guard.py: comma-separated extra hostnames the server answers
     # to, on top of IP literals, localhost and this machine's own hostname.
     crucible_host: str = "127.0.0.1"
+    # CRUCIBLE_PORT / CRUCIBLE_VITE_PORT: also launcher-only (bind_host.py), declared
+    # for the same reason. Kept as str so a bad value is bind_host's error to report.
+    crucible_port: str = ""
+    crucible_vite_port: str = ""
     crucible_allowed_hosts: str = ""
 
     @model_validator(mode="after")

@@ -35,6 +35,7 @@ class ThresholdsOut(BaseModel):
     auto_unload_after_scoring: bool = True
     comfyui_url: str = ""
     comfy_workflow_dir: str = ""
+    llm_gpu_handoff: bool = False
 
     model_config = {"from_attributes": True}
 
@@ -53,6 +54,7 @@ class ThresholdsUpdate(BaseModel):
     auto_unload_after_scoring: bool | None = Field(default=None)
     comfyui_url: str | None = Field(default=None, max_length=500)
     comfy_workflow_dir: str | None = Field(default=None, max_length=1000)
+    llm_gpu_handoff: bool | None = Field(default=None)
 
     @field_validator("versioning_mode")
     @classmethod

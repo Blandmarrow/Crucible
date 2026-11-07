@@ -17,7 +17,7 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-04, after M8 stages 2 and 3)
+## Next session (updated 2026-11-07, M6 hand checks on the box)
 
 1. M5's five stages merged on 2026-10-30 as PR #101. Only its cleanup is open, and that waits
    a release. See [server-state-plan/README.md](server-state-plan/README.md) for what was
@@ -31,6 +31,7 @@ restates its stages.
    `main` and re-run the gates; its migrations end at `e7c4a1b9d2f6`. If M7 merges first, M4's
    first migration `c3b8e1d7a52f` re-parents from `f2a6c8e4b1d7` onto M7's `c2b8e4f6a1d7`, and
    M4 resolves the overlap in `SelectionToolbar.tsx`, `queryKeys.ts` and `ImageDetailPage.tsx`.
+   If M6 merges before M4, M4 re-parents onto M6's last migration instead.
 3. **The M7 port merged on 2026-11-03 as PR #108**: layer 7 at 0.30/0.70 is the style
    default, each run records its blend weights, and the layer picker warns before a run that
    must fail. The user had both `style-embedding-measurement` and `feat/m7-style-port`
@@ -38,23 +39,66 @@ restates its stages.
    runs live on `exp/style-media`, which contains the other two and is the record the docs
    cite. Its plan is
    now [style-embedding-plan/README.md](style-embedding-plan/README.md), and the research
-   folder's findings moved into `docs/dev/quality/style-similarity.md`. What is left in M7 is
-   below; M6 is still independent and can go any time.
-4. **M8 stages 2 and 3 landed on `refactor/m8-stages-2-3`** (2026-11-04): one helper for a
-   job's image scope (`services/image_scope.py`) and one job loop for upscale and LUT
-   (`services/image_edit_job.py`), with no behaviour change beyond a LUT replace rewriting the
-   same width and height. Merge it, then rebase the held M6
-   branch onto `main`: its §4 calls jobs from code and waited for these two stages. What the
-   stages found and left alone is in [cleanup-plan/README.md](cleanup-plan/README.md) § Found
-   during stages 2 and 3, left as they were.
+   folder's findings moved into `docs/dev/quality/style-evaluation.md`. What is left in M7 is
+   below.
+4. **M6 is being built on `feat/m6-comfy-automation`**
+   ([decision 7](decisions/07-m6-built-whole-on-one-branch.md)), under the plan
+   [comfy-automation-plan/README.md](comfy-automation-plan/README.md) as revised by decisions 8
+   and 9. **Work on M6 happens on that branch.** What has landed, stage by stage, is the
+   § M6 checklist below; this item holds only what is open.
+   - **Next: the merge** (§ M6 below). Every stage is built, and the hand checks the
+     milestone owed were run on 2026-11-07 on the second machine (a 16 GB card) against a
+     real ComfyUI and a real Strata, with the user's browser checks in Firefox. All passed
+     or were fixed that day; the results, check by check, are in
+     [the plan's § Hand checks on the box](comfy-automation-plan/README.md#hand-checks-on-the-box-2026-11-07).
+     Three failures found there were fixed under rulings by the user: `ContextMenu` keeps a
+     disabled item focusable, the library panel's selection actions keep a fixed slot, and
+     the Runs page refetches on any job of its dataset. LM Studio itself was not used (Strata
+     stood in); its handoff path was checked by hand on 2026-11-04.
+   - **Not held open: §6c's "cancelling after the snapshot" state.** On the box a snapshot of
+     834 images took about 1 s, too short to hold the wait open by hand, so its UI text and a
+     second Cancel during it rest on `test_run_snapshot.py`'s gated snapshot.
+   - **What the box checks found beyond the owed list was fixed the same day**, under the
+     user's rulings: a run that ends `failed` or `cancelled` frees ComfyUI and any local LLM
+     it left loaded, and a `TopBar` cancel of a queued child steps its run at once
+     (`docs/dev/comfyui/automation.md` § Cancel, pause, resume, restart); a paused run shows
+     an amber rail dot and a `TopBar` chip, and the page greys what the server would refuse
+     (`docs/dev/comfyui/page.md`); and Restart and Shutdown work under `manage dev`'s
+     `--reload` (`docs/dev/http-edge.md`), a bug `main` has too and gets with the merge.
+     That Restart was confirmed live on Linux. The owed Windows check, run on 2026-11-07 in
+     a real console window, **failed**: `Cmd-Dev` ran uvicorn in a `Start-Job`, where the
+     reloader's Ctrl+C never reached its worker, so every reload hung, Restart or a saved
+     `.py` alike (PM-033, also on `main` since May). Fixed the same day: the backend now runs
+     in a console window of its own, and the check passed (two Restarts back in ~2 s each,
+     Shutdown, the window closed when Vite exits). Pressing Ctrl+C on Vite in a real terminal
+     is the one path left to the user's eye; the same `finally` was checked by a Vite exit.
+   - **Found in the §8b review, not fixed there:** the gallery's
+     `dataset_service.repath_subfolder` matches a folder's subtree with SQLite's case-blind
+     `LIKE`, so renaming `knight` also re-paths `Knight/a`; `filesystem.py`'s
+     `startswith(autoescape=True)` has the same shape. A fix for `main`, not this branch.
+   - **Found in the §8 review, left open on purpose:** `utils.normalize_subfolder` keeps
+     whitespace inside a segment, so a hand-typed `knight ` (or `knight /  `) is a folder of its
+     own, which blueprint leaf `knight` (whose segments are stripped) never adopts or locks.
+     It predates §8, and stripping now would re-read stored rows, so it wants a ruling and a
+     data migration rather than a quiet change.
+   - Decisions 7–10 and this M6 checklist exist only on that branch until it merges, so
+     `main`'s next decision takes number 11. Its migrations `e5c1a9d3f7b2` →
+     `b7d2f4a9c1e3` → `d4a8c2e6f1b9` → `f3b9d1a7c5e2` → `c8e4a6b2d0f7` → `a6d2f8c4e0b3` →
+     `b2e7c9a4d1f6` → `c4a8e2f6b9d3` → `d5b7f9a1c3e6` → `e7d1c5a9b3f2` → `a3c7e9b1d5f2` follow
+     `main`'s `c2b8e4f6a1d7`; rebase at stage boundaries.
 5. M8's follow-ups 8, 9, 10 and 11 can go any time; stage 3 left inpaint and detection crop
    out, so item 8 no longer waits for it. Batch move and copy, in item 9, must wait for M4 to
    merge. Items 7, 12 and 13 wait for stage 6, which replaces that code. M8 stages 5 and 6
-   now wait only for M4, since M7 has merged. Stage 4 can go any time.
-6. Four docs seams stay queued in [pending-splits.md](pending-splits.md) with nothing over
-   budget: `README.md`'s § Features deletion (deferred when its budget went to 4,000),
+   now wait only for M4, since M7 has merged. Stage 4 can go any time. What stages 2 and 3
+   found and left alone is in [cleanup-plan/README.md](cleanup-plan/README.md) § Found during
+   stages 2 and 3, left as they were.
+6. Four docs seams stay queued in [pending-splits.md](pending-splits.md) on `main` with nothing
+   over budget: `README.md`'s § Features deletion (deferred when its budget went to 4,000),
    `docs/scoring.md`'s residual seam, `docs/dev/quality/style-similarity.md` at 91% after
-   the M7 port, and `docs/dev/image-processing-models.md` at 98% after M8 stage 3. Each is picked up by the next session that appends to its file. Re-measure first and check both halves land under 60% of budget — five of
+   the M7 port, and `docs/dev/image-processing-models.md` at 98% after M8 stage 3. This
+   branch's own, comfy-structured.md, was split three ways on
+   2026-11-03 and its family hubbed (pending-splits.md records how). Each is picked up by the
+   next session that appends to its file. Re-measure first and check both halves land under 60% of budget — five of
    M3's seven recorded seams had to be re-cut on execution.
 7. A split moves sections, so `§` pointers that named a section in the same file now
    point across files. `check_docs.py` does not check them, so grep `§` in every touched
@@ -74,10 +118,13 @@ restates its stages.
 
 ## Porting the unmerged branches
 
-Three branches held work from August that never reached `main`. M7's has landed; M4's is
-ported and held; M6's is still to port. They land one at a time. M4 and M7 conflict with each other in six files, and whichever lands second
-resolves them; M7 does not wait for M4 ([decision 5](decisions/05-m7-goes-ahead-without-m4.md)).
-M6 touches neither and is the smallest.
+Three branches held work from August that never reached `main`. M7's has landed. M4's and
+M6's are both ported and held on their own branches: M4 until the user chooses to ship it, M6
+until its whole build is done ([decision 7](decisions/07-m6-built-whole-on-one-branch.md)). M4
+and M7 conflicted in six files, and M4, landing second, resolves them; M7 did not wait for M4
+([decision 5](decisions/05-m7-goes-ahead-without-m4.md)). M6 shares no files with M4, but both
+add migrations, so **whichever of the two merges second re-parents its first migration** onto
+the other's head.
 
 1. Cut each port's branch from the latest `main`, and merge it before starting the next. All
    three add migrations from old revisions, so each re-parents onto the head the last one left.
@@ -87,9 +134,10 @@ M6 touches neither and is the smallest.
    A plan file gets its own transient folder, registered in `TRANSIENT_DIRS`.
 4. Before merging, check every path added to `main` since the branch was cut. A clean port only
    reconciles lines that clash, and a missed mirror or rebuild path fails silently.
-5. Leave the source branch untouched until its port has merged, then delete it. M4 is the
-   exception: the user had `feat/scoring-arc` deleted on 2026-11-02 once every commit was
-   verified on the port branch, which is held unmerged.
+5. Leave the source branch untouched until its port has merged, then delete it. M4 and M6 are
+   the exceptions: the user had `feat/scoring-arc` deleted on 2026-11-02 and
+   `comfy-per-row-subfolders` on 2026-11-03, once every commit was verified on the port
+   branch, which is held unmerged.
 
 ## Milestones
 
@@ -128,11 +176,39 @@ to date. Open rulings go in the decision log as they are made.
 
 ### M6 — ComfyUI per-row folders and automation
 
-Gate: per-row folders merged with their docs, then the remaining stages expanded here in their
-plan's order.
+Gate: the whole build below, done on `feat/m6-comfy-automation` and merged once
+([decision 7](decisions/07-m6-built-whole-on-one-branch.md)). Plan:
+[comfy-automation-plan/README.md](comfy-automation-plan/README.md), revised by
+[decision 8](decisions/08-templates-first-filed-by-folder.md) and
+[decision 9](decisions/09-runs-step-forward-on-job-completion.md). Tick each stage when its
+gates are green and it is pushed.
 
-- [ ] Port per-row output folders from `comfy-per-row-subfolders`: c2d6a6d. Its plan comes with
-  it (docs/dev/roadmap/comfy-automation.md on that branch).
+- [x] Per-row folders ported (2026-11-03), the comfyui doc splits, §7 the mock ComfyUI, §2a
+  blueprints, §2b the outline call, §2c Top up, §3 the rewrite pass, the rebase onto M8
+  stages 2–3, §4 the stepping run, §5 the goal loop, §6 the dry run, snapshot and recipes, and
+  the review-fix pass (all by 2026-11-04). What each delivered is the plan's § Landed stages.
+- §8, the ComfyUI page rework, so prompts are easier to categorize and the prompt library
+  easier to use (the user's call, 2026-11-04: it lands before the merge). Scoped with the
+  user on 2026-11-05 and the mockup approved; the *what* is
+  [comfy-automation-plan/README.md § 8](comfy-automation-plan/README.md#8-the-comfyui-page-rework-landed).
+  Its open questions were ruled by the user on 2026-11-05.
+  - [x] §8a, the layout, and §8b, the plan rail, folder tree and grouped table (2026-11-05).
+    What each delivered is the plan's § Landed stages.
+  - [x] §8c, the library side panel, Copy to plan, the row menu and drag and drop
+    (2026-11-05). What it delivered is the plan's § 8c.
+  - [x] §8d: the Add menu, the selection bar, the paste dialog on `ModalShell`
+    (2026-11-05). What it delivered is the plan's § 8d.
+  - [x] §8 review fixes (2026-11-05), under four rulings by the user that day: the plan's
+    [§ Review fixes](comfy-automation-plan/README.md#review-fixes-2026-11-05).
+- [x] §9, two installs and a 16 GB card (2026-11-06): `CRUCIBLE_PORT`/`CRUCIBLE_VITE_PORT`, the
+  orphan sweep's refusal on a mismatched tree, and the Strata GPU handoff
+  (`docs/dev/comfyui/gpu-handoff.md`, [decision 10](decisions/10-unload-strata-while-comfyui-generates.md));
+  running several installs is `docs/dev/multiple-installs.md`. Its migration `a3c7e9b1d5f2` is
+  the branch's new last.
+- [ ] Merge: rebase onto `main`, re-parent the first migration onto M4's head if M4 merged
+  first, run every gate, open the PR. The ComfyUI docs moved behind a hub on this branch, so
+  any doc `main` has added since that names an old path (comfy-prompts.md, comfyui-sync.md, or
+  `docs/dev/comfyui.md` meaning the queue) needs repointing; `check_docs.py` FAILs on the first two.
 
 ### M7 — Style embedding
 
@@ -150,7 +226,7 @@ Stage 2 there (DINOv3) is not built, by
   seven-illustrator run in docs/dev/roadmap/style-embedding.md on `exp/style-media`.
 - [x] Research and test other models for style similarity (2026-11-03, no
   app code). Kaloscope 3.0 and CSD passed a pre-registered test on a new anime set and on
-  `test3`; PE-Core tied. Summary: `docs/dev/quality/style-similarity.md` § Kaloscope, CSD and
+  `test3`; PE-Core tied. Summary: `docs/dev/quality/style-evaluation.md` § Kaloscope, CSD and
   PE-Core.
 - [x] Test the three models on photographs, 3D art and digital paintings (2026-11-03,
   `exp/style-media`, no app code). No candidate is general; Kaloscope's verdict is fragile.

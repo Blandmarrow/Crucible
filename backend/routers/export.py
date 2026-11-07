@@ -23,7 +23,7 @@ from backend.services.export_service import (
     export_plain,
     preview_export,
 )
-from backend.workers.job_queue import job_queue
+from backend.workers.job_queue import job_queue, run_job_config, run_job_label
 
 router = APIRouter(prefix="/export", tags=["export"])
 
@@ -232,196 +232,123 @@ def _check_output_dir(output_dir: str) -> None:
 
 @router.post("/kohya")
 async def export_kohya_endpoint(body: KohyaExportRequest, db: AsyncSession = Depends(get_db)):
-    from pathlib import Path as _Path
-    exclude_flags = _parse_flags(body.exclude_flags)
-    _check_output_dir(body.output_dir)
-    mask_labels = _normalize_mask_labels(body.mask_labels)
-    mask_exclude_labels = _normalize_mask_labels(body.mask_exclude_labels)
-    license_filter = normalize_license_filter(body.license_filter)
-    # The same validator the three image endpoints run, in the **request** path:
-    # a filter shape the gallery 400s must not be smuggled in here and fail an
-    # already-enqueued job instead.
-    label_filter = validate_label_filter_params(body.label_filter, body.label_match, body.label_missing)
-    auto_label = f"Export kohya — {_Path(body.output_dir).name}"
-    job = BackgroundJob(
-        job_type="export",
-        label=body.label or auto_label,
-        dataset_id=body.dataset_id,
-        total_items=0,
-        config=body.model_dump(),
-    )
-    db.add(job)
-    await db.commit()
-
-    async def _run(job_id: str) -> None:
-        from backend.database import AsyncSessionLocal
-        async with AsyncSessionLocal() as session:
-            result = await export_kohya(
-                session,
-                body.dataset_id,
-                body.output_dir,
-                body.n_repeats,
-                body.concept_token,
-                body.image_ids,
-                body.output_format,
-                body.jpeg_quality,
-                body.caption_format,
-                body.resize_to,
-                body.aesthetic_min,
-                body.captioned_only,
-                exclude_flags,
-                body.style_sim_min,
-                body.subfolders,
-                body.strip_metadata,
-                body.captions_only,
-                export_masks=body.export_masks,
-                mask_labels=mask_labels,
-                mask_exclude_labels=mask_exclude_labels,
-                mask_invert=body.mask_invert,
-                mask_missing=body.mask_missing,
-                license_filter=license_filter,
-                commercial_only=body.commercial_only,
-                exclude_unlicensed=body.exclude_unlicensed,
-                exclude_no_derivatives=body.exclude_no_derivatives,
-                label_filter=label_filter,
-                label_match=body.label_match,
-                label_missing=body.label_missing,
-                job_id=job_id,
-            )
-        async with AsyncSessionLocal() as session:
-            job_row = await session.get(BackgroundJob, job_id)
-            if job_row:
-                job_row.result_data = result
-                job_row.total_items = result.get("exported", 0)
-                await session.commit()
-
-    await job_queue.enqueue(job, _run)
-    return {"job_id": job.id}
+    return await start_export_job(db, "kohya", body)
 
 
 @router.post("/aitoolkit")
 async def export_aitoolkit_endpoint(body: AIToolkitExportRequest, db: AsyncSession = Depends(get_db)):
-    from pathlib import Path as _Path
-    exclude_flags = _parse_flags(body.exclude_flags)
-    _check_output_dir(body.output_dir)
-    mask_labels = _normalize_mask_labels(body.mask_labels)
-    mask_exclude_labels = _normalize_mask_labels(body.mask_exclude_labels)
-    license_filter = normalize_license_filter(body.license_filter)
-    # The same validator the three image endpoints run, in the **request** path:
-    # a filter shape the gallery 400s must not be smuggled in here and fail an
-    # already-enqueued job instead.
-    label_filter = validate_label_filter_params(body.label_filter, body.label_match, body.label_missing)
-    auto_label = f"Export ai-toolkit — {_Path(body.output_dir).name}"
-    job = BackgroundJob(
-        job_type="export",
-        label=body.label or auto_label,
-        dataset_id=body.dataset_id,
-        total_items=0,
-        config=body.model_dump(),
-    )
-    db.add(job)
-    await db.commit()
-
-    async def _run(job_id: str) -> None:
-        from backend.database import AsyncSessionLocal
-        async with AsyncSessionLocal() as session:
-            result = await export_aitoolkit(
-                session,
-                body.dataset_id,
-                body.output_dir,
-                body.concept_name,
-                body.image_ids,
-                body.output_format,
-                body.jpeg_quality,
-                body.caption_format,
-                body.resize_to,
-                body.aesthetic_min,
-                body.captioned_only,
-                exclude_flags,
-                body.style_sim_min,
-                body.subfolders,
-                body.strip_metadata,
-                body.captions_only,
-                export_masks=body.export_masks,
-                mask_labels=mask_labels,
-                mask_exclude_labels=mask_exclude_labels,
-                mask_invert=body.mask_invert,
-                mask_missing=body.mask_missing,
-                license_filter=license_filter,
-                commercial_only=body.commercial_only,
-                exclude_unlicensed=body.exclude_unlicensed,
-                exclude_no_derivatives=body.exclude_no_derivatives,
-                label_filter=label_filter,
-                label_match=body.label_match,
-                label_missing=body.label_missing,
-                job_id=job_id,
-            )
-        async with AsyncSessionLocal() as session:
-            job_row = await session.get(BackgroundJob, job_id)
-            if job_row:
-                job_row.result_data = result
-                job_row.total_items = result.get("exported", 0)
-                await session.commit()
-
-    await job_queue.enqueue(job, _run)
-    return {"job_id": job.id}
+    return await start_export_job(db, "aitoolkit", body)
 
 
 @router.post("/plain")
 async def export_plain_endpoint(body: PlainExportRequest, db: AsyncSession = Depends(get_db)):
-    from pathlib import Path as _Path
+    return await start_export_job(db, "plain", body)
+
+
+ExportKind = Literal["kohya", "aitoolkit", "plain"]
+EXPORT_REQUESTS: dict[str, type[BaseModel]] = {
+    "kohya": KohyaExportRequest,
+    "aitoolkit": AIToolkitExportRequest,
+    "plain": PlainExportRequest,
+}
+_KIND_LABELS = {"kohya": "kohya", "aitoolkit": "ai-toolkit", "plain": "plain"}
+
+
+def check_export_request(body: KohyaExportRequest | AIToolkitExportRequest | PlainExportRequest) -> dict:
+    """Every request-path check an export runs, and the normalised filters they yield.
+
+    Raises the HTTPExceptions the routes always raised (400 on an unknown flag, a bad
+    path or a bad label filter; 507 on a full disk). Kept separate so an automated run
+    can run them when it is started, not first at its export stage.
+    """
     exclude_flags = _parse_flags(body.exclude_flags)
     _check_output_dir(body.output_dir)
-    mask_labels = _normalize_mask_labels(body.mask_labels)
-    mask_exclude_labels = _normalize_mask_labels(body.mask_exclude_labels)
-    license_filter = normalize_license_filter(body.license_filter)
-    # The same validator the three image endpoints run, in the **request** path:
-    # a filter shape the gallery 400s must not be smuggled in here and fail an
-    # already-enqueued job instead.
-    label_filter = validate_label_filter_params(body.label_filter, body.label_match, body.label_missing)
-    auto_label = f"Export plain — {_Path(body.output_dir).name}"
+    return {
+        "exclude_flags": exclude_flags,
+        "mask_labels": _normalize_mask_labels(body.mask_labels),
+        "mask_exclude_labels": _normalize_mask_labels(body.mask_exclude_labels),
+        "license_filter": normalize_license_filter(body.license_filter),
+        # The same validator the three image endpoints run, in the **request** path:
+        # a filter shape the gallery 400s must not be smuggled in here and fail an
+        # already-enqueued job instead.
+        "label_filter": validate_label_filter_params(body.label_filter, body.label_match, body.label_missing),
+    }
+
+
+async def start_export_job(
+    db: AsyncSession,
+    kind: ExportKind,
+    body: KohyaExportRequest | AIToolkitExportRequest | PlainExportRequest,
+    *,
+    run_id: str | None = None,
+    run_stage: str | None = None,
+    label_prefix: str = "",
+) -> dict:
+    """Queue an export job; the three routes and an automated run all start here.
+
+    `image_ids` of `None` or `[]` exports the whole dataset (through the filters), so
+    the automated run passes `None` on purpose and never an id list.
+    """
+    from pathlib import Path as _Path
+    checked = check_export_request(body)
+    exclude_flags = checked["exclude_flags"]
+    mask_labels = checked["mask_labels"]
+    mask_exclude_labels = checked["mask_exclude_labels"]
+    license_filter = checked["license_filter"]
+    label_filter = checked["label_filter"]
+    auto_label = f"Export {_KIND_LABELS[kind]} — {_Path(body.output_dir).name}"
     job = BackgroundJob(
         job_type="export",
-        label=body.label or auto_label,
+        label=run_job_label(label_prefix, body.label or auto_label),
         dataset_id=body.dataset_id,
         total_items=0,
-        config=body.model_dump(),
+        config=run_job_config(body.model_dump(), run_id, run_stage),
     )
     db.add(job)
     await db.commit()
 
     async def _run(job_id: str) -> None:
         from backend.database import AsyncSessionLocal
+        common = dict(
+            export_masks=body.export_masks,
+            mask_labels=mask_labels,
+            mask_exclude_labels=mask_exclude_labels,
+            mask_invert=body.mask_invert,
+            mask_missing=body.mask_missing,
+            license_filter=license_filter,
+            commercial_only=body.commercial_only,
+            exclude_unlicensed=body.exclude_unlicensed,
+            exclude_no_derivatives=body.exclude_no_derivatives,
+            label_filter=label_filter,
+            label_match=body.label_match,
+            label_missing=body.label_missing,
+            job_id=job_id,
+        )
         async with AsyncSessionLocal() as session:
-            result = await export_plain(
-                session,
-                body.dataset_id,
-                body.output_dir,
-                body.image_ids,
-                body.output_format,
-                body.jpeg_quality,
-                body.resize_to,
-                body.aesthetic_min,
-                body.captioned_only,
-                exclude_flags,
-                body.style_sim_min,
-                body.subfolders,
-                body.strip_metadata,
-                body.captions_only,
-                export_masks=body.export_masks,
-                mask_labels=mask_labels,
-                mask_exclude_labels=mask_exclude_labels,
-                mask_invert=body.mask_invert,
-                mask_missing=body.mask_missing,
-                license_filter=license_filter,
-                commercial_only=body.commercial_only,
-                exclude_unlicensed=body.exclude_unlicensed,
-                exclude_no_derivatives=body.exclude_no_derivatives,
-                label_filter=label_filter,
-                label_match=body.label_match,
-                label_missing=body.label_missing,
-                job_id=job_id,
-            )
+            if kind == "kohya":
+                result = await export_kohya(
+                    session, body.dataset_id, body.output_dir, body.n_repeats, body.concept_token,
+                    body.image_ids, body.output_format, body.jpeg_quality, body.caption_format,
+                    body.resize_to, body.aesthetic_min, body.captioned_only, exclude_flags,
+                    body.style_sim_min, body.subfolders, body.strip_metadata, body.captions_only,
+                    **common,
+                )
+            elif kind == "aitoolkit":
+                result = await export_aitoolkit(
+                    session, body.dataset_id, body.output_dir, body.concept_name,
+                    body.image_ids, body.output_format, body.jpeg_quality, body.caption_format,
+                    body.resize_to, body.aesthetic_min, body.captioned_only, exclude_flags,
+                    body.style_sim_min, body.subfolders, body.strip_metadata, body.captions_only,
+                    **common,
+                )
+            else:
+                result = await export_plain(
+                    session, body.dataset_id, body.output_dir,
+                    body.image_ids, body.output_format, body.jpeg_quality,
+                    body.resize_to, body.aesthetic_min, body.captioned_only, exclude_flags,
+                    body.style_sim_min, body.subfolders, body.strip_metadata, body.captions_only,
+                    **common,
+                )
         async with AsyncSessionLocal() as session:
             job_row = await session.get(BackgroundJob, job_id)
             if job_row:

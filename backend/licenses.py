@@ -19,7 +19,8 @@ Ingest truncates; the API rejects. An import must never fail on a bad sidecar
 (`merge_provenance`/`clamp_provenance` clamp to `FIELD_MAX_LEN`), while an API
 client must never silently lose data (`normalize_license_input`, the Pydantic
 validator, normalizes *then* length-checks and raises). See
-`docs/dev/provenance.md` for the full write-side rules.
+`docs/dev/provenance.md` for the full write-side rules, and
+`docs/dev/provenance-api.md` § API surface for the field caps and 422s.
 """
 
 import copy

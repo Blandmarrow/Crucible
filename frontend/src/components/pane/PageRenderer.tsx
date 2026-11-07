@@ -15,6 +15,7 @@ import {
   BooruPage,
   VersionsPage,
   ComfyPage,
+  RunsPage,
 } from "../../pages/lazyPages";
 
 // A pane's dataset is part of a page's *identity* for the three pages below: each
@@ -52,6 +53,7 @@ function renderPage(view: PaneView) {
     case "consolidate":  return <TagConsolidatePage key={view.datasetId} />;
     case "versions":     return <VersionsPage key={view.datasetId} />;
     case "comfy":        return <ComfyPage />;
+    case "runs":         return <RunsPage />;
     case "file-browser": return <FileBrowserPage />;
     case "booru":        return <BooruPage />;
     default:             return <DatasetsPage />;

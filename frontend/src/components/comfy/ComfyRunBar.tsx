@@ -5,22 +5,20 @@ import type { JobProgress } from "../../types";
 interface Props {
   datasetId: string;
   pendingCount: number;
-  selectedCount: number;
   totalCount: number;
   subfolder: string;
   onSubfolderChange: (v: string) => void;
   setCaption: boolean;
   onSetCaptionChange: (v: boolean) => void;
   onRunPending: () => void;
-  onRunSelected: () => void;
   onRunAll: () => void;
   isRunning: boolean;
   jobProgress: JobProgress | undefined;
 }
 
 export default function ComfyRunBar({
-  datasetId, pendingCount, selectedCount, totalCount, subfolder, onSubfolderChange,
-  setCaption, onSetCaptionChange, onRunPending, onRunSelected, onRunAll, isRunning, jobProgress,
+  datasetId, pendingCount, totalCount, subfolder, onSubfolderChange,
+  setCaption, onSetCaptionChange, onRunPending, onRunAll, isRunning, jobProgress,
 }: Props) {
   const { data: subfolders = [] } = useQuery({
     queryKey: ["subfolders", datasetId],
@@ -28,13 +26,18 @@ export default function ComfyRunBar({
     enabled: !!datasetId,
   });
 
+  // A strip, not a panel: it sits in the page's sticky header on every tab. Run selected
+  // lives in the Rows tab's selection bar since M6 §8d, beside the rows it runs.
   return (
-    <div className="panel" style={{ marginBottom: 12 }}>
-      <div className="panel-h" style={{ flexWrap: "wrap", gap: 8 }}>
-        <h3>Run</h3>
+    <div data-testid="comfy-run-bar">
+      <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+        <h3 style={{ margin: 0, fontSize: 13, fontWeight: 600 }}>Run</h3>
         <div style={{ flex: 1 }} />
-        <label style={{ fontSize: 12, color: "var(--fg-mute)", display: "flex", alignItems: "center", gap: 6 }}>
-          Subfolder
+        <label
+          style={{ fontSize: 12, color: "var(--fg-mute)", display: "flex", alignItems: "center", gap: 6 }}
+          title="Per-row folders nest under this"
+        >
+          Base folder
           <select
             className="select" style={{ height: 30, fontSize: 12 }}
             value={subfolder} onChange={(e) => onSubfolderChange(e.target.value)} disabled={isRunning}
@@ -52,9 +55,6 @@ export default function ComfyRunBar({
           />
           Prompt as caption
         </label>
-        <button className="btn ghost" onClick={onRunSelected} disabled={isRunning || selectedCount === 0}>
-          Run selected ({selectedCount})
-        </button>
         <button
           className="btn ghost" onClick={onRunAll} disabled={isRunning || totalCount === 0}
           title="Run every row regardless of status — re-runs completed prompts and regenerates images"
@@ -66,12 +66,12 @@ export default function ComfyRunBar({
         </button>
       </div>
       {jobProgress && (
-        <div className="panel-b" style={{ paddingTop: 0 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--fg-mute)", marginBottom: 6 }}>
+        <div style={{ marginTop: 6 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 12, color: "var(--fg-mute)", marginBottom: 4 }}>
             <span>{jobProgress.message}{jobProgress.current_item ? ` — ${jobProgress.current_item}` : ""}</span>
             <span className="mono">{jobProgress.done}/{jobProgress.total}</span>
           </div>
-          <div style={{ height: 5, background: "var(--surface-3)", borderRadius: 3, overflow: "hidden" }}>
+          <div style={{ height: 4, background: "var(--surface-3)", borderRadius: 3, overflow: "hidden" }}>
             <div style={{ height: "100%", width: `${jobProgress.percent ?? 0}%`, background: "linear-gradient(90deg, var(--accent-2), var(--accent))", transition: "width .4s" }} />
           </div>
         </div>

@@ -45,6 +45,47 @@ def test_export_plain_writes_files(tmp_path):
     run(scenario())
 
 
+def test_export_kohya_and_aitoolkit_write_files_with_their_labels(tmp_path):
+    """The two other kinds share `start_export_job` with plain; each must still reach
+    its own service function with its own leading arguments."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("exp3")
+            img = await upload_image(env, ds["id"], "a.png")
+            await env.client.put(f"{API}/captions/image/{img['id']}", json={"caption_text": "cap"})
+
+            kohya = tmp_path / "kohya"
+            r = await env.client.post(f"{API}/export/kohya", json={
+                "dataset_id": ds["id"], "output_dir": str(kohya),
+                "n_repeats": 3, "concept_token": "tok",
+            })
+            assert r.status_code == 200, r.text
+            job = await wait_for_job(env, r.json()["job_id"])
+            assert job["status"] == "completed", job
+            assert job["label"] == "Export kohya — kohya"
+            assert job["result_data"]["exported"] == 1
+            assert any(p.parent.name.startswith("3_") for p in kohya.rglob("*.png"))
+
+            ait = tmp_path / "ait"
+            r = await env.client.post(f"{API}/export/aitoolkit", json={
+                "dataset_id": ds["id"], "output_dir": str(ait), "concept_name": "thing",
+            })
+            assert r.status_code == 200, r.text
+            job = await wait_for_job(env, r.json()["job_id"])
+            assert job["status"] == "completed", job
+            assert job["label"] == "Export ai-toolkit — ait"
+            assert job["result_data"]["exported"] == 1
+            assert len(list(ait.rglob("*.png"))) == 1
+
+            # A request-path check still answers before any job exists.
+            r = await env.client.post(f"{API}/export/aitoolkit", json={
+                "dataset_id": ds["id"], "output_dir": str(ait), "exclude_flags": "nope",
+            })
+            assert r.status_code == 400, r.text
+
+    run(scenario())
+
+
 def test_export_preview_and_invalid_body(tmp_path):
     async def scenario():
         async with api_env(tmp_path) as env:

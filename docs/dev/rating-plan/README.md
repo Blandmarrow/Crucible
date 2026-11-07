@@ -221,7 +221,7 @@ therefore excluded"), not that the filter is withheld.
 ## 3. The learned head — last
 
 Source: a handoff spec supplied by the user (Bradley-Terry linear head over frozen
-embeddings). Read `docs/dev/quality/style-similarity.md`, `docs/dev/quality/scores-stale.md` and
+embeddings). Read `docs/dev/quality/style-similarity.md`, `docs/dev/quality/style-evaluation.md`, `docs/dev/quality/scores-stale.md` and
 `docs/dev/panes-routing.md`.
 
 ### Where it lives
@@ -287,7 +287,7 @@ meaning.
   modes give a free three-way A/B; the Phase 0 gate measured them and they do not —
   `combined` is DINOv2 with a slight CLIP tilt (Spearman ρ 0.98, 18 of 20 top images
   shared). **CLIP vs DINOv2 is the only real axis**, and it is a two-way A/B. See
-  `docs/dev/quality/style-similarity.md` § What the modes are actually worth.
+  `docs/dev/quality/style-evaluation.md` § What the modes are actually worth.
 - **Scope**: a global base head plus optional per-dataset overrides. An override **wins
   outright** where it exists (a hard switch, chosen for predictability). Because that lets a
   head fit from 300 ratings outrank one fit from 1,200, the heads table must show each
@@ -332,7 +332,7 @@ Four tiles, three of which are nearly free:
 
 ## 5. DINOv3 — deferred, opt-in only
 
-Read `docs/dev/quality/style-similarity.md`.
+Read `docs/dev/quality/style-similarity.md` and `docs/dev/quality/style-evaluation.md`.
 
 **Decided**: not as the default, and not in the same change as §3. Manual Meta approval as a
 prerequisite for quality scoring is a worse regression than the model is an upgrade, and
@@ -351,7 +351,7 @@ the `range(1, 13)` hidden-states loop both survive unchanged.
 
 Touchpoints when it happens: `model_name` in `backend/ml/model_manager.py`,
 `_LAYER_BLOB_SIZE`/`slice_layer_embedding`, the layer table in
-`docs/dev/quality/style-similarity.md`, the scorer row in `docs/dev/quality/scoring.md`, and the
+`docs/dev/quality/style-evaluation.md`, the scorer row in `docs/dev/quality/scoring.md`, and the
 DINOv2-conditional per-layer row in `QualityPage` plus `frontend/e2e/quality.spec.ts`.
 
 ## Still open

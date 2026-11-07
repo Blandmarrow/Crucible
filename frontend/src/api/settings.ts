@@ -14,6 +14,8 @@ export interface Thresholds {
   auto_unload_after_scoring: boolean;
   comfyui_url: string;
   comfy_workflow_dir: string;
+  /** Unload a local Strata LLM server before ComfyUI generates (M6 §9). */
+  llm_gpu_handoff: boolean;
 }
 
 /** One secret as the server reports it: never the plaintext, only a mask and its origin. */

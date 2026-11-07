@@ -6,7 +6,7 @@ selection, `VideoDetailPage`, the extraction history panel, and the frame-lineag
 `ExtractFramesModal` those screens open — with the `useVideoExtractJobs` re-attach hook —
 is in `docs/dev/video/extract-ui.md`, and its `CropOverlay`/`TrimBar` controls are in
 `docs/dev/video/extract-controls.md`. The backend
-behind all of it is in `docs/dev/video.md` (model, storage, ingest),
+behind all of it is in `docs/dev/video/storage.md` (model, storage, ingest),
 `docs/dev/video/endpoints.md` (the `/videos` routes) and
 `docs/dev/video/extract.md` (the probe/extract endpoints and the `video_extract` job).
 

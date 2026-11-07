@@ -170,6 +170,36 @@ async def delete_captioning_workflow(db: AsyncSession = Depends(get_db)):
     return {"value": None}
 
 
+# ── The Runs page's start form (M6 §6) ────────────────────────────────────────
+# Saved as the user edits it, so it is there on the next visit, from any browser. Its
+# shape is the frontend's; it may hold this machine's provider ids and export folder,
+# which is fine for a value that never leaves this install.
+
+@router.get("/run-form")
+async def get_run_form(db: AsyncSession = Depends(get_db)):
+    value = (
+        await db.execute(select(ThresholdSettings.run_form).where(ThresholdSettings.id == 1))
+    ).scalar_one_or_none()
+    return {"value": value}
+
+
+@router.put("/run-form")
+async def put_run_form(body: CaptioningWorkflowPut, db: AsyncSession = Depends(get_db)):
+    if not _workflow_fits(body.value):
+        raise HTTPException(413, "The run form is too large")
+    await _ensure_settings_row(db)
+    await db.execute(update(ThresholdSettings).where(ThresholdSettings.id == 1).values(run_form=body.value))
+    await db.commit()
+    return {"value": body.value}
+
+
+@router.delete("/run-form")
+async def delete_run_form(db: AsyncSession = Depends(get_db)):
+    await db.execute(update(ThresholdSettings).where(ThresholdSettings.id == 1).values(run_form=sa.null()))
+    await db.commit()
+    return {"value": None}
+
+
 # ── One-time import from browser storage ──────────────────────────────────────
 # Re-running an import changes nothing, which is what makes a crash before the browser
 # records its marker safe.

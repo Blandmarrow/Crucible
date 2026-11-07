@@ -6,7 +6,7 @@ twelve are documented elsewhere because they belong to the extraction arc rather
 router's own surface — `POST /{id}/probe` and `POST /extract` in `docs/dev/video/extract.md`,
 `POST /reextract/preview` and `POST /reextract` in `docs/dev/video/reextract-endpoints.md`. The `Video`
 model, the `videos/` storage layout, the poster-stem rules and the three ingest paths are in
-`docs/dev/video.md`; the decode work behind `GET /{id}/poster` is in `docs/dev/video/decode.md`;
+`docs/dev/video/storage.md`; the decode work behind `GET /{id}/poster` is in `docs/dev/video/decode.md`;
 the screens that call all of this are in `docs/dev/video/ui.md`. Tests are indexed in
 `docs/dev/video/tests.md`.
 
@@ -34,7 +34,7 @@ for a row whose file is gone.
 `PATCH /{id}/rename` takes `{new_stem}` and is a near-verbatim mirror of
 `routers/images.py::rename_image` — `ensure_not_busy`, the same stem validation and
 `slugify_filename`, sibling `Video.filename`s as `db_names`, the three-term
-occupied-poster-stem set described in `docs/dev/video.md` § Poster stems and collisions,
+occupied-poster-stem set described in `docs/dev/video/storage.md` § Poster stems and collisions,
 `unique_filename_with_thumb`, then ORM fields → the file rename →
 `commit` → the poster move as a **post-commit epilogue**. A failed rename means no commit;
 a failed poster move is logged and cannot undo one, and `poster_path` names the new poster

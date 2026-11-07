@@ -1,18 +1,62 @@
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
+import { useDroppable } from "@dnd-kit/core";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { apiErrorDetail } from "../../utils/apiError";
+import { ChevronDown, ChevronRight, Folder, GripVertical, Lock } from "lucide-react";
 import { comfyApi, coerceCellValue, type ComfyPlan, type ComfyRow, type PinnedParam } from "../../api/comfy";
+import { imagesApi } from "../../api/images";
 import { usePaneNavigate } from "../../hooks/usePaneNavigate";
+import { compareFolders } from "./folderTree";
+import ContextMenu, { type ContextMenuAction } from "../common/ContextMenu";
+import DndRow from "./DndRow";
+import { DROP_RING, dragId, dropId } from "./dnd";
 
 interface Props {
   plan: ComfyPlan;
+  /** The rows to show: the plan's rows after the folder, text and status filters. */
   rows: ComfyRow[];
+  /** The plan's row count before filtering, to tell "no rows yet" from "none match". */
+  totalRows: number;
   selected: Set<string>;
   onToggle: (id: string) => void;
   onToggleAll: (ids: string[], select: boolean) => void;
   runningJob: boolean;
+  /** Folder groups collapsed under their header (persisted per plan). */
+  closedGroups: Set<string>;
+  onToggleGroup: (path: string) => void;
+  /** Where a row sits in its folder's run order, for the row menu's Move entries. */
+  rowBounds: Map<string, { first: boolean; last: boolean }>;
+  onMoveRow: (row: ComfyRow, where: RowMove) => void;
+  /** The row being dragged: kept mounted while it scrolls out of view, since dnd-kit
+   *  loses a drag whose source node unmounts. */
+  draggingRowId: string | null;
+  /** Where a drop between rows would land: drawn as a line on that row's edge. */
+  dropIndicator: { rowId: string; position: "before" | "after" } | null;
+  /** `.txt` files dropped on the table from the desktop. */
+  onDropFiles: (files: File[]) => void;
+}
+
+/** The row menu's moves, all within the row's folder (M6 §8c). Across folders is Set
+ *  folder, or a drag. */
+export type RowMove = "top" | "up" | "down" | "bottom";
+
+type Item =
+  | { kind: "group"; path: string; rows: ComfyRow[] }
+  | { kind: "row"; row: ComfyRow };
+
+/** Group header counts: pending · running · failed · done, leaving out zeros. */
+function groupSummary(rows: ComfyRow[]): string {
+  const n = { pending: 0, running: 0, failed: 0, completed: 0 };
+  for (const r of rows) n[r.status]++;
+  const parts = [
+    n.pending && `${n.pending} pending`,
+    n.running && `${n.running} running`,
+    n.failed && `${n.failed} failed`,
+    n.completed && `${n.completed} done`,
+  ].filter(Boolean);
+  return parts.join(" · ");
 }
 
 const STATUS_BADGE: Record<ComfyRow["status"], string> = {
@@ -118,10 +162,64 @@ function EditableCell({ row, alias, numeric, disabled, placeholder, onCommit }: 
   );
 }
 
-export default function ComfyRowsTable({ plan, rows, selected, onToggle, onToggleAll, runningJob }: Props) {
+/** The row's destination folder, nested under the run bar's base folder.
+ *
+ *  Deliberately an `<input>`, never a `<textarea>`: a folder is one line, and
+ *  `frontend/e2e/comfy.spec.ts` counts the textareas in the rows table to prove
+ *  the prompt cells are the only multi-line ones. Modelled on `EditableCell`
+ *  (commit on blur, Enter blurs) but writes `subfolder` rather than a `values`
+ *  entry — a folder must never enter `values`, which is the pinned-parameter map. */
+function FolderCell({ row, disabled, onCommit }: {
+  row: ComfyRow;
+  disabled: boolean;
+  onCommit: (raw: string) => void;
+}) {
+  const value = row.subfolder ?? "";
+  const [draft, setDraft] = useState<string | null>(null);
+  // A row the blueprint still counts is locked here: moving it must unlink it, which
+  // only Set folder asks about (docs/dev/comfyui/structured.md § Moving a blueprint row).
+  if (row.blueprint_linked) {
+    return (
+      <span style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
+        <Lock size={12} style={{ flexShrink: 0, color: "var(--fg-mute)" }} role="img" aria-label="From the blueprint" />
+        <input
+          className="input"
+          style={{ flex: 1, minWidth: 0, fontSize: 12, height: 26, padding: "0 6px" }}
+          type="text" value={value} placeholder="(root)" readOnly
+          title="Made by the blueprint, which counts this folder. Use Set folder to move it out."
+        />
+      </span>
+    );
+  }
+  return (
+    <input
+      className="input"
+      style={{ width: "100%", fontSize: 12, height: 26, padding: "0 6px" }}
+      type="text"
+      value={draft ?? value}
+      placeholder="(root)"
+      title="Folder for this row's images, nested under the run's base folder. Blank = the base folder itself."
+      disabled={disabled}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => {
+        // Trimmed like SetRowFolderModal: the server folds slashes but keeps spaces,
+        // so "knight " would otherwise file beside "knight" as a second folder.
+        const next = draft?.trim();
+        if (next !== undefined && next !== value) onCommit(next);
+        setDraft(null);
+      }}
+      onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+    />
+  );
+}
+
+export default function ComfyRowsTable({
+  plan, rows, totalRows, selected, onToggle, onToggleAll, runningJob, closedGroups, onToggleGroup,
+  rowBounds, onMoveRow, draggingRowId, dropIndicator, onDropFiles,
+}: Props) {
   const qc = useQueryClient();
   const { go } = usePaneNavigate();
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
 
   // Only per-row pins get columns; run defaults live in the defaults strip above.
   const columns = useMemo(() => plan.pinned_params.filter((p) => p.per_row), [plan.pinned_params]);
@@ -131,17 +229,104 @@ export default function ComfyRowsTable({ plan, rows, selected, onToggle, onToggl
     return m;
   }, [plan, columns]);
 
+  // Rows grouped by folder, in tree order, with a header per group. A plan whose rows
+  // all sit in (root) shows no header: one group adds nothing.
+  const items = useMemo<Item[]>(() => {
+    const groups = new Map<string, ComfyRow[]>();
+    for (const r of rows) {
+      const g = groups.get(r.subfolder);
+      if (g) g.push(r); else groups.set(r.subfolder, [r]);
+    }
+    const paths = [...groups.keys()].sort(compareFolders);
+    if (paths.length === 1 && paths[0] === "") return rows.map((row) => ({ kind: "row", row }));
+    const out: Item[] = [];
+    for (const path of paths) {
+      const g = groups.get(path)!;
+      out.push({ kind: "group", path, rows: g });
+      if (!closedGroups.has(path)) for (const row of g) out.push({ kind: "row", row });
+    }
+    return out;
+  }, [rows, closedGroups]);
+
+  const draggedIndex = draggingRowId
+    ? items.findIndex((it) => it.kind === "row" && it.row.id === draggingRowId)
+    : -1;
   const rowVirtualizer = useVirtualizer({
-    count: rows.length,
+    count: items.length,
+    rangeExtractor: (range) => {
+      const out = defaultRangeExtractor(range);
+      if (draggedIndex >= 0 && !out.includes(draggedIndex)) {
+        out.push(draggedIndex);
+        out.sort((a, b) => a - b);
+      }
+      return out;
+    },
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => 36,
+    estimateSize: (i) => (items[i]?.kind === "group" ? 30 : 36),
+    getItemKey: (i) => {
+      const it = items[i];
+      return it.kind === "group" ? `g:${it.path}` : it.row.id;
+    },
     overscan: 10,
   });
 
+  // The body is a drop target of its own: library prompts and other plans' rows dropped
+  // on it land in the folder in view. Being a droppable also lets dnd-kit auto-scroll it.
+  const bodyDrop = useDroppable({ id: dropId.table, data: { kind: "table" } });
+
+  // `.txt` files from the desktop: native events, which dnd-kit (pointer events) never
+  // sees. Gated on "Files" so no internal drag lights it up; a depth counter because
+  // enter/leave fire per child, reset in the capture phase in case a child swallows the
+  // drop (the gallery's upload overlay does the same).
+  const [fileOver, setFileOver] = useState(false);
+  const fileDepth = useRef(0);
+  useEffect(() => {
+    const reset = () => { fileDepth.current = 0; setFileOver(false); };
+    window.addEventListener("drop", reset, true);
+    window.addEventListener("dragend", reset, true);
+    return () => {
+      window.removeEventListener("drop", reset, true);
+      window.removeEventListener("dragend", reset, true);
+    };
+  }, []);
+  const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes("Files");
+  const fileDropProps = {
+    onDragEnter: (e: React.DragEvent) => {
+      if (!hasFiles(e)) return;
+      fileDepth.current += 1;
+      setFileOver(true);
+    },
+    onDragOver: (e: React.DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+    },
+    onDragLeave: (e: React.DragEvent) => {
+      if (!hasFiles(e)) return;
+      fileDepth.current = Math.max(0, fileDepth.current - 1);
+      if (fileDepth.current === 0) setFileOver(false);
+    },
+    onDrop: (e: React.DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      fileDepth.current = 0;
+      setFileOver(false);
+      // By extension: a .txt can report an empty `type` on Windows.
+      const files = Array.from(e.dataTransfer.files).filter((f) => /\.txt$/i.test(f.name));
+      if (files.length === 0) toast.error("Only .txt files import as prompts");
+      else onDropFiles(files);
+    },
+  };
+
+  // A generic patch, not a `values` dict: the folder cell and the parameter cells
+  // write different fields of the same row.
   const updateMutation = useMutation({
-    mutationFn: ({ rowId, values }: { rowId: string; values: Record<string, unknown> }) =>
-      comfyApi.updateRow(rowId, { values }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["comfy", "rows", plan.id] }),
+    mutationFn: ({ rowId, patch }: { rowId: string; patch: Parameters<typeof comfyApi.updateRow>[1] }) =>
+      comfyApi.updateRow(rowId, patch),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["comfy", "rows", plan.id] });
+      qc.invalidateQueries({ queryKey: ["comfy", "plans", plan.dataset_id] });
+    },
     onError: (err: unknown) => {
       toast.error(apiErrorDetail(err, "Failed to save row"));
     },
@@ -154,7 +339,7 @@ export default function ComfyRowsTable({ plan, rows, selected, onToggle, onToggl
     } else {
       values[alias] = coerceCellValue(raw, !!numericAlias.get(alias));
     }
-    updateMutation.mutate({ rowId: row.id, values });
+    updateMutation.mutate({ rowId: row.id, patch: { values } });
   }
 
   // Expand every prompt cell to its full text (toggle in the prompt column header).
@@ -191,10 +376,36 @@ export default function ComfyRowsTable({ plan, rows, selected, onToggle, onToggl
     setAllMutation.mutate({ alias: bulkPin.alias, value });
   }
 
-  const allSelected = rows.length > 0 && rows.every((r) => selected.has(r.id));
-  // Grid: checkbox | per-row columns (prompt wider) | status | image
+  // The row menu, opened from the grip at the row's start (a drag handle from §8c's
+  // stage 6). Buttons only: the e2e counts textareas and "(root)" inputs as row cells.
+  const [rowMenu, setRowMenu] = useState<{ row: ComfyRow; x: number; y: number } | null>(null);
+  function rowMenuActions(row: ComfyRow): ContextMenuAction[] {
+    const b = rowBounds.get(row.id) ?? { first: true, last: true };
+    const why = runningJob ? "Wait for the run to finish" : undefined;
+    const move = (where: RowMove, label: string, blocked: boolean): ContextMenuAction => ({
+      label, onClick: () => onMoveRow(row, where),
+      disabled: runningJob || blocked,
+      title: why ?? (blocked ? "Already there" : undefined),
+    });
+    return [
+      move("top", "Move to top of folder", b.first),
+      move("up", "Move up", b.first),
+      move("down", "Move down", b.last),
+      move("bottom", "Move to bottom of folder", b.last),
+    ];
+  }
+
+  // Select-all covers the rows on show: those in a folded group are left out.
+  const shownIds = items.flatMap((it) => (it.kind === "row" ? [it.row.id] : []));
+  const allSelected = shownIds.length > 0 && shownIds.every((id) => selected.has(id));
+  // Grid: checkbox | folder | per-row columns (prompt wider) | status | image.
+  // The folder sits leftmost because it is row identity rather than a parameter: it
+  // stays put as pins are added and removed. Built once and consumed by the header
+  // and every body row, so header/body cells must go in matching positions.
   const gridTemplate = [
+    "18px",
     "28px",
+    "minmax(120px, 1fr)",
     ...columns.map((p) => (p.is_prompt ? "minmax(240px, 3fr)" : "minmax(110px, 1fr)")),
     "96px",
     "60px",
@@ -210,17 +421,27 @@ export default function ComfyRowsTable({ plan, rows, selected, onToggle, onToggl
   }
 
   return (
-    <div style={{ border: "1px solid var(--line)", borderRadius: "var(--r)", overflow: "hidden" }}>
+    <div
+      data-testid="comfy-rows-table"
+      style={{ border: "1px solid var(--line)", borderRadius: "var(--r)", overflow: "hidden" }}
+    >
       {/* Header */}
       <div style={{
         display: "grid", gridTemplateColumns: gridTemplate, gap: 8, alignItems: "start",
         padding: "6px 10px", background: "var(--surface-2)", borderBottom: "1px solid var(--line)",
         fontSize: 11, color: "var(--fg-mute)",
       }}>
+        <span />
         <input
           type="checkbox" className="checkbox" checked={allSelected}
-          onChange={(e) => onToggleAll(rows.map((r) => r.id), e.target.checked)}
+          onChange={(e) => onToggleAll(shownIds, e.target.checked)}
         />
+        <span
+          style={{ textTransform: "uppercase", letterSpacing: ".06em" }}
+          title="Per-row folder — nests under the base folder set on the Run bar"
+        >
+          Folder
+        </span>
         {columns.map((p) => (
           <span key={p.alias} style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
             <span style={{ display: "flex", alignItems: "center", gap: 4, textTransform: "uppercase", letterSpacing: ".06em" }}>
@@ -264,31 +485,108 @@ export default function ComfyRowsTable({ plan, rows, selected, onToggle, onToggl
       </div>
 
       {/* Virtualized body */}
-      <div ref={scrollRef} style={{ height: "52vh", overflowY: "auto", background: "var(--surface-1)" }}>
+      <div
+        ref={(el) => { scrollRef.current = el; bodyDrop.setNodeRef(el); }}
+        data-testid="comfy-rows-body"
+        {...fileDropProps}
+        style={{
+          height: "52vh", overflowY: "auto", background: "var(--surface-1)",
+          ...(bodyDrop.isOver || fileOver ? DROP_RING : null),
+        }}
+      >
         {rows.length === 0 ? (
           <p style={{ fontSize: 12, color: "var(--fg-mute)", padding: 16 }}>
-            No rows yet — add one, or paste a list of prompts.
+            {totalRows === 0
+              ? "No rows yet — add one, or paste a list of prompts."
+              : "No rows match. Clear the filter, or pick another folder."}
           </p>
         ) : (
           <div style={{ height: rowVirtualizer.getTotalSize(), position: "relative" }}>
             {rowVirtualizer.getVirtualItems().map((vi) => {
-              const row = rows[vi.index];
+              const item = items[vi.index];
+              if (item.kind === "group") {
+                const open = !closedGroups.has(item.path);
+                const label = item.path || "(root)";
+                return (
+                  // No checkbox, textarea or "(root)"-placeholder input in a header: the
+                  // e2e counts those in this table as row cells.
+                  <DndRow
+                    key={vi.key}
+                    data-index={vi.index}
+                    nodeRef={rowVirtualizer.measureElement}
+                    drop={{ id: dropId.group(item.path), data: { kind: "folder", path: item.path } }}
+                    className="comfy-group-h"
+                    data-testid="comfy-group"
+                    data-folder={item.path}
+                    // `top`, not a transform: dnd-kit measures droppables ignoring transforms, so a
+                    // translated item would measure at the top of the body.
+                    style={{ position: "absolute", top: vi.start, left: 0, width: "100%" }}
+                  >
+                    {({ isOver }) => (<>
+                    {isOver && <span aria-hidden style={{ position: "absolute", inset: 0, pointerEvents: "none", ...DROP_RING }} />}
+                    <button
+                      className="comfy-rail-twisty"
+                      aria-label={`${open ? "Collapse" : "Expand"} folder ${label}`}
+                      aria-expanded={open}
+                      onClick={() => onToggleGroup(item.path)}
+                    >
+                      {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                    </button>
+                    <Folder size={13} style={{ flexShrink: 0, color: item.path ? "var(--accent)" : "var(--fg-mute)" }} />
+                    <span className="mono" style={{ fontWeight: 500 }}>{label}</span>
+                    <span style={{ color: "var(--fg-mute)", fontSize: 11.5 }}>{groupSummary(item.rows)}</span>
+                    {item.rows.some((r) => r.blueprint_linked) && <span className="comfy-pill">from blueprint</span>}
+                    </>)}
+                  </DndRow>
+                );
+              }
+              const row = item.row;
               const rowBusy = runningJob && row.status === "running";
+              const line = dropIndicator?.rowId === row.id ? dropIndicator.position : null;
               return (
-                <div
-                  key={row.id}
+                <DndRow
+                  key={vi.key}
                   data-index={vi.index}
-                  ref={rowVirtualizer.measureElement}
+                  nodeRef={rowVirtualizer.measureElement}
+                  drop={{ id: dropId.row(row.id), data: { kind: "row", rowId: row.id, folder: row.subfolder } }}
+                  // No dragging a row while its plan runs: every drop would move it or
+                  // re-file it, which the server refuses mid-run anyway.
+                  drag={runningJob ? null : { id: dragId.row(row.id), data: { kind: "row", rowId: row.id } }}
                   style={{
-                    position: "absolute", top: 0, left: 0, width: "100%",
-                    transform: `translateY(${vi.start}px)`,
+                    position: "absolute", top: vi.start, left: 0, width: "100%",
                     display: "grid", gridTemplateColumns: gridTemplate, gap: 8, alignItems: "center",
                     padding: "4px 10px", borderBottom: "1px solid var(--line-2)",
+                    boxShadow: line === "before" ? "inset 0 2px 0 var(--accent)"
+                      : line === "after" ? "inset 0 -2px 0 var(--accent)" : undefined,
                   }}
                 >
+                  {({ handle }) => (<>
+                  <button
+                    {...handle?.props}
+                    ref={handle?.attach}
+                    className="comfy-rail-twisty"
+                    aria-label="Row actions"
+                    aria-haspopup="menu"
+                    title="Drag to move, click for actions"
+                    style={{ cursor: runningJob ? "pointer" : "grab" }}
+                    onClick={(e) => {
+                      const r = e.currentTarget.getBoundingClientRect();
+                      setRowMenu({ row, x: r.left, y: r.bottom + 2 });
+                    }}
+                  >
+                    <GripVertical size={13} />
+                  </button>
                   <input
                     type="checkbox" className="checkbox" checked={selected.has(row.id)}
                     onChange={() => onToggle(row.id)}
+                  />
+                  <FolderCell
+                    row={row}
+                    // Locked for the whole run, not just the busy row: the run filed its
+                    // folders from the rows it loaded at start, so a mid-run edit would
+                    // show a folder the image never went to (Set folder is locked too).
+                    disabled={runningJob}
+                    onCommit={(raw) => updateMutation.mutate({ rowId: row.id, patch: { subfolder: raw } })}
                   />
                   {columns.map((p) => (
                     p.is_prompt ? (
@@ -319,7 +617,8 @@ export default function ComfyRowsTable({ plan, rows, selected, onToggle, onToggl
                   {row.image_id ? (
                     <button
                       className="btn ghost sm"
-                      style={{ fontSize: 11, padding: "1px 8px" }}
+                      aria-label={row.image_ids.length > 1 ? `View (${row.image_ids.length})` : "View"}
+                      style={{ fontSize: 11, padding: "1px 4px", gap: 4, display: "inline-flex", alignItems: "center" }}
                       title={row.image_ids.length > 1 ? `${row.image_ids.length} images — opens the first` : "Open image"}
                       onClick={() =>
                         go(`/datasets/${plan.dataset_id}/image/${row.image_id}`, {
@@ -327,17 +626,30 @@ export default function ComfyRowsTable({ plan, rows, selected, onToggle, onToggl
                         })
                       }
                     >
-                      View{row.image_ids.length > 1 ? ` (${row.image_ids.length})` : ""}
+                      <img
+                        src={imagesApi.thumbnailUrl(row.image_id)} alt="" loading="lazy"
+                        style={{ width: 24, height: 24, objectFit: "cover", borderRadius: 3, flexShrink: 0 }}
+                      />
+                      {row.image_ids.length > 1 ? `+${row.image_ids.length - 1}` : ""}
                     </button>
                   ) : (
                     <span style={{ color: "var(--fg-dim)", fontSize: 11 }}>—</span>
                   )}
-                </div>
+                  </>)}
+                </DndRow>
               );
             })}
           </div>
         )}
       </div>
+
+      {rowMenu && (
+        <ContextMenu
+          x={rowMenu.x} y={rowMenu.y}
+          actions={rowMenuActions(rowMenu.row)}
+          onClose={() => setRowMenu(null)}
+        />
+      )}
 
       {/* Bulk column edit */}
       {bulkPin && (
@@ -349,7 +661,7 @@ export default function ComfyRowsTable({ plan, rows, selected, onToggle, onToggl
             <div className="panel-h"><h3>Set “{bulkPin.alias}” on all rows</h3></div>
             <div className="panel-b">
               <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "0 0 8px" }}>
-                Applies to all {rows.length} row{rows.length !== 1 ? "s" : ""} of{" "}
+                Applies to all {totalRows} row{totalRows !== 1 ? "s" : ""} of the plan, whatever the filter shows, for{" "}
                 <span className="mono">#{bulkPin.node_id} {plan.workflow_json[bulkPin.node_id]?.class_type ?? "?"} · {bulkPin.input}</span>.
                 Completed and failed rows whose value changes reset to pending. Blank cells currently
                 fall back to: <span className="mono">{fallbackLabel(plan, bulkPin) || "—"}</span>

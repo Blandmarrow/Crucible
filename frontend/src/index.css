@@ -401,6 +401,134 @@
   .tab:hover { color: var(--fg); }
   .tab.active { color: var(--fg); border-bottom-color: var(--accent); }
 
+  /* ── ComfyUI page: the sticky header and the Blueprint tab's two columns ──
+     ComfyPage is its own bounded scroller; useStickyOffsets writes --comfy-head-h and
+     --comfy-view-h onto it. See docs/dev/comfyui/page.md § The layout, and
+     docs/dev/comfyui/blueprint-tab.md § The layout for the .bp-* rules. */
+  .comfy-head {
+    position: sticky; top: 0; z-index: 20; background: var(--bg);
+    margin: 0 -28px 16px; padding: 10px 28px 8px; border-bottom: 1px solid var(--line);
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  /* A container query, not a media query: a split pane is narrow in a wide window. */
+  .bp-wrap { container-type: inline-size; }
+  .bp-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(360px, 40%); gap: 16px; align-items: start; }
+  .bp-jump {
+    position: sticky; top: var(--comfy-head-h, 0px); z-index: 5; background: var(--bg);
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 0; margin-bottom: 4px;
+  }
+  .bp-section { margin-bottom: 12px; }
+  /* The scroller's scroll padding clears the page header; this clears the jump bar under
+     it too (BlueprintPanel measures it into --bp-jump-h), for a jump and for a field that
+     takes focus just below the header. */
+  .bp-wrap :is(.bp-section, input, textarea, select, button) { scroll-margin-top: calc(var(--bp-jump-h, 44px) + 8px); }
+  .bp-section-toggle {
+    display: inline-flex; align-items: center; gap: 8px; background: none; border: 0; padding: 0;
+    color: inherit; font: inherit; cursor: pointer; text-align: left;
+  }
+  .bp-section-toggle .bp-summary { font-size: 12px; font-weight: 400; color: var(--fg-mute); }
+  /* align-items: start above keeps the side column unstretched, or sticky could not move it. */
+  .bp-side {
+    position: sticky; top: calc(var(--comfy-head-h, 0px) + 12px);
+    max-height: calc(var(--comfy-view-h, 100vh) - var(--comfy-head-h, 0px) - 24px);
+    display: flex; flex-direction: column; overflow: auto;
+  }
+  .bp-side > .bp-actions { flex-shrink: 0; border-bottom: 1px solid var(--line); background: var(--surface-1); }
+  /* The body scrolls on its own down to 120px; in a pane too short for that, the whole
+     column scrolls instead, so Apply and Top up can never be clipped out of reach. */
+  .bp-side > .bp-body { overflow: auto; min-height: 120px; }
+  @container (max-width: 880px) {
+    /* Flex, not grid: a sticky grid item is held inside its own grid area, so the action
+       bar could not stay in view while the editors scroll. A flex item is held inside
+       the whole container. */
+    .bp-grid { display: flex; flex-direction: column; align-items: stretch; }
+    .bp-side { display: contents; }
+    .bp-side > .bp-body { order: 1; background: var(--surface-1); border: 1px solid var(--line); border-radius: var(--r-lg); }
+    .bp-side > .bp-actions {
+      order: 2; position: sticky; bottom: 0; z-index: 5;
+      border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow-lg);
+    }
+  }
+
+  /* The Rows tab (M6 §8b): the rail (plans, then the plan's folder tree) beside the table.
+     Sticky with its own scroll, like .bp-side; stacks above the table in a narrow pane. */
+  .comfy-rows-wrap { container-type: inline-size; }
+  .comfy-rows-grid { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 16px; align-items: start; }
+  /* z-index 6: sticky makes the rail its own stacking context, so without one the menus
+     it opens (ContextMenu, fixed but painted inside it) drew under the rows table. Still
+     under the header (20) and every dialog. */
+  .comfy-rail {
+    position: sticky; top: calc(var(--comfy-head-h, 0px) + 12px); z-index: 6;
+    max-height: calc(var(--comfy-view-h, 100vh) - var(--comfy-head-h, 0px) - 24px);
+    display: flex; flex-direction: column; gap: 12px; overflow: auto; min-width: 0;
+  }
+  .comfy-rail-panel {
+    background: var(--surface-1); border: 1px solid var(--line); border-radius: var(--r-lg);
+    padding: 8px; display: flex; flex-direction: column; gap: 1px;
+  }
+  .comfy-rail-h {
+    display: flex; align-items: center; gap: 4px; padding: 2px 4px 6px;
+    font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--fg-mute);
+  }
+  .comfy-rail-item { position: relative; display: flex; align-items: center; border-radius: var(--r); }
+  .comfy-rail-item.active { background: var(--surface-3); }
+  .comfy-rail-item:hover { background: var(--surface-2); }
+  .comfy-rail-item.active:hover { background: var(--surface-3); }
+  .comfy-rail-node {
+    flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; padding: 5px 4px;
+    background: none; border: 0; color: var(--fg); font: inherit; font-size: 12.5px; text-align: left; cursor: pointer;
+  }
+  .comfy-rail-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .comfy-rail-count { font-size: 11px; color: var(--fg-mute); }
+  .comfy-rail-more { flex-shrink: 0; width: 22px; height: 22px; }
+  .comfy-rail-twisty {
+    flex-shrink: 0; width: 18px; height: 22px; padding: 0; background: none; border: 0;
+    color: var(--fg-mute); display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+  }
+  .comfy-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .comfy-group-h {
+    display: flex; align-items: center; gap: 8px; padding: 4px 10px;
+    background: var(--surface-2); border-bottom: 1px solid var(--line-2); font-size: 12px;
+  }
+  .comfy-pill {
+    font-size: 11px; color: var(--fg-mute); border: 1px solid var(--line-2); border-radius: 999px; padding: 1px 8px;
+  }
+  /* M6 §8d: the selected-rows bar. One fixed height whether or not rows are ticked, so the
+     table never moves under the pointer on the first tick; it scrolls sideways rather than
+     wrapping in a narrow column, because a second line would move the table just the same. */
+  .comfy-selbar {
+    display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 10px; margin-bottom: 8px;
+    flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; white-space: nowrap;
+    border: 1px dashed var(--line-2); border-radius: var(--r);
+    /* Firefox ignores the app's 5px ::-webkit-scrollbar, and its classic bar would eat
+       the height the 24px buttons need. */
+    scrollbar-width: thin;
+  }
+  .comfy-selbar.on { border: 1px solid var(--accent-dim); background: var(--good-bg); }
+  .comfy-selbar > * { flex-shrink: 0; }
+  /* aria-disabled rather than `disabled`, whose pointer-events: none hides the title that
+     says why (the ContextMenu convention). */
+  .comfy-selbar .btn[aria-disabled="true"] { opacity: .5; cursor: not-allowed; }
+  .comfy-selbar .btn[aria-disabled="true"]:hover { background: transparent; color: var(--fg-mute); }
+  /* M6 §8c: the library panel, a third column while it is open. Sticky with its own
+     scroll like the rail, and z-index 6 for the same reason (the menus it opens). In a
+     container too narrow for three columns it spans the top instead, above the rail and
+     the table, with a capped height: the panel was opened to be used, so it stays in view. */
+  .comfy-rows-grid.lib-open { grid-template-columns: 240px minmax(0, 1fr) 300px; }
+  .comfy-lib {
+    position: sticky; top: calc(var(--comfy-head-h, 0px) + 12px); z-index: 6;
+    max-height: calc(var(--comfy-view-h, 100vh) - var(--comfy-head-h, 0px) - 24px);
+    display: flex; flex-direction: column; gap: 8px; overflow: auto; min-width: 0;
+  }
+  @container (max-width: 1040px) {
+    .comfy-rows-grid.lib-open { grid-template-columns: 240px minmax(0, 1fr); }
+    .comfy-rows-grid.lib-open .comfy-lib { grid-column: 1 / -1; grid-row: 1; position: static; max-height: 380px; }
+  }
+  @container (max-width: 760px) {
+    .comfy-rows-grid, .comfy-rows-grid.lib-open { grid-template-columns: minmax(0, 1fr); }
+    .comfy-rail { position: static; max-height: none; }
+  }
+
   /* ── Page header ── */
   .page-h { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
   .page-h h1 { margin: 0 0 4px; font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }

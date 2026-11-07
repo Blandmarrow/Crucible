@@ -116,6 +116,16 @@ export async function resetCategoriesViaApi(request: APIRequestContext): Promise
   }
 }
 
+/** Point the backend at a ComfyUI URL — by default the fake one `serve-comfy.mjs`
+ *  runs beside it. The setting is global, so `''` puts it back for later specs. */
+export async function setComfyUrlViaApi(
+  request: APIRequestContext,
+  url = `http://127.0.0.1:${process.env.E2E_COMFY_PORT ?? '8198'}`,
+): Promise<void> {
+  const r = await request.patch('/api/v1/settings/thresholds', { data: { comfyui_url: url } })
+  expect(r.status(), await r.text()).toBe(200)
+}
+
 /** Upload one PNG into a dataset through the API and return the added filename. */
 export async function uploadViaApi(
   request: APIRequestContext,
@@ -157,4 +167,13 @@ export async function uploadVideoViaApi(
     await request.get('/api/v1/videos/', { params: { dataset_id: datasetId } })
   ).json()
   return listing.find((v: { filename: string }) => v.filename === name)
+}
+
+/**
+ * Picks an entry from the ComfyUI Rows toolbar's *Add ▾* menu (M6 §8d), which holds
+ * Add row, Paste prompts…, Import .txt…, Generate prompts… and Edit prompts….
+ */
+export async function addMenu(page: import('@playwright/test').Page, item: string): Promise<void> {
+  await page.getByTestId('comfy-add-menu').click()
+  await page.getByRole('menuitem', { name: item }).click()
 }

@@ -40,7 +40,7 @@ STYLE_DINO_WEIGHT = 0.70
 # crossover at about layer 7, with layer 9 responding more to what is depicted
 # than to how it is drawn. It costs nothing where it can be checked against a
 # published number — 0.9442 against layer 9's 0.9428 on the gate's own
-# configuration. See `docs/dev/quality/style-similarity.md` § Which layer, and
+# configuration. See `docs/dev/quality/style-evaluation.md` § Which layer, and
 # why it moved twice.
 DEFAULT_DINO_LAYER = 7
 

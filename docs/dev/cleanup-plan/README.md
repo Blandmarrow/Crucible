@@ -24,7 +24,7 @@ guard, as with `utils.record_in_place`. Prefer that to a file split wherever bot
 ## Stage 1: the bugs (landed 2026-11-02)
 
 B1–B4 are fixed on `fix/m8-stage1-bugs`, each with a test that failed first. What stays true now
-lives in the topic files: `docs/dev/image-processing-models.md` § Upscaling (the gate, chunking,
+lives in the topic files: `docs/dev/image-edit-job.md` (the gate, chunking,
 stats refresh and the detail page's outcome read), `docs/dev/frontend-jobs.md` (upscale and LUT
 in the `failed_count` convention, `backend/job_outcome.py`), `docs/dev/shared-utilities.md` (the
 gate-only rule and the rename exemption), `docs/dev/inpaint.md` and CLAUDE.md § Key invariants.
@@ -51,7 +51,7 @@ and no e2e journey can run an upscale. What stays true lives in the files named 
    resize and crop jobs' id loads. Every loop over a client's list now dedupes it first, which
    one `IN` used to do for free (`utils.chunked`'s docstring). The rest of the class is item 9.
 4. **The detail-page toast names its cause.** Upscale and LUT write `missing` beside `skipped`.
-   `docs/dev/image-processing-models.md` § Upscaling.
+   `docs/dev/image-edit-job.md` § The run's outcome.
 5. **Stats refresh on a partway failure** for upscale, LUT and inpaint, through
    `dataset_service.refresh_stats_after_abort` around `_run` rather than a `try/finally`
    inside it. Same section.
@@ -109,7 +109,7 @@ LUT forms or `DatasetsPage.tsx`.
   `exclude_flags` use the parts that match them. There was no behaviour change: captioning's
   request models already 422 an unknown flag, so `flag_exclusions` dropping one changes nothing there.
 - **Stage 3 (landed on the same branch): a shared job loop for upscale and LUT.**
-  `services/image_edit_job.py`, described in `docs/dev/image-processing-models.md` § Upscaling.
+  `services/image_edit_job.py`, described in `docs/dev/image-edit-job.md`.
   Inpaint and `crop_to_detection` stayed out: their count keys, commit order and model lease
   would each need a flag. One intended change: a LUT replace now writes `width`/`height` from
   the result, as an upscale does. A grade keeps the size, so the values are the same.

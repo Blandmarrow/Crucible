@@ -7,7 +7,7 @@ import re
 import shutil
 import stat
 import time
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -97,7 +97,7 @@ def count_caption_tokens(text: str | None) -> int:
 
 # The canonical set of valid quality flag names. Import this wherever flag names
 # must be validated or used in a SQL filter; never redefine the set locally.
-ALLOWED_FLAG_KEYS = frozenset({"is_blurry", "is_noisy", "is_uniform", "has_watermark", "is_duplicate", "is_nsfw", "has_ai_artifacts"})
+ALLOWED_FLAG_KEYS = frozenset({"is_blurry", "is_noisy", "is_uniform", "has_watermark", "is_duplicate", "is_nsfw", "has_ai_artifacts", "gate_rejected"})
 
 
 def sanitize_abs_path(path: str) -> Path:
@@ -262,16 +262,79 @@ def contained_path(
     return safe
 
 
+def _subfolder_parts(s: str) -> list[str]:
+    """The segments of a subfolder path: backslashes folded, blanks and `.` dropped.
+
+    Shared by `normalize_subfolder` and `join_subfolder` so the two disagree only
+    about what `..` means, never about anything else.
+    """
+    return [p for p in s.replace("\\", "/").split("/") if p and p != "."]
+
+
+SUBFOLDER_MAX_LEN = 512  # the longest subfolder path a blueprint leaf or a folder move may make
+
+
 def normalize_subfolder(s: str) -> str:
     """Normalize a subfolder path: strip leading/trailing slashes, reject '..' segments.
 
     Rejects '..' with HTTP 400. Import this; never copy the logic inline and never
-    re-import it from a router.
+    re-import it from a router. This is the **write-time** guard — use it wherever a
+    subfolder arrives from a client; see `join_subfolder` for the job-side counterpart.
     """
-    parts = [p for p in s.replace("\\", "/").split("/") if p and p != "."]
+    parts = _subfolder_parts(s)
     if any(p == ".." for p in parts):
         raise HTTPException(400, "Subfolder path must not contain '..'")
     return "/".join(parts)
+
+
+def join_subfolder(*fragments: str) -> str:
+    """Join subfolder fragments into one normalized path. **Never raises.**
+
+    The job-side counterpart to `normalize_subfolder`: it drops `..` segments
+    rather than rejecting them. Gallery subfolders are virtual labels — nothing
+    nests on disk — so a stray `..` is a wrong folder *name*, not a path escape,
+    and failing a long-running job's item over one is worse than filing the image
+    a level up. Raising here would also be unactionable: the message would surface
+    on a background row and re-fail identically on every re-run.
+
+    Needed because rows can hold a subfolder written before the write-time guard
+    existed, or by future code that renders paths rather than accepting them.
+    """
+    parts: list[str] = []
+    for fragment in fragments:
+        parts.extend(p for p in _subfolder_parts(fragment or "") if p != "..")
+    return "/".join(parts)
+
+
+def subfolder_ancestors(path: str) -> list[str]:
+    """Every proper ancestor of a normalized subfolder path: `a/b/c` -> `["a", "a/b"]`."""
+    parts = path.split("/")
+    return ["/".join(parts[:i]) for i in range(1, len(parts))]
+
+
+def remap_declared_paths(declared: Iterable[str] | None, path: str, new_path: str) -> list[str]:
+    """Rewrite a declared-folder list for a re-path of `path` to `new_path`. Pure.
+
+    `path` and its descendants take the new prefix, `new_path`'s ancestors are added
+    (an empty folder moved under a merely-declared parent must not vanish), and the
+    result is de-duplicated in order. Returns a NEW list; callers reassign it to the
+    JSON column rather than mutating the loaded one (SQLAlchemy compares by equality).
+    """
+    rebuilt: list[str] = []
+    for p in (declared or []):
+        if p == path:
+            rebuilt.append(new_path)
+        elif p.startswith(path + "/"):
+            rebuilt.append(new_path + p[len(path):])
+        else:
+            rebuilt.append(p)
+    rebuilt.extend(subfolder_ancestors(new_path))
+    return list(dict.fromkeys(rebuilt))
+
+
+def drop_declared_paths(declared: Iterable[str] | None, path: str) -> list[str]:
+    """A NEW declared-folder list without `path` or any of its descendants. Pure."""
+    return [p for p in (declared or []) if p != path and not p.startswith(path + "/")]
 
 
 def _is_unsafe_url_char(c: str) -> bool:

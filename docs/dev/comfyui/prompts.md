@@ -2,7 +2,10 @@
 
 Writing ComfyUI queue prompts with an LLM: the one-shot endpoint, the durable
 `comfy_prompts` background job, the output parser, and `GeneratePromptsModal`. The queue
-itself (plans, pins, rows, running) is `docs/dev/comfyui.md`.
+itself (plans, pins, rows) is `docs/dev/comfyui/queue.md`, running it is `docs/dev/comfyui/run.md`,
+and the page is `docs/dev/comfyui/page.md`. The other LLM call in this module,
+`generate_outline` (a brief → a draft blueprint, the `comfy_outline` job), is
+`docs/dev/comfyui/structured-llm.md` § The outline call.
 
 ### Generating (`backend/routers/comfy.py`, `backend/ml/prompt_generator.py`)
 
@@ -119,7 +122,7 @@ queue prompts + textarea lines as diverge-from context); *Generate until N* = th
 `comfy_prompts` job, which writes rows itself.
 
 - **The queue's existing prompts come from `GET /comfy/plans/{id}/prompts`** (`listPlanPrompts`,
-  keyed `["comfy","prompts",planId]` as in `PromptLibraryModal`), never derived from rows in the
+  keyed `["comfy","prompts",planId]` as in `ComfyLibraryPanel`), never derived from rows in the
   client. They feed both the diverge-from context and the "N in queue" count that gates
   *Generate until*. **Invariant: the number shown here and the server's `existing >=
   target_count` gate must be the same number.** They were not — the client counted only rows

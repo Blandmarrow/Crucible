@@ -44,8 +44,10 @@ Every step from raw images to a training-ready export, in order:
 - **Re-extract the keepers at full resolution** once you have curated the small triage frames — Crucible seeks back to the exact moment each frame came from and cuts it again from the original video, replaying the same crop and deinterlacer, as JPEG or lossless PNG. Frames edited in place since are skipped rather than silently overwritten → [details](docs/video-reextract.md)
 
 ### Image generation
-- **Generate** images into a dataset by queueing prompts against your own ComfyUI workflow — pin the parameters you want to vary, build a queue of prompts (write them by hand, import them, or generate them with an LLM), and every output is imported automatically with metadata and optional captions → [details](docs/comfyui.md)
-- **Reuse prompts** from a global prompt library shared across every dataset and plan → [details](docs/comfyui.md)
+- **Generate** images into a dataset by queueing prompts against your own ComfyUI workflow — pin the parameters you want to vary, build a queue of prompts (write them by hand, import them, or generate them with an LLM), give each row its own destination folder so one run builds a whole folder structure, and every output is imported automatically with metadata and optional captions → [details](docs/comfyui.md), [the queue](docs/comfy-queue.md)
+- **Reuse prompts** from a global prompt library shared across every dataset and plan → [details](docs/comfy-queue.md#prompt-library)
+- **Describe a dataset once** — axes of characters, places or anything else, variation pieces like camera angle, and scenarios that combine them alone or in pairs — and a blueprint expands it into a foldered ComfyUI queue, writing every prompt from a template so each character reads the same everywhere → [details](docs/comfy-structured.md)
+- **Run a plan end to end** in one press — fill the blueprint's short folders, generate, score, caption and export, stage by stage, with pause, resume and cancel; optionally repeat, rejecting images that fail a quality gate, until every folder is full, within hard caps you can raise to carry on; check a run first with a dry run, take a snapshot before it, and save its settings as recipes → [details](docs/runs.md)
 
 ### Captioning
 - **Caption** images in batch using local ML models (Florence-2, PaliGemma-2, JoyCaption, WD14, Ollama) or any OpenAI-compatible API — or drag a `.txt` file onto an image to set its caption → [details](docs/captioning.md)
@@ -71,7 +73,7 @@ Every step from raw images to a training-ready export, in order:
 ### Versioning & export
 - **Version** datasets with named snapshots and branches — restore any prior state → [details](docs/versioning.md)
 - **Export** to Kohya, AI Toolkit, or plain folder format with per-export filtering and resizing → [details](docs/export.md)
-- **Track source & license** per image and per dataset — captured automatically from scraper sidecars and EXIF, filterable in the gallery and at export, written out as `CREDITS.md` / `licenses.csv` → [details](docs/provenance.md)
+- **Track source & license** per image and per dataset — captured automatically from scraper sidecars and EXIF, filterable in the gallery and at export, written out as `CREDITS.md` / `licenses.csv` → [details](docs/provenance.md), [licenses and credits](docs/licenses.md)
 
 ### Workspace & tooling
 - **Statistics** — inspect dataset composition with caption-length, token, resolution, and score histograms, plus CSV export → [details](docs/statistics.md)
@@ -257,13 +259,13 @@ See [docs/settings.md](docs/settings.md).
 
 | Command | Effect |
 |---|---|
-| `.\manage.ps1 start` | Production server on :8000 |
-| `.\manage.ps1 dev` | Backend hot-reload + Vite dev server (:5173) |
+| `.\manage.ps1 start` | Production server on :8000 (change with `CRUCIBLE_PORT`) |
+| `.\manage.ps1 dev` | Backend hot-reload + Vite dev server (:5173, change with `CRUCIBLE_VITE_PORT`) |
 | `.\manage.ps1 update` | Pull latest + rebuild |
 
 **Linux / macOS** — same commands via `./manage.sh start`, `./manage.sh dev`, `./manage.sh update`.
 
-`start` opens your browser on http://localhost:8000 right away and shows an animated placeholder until the server is ready, then loads the app by itself — set `CRUCIBLE_NO_BROWSER=1` to launch without it → [details](docs/server.md#starting-up).
+`start` opens your browser on http://localhost:8000 right away and shows an animated placeholder until the server is ready, then loads the app by itself — set `CRUCIBLE_NO_BROWSER=1` to launch without it → [details](docs/server.md#starting-up). To use other ports, for example to run two installs on one machine, see [Changing the ports](docs/server.md#changing-the-ports).
 
 > **If `update` stops at "git pull failed"** with *"Your local changes to the following files would be overwritten by merge"*, you have edited a tracked file. Run `git stash` (to keep the changes) or `git checkout -- <file>` (to discard them), then re-run `update`. `frontend/package-lock.json` is handled automatically — `update` discards npm's rewrites of it, since it is regenerated from the repo copy anyway.
 
@@ -311,6 +313,11 @@ Start at the [feature index](docs/features.md), or jump straight to a topic:
 | Frame Extraction | [docs/video-extraction.md](docs/video-extraction.md) |
 | Re-extracting Frames | [docs/video-reextract.md](docs/video-reextract.md) |
 | ComfyUI Generation | [docs/comfyui.md](docs/comfyui.md) |
+| ComfyUI Queue | [docs/comfy-queue.md](docs/comfy-queue.md) |
+| ComfyUI Blueprints | [docs/comfy-structured.md](docs/comfy-structured.md) |
+| Automated Runs | [docs/runs.md](docs/runs.md) |
+| Setting up a run | [docs/run-setup.md](docs/run-setup.md) |
+| Repeating a run | [docs/repeating-runs.md](docs/repeating-runs.md) |
 | AI Captioning | [docs/captioning.md](docs/captioning.md) |
 | Quality Scoring | [docs/scoring.md](docs/scoring.md) |
 | Style Similarity | [docs/style-similarity.md](docs/style-similarity.md) |
@@ -321,6 +328,7 @@ Start at the [feature index](docs/features.md), or jump straight to a topic:
 | Statistics Dashboard | [docs/statistics.md](docs/statistics.md) |
 | Dataset Versioning | [docs/versioning.md](docs/versioning.md) |
 | Source & License Provenance | [docs/provenance.md](docs/provenance.md) |
+| Licenses and Credits | [docs/licenses.md](docs/licenses.md) |
 | Export | [docs/export.md](docs/export.md) |
 | Settings | [docs/settings.md](docs/settings.md) |
 | Workspace — dialogs, jobs, hardware meters, split view, logs, booru lookup | [docs/workspace.md](docs/workspace.md) |

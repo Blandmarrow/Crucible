@@ -6,11 +6,11 @@ Documentation Map near the end; load only the ones a task needs.
 
 ## Working here
 
-**Milestone (2026-10-30):** the docs-architecture upgrade (M1–M3) and M5, app-stored prompts,
-are merged. M4, the rating feature, is ported on `feat/m4-rating-port` but held unmerged until
-the user decides to ship it. M6 and M7 are the two remaining branch ports, and M7 no longer waits
-for M4 (decision 5). Order and the session handoff are in
-`docs/dev/roadmap.md`.
+**Milestone (2026-11-03):** the docs-architecture upgrade (M1–M3), M5 (app-stored prompts) and
+the M7 style port are merged. M4, the rating feature, is ported on `feat/m4-rating-port` but held
+unmerged until the user decides to ship it. M6, ComfyUI structured generation and automated runs,
+is being built whole on `feat/m6-comfy-automation` and merges only when done (decision 7). Order
+and the session handoff are in `docs/dev/roadmap.md`.
 
 ## Commands
 
@@ -69,7 +69,8 @@ cd frontend
 npm run build                     # refresh dist first — e2e serves it (stale dist = stale test)
 npm run typecheck:e2e             # the specs' only typecheck (see above)
 npx playwright install chromium   # first run only
-npx playwright test               # spins up its own backend on :8199 vs a throwaway DB
+npx playwright test               # spins up its own backend on :8199 vs a throwaway DB,
+                                  # and a fake ComfyUI on :8198
 ```
 
 The full pre-merge sweep (backend pytest → frontend build + e2e typecheck + lint → e2e) is
@@ -114,7 +115,8 @@ Which gate runs where — the one place this list lives:
 - **Windows filesystem rules** — the open-file locks of PM-021, symlink privilege — reach
   only the non-blocking Windows job; `manage.ps1` is parse-checked, never run.
 - **A real ComfyUI, the booru lookup, Restart and Shutdown**, which `qa-smoke` and e2e leave
-  out.
+  out. e2e runs ComfyUI journeys against a fake one (`docs/dev/comfyui/run.md` § Testing the
+  run), so a change in what real ComfyUI sends still reaches no gate.
 
 ## Architecture
 
@@ -172,11 +174,12 @@ substantial edit.
 
 | File | Read this when... | Words |
 |---|---|---|
-| `docs/dev/shared-utilities.md` | Importing anything from `backend/utils.py`, `media_types.py` or `licenses.py`, or resolving a job's image scope (`image_scope.py`) — path guards and containment, naming and collisions, caption sidecars, `record_in_place`, client-supplied regex, batching, the ingestible-extension allowlist, the license vocabulary | ~2450 |
+| `docs/dev/shared-utilities.md` | Importing anything from `backend/utils.py`, `media_types.py` or `licenses.py`, or resolving a job's image scope (`image_scope.py`) — path guards and containment, naming and collisions, caption sidecars, `record_in_place`, client-supplied regex, batching, the ingestible-extension allowlist, the license vocabulary | ~2600 |
 | `docs/dev/ml-models.md` | Working on `backend/ml/` loading, `model_manager`, `backend/ml/device.py`, or how an inference path opens images — `open_rgb_bytes`, the `test_ml_image_opens` AST guard, why torch is imported per function | ~1250 |
 | `docs/dev/model-residency.md` | Working on a model unload, `evict_all`, `_evict_lru`, or a consumer's lease on a model — `POST /models/unload-all`, the per-consumer lease scopes, the Grounding DINO tenant in sam2's entry, a hard cancel outliving a lease | ~1500 |
 | `docs/dev/model-registry.md` | Adding a model ID or a captioner/scorer module, or changing a registry entry's `kind`/`description` — PaliGemma-2 gating, the WD14 tagger's own cache, where the V2.5 predictor head is cached | ~1300 |
-| `docs/dev/image-processing-models.md` | Working on upscaling, `spandrel` model scanning, LUT color grading, or the LaMa inpainter — the shared upscale/LUT job loop (`image_edit_job.py`) and its PNG fallback, the `.cube`/`.3dl` parsers and the LUT axis-ordering invariant, the hash-pinned TorchScript weight download | ~3450 |
+| `docs/dev/image-processing-models.md` | Working on upscaling, `spandrel` model scanning, LUT color grading, or the LaMa inpainter — the `.cube`/`.3dl` parsers and the LUT axis-ordering invariant, the hash-pinned TorchScript weight download | ~2000 |
+| `docs/dev/image-edit-job.md` | Working on `image_edit_job.py`, the shared upscale/LUT job loop — the PNG fallback and `info["out_path"]`, copy mode's occupied-stem sets, `ImageDetailPage`'s outcome read | ~1650 |
 | `docs/dev/detection.md` | Working on the `/detection` router, masks, or `DetectionsPanel` — the endpoints and request validation, per-model overwrite scoping and its `inference_ok` gate | ~2550 |
 | `docs/dev/detection-inference.md` | Working on SAM2/SAM3/Florence-2/NudeNet inference or the SAM 3 checkpoint — mask refine and merge geometry, triton and deferred work | ~1340 |
 | `docs/dev/quality.md` | **Start here for anything on the Quality page** — scorers and quality flags, thresholds, the aesthetic model picker, `scores_stale` and in-place pixel rewrites, duplicate detection and resolution, style similarity and the style-match meter; its § Where things live table routes from a code path to the file in `docs/dev/quality/` that owns it | ~600 (+ details) |
@@ -184,10 +187,11 @@ substantial edit.
 | `docs/dev/image-detail.md` | Working on `ImageDetailPage`, the crop tool, the style-match block or generation-metadata display — caption panel and its image-keyed draft, `StyleMatchPanel` and `DinoLayerBreakdown` | ~2035 |
 | `docs/dev/image-files.md` | Working on image upload/move/copy/rename or an image delete — upload toasts, the per-directory occupied-stem set, the files-first delete order | ~1700 |
 | `docs/dev/image-import.md` | Working on folder import, rescan/sync, caption import or a stem-keyed derived artifact (thumbnail, poster) — `disk_exclude`, `occupied_thumb_stems`' two terms, the rescan dedupe, the import/rescan toasts | ~1950 |
-| `docs/dev/provenance.md` | Anything touching license, attribution, `source_meta`, or license filters — ingest capture precedence, cross-dataset materialization | ~3425 |
+| `docs/dev/provenance.md` | Anything touching how an image's license, attribution or `source_meta` gets its value — ingest capture precedence, cross-dataset materialization, ComfyUI synthetic stamping | ~1500 |
+| `docs/dev/provenance-api.md` | Working on a provenance endpoint, license filters or the provenance edit UI — the `""` rule, `licenses-in-use`, `useCustomLicenses` | ~2000 |
 | `docs/dev/captioning.md` | Working on a caption job, `CaptioningPage`'s progress panel, or a caption sidecar write — delimiter modes, refusal stripping, rename-on-caption, `failure_summary` and `result_data` | ~2500 |
 | `docs/dev/caption-model-picker.md` | Working on a captioning model picker or the registry's `kind`/`description` — the silent no-op, why `modelType` is the wrong gate | ~900 |
-| `docs/dev/llm-providers.md` | Working on the `/providers` router, an OpenAI-compatible provider, `openai_compat_captioner.py`, the Settings LLM Providers tab or `ModelPicker` — `from_orm_row`'s hand-kept field list, `finish_reason` logging, `max_retries=0` | ~800 |
+| `docs/dev/llm-providers.md` | Working on the `/providers` router, an OpenAI-compatible provider, `openai_compat_captioner.py`, the Settings LLM Providers tab or `ModelPicker` — `from_orm_row`'s hand-kept field list, `finish_reason` logging, `max_retries=0` | ~950 |
 | `docs/dev/export.md` | Working on `ExportPage` or `export_service.py` — the filter table and preview | ~2700 |
 | `docs/dev/export-licensing.md` | Working on `CREDITS.md`/`licenses.csv` or an export license filter | ~1325 |
 | `docs/dev/bulk-ops.md` | Working on `BulkEditPage` or a `bulk-*` metadata endpoint — Renumber's two-phase rename | ~2180 |
@@ -195,9 +199,10 @@ substantial edit.
 | `docs/dev/detection-crop.md` | Working on Crop to Subject — `POST /detection/crop`, `CropToDetectionForm` or the `crop_to_detection` job — `detection_crop_rect`, `dest_subfolder` | ~900 |
 | `docs/dev/inpaint.md` | Working on watermark removal — `POST /inpaint/run`, `InpaintForm` or the `batch_inpaint` job — `_dilate`, the stored-form `contained_path` gate | ~1400 |
 | `docs/dev/tag-consolidation.md` | Working on `TagConsolidatePage`, `tag_embedder`, or `dedupe_tags` — analyze/apply jobs, whole-tag (non-substring) rewrite | ~895 |
-| `docs/dev/video.md` | **Start here for anything video** — the `/videos` router, probe/duration/posters, shot detection and frame heuristics, the extract and re-extract jobs and their dialogs, the crop/trim controls and `NumberField` (any bounded numeric input), video rename/delete and range serving, cropdetect and interlace/telecine, seek-by-timestamp re-extraction, the video screens and the frame lineage filter, video tests and the cv2 gate; its § Where things live table routes from a code path to whichever file in `docs/dev/video/` owns it. Also covers the two `Dataset` columns | ~3100 (+ details) |
+| `docs/dev/video.md` | **Start here for anything video** — the `/videos` router, probe/duration/posters, shot detection and frame heuristics, the extract and re-extract jobs and their dialogs, the crop/trim controls and `NumberField` (any bounded numeric input), video rename/delete and range serving, cropdetect and interlace/telecine, seek-by-timestamp re-extraction, the video screens and the frame lineage filter, video tests and the cv2 gate; its § Where things live table routes from a code path to whichever file in `docs/dev/video/` owns it. Also covers the two `Dataset` columns, in `docs/dev/video/storage.md` | ~1550 (+ details) |
 | `docs/dev/versioning.md` | **Start here for anything versioning** — `VersionsPage`, `dataset_busy`, the versioning routes, branches and snapshot tables, prune/GC, `version_service.py`, or any path that overwrites or deletes an image file in place (the copy-on-write hooks and their call sites), restore's four passes, what a snapshot mirrors and the diff; its § Where things live table routes from a code path to the file in `docs/dev/versioning/` that owns it | ~500 (+ details) |
-| `docs/dev/datasets-page.md` | Working on `DatasetsPage`, categories, the duplicate toggle, or the folder picker | ~3265 |
+| `docs/dev/datasets-page.md` | Working on `DatasetsPage`'s layout, sort, categories or the category rail — the preview strip, `DATASETS_UI_KEY`, dropping files onto a card | ~1600 |
+| `docs/dev/dataset-operations.md` | Working on dataset create/edit/rename/duplicate, the import modal, `DirPickerModal`, or a rescan/caption import from the Datasets page — folder naming, duplicate's video copy and its FK flush | ~1950 |
 | `docs/dev/statistics.md` | Working on `StatsPage`, `BucketPanel`, or `get_dataset_stats` — the validator-keyed cache | ~2690 |
 | `docs/dev/labels.md` | Working on the `/labels` router or the label vocabulary — the `Label`/`image_labels` tables and their migrations, `label_service.py`, `POST /labels/assign`'s chunking, race-safe 409 and busy-dataset guard | ~1700 |
 | `docs/dev/label-consumers.md` | Working on a label filter, label export narrowing, or labels across snapshots, copies and derivatives — the EXISTS-only filter block, the `VersionImageState.label_ids` mirror and restore's Pass 2c, `labelParams()`'s falsy-omit encoding | ~1600 |
@@ -208,23 +213,25 @@ substantial edit.
 | `docs/dev/file-browser.md` | Working on `FileBrowserPage`, its preview panel, or any `/filesystem` endpoint's listing side or `/mkdir` — `canonical_abs_path` and stored-path containment, the name-collision 409s, the router's known holes, the `released` prop | ~1300 |
 | `docs/dev/file-browser-move.md` | Working on `POST /filesystem/move` — the file/directory branches, the canonical-media-folder 409, the derived-artifact guard, escaped-LIKE prefix tests | ~1300 |
 | `docs/dev/file-browser-rename-delete.md` | Working on `POST /filesystem/rename` or `/delete` — guards C/D/A/B and `_DATASET_LAYOUT_DIRS`, the thumbnail-stem 409, the delete's hook ordering and `_add_orphan` | ~1500 |
-| `docs/dev/frontend-core.md` | Working on global frontend state, a shared constants module, or the JS error console — `uploadStore` | ~3255 |
-| `docs/dev/frontend-jobs.md` | Adding a job-triggering UI or changing what a finished job invalidates — job-completion cache invalidation (single-job and id-list patterns), the stale-thumbnail warning and the terminal-emit ordering rule | ~3215 |
+| `docs/dev/frontend-core.md` | Working on global frontend state, the `SelectionToolbar` modals, or the JS error console — `uploadStore` | ~1800 |
+| `docs/dev/frontend-constants.md` | Working on a shared `frontend/src/constants/` module — the caption style table, license vocabulary, `queryKeys.ts` invalidation helpers, `apiErrorDetail` | ~1650 |
+| `docs/dev/frontend-jobs.md` | Working on `useJobSSE`/`useAllJobsSSE`, reconciling after an SSE gap, or job reporting — the partial-failure line, the stale-thumbnail warning and the terminal-emit ordering rule | ~1650 |
+| `docs/dev/job-invalidation.md` | Adding a job-triggering UI or changing what a finished job invalidates — the single-job and id-list patterns, `TopBar`'s global watcher, `IMAGE_MODIFYING_JOB_TYPES` | ~1850 |
 | `docs/dev/panes-routing.md` | Working on panes, adding a routed page, or lazy page loading — sidebar layout and `usePaneNavigate` | ~1435 |
-| `docs/dev/persistence.md` | Adding a storage key or persisting page configuration | ~2750 |
-| `docs/dev/app-stored-data.md` | Working on the `/app-data` routes, a form whose saved state lives on the server, or the one-time browser import — `ServerStateGate`, `writeToServer`, the conflict dialog, NULL meaning never saved | ~900 |
-| `docs/dev/styling.md` | Working on Tailwind/CSS, the brand mark, a modal dialog, the right-click menu, or an anchored popover/dropdown — `useModalBehavior` and `ModalShell`, `ContextMenu`, `usePopover`, `LabelPicker` | ~2770 |
-| `docs/dev/backend-infrastructure.md` | Working on `main.py`'s lifespan, the job queue, SSE, job cancellation or a CI workflow — `JobQueue.stop()`'s bounded grace-then-cancel shutdown, the broadcaster's never-dropped terminal events, the Windows CI job | ~2000 |
-| `docs/dev/http-edge.md` | Working on middleware, `request_guard.py`, the SPA catch-all, an app-level exception handler (the `FileInUseError`/`ModelInUseError` 409s, the 422 redaction), or the shutdown/restart/health endpoints and restart loop — `CRUCIBLE_ALLOWED_HOSTS`, why there is no CORS, the restart poll's missing deadline | ~1850 |
-| `docs/dev/backend-tests.md` | Writing or fixing a backend test, or adding a test/CI dependency — which harness a test drives, what `backend/requirements-ci.txt` installs, the `needs_torch`/`needs_cv2`/`needs_symlinks` gates, `api_env` foreign keys, coverage, ruff and the migration drift check | ~320 |
-| `docs/dev/database.md` | Working on a model or Alembic migration, an index or FK `ondelete`, deferred columns, `check_migrations.py`, or the startup DB backup — the drift check's `ACCEPTED_DRIFT` and `db_maintenance` rotation | ~1885 |
-| `docs/dev/environment-setup.md` | Working on `manage.ps1`/`manage.sh`, the bind address or `--lan`, torch wheels, the startup splash, or the setup/update flow — the Node version check, `bind_host.py`/`CRUCIBLE_HOST` and lockfile reset | ~3140 |
-| `docs/dev/comfyui.md` | Working on `ComfyPage`, the `comfy` router, or ComfyUI integration — plans (workflow template + pinned params), prompt rows, prompt library, ComfyClient, removing our own prompt from ComfyUI's queue on cancel/failure | ~3315 |
-| `docs/dev/comfy-prompts.md` | Generating prompts with an LLM or working on `prompt_generator.py` — `parse_prompts` filtering, `GeneratePromptsModal` re-attach | ~1880 |
-| `docs/dev/comfyui-sync.md` | Working on workflow sync or the bridge extension — "Sync from canvas", `GET /comfy/canvas-workflow` and ComfyUI API constraints | ~710 |
-| `docs/dev/postmortems.md` | Doing a code review or investigating a bug — the postmortem index: past incidents as one-line rows with LIVE/MITIGATED/STRUCTURAL status, linking `docs/dev/postmortems/` | ~2170 |
-| `docs/dev/roadmap.md` | Deciding what to work on next, landing a task, or picking up a branch mid-way — order and dependencies of open work and the dated "Next session" handoff; tick it in the same session | ~2050 |
-| `docs/dev/decisions.md` | Asking *why* the project does X, or proposing to change direction — the decision log: what was decided, by whom, and what was rejected | ~400 |
+| `docs/dev/persistence.md` | Adding a storage key or persisting page configuration | ~2950 |
+| `docs/dev/app-stored-data.md` | Working on the `/app-data` routes, a form whose saved state lives on the server, or the one-time browser import — `ServerStateGate`, `writeToServer`, the conflict dialog, NULL meaning never saved | ~950 |
+| `docs/dev/styling.md` | Working on Tailwind/CSS, the brand mark, a modal dialog, the right-click menu, or an anchored popover/dropdown — `useModalBehavior` and `ModalShell`, `ContextMenu`, `usePopover`, `MenuButton`, `LabelPicker` | ~3200 |
+| `docs/dev/backend-infrastructure.md` | Working on `main.py`'s lifespan, the job queue, SSE, job cancellation or a CI workflow — `JobQueue.stop()`'s bounded grace-then-cancel shutdown, the broadcaster's never-dropped terminal events, the Windows CI job, the run hook `_after_terminal` | ~2150 |
+| `docs/dev/http-edge.md` | Working on middleware, `request_guard.py`, the SPA catch-all, an app-level exception handler (the `FileInUseError`/`ModelInUseError` 409s, the 422 redaction), or the shutdown/restart/health endpoints and restart loop — `CRUCIBLE_ALLOWED_HOSTS`, why there is no CORS, the restart poll's missing deadline, Restart and Shutdown under `manage dev`'s `--reload` | ~2300 |
+| `docs/dev/backend-tests.md` | Writing or fixing a backend test, or adding a test/CI dependency — which harness a test drives, what `backend/requirements-ci.txt` installs, the `needs_torch`/`needs_cv2`/`needs_symlinks` gates, the autouse fixture that keeps LLM-server calls off the network, `api_env` foreign keys, coverage, ruff and the migration drift check | ~450 |
+| `docs/dev/database.md` | Working on a model or Alembic migration, an index or FK `ondelete`, deferred columns, `check_migrations.py`, or the startup DB backup — the drift check's `ACCEPTED_DRIFT` and `db_maintenance` rotation | ~2050 |
+| `docs/dev/environment-setup.md` | Working on `manage.ps1`/`manage.sh` setup or update, torch wheels, or the setup/update flow — the Node version check and lockfile reset | ~2250 |
+| `docs/dev/server-start.md` | Working on the bind address or `--lan`, or the startup splash at launch — `bind_host.py`/`CRUCIBLE_HOST` precedence, `splash_server.py`'s handover to uvicorn | ~1300 |
+| `docs/dev/comfyui.md` | **Start here for anything ComfyUI** — the `comfy` router, `comfy_service.py` and ComfyClient, plans, pins and prompt rows, the `comfy_generate` run and the fake ComfyUI, `ComfyPage`, the prompt library panel, Copy to plan and drag and drop, LLM prompt generation (`prompt_generator.py`), blueprints (`comfy_leaves`, `blueprint_expand.py`/`blueprint_service.py`, Apply, Top up, the `comfy_outline` draft job, the `comfy_rewrite` prose pass and `prompt_origin`), workflow sync and the bridge extension, automated runs (`Run`, `run_service.py`, `advance_run`, the Runs page) and their goal loop (`next_pass`, the gate and `rejects/`, budgets, the paid-call cap, carrying on past a cap), the snapshot stage, the dry run and shared start check (`plan_run`), run recipes (`run_recipes`, export/import) and the remembered start form; its § Where things live table routes from a code path to the file in `docs/dev/comfyui/` that owns it | ~1700 (+ details) |
+| `docs/dev/postmortems.md` | Doing a code review or investigating a bug — the postmortem index: past incidents as one-line rows with LIVE/MITIGATED/STRUCTURAL status, linking `docs/dev/postmortems/` | ~2300 |
+| `docs/dev/roadmap.md` | Deciding what to work on next, landing a task, or picking up a branch mid-way — order and dependencies of open work and the dated "Next session" handoff; tick it in the same session | ~2850 |
+| `docs/dev/decisions.md` | Asking *why* the project does X, or proposing to change direction — the decision log: what was decided, by whom, and what was rejected | ~700 |
+| `docs/dev/multiple-installs.md` | Running a second install, on this machine or another — ports per install, the never-share-a-datasets-folder rule, datasets on a network share, moving a database between machines, running as a systemd service | ~600 |
 
 ### Code review & bug investigation
 

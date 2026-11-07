@@ -23,90 +23,10 @@ import { loadPersisted, clearPersisted, datasetScopedKey } from "../utils/persis
 import { buildSubfolderTree, subtreeTargets, tickState, withMissingAncestors, type SubfolderNode } from "../utils/subfolderTree";
 import { useDebouncedPersist } from "../hooks/useDebouncedPersist";
 
-type Format = "kohya" | "aitoolkit" | "plain";
-type CaptionFmt = "txt" | "caption" | "jsonl";
-type ResizeTo = number | null;
-type MaskMissing = "white" | "skip";
-
-const FORMAT_LABELS: Record<Format, string> = {
-  kohya: "kohya",
-  aitoolkit: "ai-toolkit",
-  plain: "plain folder",
-};
-
-interface ExportWorkflow {
-  format: Format;
-  captionFmt: CaptionFmt;
-  outputDir: string;
-  nRepeats: number;
-  conceptToken: string;
-  outputImgFmt: string;
-  resizeTo: ResizeTo;
-  customResize: boolean;
-  customResizeVal: string;
-  stripMetadata: boolean;
-  captionsOnly: boolean;
-  exportMasks: boolean;
-  maskInvert: boolean;
-  maskMissing: MaskMissing;
-}
-
-const EXPORT_WORKFLOW_DEFAULTS: ExportWorkflow = {
-  format: "kohya",
-  captionFmt: "txt",
-  outputDir: "",
-  nRepeats: 10,
-  conceptToken: "concept",
-  outputImgFmt: "original",
-  resizeTo: null,
-  customResize: false,
-  customResizeVal: "",
-  stripMetadata: false,
-  captionsOnly: false,
-  exportMasks: false,
-  maskInvert: false,
-  maskMissing: "white",
-};
-
-interface ExportFilters {
-  filterAesthetic: boolean;
-  aestheticMin: number;
-  filterCaptioned: boolean;
-  excludeFlags: string[];
-  filterStyleSim: boolean;
-  styleSimMin: number;
-  subfolderFilterActive: boolean;
-  selectedSubfolders: string[];
-  maskLabels: string[];
-  maskExcludeLabels: string[];
-  licenseFilter: string[];
-  commercialOnly: boolean;
-  excludeUnlicensed: boolean;
-  excludeNoDerivatives: boolean;
-  labelFilter: string[];
-  labelMatch: "any" | "all";
-  labelMissing: boolean;
-}
-
-const EXPORT_FILTERS_DEFAULTS: ExportFilters = {
-  filterAesthetic: false,
-  aestheticMin: 5.0,
-  filterCaptioned: true,
-  excludeFlags: ["has_watermark"],
-  filterStyleSim: false,
-  styleSimMin: 0.5,
-  subfolderFilterActive: false,
-  selectedSubfolders: [],
-  maskLabels: [],
-  maskExcludeLabels: [],
-  licenseFilter: [],
-  commercialOnly: false,
-  excludeUnlicensed: false,
-  excludeNoDerivatives: false,
-  labelFilter: [],
-  labelMatch: "any",
-  labelMissing: false,
-};
+import {
+  EXPORT_FILTERS_DEFAULTS, EXPORT_WORKFLOW_DEFAULTS, FORMAT_LABELS,
+  type CaptionFmt, type Format, type MaskMissing, type ResizeTo,
+} from "../constants/exportWorkflow";
 
 /** The **one** encoder for the label trio, shared by the three export POST bodies
  *  and the preview query.
@@ -313,7 +233,7 @@ export default function ExportPage() {
   const [debouncedFilters, setDebouncedFilters] = useState<ExportPreviewFilters>({
     aesthetic_min: null,
     captioned_only: filterCaptioned,
-    exclude_flags: "has_watermark",
+    exclude_flags: "has_watermark,gate_rejected",
     style_sim_min: null,
     subfolders: null,
     export_masks: false,

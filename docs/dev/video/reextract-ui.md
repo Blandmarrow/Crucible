@@ -112,7 +112,7 @@ about a curation decision the user already made. Still no subfolder or `["video"
 invalidation: pass 2 creates no subfolder and touches no `Video` row, it only rewrites the
 frames that row lists. The membership in `LIVE_IMAGE_JOB_TYPES` fills `["images", ds]`
 mid-run; unlike `video_extract` it adds no `["subfolders", id]` there, for the same reason.
-The full invalidation table is in `docs/dev/frontend-jobs.md`.
+The full invalidation table is in `docs/dev/job-invalidation.md`.
 
 `TERMINAL_JOB_STATUSES` comes from `constants/jobs.ts`, shared with `TopBar` and
 `useVideoExtractJobs` — three call sites is past the threshold for a local copy. One local

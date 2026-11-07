@@ -29,7 +29,7 @@ testing.
   blend and the 4-decimal rounding come along with them. A verdict here is therefore a
   verdict about production code. **As of 2026-08-04 the app no longer ships 0.38/0.62** — a
   wider sweep moved `combined` to 0.30/0.70 read from a mid layer, 9 and then 7 (see
-  `docs/dev/quality/style-similarity.md` § What the modes are actually worth), and
+  `docs/dev/quality/style-evaluation.md` § What the modes are actually worth), and
   `compute_combined_similarity` defaults to whatever is shipped. `style_gate.py` therefore
   passes the weights explicitly, from its own `GATE_CLIP_WEIGHT`/`GATE_DINO_WEIGHT`
   (overridable with `--clip-weight`/`--dino-weight`), so re-running it still reproduces the
@@ -214,6 +214,6 @@ not an inability to order. Nothing here suggests a learned head would repay a tr
 labelling UI. Style stays on the centroid baseline; the aesthetic-rating head in the rating plan
 §§1–3 remains about *aesthetic quality*, which this run says nothing about.
 
-Three findings carried into `docs/dev/quality/style-similarity.md`, all cheap to act on: CLIP is the
+Three findings carried into `docs/dev/quality/style-evaluation.md`, all cheap to act on: CLIP is the
 default worth recommending for style matching; the three modes are two signals, not three;
 and the DINOv2 per-layer picker offers nine layers that cannot be thresholded.

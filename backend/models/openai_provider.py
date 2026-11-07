@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import DateTime, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.database import Base
@@ -18,4 +18,7 @@ class OpenAIProvider(Base):
     max_image_px: Mapped[int] = mapped_column(Integer, nullable=False, default=1024, server_default="1024")
     max_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=2048, server_default="2048")
     timeout_s: Mapped[int] = mapped_column(Integer, nullable=False, default=300, server_default="300")
+    # NULL means "follow the URL" (schemas.openai_provider._is_remote); True/False is the
+    # user's word on whether this provider bills per call. See provider_is_billed.
+    billed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

@@ -4,7 +4,7 @@ This file covers how a stored `style_similarity_score` is made readable: the `St
 
 ## Making the score readable — the run descriptor and the percentile
 
-The gate in `docs/dev/quality/style-similarity.md` § What the modes are actually worth is
+The gate in `docs/dev/quality/style-evaluation.md` § What the modes are actually worth is
 also the argument for everything in this section: a stored
 `style_similarity_score` is a raw cosine, and nothing about it says which of the five modes,
 which layer or which references produced it. The same "0.62" is a mediocre CLIP match, a
@@ -189,7 +189,7 @@ It uses a **fixed 0–1 axis** (`clamp(score) * 100`) with stated `0` / `1.0` en
 below layer 10 on the strength of the 0.90–0.99 compression; the wider sweep found the
 middle of the stack separates *best*, so the panel would have been arguing against the
 layer the app now scores on. Range is not separability
-(`docs/dev/quality/style-similarity.md` § What the modes are actually worth).
+(`docs/dev/quality/style-evaluation.md` § What the modes are actually worth).
 
 The `stored` badge takes a **`storedLayer` prop** from `run.dino_layer` rather than
 hardcoding `12`, and only when `run.embedding_type` is an `*_all_layers` mode: those are the

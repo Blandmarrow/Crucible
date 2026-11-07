@@ -458,6 +458,38 @@ orphan sweep refuses to run when the database and the datasets folder visibly di
 (`docs/dev/comfyui/gpu-handoff.md`, [decision 10](../decisions/10-unload-strata-while-comfyui-generates.md)).
 Running several installs is `docs/dev/multiple-installs.md`.
 
+## Hand checks on the box (2026-11-07)
+
+The checks the milestone owed by hand, run on the second machine (a 16 GB card, Linux)
+in a dev install on its own port with a throwaway database: a real ComfyUI with a real
+three-pass workflow, a real Strata server standing in for LM Studio, and the user in
+Firefox for what only a browser shows. Prod's data was never written.
+
+| Check | Result |
+|---|---|
+| Backend suite on Linux | 1805 passed, no skips (torch and cv2 present); `check_migrations.py` clean |
+| §3 Stop mid-rewrite; a hand-edited row left alone | Pass. The stop ended the job `cancelled` with the committed rows kept and only the leftovers rewritten next time; the `manual` row came through byte for byte, and edits during the pass got 409 |
+| §4 Pause; restart mid-run (clean and `kill -9`); TopBar cancel | Pass. A hard kill wastes one render (now in `docs/dev/comfyui/automation.md`); the real TopBar click exposed the Runs page bug below |
+| §5 Two-pass loop to target; a cap stop | Pass. Met in two passes with one snapshot; `max_passes: 1` stopped `short` on `passes` with `can_extend` |
+| §6 Dry run; ComfyUI off; Snapshot + Cancel; recipes; a pass cap raised | Pass, except the snapshot's cancelling wait: about 1 s on 834 images, too short to hold open, so it rests on `test_run_snapshot.py` |
+| Review fixes: every row rejected; a reject moved back | Pass. A real rejection (the box lacked RES4LYF's `beta57` scheduler) failed the run and Resume retried only those rows; the flag and the Stats count cleared |
+| §8b–§8d and the §8 review fixes, in Firefox | Pass after two fixes below |
+| §8c category migration on a messy library | Pass on a crafted library: the user's real one held one clean category, so the dev database was built to `d5b7f9a1c3e6`, seeded with 13 hand-made messy rows beside the 35 real ones, and upgraded; every row matched a hand-written expectation |
+| §9 handoff run with `nvidia-smi`; a second install beside the first | Pass. Strata 15.3 GB for the rewrite, gone before generate; ComfyUI 6.5–6.8 GB alone; 270 MiB after its handoff; Strata back for captions and gone after. A foreign ComfyUI prompt survived a dev cancel |
+
+Fixed that day, each with a regression test, under rulings by the user:
+- **`ContextMenu` keeps a disabled item focusable but inert.** A folder's menu during a run
+  had every item disabled, so nothing took focus and the arrows were dead
+  (`docs/dev/styling.md`).
+- **The library panel's selection actions keep a fixed slot**, as the rows bar's did on
+  2026-11-05: the block appeared on the first tick and pushed the tree down
+  (`docs/dev/comfyui/library-dnd.md`).
+- **The Runs page refetches whenever a job of its dataset changes status.** It polled only
+  while its own last fetch held a running run, so a run started anywhere else, and its
+  cancel, stayed invisible until the page was reopened (`docs/dev/comfyui/run-start.md`).
+
+What the checks found and left open is in the roadmap's Next session item for M6.
+
 ## Landed stages
 
 Moved here word for word from the roadmap's § M6 checklist on 2026-11-05, when the roadmap

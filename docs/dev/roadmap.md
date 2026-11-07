@@ -17,7 +17,7 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-06, M6 §9)
+## Next session (updated 2026-11-07, M6 hand checks on the box)
 
 1. M5's five stages merged on 2026-10-30 as PR #101. Only its cleanup is open, and that waits
    a release. See [server-state-plan/README.md](server-state-plan/README.md) for what was
@@ -46,38 +46,34 @@ restates its stages.
    [comfy-automation-plan/README.md](comfy-automation-plan/README.md) as revised by decisions 8
    and 9. **Work on M6 happens on that branch.** What has landed, stage by stage, is the
    § M6 checklist below; this item holds only what is open.
-   - **§9, two installs and a 16 GB card (2026-11-06)**: configurable ports, the orphan
-     sweep's refusal on a mismatched tree, and the Strata GPU handoff
-     ([decision 10](decisions/10-unload-strata-while-comfyui-generates.md)) are built. The user
-     tests the branch on a second machine before the merge (`docs/dev/multiple-installs.md`).
-   - **Next: the merge** (§ M6 below). §8, the page rework, is complete: §8d landed on
-     2026-11-05 with the *Add ▾* menu, the selection bar in a fixed slot, Run selected moved
-     into it and the paste dialog on `ModalShell`, under three rulings by the user that day
-     ([the plan's § 8d](comfy-automation-plan/README.md#8d--toolbar-cleanup)).
-   - **Owed by hand, against a real ComfyUI and LM Studio** — the one list; the § M6 ticks do
-     not repeat it. The user chose to take §4's checks before §5's.
-     - §3: a Stop mid-rewrite, and a hand-edited row left alone by the rewrite.
-     - §4: Pause, a restart mid-run, and a `TopBar` cancel.
-     - §5: a two-pass loop to target, and a run stopped by a cap.
-     - §6: a dry run and a start with ComfyUI off, a run with Snapshot on (and a Cancel
-       during it), a recipe exported and imported, and a pass cap raised.
-     - Review fixes: a run whose ComfyUI rejects every row ends `failed` and Resume retries
-       it; a rejected image moved back loses its flag in the gallery and the Stats card.
-     - §8b: the rail's dot turning blue during a run, and a folder rename refused while one
-       is live.
-     - §8c: a folder change and a row delete refused while a real run is live; a move to
-       another plan refused while the source runs; a drop between rows while the table
-       auto-scrolls; a drop over a library category scrolled out of the panel (it must not
-       take it); a category migration on a real library with free-text categories.
-     - §8 review fixes: a paused automated Run refusing plan delete and a paste into its plan;
-       a drop released over the sticky header taking nothing; `ContextMenu`'s keyboard focus and
-       the ⋯ toggle in Firefox (e2e runs Chromium only); a `.txt` dropped beside the table
-       staying on the page.
-     - §8d: the selection bar in Firefox with the library panel open (its buttons must not be
-       clipped by the scrollbar; e2e runs Chromium only).
-     - §9, on a second machine: a run with rewrite, generate and caption against a real
-       Strata and ComfyUI, `nvidia-smi` between stages; a second install on its own ports
-       beside the first; the backend suite there.
+   - **Next: the merge** (§ M6 below). Every stage is built, and the hand checks the
+     milestone owed were run on 2026-11-07 on the second machine (a 16 GB card) against a
+     real ComfyUI and a real Strata, with the user's browser checks in Firefox. All passed
+     or were fixed that day; the results, check by check, are in
+     [the plan's § Hand checks on the box](comfy-automation-plan/README.md#hand-checks-on-the-box-2026-11-07).
+     Three failures found there were fixed under rulings by the user: `ContextMenu` keeps a
+     disabled item focusable, the library panel's selection actions keep a fixed slot, and
+     the Runs page refetches on any job of its dataset. LM Studio itself was not used (Strata
+     stood in); its handoff path was checked by hand on 2026-11-04.
+   - **Not held open: §6c's "cancelling after the snapshot" state.** On the box a snapshot of
+     834 images took about 1 s, too short to hold the wait open by hand, so its UI text and a
+     second Cancel during it rest on `test_run_snapshot.py`'s gated snapshot.
+   - **Found in the box checks, open — the user decides before or after the merge:**
+     - A run that ends `failed` or `cancelled` after `handoff_to_comfy` never reaches
+       `handoff_to_local`, so ComfyUI keeps its models; on the 16 GB card the next Strata
+       load then got 10.2 GB instead of 15.6. A best-effort ComfyUI `/free` on such an end
+       would fix it.
+     - A paused automated run shows no dot in the plan rail, and the rail greys Delete only
+       for a live job, so a paused run's plan offers Delete and refuses it on confirm.
+     - A `TopBar` cancel of a run's child that is still queued leaves the run reading
+       `running` until the worker reaches that job (`docs/dev/comfyui/automation.md`
+       § Cancel, pause, resume, restart). `DELETE /jobs/{id}` on a pending run child could
+       step the run at once.
+   - **Found in the box checks, a fix for `main`:** `TopBar`'s Restart never comes back under
+     `manage.sh dev`. `cmd_dev` runs uvicorn with `--reload`, so `POST /restart`'s
+     `os.kill(os.getpid(), SIGTERM)` stops only the reload worker; the reloader neither
+     respawns it nor exits, so the restart loop never sees uvicorn end and `.restart` is left
+     behind. `start` is unaffected; `manage.ps1`'s dev path was not checked.
    - **Found in the §8b review, not fixed there:** the gallery's
      `dataset_service.repath_subfolder` matches a folder's subtree with SQLite's case-blind
      `LIKE`, so renaming `knight` also re-paths `Knight/a`; `filesystem.py`'s
@@ -87,11 +83,11 @@ restates its stages.
      own, which blueprint leaf `knight` (whose segments are stripped) never adopts or locks.
      It predates §8, and stripping now would re-read stored rows, so it wants a ruling and a
      data migration rather than a quiet change.
-   - Decisions 7–9 and this M6 checklist exist only on that branch until it merges, so
-     `main`'s next decision takes number 10. Its migrations `e5c1a9d3f7b2` →
+   - Decisions 7–10 and this M6 checklist exist only on that branch until it merges, so
+     `main`'s next decision takes number 11. Its migrations `e5c1a9d3f7b2` →
      `b7d2f4a9c1e3` → `d4a8c2e6f1b9` → `f3b9d1a7c5e2` → `c8e4a6b2d0f7` → `a6d2f8c4e0b3` →
-     `b2e7c9a4d1f6` → `c4a8e2f6b9d3` → `d5b7f9a1c3e6` → `e7d1c5a9b3f2` follow `main`'s `c2b8e4f6a1d7`;
-     rebase at stage boundaries.
+     `b2e7c9a4d1f6` → `c4a8e2f6b9d3` → `d5b7f9a1c3e6` → `e7d1c5a9b3f2` → `a3c7e9b1d5f2` follow
+     `main`'s `c2b8e4f6a1d7`; rebase at stage boundaries.
 5. M8's follow-ups 8, 9, 10 and 11 can go any time; stage 3 left inpaint and detection crop
    out, so item 8 no longer waits for it. Batch move and copy, in item 9, must wait for M4 to
    merge. Items 7, 12 and 13 wait for stage 6, which replaces that code. M8 stages 5 and 6

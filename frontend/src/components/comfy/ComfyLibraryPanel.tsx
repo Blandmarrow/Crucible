@@ -200,6 +200,7 @@ function LibraryTabBody({ datasetId, plan, folders, folderInView }: ComfyLibrary
 
   const invalidateLibrary = () => qc.invalidateQueries({ queryKey: ["comfy", "library"] });
   const clearSelection = () => setSelectedIds(new Set());
+  const none = selected.length === 0;
 
   const updateMutation = useMutation({
     mutationFn: ({ id, text }: { id: string; text: string }) => comfyApi.libraryUpdate(id, text),
@@ -339,30 +340,40 @@ function LibraryTabBody({ datasetId, plan, folders, folderInView }: ComfyLibrary
         </div>
       )}
 
-      {selected.length > 0 && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12, padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
+      {/* The selection's actions sit in a slot that is always there, disabled under a hint
+          while nothing is ticked: the user's ruling on 2026-11-07, as the rows bar's on
+          2026-11-05, so the tree never moves under the pointer on the first tick or the
+          last untick. The real controls render either way, so the slot's height is the
+          same by construction rather than by a measured constant. */}
+      <div
+        data-testid="comfy-library-selection"
+        style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12, padding: "6px 0", borderBottom: "1px solid var(--border)" }}
+      >
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ color: "var(--fg-mute)", flex: 1 }}>{selected.length} selected</span>
-            <button className="btn ghost sm" onClick={clearSelection}>Clear</button>
+            <span style={{ color: none ? "var(--fg-dim)" : "var(--fg-mute)", flex: 1, minWidth: 0 }}>
+              {none ? "Tick prompts to add, move or delete them." : `${selected.length} selected`}
+            </span>
+            <button className="btn ghost sm" onClick={clearSelection} disabled={none}
+              style={none ? { visibility: "hidden" } : undefined}>Clear</button>
           </div>
           <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
             <select
               className="select" aria-label="Add to folder" style={{ fontSize: 12, minWidth: 0, flex: 1 }}
-              value={folder} onChange={(e) => setFolder(e.target.value)}
+              value={folder} onChange={(e) => setFolder(e.target.value)} disabled={none}
             >
               <option value="">(root)</option>
               {folderOptions.filter((f) => f !== "").map((f) => <option key={f} value={f}>{f}</option>)}
             </select>
             <button
               className="btn primary sm"
-              disabled={!hasPromptPin || addMutation.isPending}
+              disabled={none || !hasPromptPin || addMutation.isPending}
               title={hasPromptPin ? undefined : "This plan has no prompt pin, so there is nowhere to put the text"}
               onClick={() => addMutation.mutate()}
             >
-              Add {selected.length} to plan
+              {none ? "Add to plan" : `Add ${selected.length} to plan`}
             </button>
           </div>
-          {showMove ? (
+          {showMove && !none ? (
             <div style={{ display: "flex", gap: 6 }}>
               <input
                 className="input" list="comfy-lib-categories" aria-label="Move to category" placeholder="Category" maxLength={512}
@@ -378,14 +389,13 @@ function LibraryTabBody({ datasetId, plan, folders, folderInView }: ComfyLibrary
             </div>
           ) : (
             <div style={{ display: "flex", gap: 6 }}>
-              <button className="btn ghost sm" onClick={() => setShowMove(true)}>Move to…</button>
-              <button className="btn ghost sm" style={{ color: "var(--bad)" }} onClick={() => setConfirmDelete(true)}>
-                Delete ({selected.length})
+              <button className="btn ghost sm" disabled={none} onClick={() => setShowMove(true)}>Move to…</button>
+              <button className="btn ghost sm" style={{ color: "var(--bad)" }} disabled={none} onClick={() => setConfirmDelete(true)}>
+                {none ? "Delete" : `Delete (${selected.length})`}
               </button>
             </div>
           )}
-        </div>
-      )}
+      </div>
 
       <div style={{ overflowY: "auto", minHeight: 0, flex: 1 }}>
         {isLoading ? (

@@ -149,6 +149,27 @@ test.describe('the prompt library side panel', () => {
     await expect(panel.getByRole('button', { name: 'Add 2 to plan' })).toHaveCount(0)
   })
 
+  // The user's ruling, 2026-11-07: the selection's actions have a slot that is always
+  // there, so the tree does not move under the pointer on the first tick or last untick.
+  test('ticking the first prompt and unticking the last leave the tree where it was', async ({ page, request }) => {
+    const ds = await createDatasetViaApi(request, `e2e-lib-slot-${stamp}`)
+    await createPlanViaApi(request, ds.id, 'slot plan')
+    await seedLibrary(request, `${prefix}/slot`, [`a heron at dawn ${stamp}`])
+
+    const panel = await openLibrary(page, ds.id)
+    const card = panel.getByTestId('comfy-lib-prompt').filter({ hasText: `a heron at dawn ${stamp}` })
+    await expect(card).toHaveCount(1)
+    await expect(panel.getByTestId('comfy-library-selection')).toContainText('Tick prompts')
+    const y = async () => (await card.boundingBox())!.y
+    const before = await y()
+    await card.getByRole('checkbox', { name: 'Select prompt' }).check()
+    await expect(panel.getByTestId('comfy-library-selection')).toContainText('1 selected')
+    expect(await y()).toBe(before)
+    await card.getByRole('checkbox', { name: 'Select prompt' }).uncheck()
+    await expect(panel.getByTestId('comfy-library-selection')).toContainText('Tick prompts')
+    expect(await y()).toBe(before)
+  })
+
   test('renaming a category into an existing one merges them', async ({ page, request }) => {
     const ds = await createDatasetViaApi(request, `e2e-lib-rename-${stamp}`)
     await createPlanViaApi(request, ds.id, 'rename plan')
@@ -238,7 +259,8 @@ test.describe('library button routes', () => {
     await panel.getByRole('button', { name: `Category actions for ${prefix}/studio` }).click()
     await page.getByRole('menuitem', { name: 'Delete…' }).click()
     await expect(page.getByText(/and its 3 prompts/)).toBeVisible()
-    await page.getByRole('button', { name: 'Delete', exact: true }).click()
+    // Scoped to the dialog: the panel's selection slot has a (disabled) Delete of its own.
+    await page.getByRole('dialog').getByRole('button', { name: 'Delete', exact: true }).click()
 
     await expect.poll(() => placed(request)).toEqual([])
   })

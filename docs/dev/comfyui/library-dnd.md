@@ -41,7 +41,12 @@ it was filling, and moving prompts between plans was buried in it.
   card, or a folded category above it, drops it from what *Add*, *Move to…*, *Delete* and a
   drag act on: the page's rule that nothing acts on what the user cannot see. Ids a refetch
   removed fall away the same way, without an effect. *Select all / Select none* over the
-  cards on show sits above the list, as on the Other plans tab. *Add n to plan* files the rows through `rows/bulk` in the folder its
+  cards on show sits above the list, as on the Other plans tab. The selection's actions sit
+  in a slot that is always there (`comfy-library-selection`), disabled under a hint while
+  nothing is ticked, so the tree never moves under the pointer on the first tick or the last
+  untick: the user's ruling on 2026-11-07, the rows bar's of 2026-11-05 applied to the panel.
+  The real controls render either way, so its height is the same by construction rather
+  than a measured constant. *Add n to plan* files the rows through `rows/bulk` in the folder its
   select names, which defaults to the folder in view and follows it as the tree selection
   changes. It is disabled while the plan has no prompt pin. *Move to…* takes a typed or listed
   category path. *Delete* asks first.

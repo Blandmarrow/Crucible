@@ -67,7 +67,7 @@ A single library shared across every dataset and plan, so a set of prompts writt
 - **Categories nest.** Write a category as a path, like `portraits/studio`, and it shows as a tree: `portraits` with `studio` inside it. Each category shows how many prompts it and its subcategories hold. Fold a category with its arrow.
 - **Search** the box at the top to find prompts by their text or their category.
 - **Edit a prompt** with its ✎. A prompt that is already in that category is refused.
-- **Tick prompts** to act on them:
+- **Tick prompts** to act on them. The buttons stay above the list, greyed out until something is ticked, so the list never jumps when you tick or untick:
   - **Add to plan** puts them in the current plan as new rows, in the folder you choose. It starts on the folder you have picked in the folder list.
   - **Move to…** files them under another category. A prompt already in that category is merged into it rather than stored twice.
   - **Delete** removes them from the library.

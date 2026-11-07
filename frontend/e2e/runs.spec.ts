@@ -334,3 +334,40 @@ test('a run stopped by its image cap carries on once the cap is raised', async (
   expect(runs[0].recipe.loop.max_images).toBe(2)
   expect(runs[0].can_extend).toBe(false)
 })
+
+// Box test, 2026-11-07: the page polled only while its own last fetch held a running
+// run, so a run started anywhere else stayed invisible until the page was reopened. It
+// now refetches whenever a job of its dataset changes status.
+test('a run started elsewhere shows up on an open Runs page without a reload', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-run-elsewhere-${Date.now()}`)
+  let r = await request.post('/api/v1/comfy/plans', {
+    data: {
+      dataset_id: ds.id, name: 'elsewhere plan', workflow_json: WORKFLOW,
+      pinned_params: [{ node_id: '6', input: 'text', alias: 'prompt', is_prompt: true }],
+      output_node_ids: ['9'],
+    },
+  })
+  expect(r.status(), await r.text()).toBe(200)
+  const plan = await r.json()
+  r = await request.put(`/api/v1/comfy/plans/${plan.id}/blueprint`, { data: { spec: SPEC, seed: 3 } })
+  expect(r.status(), await r.text()).toBe(200)
+
+  await page.goto(`/datasets/${ds.id}/runs`)
+  await expect(page.getByText('This plan has a blueprint', { exact: false })).toBeVisible()
+
+  // Started over the API, as another tab or device would: the page's own Start is not used.
+  r = await request.post('/api/v1/runs/', {
+    data: {
+      dataset_id: ds.id, plan_id: plan.id, name: 'started elsewhere',
+      recipe: {
+        stages: ['prompts', 'generate'], score: { run_aesthetic: false, aesthetic_model: 'laion' },
+        generate: { subfolder: '', set_caption: true }, caption: null, export: null,
+      },
+    },
+  })
+  expect(r.status(), await r.text()).toBe(200)
+
+  const history = page.locator('.panel', { hasText: 'Past runs' })
+  await expect(history.getByText('started elsewhere')).toBeVisible({ timeout: 30_000 })
+  await expect(history.getByText('completed', { exact: true })).toBeVisible({ timeout: 30_000 })
+})

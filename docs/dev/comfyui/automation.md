@@ -142,6 +142,15 @@ check. The order is always run lock, then dataset or plan lock, never the revers
   with its summary, and a run with no stage left is `completed` rather than paused. A
   completed child that failed every item (`_every_item_failed`) is recorded `failed`
   instead, and the run ends `failed`, as `advance_run` would have ended it.
+  **A crash costs one render** (measured on the box, 2026-11-07). A clean stop removes our
+  prompt from ComfyUI as the cancelled generate job ends, so nothing runs twice. A hard kill
+  runs no shutdown code: ComfyUI finishes the in-flight prompt on its own, its output is
+  never imported, and Resume renders that row again. No image is imported twice.
+- **Cancel from `TopBar`** (`DELETE /jobs/{id}` on a child, not the run) fails the stage and
+  the run with "… cancelled outside the run", and Resume re-runs the stage. On a child still
+  queued behind another job the hook fires only when the worker reaches it (the
+  cancelled-while-queued branch above), so until then the run reads `running` with a
+  cancelled child: never stuck, but it can look live for as long as the job ahead runs.
 - **Delete** (`DELETE /runs/{id}`) refuses a live run with a 409.
 
 ## Testing

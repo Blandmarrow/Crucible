@@ -161,6 +161,41 @@ test('while a run is live, the rail Delete and the bar Delete are off, and come 
   await expect(page.getByRole('menuitem', { name: 'Delete…' })).not.toHaveAttribute('aria-disabled', 'true')
 })
 
+// The user's ruling, 2026-11-07: a menu whose entries are all disabled (a folder's while
+// its plan runs) still takes focus, so the arrows move and each entry's reason is reachable.
+test('a folder menu that is all disabled during a run is still navigable from the keyboard', async ({ page, request }) => {
+  test.setTimeout(120_000)
+  const ds = await createDatasetViaApi(request, `e2e-comfy-menukeys-${Date.now()}`)
+  const plan = await createPlanViaApi(request, ds.id, 'menu keys plan')
+  const added = await request.post(`/api/v1/comfy/plans/${plan.id}/rows/bulk`, {
+    data: { lines: Array.from({ length: 8 }, (_, i) => `fen row ${i}`), subfolder: 'fen' },
+  })
+  expect(added.status(), await added.text()).toBe(200)
+
+  await page.goto(`/datasets/${ds.id}/comfy`)
+  await page.getByRole('button', { name: 'Run pending (8)' }).click()
+  const more = page.getByTestId('comfy-folder-tree').getByRole('button', { name: 'Folder actions for fen' })
+  // Wait for the lock, so the menu opens with every entry disabled.
+  await more.click()
+  await expect(page.getByRole('menuitem', { name: 'Rename…' })).toHaveAttribute('aria-disabled', 'true')
+  await page.keyboard.press('Escape')
+  await expect(more).toBeFocused()
+
+  await page.keyboard.press('Enter')
+  const items = page.getByRole('menuitem')
+  await expect(items.first()).toBeFocused()
+  await expect(items.first()).toHaveAttribute('aria-disabled', 'true')
+  await page.keyboard.press('ArrowDown')
+  await expect(items.nth(1)).toBeFocused()
+  await page.keyboard.press('End')
+  await expect(items.last()).toBeFocused()
+  // Enter on a disabled entry does nothing: the menu stays open.
+  await page.keyboard.press('Enter')
+  await expect(page.getByRole('menu')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(more).toBeFocused()
+})
+
 // M6 §8d: Run selected moved out of the sticky run bar into the selection bar.
 test('Run selected in the selection bar runs only the ticked rows', async ({ page, request }) => {
   const ds = await createDatasetViaApi(request, `e2e-comfy-runsel-${Date.now()}`)

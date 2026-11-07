@@ -47,6 +47,23 @@ export default function RunsPage() {
     refetchInterval: (q) => ((q.state.data ?? []).some((r) => r.status === "running") ? 1500 : false),
   });
 
+  // The poll only runs while this list's last fetch held a running run, so a run started
+  // or stepped anywhere else (another tab or device, the API, another pane) stayed
+  // invisible here, its cancel or failure too, until the page was left and reopened (box
+  // test, 2026-11-07). Every stage of a run is a job of this dataset, so refetch the list
+  // whenever one of this dataset's jobs starts, ends or changes status. The key holds
+  // statuses only, so progress ticks do not refetch.
+  const datasetJobsKey = useJobStore((s) => {
+    let key = "";
+    for (const j of s.activeJobs.values()) {
+      if (j.dataset_id === datasetId) key += `${j.job_id}:${j.status};`;
+    }
+    return key;
+  });
+  useEffect(() => {
+    if (datasetId && datasetJobsKey) qc.invalidateQueries({ queryKey: ["runs", datasetId] });
+  }, [datasetJobsKey, datasetId, qc]);
+
   const active = runs.find(isLiveRun) ?? null;
   const history = runs.filter((r) => !isLiveRun(r));
   // "Use these settings" on a past run: handed to the start form, which clears it once

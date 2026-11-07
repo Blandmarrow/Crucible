@@ -96,7 +96,12 @@ dataset, so a dataset switch shows that dataset's own; a `prevDatasetId` effect,
   progress through `useJobSSE(current_job_id)`, and Pause, Resume and Cancel.
 - The run list refetches every 1.5 s while a run is `running`, and again on the child's
   terminal event, which also invalidates the dataset's images, subfolders and the plan's
-  rows. The children keep their own job types, so `TopBar`'s `LIVE_IMAGE_JOB_TYPES` and
+  rows. **It also refetches whenever any job of its dataset changes status**, read from the
+  global job store (a key of job ids and statuses, so progress ticks do not count). The
+  poll alone keys off the list's own last fetch, so a run started or stepped elsewhere —
+  another tab or device, the API, another pane — stayed invisible, its TopBar cancel too,
+  until the page was reopened (found on the box, 2026-11-07; `runs.spec.ts` "a run started
+  elsewhere shows up on an open Runs page without a reload"). The children keep their own job types, so `TopBar`'s `LIVE_IMAGE_JOB_TYPES` and
   `IMAGE_MODIFYING_JOB_TYPES` fire their usual invalidations; `run_handoff` needs no entry.
 - Past runs are listed below, with Resume for a failed one, Delete, **Use these
   settings**, and **Raise caps and continue** where `RunOut.can_extend`

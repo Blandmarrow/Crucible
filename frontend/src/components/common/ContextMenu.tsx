@@ -24,6 +24,7 @@ export interface ContextMenuProps {
 
 const EDGE_PAD = 8;
 
+const ITEMS = '[role="menuitem"]';
 const ENABLED_ITEMS = '[role="menuitem"]:not([aria-disabled="true"])';
 
 function focusOpener(opener: HTMLElement | null) {
@@ -61,8 +62,11 @@ function swallowNextClick(opener: HTMLElement) {
  * this component's answer to the "never hand-roll Escape" rule — one implementation,
  * not one per call site.
  *
- * Keyboard: the first enabled entry takes focus on open; Arrow Up/Down, Home and End
- * move between enabled entries (an `aria-disabled` one is skipped). The element that had
+ * Keyboard: the first enabled entry takes focus on open, or the first entry when none is
+ * enabled; Arrow Up/Down, Home and End move over every entry. A disabled one stays
+ * focusable but inert, the ARIA menu pattern: skipping it left a menu whose entries were
+ * all disabled (a folder's during a run) with nothing to focus, so the arrows were dead
+ * and no reason was reachable (the user's ruling, 2026-11-07). The element that had
  * focus when the menu opened is the "opener": Escape, and choosing an entry, hand focus
  * back to it right after the entry's `onClick` returns, in the same handler, so before
  * any dialog that entry opens renders: the dialog then records a live element to return to (`useModalBehavior` captures `document.activeElement` while
@@ -103,9 +107,11 @@ export default function ContextMenu({ x, y, actions, onClose }: ContextMenuProps
 
   const returnFocus = () => focusOpener(opener);
 
-  // Focus the first enabled entry on open.
+  // Focus the first enabled entry on open, or the first entry when every one is disabled.
   useEffect(() => {
-    ref.current?.querySelector<HTMLElement>(ENABLED_ITEMS)?.focus({ preventScroll: true });
+    const el = ref.current;
+    (el?.querySelector<HTMLElement>(ENABLED_ITEMS) ?? el?.querySelector<HTMLElement>(ITEMS))
+      ?.focus({ preventScroll: true });
   }, []);
 
   useEffect(() => {
@@ -128,7 +134,7 @@ export default function ContextMenu({ x, y, actions, onClose }: ContextMenuProps
         return;
       }
       if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key) || !ref.current) return;
-      const items = Array.from(ref.current.querySelectorAll<HTMLElement>(ENABLED_ITEMS));
+      const items = Array.from(ref.current.querySelectorAll<HTMLElement>(ITEMS));
       if (items.length === 0) return;
       e.preventDefault();
       e.stopPropagation();

@@ -64,9 +64,13 @@ async def _image_count(env) -> int:
 
 
 def _assert_refused(job: dict, *, done_key: str = "processed") -> None:
+    """Refused, and the reason kept once the live `Failed:` message is gone —
+    every job here writes `failed_count` and `failure_summary` (follow-up 8)."""
     assert job["status"] == "completed", job
     rd = job["result_data"]
     assert rd[done_key] == 0 and rd["failed"] == 1, rd
+    assert rd["failed_count"] == 1, rd
+    assert REASON in rd["failure_summary"], rd
 
 
 # ── The jobs ──────────────────────────────────────────────────────────────────

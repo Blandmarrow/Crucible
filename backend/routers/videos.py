@@ -39,6 +39,7 @@ from backend.services.duplicate_service import prune_orphaned_duplicate_flags
 from backend.services.image_service import generate_thumbnail, get_image_info
 from backend.services.video_frames import clamp_crop
 from backend.services.video_service import claimed_poster_stems, generate_poster, measure_duration_ms
+from backend.job_outcome import failure_summary, note_failure
 from backend.utils import (
     OUT_OF_TREE_MSG,
     FileInUseError,
@@ -1805,6 +1806,8 @@ async def _run_reextraction(session: AsyncSession, job_id: str, cfg: dict) -> No
     consecutive_failures = 0
     written_since_disk_check = 0
     cancelled = False
+    # The reason for each failed frame, kept past the live message and the log.
+    failures: list[dict] = []
 
     for i, img in enumerate(rows):
         if job_queue.cancel_requested(job_id):
@@ -1820,6 +1823,8 @@ async def _run_reextraction(session: AsyncSession, job_id: str, cfg: dict) -> No
         else:
             kind, reason, is_fault = outcome
             counts["failed" if kind == "failed" else "skipped_edited"] += 1
+            if kind == "failed":
+                note_failure(failures, img.filename, reason)
             # A refusal that says nothing about the video's readability must not
             # feed the breaker, or one squatting file per frame aborts the run.
             if is_fault:
@@ -1859,7 +1864,12 @@ async def _run_reextraction(session: AsyncSession, job_id: str, cfg: dict) -> No
 
     job_row = await session.get(BackgroundJob, job_id)
     if job_row:
-        job_row.result_data = counts
+        job_row.result_data = {
+            **counts, "failed_count": counts["failed"],
+            "failure_summary": failure_summary(
+                counts["failed"], failures, action="could not be re-extracted"
+            ),
+        }
     await session.commit()
     if cancelled:
         # Everything already written stays: the files are real and their COW

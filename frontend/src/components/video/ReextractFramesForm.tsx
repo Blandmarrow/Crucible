@@ -42,7 +42,10 @@ function resultToast(result: Record<string, unknown>) {
   if (failed > 0) parts.push(`${failed} failed`);
   if (editedLate > 0) parts.push(`${editedLate} skipped (edited meanwhile)`);
   const msg = parts.join(", ");
-  if (failed > 0 || editedLate > 0) toast(msg, { icon: "⚠️" });
+  // Why frames failed outlives the live message only here (UpscaleForm's convention).
+  const summary = typeof result.failure_summary === "string" ? result.failure_summary : null;
+  if (failed > 0) toast(summary ? `${msg}. ${summary}` : msg, { icon: "⚠️", duration: 10000 });
+  else if (editedLate > 0) toast(msg, { icon: "⚠️" });
   else toast.success(msg);
   // The stale-scores note travels on `result_data` so it is said at the end as
   // well as before the run — a user who scrolled past it in the form still sees

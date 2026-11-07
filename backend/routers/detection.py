@@ -32,6 +32,7 @@ from backend.services.detection_service import remap_detections_for_crop
 from backend.services.image_scope import flag_exclusions, resolve_scope_ids, scope_query
 from backend.services.image_service import crop_image_to_dest, generate_thumbnail, temp_sibling
 from backend.services.label_service import copy_labels
+from backend.job_outcome import failure_summary, note_failure
 from backend.utils import (
     OUT_OF_TREE_MSG,
     chunked,
@@ -938,6 +939,8 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
                 "cropped": 0, "skipped_no_detection": 0, "skipped_noop": 0,
                 "failed": 0, "thumbnails_stale": 0,
             }
+            # The reason for each failure, kept past the live `Failed:` message.
+            failures: list[dict] = []
 
             # Occupied/planned thumbnail stems for the non-replace path, keyed by
             # thumbnail directory: matched images can span multiple datasets (each
@@ -1004,6 +1007,7 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
                     img.file_path, settings.datasets_dir, context="Detection crop", ident=img.id
                 ) is None:
                     counts["failed"] += 1
+                    note_failure(failures, img.filename, OUT_OF_TREE_MSG)
                     await broadcaster.emit(job_id, {
                         "type": "progress", "job_id": job_id, "job_type": "crop_to_detection",
                         "status": "running", "done": i + 1, "total": len(images),
@@ -1066,6 +1070,7 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
                             logger.warning("Detection crop: could not remove %s", tmp_path, exc_info=True)
                         logger.error("Detection crop failed for %s: %s", filename, exc)
                         counts["failed"] += 1
+                        note_failure(failures, filename, str(exc))
                         await broadcaster.emit(job_id, {
                             "type": "progress", "job_id": job_id, "job_type": "crop_to_detection",
                             "status": "running", "done": i + 1, "total": len(images),
@@ -1144,6 +1149,7 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
                     except Exception as exc:
                         logger.error("Detection crop failed for %s: %s", img.filename, exc)
                         counts["failed"] += 1
+                        note_failure(failures, img.filename, str(exc))
                         await broadcaster.emit(job_id, {
                             "type": "progress", "job_id": job_id, "job_type": "crop_to_detection",
                             "status": "running", "done": i + 1, "total": len(images),
@@ -1189,7 +1195,12 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
 
             job_row = await session.get(BackgroundJob, job_id)
             if job_row:
-                job_row.result_data = counts
+                job_row.result_data = {
+                    **counts, "failed_count": counts["failed"],
+                    "failure_summary": failure_summary(
+                        counts["failed"], failures, action="could not be cropped"
+                    ),
+                }
             await session.commit()
 
             # Both modes moved `total_size_bytes` (a replace rewrote the file,

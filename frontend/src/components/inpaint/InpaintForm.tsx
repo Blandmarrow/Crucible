@@ -52,7 +52,10 @@ function resultToast(result: Record<string, unknown>) {
   // Deliberately silent about `thumbnails_stale`: TopBar owns that warning for
   // every job type, and repeating it here double-toasts.
   const msg = parts.join(", ");
-  failed > 0 ? toast(msg, { icon: "⚠️" }) : toast.success(msg);
+  // Why it failed outlives the live message only here (UpscaleForm's convention).
+  const summary = typeof result.failure_summary === "string" ? result.failure_summary : null;
+  if (failed > 0) toast(summary ? `${msg}. ${summary}` : msg, { icon: "⚠️", duration: 10000 });
+  else toast.success(msg);
 }
 
 export default function InpaintForm({ datasetId, imageIds, selectionDatasetIds, subfolder, qualityFlags, availableLabels, disabled, onSuccess, onCancel, onRunningChange }: Props) {

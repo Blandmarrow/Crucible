@@ -79,6 +79,7 @@ def test_batch_resize_commits_geometry_and_history_per_image(tmp_path):
             assert job["status"] == "completed", job
             assert job["result_data"] == {
                 "processed": 2, "skipped": 0, "failed": 0, "thumbnails_stale": 0,
+                "failed_count": 0, "failure_summary": None,
             }
             # A single-dataset selection names its dataset on the job row, and the
             # label is descriptive rather than the old static "Batch resize".
@@ -195,6 +196,8 @@ def test_one_failed_image_does_not_roll_back_its_predecessors(tmp_path):
             assert job["status"] == "completed", job
             assert job["result_data"] == {
                 "processed": 1, "skipped": 0, "failed": 1, "thumbnails_stale": 0,
+                "failed_count": 1,
+                "failure_summary": "1 file(s) could not be resized: b.png (decode failed)",
             }
 
             rows = await _rows(env, ds["id"])

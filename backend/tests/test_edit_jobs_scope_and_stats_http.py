@@ -557,3 +557,48 @@ def test_detection_crop_refreshes_stats_when_it_fails_partway(tmp_path, monkeypa
             await _assert_refreshed_after_failure(env, ds["id"], job, before)
 
     run(scenario())
+
+
+# Follow-up 11: a dataset joins `touched` *before* the replace's commit. After
+# it, a cancel landing between the two left a committed replace out of the
+# abort refresh. Detection crop had the widest window — its add sat after the
+# whole thumbnail epilogue — so it is the one with a seam to test; elsewhere
+# only the commit itself lay between them.
+
+def test_detection_crop_counts_a_replace_cancelled_in_its_epilogue(tmp_path, monkeypatch):
+    import asyncio
+
+    import backend.routers.detection as detection_router
+
+    real = detection_router.contained_path
+
+    def cancel_at_the_thumbnail(path, root, *, context, **kwargs):
+        if context == "Detection crop thumbnail":
+            raise asyncio.CancelledError()
+        return real(path, root, context=context, **kwargs)
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            a = await upload_image(env, ds["id"], "a.png", png_bytes(size=(40, 20)))
+            async with env.Session() as db:
+                db.add(Detection(
+                    image_id=a["id"], label="face", bbox=[0.25, 0.25, 0.75, 0.75],
+                    score=0.9, model="test", task="detect",
+                ))
+                await db.commit()
+            before = await _stored_stats(env, ds["id"])
+            monkeypatch.setattr(detection_router, "contained_path", cancel_at_the_thumbnail)
+
+            r = await env.client.post(f"{API}/detection/crop", json={
+                "dataset_id": ds["id"], "image_ids": [a["id"]], "replace": True,
+            })
+            assert r.status_code == 200, r.text
+            job = await wait_for_job(env, r.json()["job_id"])
+
+            assert job["status"] == "cancelled", job
+            after = await _stored_stats(env, ds["id"])
+            assert after == await _true_stats(env, ds["id"])
+            assert after[1] != before[1], "the replace committed, so the size moved"
+
+    run(scenario())

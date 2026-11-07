@@ -484,8 +484,10 @@ async def run_inpaint(body: InpaintRunRequest, db: AsyncSession = Depends(get_db
                     # Nothing fallible between the (already-done) overwrite and this
                     # commit — a raise before here would roll back the row of every
                     # image the loop has already overwritten on disk (PM-013).
-                    await session.commit()
+                    # `touched` first, so a hard cancel landing in the commit
+                    # still refreshes; early is harmless.
                     touched.add(img.dataset_id)
+                    await session.commit()
 
                     # --- epilogue: best-effort, cannot undo the paint ---
                     # `expire_on_commit=False` (backend/database.py) keeps `img`
@@ -554,11 +556,11 @@ async def run_inpaint(body: InpaintRunRequest, db: AsyncSession = Depends(get_db
                     # session and this one rolls back **every** uncommitted
                     # derivative row while their `_nowm` files stay on disk.
                     session.add(new_img)
+                    touched.add(img.dataset_id)  # before the commit, as above
                     await session.commit()
                     # `expire_on_commit=False` (backend/database.py), so the id is
                     # readable after the commit without a refresh.
                     derivative_ids[img.id] = new_img.id
-                    touched.add(img.dataset_id)
                     last_image_id = new_img.id
                     try:
                         await loop.run_in_executor(

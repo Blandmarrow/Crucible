@@ -306,9 +306,11 @@ async def _edit_loop(
                 record_in_place(img, spec.history_op, **spec.history_params)
                 # Nothing fallible between the (already-done) overwrite and
                 # this commit — a raise before here would roll the row back
-                # onto a file that no longer exists (PM-013).
-                await session.commit()
+                # onto a file that no longer exists (PM-013). `touched` first,
+                # so a hard cancel landing in the commit still refreshes; early
+                # is harmless, since an unchanged dataset refreshes the same.
                 touched.add(img.dataset_id)
+                await session.commit()
 
                 # --- epilogue: best-effort, cannot undo the edit ---
                 # `expire_on_commit=False` (backend/database.py) keeps `img`

@@ -1422,9 +1422,10 @@ async def batch_resize(body: BatchResizeRequest, db: AsyncSession = Depends(get_
                 # Per image, with only the commit after the swap. The commit used
                 # to sit outside the loop, so a raise on image N rolled back the
                 # geometry and processing_history of images 1..N — every one of
-                # them already rewritten on disk (PM-013).
-                await session.commit()
+                # them already rewritten on disk (PM-013). `touched` before the
+                # commit, so a hard cancel landing in it still refreshes.
                 touched.add(img.dataset_id)
+                await session.commit()
 
                 # --- epilogue: best-effort, cannot undo the resize ---
                 # `expire_on_commit=False` (backend/database.py) keeps `img`
@@ -1560,8 +1561,8 @@ async def batch_crop(body: BatchCropRequest, db: AsyncSession = Depends(get_db))
                         "message": f"Failed: {exc}",
                     })
                     continue
+                touched.add(img.dataset_id)  # before the commit, as in resize
                 await session.commit()
-                touched.add(img.dataset_id)
 
                 # --- epilogue: best-effort, cannot undo the crop ---
                 thumb_target = _in_tree_thumbnail(img, "Batch crop thumbnail")

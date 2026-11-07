@@ -1446,7 +1446,16 @@ async def refresh_stats_after_abort(dataset_ids, *, context: str) -> None:
     tail refresh never ran. A fresh session, since the job's may be mid-failure;
     best-effort per dataset, so it never masks the exception the caller re-raises.
     `AsyncSessionLocal` is imported here, not at module level, so a test's patch
-    of `backend.database` reaches it (`videos._run_with_stats` does the same)."""
+    of `backend.database` reaches it (`videos._run_with_stats` does the same).
+
+    Callers add a dataset to their set *before* the commit that changes it, so a
+    hard cancel landing in that commit still refreshes it.
+
+    On shutdown this runs inside `JobQueue.stop()`'s `STOP_UNWIND_SECONDS`, before
+    `_run_item` can record the job as interrupted. A refresh held past that window
+    (a SQLite lock) gets the worker abandoned, and the row reads `running` until
+    the next startup's `mark_interrupted_jobs` writes the same `failed`. Accepted:
+    a timeout here would trade that delayed status for a missed refresh."""
     from backend.database import AsyncSessionLocal
 
     for ds_id in dataset_ids:

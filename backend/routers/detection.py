@@ -1076,6 +1076,11 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
                         continue
                     # Per image: committing after the loop would let one raise
                     # roll back the rows of every image already swapped on disk.
+                    # `touched_datasets` first: a cancel landing in the commit or
+                    # the epilogue below would otherwise leave a committed replace
+                    # out of `_run_with_stats`' refresh. Early is harmless — an
+                    # unchanged dataset refreshes to the same numbers.
+                    touched_datasets.add(img.dataset_id)
                     await session.commit()
 
                     # --- epilogue: best-effort, cannot undo the crop ---
@@ -1168,9 +1173,9 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
                     await session.flush()
                     derivative_ids[img.id] = new_img.id
                     last_image_id = new_img.id
+                    touched_datasets.add(img.dataset_id)
 
                 counts["cropped"] += 1
-                touched_datasets.add(img.dataset_id)
                 await broadcaster.emit(job_id, {
                     "type": "progress", "job_id": job_id, "job_type": "crop_to_detection",
                     "status": "running", "done": i + 1, "total": len(images),

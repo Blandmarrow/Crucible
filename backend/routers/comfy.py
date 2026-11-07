@@ -1995,8 +1995,11 @@ async def bulk_edit_rows(plan_id: str, body: RowsBulkEditRequest, db: AsyncSessi
 
     stmt = select(ComfyRow).where(ComfyRow.plan_id == plan_id)
     if body.row_ids is not None:
-        stmt = stmt.where(ComfyRow.id.in_(body.row_ids))
-    rows = (await db.execute(stmt)).scalars().all()
+        rows = []
+        for chunk in chunked(list(dict.fromkeys(body.row_ids))):
+            rows.extend((await db.execute(stmt.where(ComfyRow.id.in_(chunk)))).scalars().all())
+    else:
+        rows = (await db.execute(stmt)).scalars().all()
 
     if body.use_regex:
         try:
@@ -2059,8 +2062,11 @@ async def reset_rows(plan_id: str, body: RowResetRequest, db: AsyncSession = Dep
     await _get_plan(db, plan_id)
     stmt = select(ComfyRow).where(ComfyRow.plan_id == plan_id, ComfyRow.status == "failed")
     if body.row_ids:
-        stmt = stmt.where(ComfyRow.id.in_(body.row_ids))
-    rows = (await db.execute(stmt)).scalars().all()
+        rows = []
+        for chunk in chunked(list(dict.fromkeys(body.row_ids))):
+            rows.extend((await db.execute(stmt.where(ComfyRow.id.in_(chunk)))).scalars().all())
+    else:
+        rows = (await db.execute(stmt)).scalars().all()
     for r in rows:
         r.status = "pending"
         r.error_msg = None
@@ -2683,10 +2689,16 @@ async def _start_run(
             raise HTTPException(409, "A prompt rewrite for this plan is queued or running — wait for it to finish")
 
         if body.row_ids:
-            stmt = select(ComfyRow).where(ComfyRow.plan_id == body.plan_id, ComfyRow.id.in_(body.row_ids))
+            # Chunked under SQLite's bind limit, then put back in the SQL order.
+            rows = []
+            for chunk in chunked(list(dict.fromkeys(body.row_ids))):
+                rows.extend((await db.execute(
+                    select(ComfyRow).where(ComfyRow.plan_id == body.plan_id, ComfyRow.id.in_(chunk))
+                )).scalars().all())
+            rows.sort(key=lambda r: (r.sort_order, r.created_at))
         else:
             stmt = select(ComfyRow).where(ComfyRow.plan_id == body.plan_id, ComfyRow.status == "pending")
-        rows = (await db.execute(stmt.order_by(ComfyRow.sort_order, ComfyRow.created_at))).scalars().all()
+            rows = (await db.execute(stmt.order_by(ComfyRow.sort_order, ComfyRow.created_at))).scalars().all()
         if not rows:
             raise HTTPException(400, "No rows to run")
         row_ids = [r.id for r in rows]
@@ -2739,13 +2751,12 @@ async def _start_run(
             pinned = plan_row.pinned_params or []
             output_node_ids = plan_row.output_node_ids or []
 
-            run_rows = (
-                await session.execute(
-                    select(ComfyRow)
-                    .where(ComfyRow.id.in_(row_ids))
-                    .order_by(ComfyRow.sort_order, ComfyRow.created_at)
-                )
-            ).scalars().all()
+            run_rows = []
+            for chunk in chunked(list(dict.fromkeys(row_ids))):
+                run_rows.extend((
+                    await session.execute(select(ComfyRow).where(ComfyRow.id.in_(chunk)))
+                ).scalars().all())
+            run_rows.sort(key=lambda r: (r.sort_order, r.created_at))
             total = len(run_rows)
 
             images_dir = Path(ds.folder_path) / "images"
@@ -3062,11 +3073,12 @@ async def _start_run(
                     try:
                         await session.refresh(ds)
                         await session.refresh(plan_row)
-                        await session.execute(
-                            select(ComfyRow)
-                            .where(ComfyRow.id.in_(row_ids))
-                            .execution_options(populate_existing=True)
-                        )
+                        for chunk in chunked(list(dict.fromkeys(row_ids))):
+                            await session.execute(
+                                select(ComfyRow)
+                                .where(ComfyRow.id.in_(chunk))
+                                .execution_options(populate_existing=True)
+                            )
                     except Exception:
                         logger.warning("comfy_generate: reload after rollback failed", exc_info=True)
                     failed_row_ids.append(row_id)

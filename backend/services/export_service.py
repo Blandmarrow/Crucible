@@ -585,9 +585,11 @@ async def _run_export_loop(
     """
     from backend.workers.progress import broadcaster
 
-    query = select(*_EXPORT_COLS).where(Image.dataset_id == dataset_id)
-    if image_ids:
-        query = query.where(Image.id.in_(image_ids))
+    # With explicit ids the statement runs once per chunk (SQLite caps bind
+    # parameters), so the ORDER BY below cannot span them: the ordering columns
+    # are selected too and the rows are sorted in Python.
+    cols = (*_EXPORT_COLS, Image.sort_order, Image.created_at) if image_ids else _EXPORT_COLS
+    query = select(*cols).where(Image.dataset_id == dataset_id)
     if subfolders is not None:
         query = query.where(Image.subfolder.in_(subfolders))
     # Like `subfolders`, the label filter **narrows the query** rather than
@@ -598,9 +600,15 @@ async def _run_export_loop(
     # drift into meaning different things.
     for clause in label_filter_clause(label_filter, label_match, label_missing):
         query = query.where(clause)
-    query = query.order_by(Image.sort_order.asc().nulls_last(), Image.created_at.asc())
-    result = await db.execute(query)
-    images = result.all()
+    if image_ids:
+        images = []
+        for chunk in chunked(list(dict.fromkeys(image_ids))):
+            images.extend((await db.execute(query.where(Image.id.in_(chunk)))).all())
+        # Same order as the SQL below: sort_order ascending with NULLs last, then created_at.
+        images.sort(key=lambda r: (r.sort_order is None, r.sort_order or 0, r.created_at))
+    else:
+        query = query.order_by(Image.sort_order.asc().nulls_last(), Image.created_at.asc())
+        images = (await db.execute(query)).all()
 
     export_masks = mask_dir is not None and not captions_only
 

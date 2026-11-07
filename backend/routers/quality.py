@@ -767,6 +767,14 @@ async def compute_style_similarity(
     return result
 
 
+async def _select_by_ids(db: AsyncSession, cols: tuple, ids) -> list:
+    """Rows for a client-supplied id list, chunked under SQLite's bind limit (deduped)."""
+    rows: list = []
+    for chunk in chunked(list(dict.fromkeys(ids))):
+        rows.extend((await db.execute(select(*cols).where(Image.id.in_(chunk)))).all())
+    return rows
+
+
 async def _score_style_similarity(body: StyleSimilarityRequest, db: AsyncSession) -> dict:
     from backend.ml.similarity_scorer import compute_style_similarity as _cosine_sim
     from backend.ml.similarity_scorer import (
@@ -777,11 +785,17 @@ async def _score_style_similarity(body: StyleSimilarityRequest, db: AsyncSession
 
     loop = asyncio.get_running_loop()
 
-    id_filter = (Image.id.in_(body.image_ids),) if body.image_ids else ()
-    total_count_result = await db.execute(
-        select(func.count(Image.id)).where(Image.dataset_id == body.dataset_id, *id_filter)
+    # Chunked under SQLite's bind limit; an empty list means the whole dataset.
+    id_filters = (
+        [(Image.id.in_(c),) for c in chunked(sorted(set(body.image_ids)))]
+        if body.image_ids else [()]
     )
-    total_images = total_count_result.scalar() or 0
+    total_images = 0
+    for id_filter in id_filters:
+        total_count_result = await db.execute(
+            select(func.count(Image.id)).where(Image.dataset_id == body.dataset_id, *id_filter)
+        )
+        total_images += total_count_result.scalar() or 0
 
     async def _score_all_layers_paginated(select_cols, extra_filters, score_chunk) -> int:
         """Keyset-paginate the candidate set and score each chunk off the event loop.
@@ -791,27 +805,28 @@ async def _score_style_similarity(body: StyleSimilarityRequest, db: AsyncSession
         are SQLAlchemy Rows whose first column is `Image.id`. Returns the number of
         rows updated. Used by both all-layers branches.
         """
-        last_id = ""
         total_updated = 0
-        while True:
-            chunk_rows = (await db.execute(
-                select(*select_cols)
-                .where(
-                    Image.dataset_id == body.dataset_id,
-                    *extra_filters,
-                    *id_filter,
-                    Image.id > last_id,
-                )
-                .order_by(Image.id)
-                .limit(2000)
-            )).all()
-            if not chunk_rows:
-                break
-            updates = await loop.run_in_executor(None, score_chunk, chunk_rows)
-            if updates:
-                await db.execute(update(Image), updates)
-                total_updated += len(updates)
-            last_id = chunk_rows[-1][0]
+        for id_filter in id_filters:
+            last_id = ""
+            while True:
+                chunk_rows = (await db.execute(
+                    select(*select_cols)
+                    .where(
+                        Image.dataset_id == body.dataset_id,
+                        *extra_filters,
+                        *id_filter,
+                        Image.id > last_id,
+                    )
+                    .order_by(Image.id)
+                    .limit(2000)
+                )).all()
+                if not chunk_rows:
+                    break
+                updates = await loop.run_in_executor(None, score_chunk, chunk_rows)
+                if updates:
+                    await db.execute(update(Image), updates)
+                    total_updated += len(updates)
+                last_id = chunk_rows[-1][0]
         if total_updated:
             await db.commit()
         return total_updated
@@ -821,18 +836,18 @@ async def _score_style_similarity(body: StyleSimilarityRequest, db: AsyncSession
         col = Image.clip_embedding
         ref_embs: list[bytes] = []
         if body.reference_image_ids:
-            ref_result = await db.execute(
-                select(Image.id, col).where(Image.id.in_(body.reference_image_ids))
-            )
-            ref_embs.extend(r[1] for r in ref_result.all() if r[1] is not None)
+            ref_rows_raw = await _select_by_ids(db, (Image.id, col), body.reference_image_ids)
+            ref_embs.extend(r[1] for r in ref_rows_raw if r[1] is not None)
         for b64 in body.reference_embeddings:
             ref_embs.append(base64.b64decode(b64))
         if not ref_embs:
             raise HTTPException(status_code=400, detail="No CLIP embeddings found for reference images. Run embedding extraction first, or upload local reference images.")
-        cand_result = await db.execute(
-            select(Image.id, col).where(Image.dataset_id == body.dataset_id, col.isnot(None), *id_filter)
-        )
-        cand_rows = [(r[0], r[1]) for r in cand_result.all()]
+        cand_rows = []
+        for id_filter in id_filters:
+            cand_result = await db.execute(
+                select(Image.id, col).where(Image.dataset_id == body.dataset_id, col.isnot(None), *id_filter)
+            )
+            cand_rows.extend((r[0], r[1]) for r in cand_result.all())
         if not cand_rows:
             raise HTTPException(status_code=400, detail="No CLIP embeddings found for dataset images. Run embedding extraction first.")
         scores = await loop.run_in_executor(None, _cosine_sim, ref_embs, [r[1] for r in cand_rows])
@@ -847,18 +862,18 @@ async def _score_style_similarity(body: StyleSimilarityRequest, db: AsyncSession
             col = Image.dino_embedding
             ref_embs = []
             if body.reference_image_ids:
-                ref_result = await db.execute(
-                    select(Image.id, col).where(Image.id.in_(body.reference_image_ids))
-                )
-                ref_embs.extend(r[1] for r in ref_result.all() if r[1] is not None)
+                ref_rows_raw = await _select_by_ids(db, (Image.id, col), body.reference_image_ids)
+                ref_embs.extend(r[1] for r in ref_rows_raw if r[1] is not None)
             for b64 in body.reference_embeddings:
                 ref_embs.append(base64.b64decode(b64))
             if not ref_embs:
                 raise HTTPException(status_code=400, detail="No DINOv2 embeddings found for reference images. Run embedding extraction first.")
-            cand_result = await db.execute(
-                select(Image.id, col).where(Image.dataset_id == body.dataset_id, col.isnot(None), *id_filter)
-            )
-            cand_rows = [(r[0], r[1]) for r in cand_result.all()]
+            cand_rows = []
+            for id_filter in id_filters:
+                cand_result = await db.execute(
+                    select(Image.id, col).where(Image.dataset_id == body.dataset_id, col.isnot(None), *id_filter)
+                )
+                cand_rows.extend((r[0], r[1]) for r in cand_result.all())
             if not cand_rows:
                 raise HTTPException(status_code=400, detail="No DINOv2 embeddings found for dataset images. Run embedding extraction first.")
             scores = await loop.run_in_executor(None, _cosine_sim, ref_embs, [r[1] for r in cand_rows])
@@ -873,21 +888,21 @@ async def _score_style_similarity(body: StyleSimilarityRequest, db: AsyncSession
             col = Image.dino_layer_embeddings
             ref_embs = []
             if body.reference_image_ids:
-                ref_result = await db.execute(
-                    select(Image.id, col).where(Image.id.in_(body.reference_image_ids))
-                )
+                ref_rows_raw = await _select_by_ids(db, (Image.id, col), body.reference_image_ids)
                 ref_embs.extend(
                     slice_layer_embedding(r[1], layer)
-                    for r in ref_result.all() if r[1] is not None
+                    for r in ref_rows_raw if r[1] is not None
                 )
             for b64 in body.reference_embeddings:
                 ref_embs.append(slice_layer_embedding(base64.b64decode(b64), layer))
             if not ref_embs:
                 raise HTTPException(status_code=400, detail="No per-layer DINOv2 embeddings found for reference images. Run per-layer embedding extraction first.")
-            cand_result = await db.execute(
-                select(Image.id, col).where(Image.dataset_id == body.dataset_id, col.isnot(None), *id_filter)
-            )
-            cand_rows_raw = [(r[0], r[1]) for r in cand_result.all()]
+            cand_rows_raw = []
+            for id_filter in id_filters:
+                cand_result = await db.execute(
+                    select(Image.id, col).where(Image.dataset_id == body.dataset_id, col.isnot(None), *id_filter)
+                )
+                cand_rows_raw.extend((r[0], r[1]) for r in cand_result.all())
             cand_rows = [(img_id, slice_layer_embedding(blob, layer)) for img_id, blob in cand_rows_raw]
             if not cand_rows:
                 raise HTTPException(status_code=400, detail="No per-layer DINOv2 embeddings found for dataset images. Run per-layer embedding extraction first.")
@@ -909,17 +924,15 @@ async def _score_style_similarity(body: StyleSimilarityRequest, db: AsyncSession
         # Fetch refs — always need clip; dino column depends on mode
         if body.reference_image_ids:
             if use_layer_col:
-                ref_result = await db.execute(
-                    select(Image.id, Image.clip_embedding, Image.dino_layer_embeddings)
-                    .where(Image.id.in_(body.reference_image_ids))
+                ref_result = await _select_by_ids(
+                    db, (Image.id, Image.clip_embedding, Image.dino_layer_embeddings), body.reference_image_ids
                 )
-                ref_rows = [(r[0], r[1], r[2]) for r in ref_result.all() if r[1] is not None and r[2] is not None]
+                ref_rows = [(r[0], r[1], r[2]) for r in ref_result if r[1] is not None and r[2] is not None]
             else:
-                ref_result = await db.execute(
-                    select(Image.id, Image.clip_embedding, Image.dino_embedding)
-                    .where(Image.id.in_(body.reference_image_ids))
+                ref_result = await _select_by_ids(
+                    db, (Image.id, Image.clip_embedding, Image.dino_embedding), body.reference_image_ids
                 )
-                ref_rows = [(r[0], r[1], r[2]) for r in ref_result.all() if r[1] is not None and r[2] is not None]
+                ref_rows = [(r[0], r[1], r[2]) for r in ref_result if r[1] is not None and r[2] is not None]
         else:
             ref_rows = []
         if not ref_rows:
@@ -983,27 +996,19 @@ async def _score_style_similarity(body: StyleSimilarityRequest, db: AsyncSession
                     "clip_weight": STYLE_CLIP_WEIGHT, "dino_weight": STYLE_DINO_WEIGHT}
 
         # Single layer or final layer combined score
-        if use_layer_col:
+        dino_cand_col = Image.dino_layer_embeddings if use_layer_col else Image.dino_embedding
+        cand_rows_full = []
+        for id_filter in id_filters:
             cand_result = await db.execute(
-                select(Image.id, Image.clip_embedding, Image.dino_layer_embeddings)
+                select(Image.id, Image.clip_embedding, dino_cand_col)
                 .where(
                     Image.dataset_id == body.dataset_id,
                     Image.clip_embedding.isnot(None),
-                    Image.dino_layer_embeddings.isnot(None),
+                    dino_cand_col.isnot(None),
                     *id_filter,
                 )
             )
-        else:
-            cand_result = await db.execute(
-                select(Image.id, Image.clip_embedding, Image.dino_embedding)
-                .where(
-                    Image.dataset_id == body.dataset_id,
-                    Image.clip_embedding.isnot(None),
-                    Image.dino_embedding.isnot(None),
-                    *id_filter,
-                )
-            )
-        cand_rows_full = [(r[0], r[1], r[2]) for r in cand_result.all()]
+            cand_rows_full.extend((r[0], r[1], r[2]) for r in cand_result.all())
         if not cand_rows_full:
             detail = (
                 "No dataset images have both CLIP and per-layer DINOv2 embeddings. Run per-layer embedding extraction first."
@@ -1036,10 +1041,8 @@ async def _score_style_similarity(body: StyleSimilarityRequest, db: AsyncSession
         col = Image.dino_layer_embeddings
         ref_blobs: list[bytes] = []
         if body.reference_image_ids:
-            ref_result = await db.execute(
-                select(Image.id, col).where(Image.id.in_(body.reference_image_ids))
-            )
-            ref_blobs.extend(r[1] for r in ref_result.all() if r[1] is not None)
+            ref_rows_raw = await _select_by_ids(db, (Image.id, col), body.reference_image_ids)
+            ref_blobs.extend(r[1] for r in ref_rows_raw if r[1] is not None)
         if not ref_blobs:
             raise HTTPException(status_code=400, detail="No per-layer DINOv2 embeddings found for reference images. Run per-layer embedding extraction first.")
 

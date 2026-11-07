@@ -20,7 +20,7 @@ from backend.ml import tag_embedder
 from backend.ml.model_manager import model_manager
 from backend.models import Image
 from backend.services.caption_service import _write_txt_sidecar
-from backend.utils import normalize_subfolder, subsume_tags
+from backend.utils import chunked, normalize_subfolder, subsume_tags
 from backend.workers.progress import broadcaster
 
 logger = logging.getLogger(__name__)
@@ -189,12 +189,15 @@ async def subsume(
         Image.dataset_id == dataset_id,
         Image.caption_text != "",
     )
-    if image_ids is not None:
-        query = query.where(Image.id.in_(image_ids))
-    elif subfolder is not None:
+    if image_ids is None and subfolder is not None:
         query = query.where(Image.subfolder == normalize_subfolder(subfolder))
-    result = await db.execute(query)
-    images = result.scalars().all()
+    if image_ids is not None:
+        # An empty list selects nothing; a long one is chunked under SQLite's bind limit.
+        images = []
+        for chunk in chunked(list(dict.fromkeys(image_ids))):
+            images.extend((await db.execute(query.where(Image.id.in_(chunk)))).scalars().all())
+    else:
+        images = (await db.execute(query)).scalars().all()
 
     affected = 0
     skipped = 0

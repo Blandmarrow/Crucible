@@ -38,6 +38,8 @@ Per-caption subsumption cleanup (drop `tail` when `long tail` is present) is **n
 
 Five endpoints in `backend/routers/images.py` share a common `_apply_bulk_filters(query, image_ids, subfolder, quality_flags, include_flagged=False)` helper (module-level private function) that applies the triple filter — `image_ids` takes precedence over `subfolder`; `quality_flags` direction is controlled by `include_flagged`: when `False` (default) it excludes images where ANY flag is `True` (`AND IS NOT TRUE` per flag); when `True` it targets images where ANY flag is `True` (`OR IS TRUE` per flag). All of them accept a `BulkFilterBase`-derived schema (`backend/schemas/image.py`).
 
+**`image_ids` is capped, not chunked.** The helper returns a statement for each caller to finish, so it cannot loop over chunks itself. Instead it dedupes `image_ids` and answers **422** above `SELECT_ALL_ID_CAP` (20,000, read at call time so tests can patch it), which keeps its one `IN` under SQLite's 32,766 bind limit. The UI never sends more: its lists come from `GET /images/ids`, which has the same cap (`docs/dev/image-filters.md`). The owner chose the cap over chunking five callers on 2026-11-07. Renumber's occupancy check reads every filename in the dataset and drops the batch's own ids in Python, rather than binding the whole scope into a `NOT IN`.
+
 `BulkFilterBase` fields (shared by every one of these schemas): `dataset_id`, `image_ids: list[str] | None`, `quality_flags: list[str] | None`, `subfolder: str | None`.
 
 | Endpoint | Extra fields | Returns |

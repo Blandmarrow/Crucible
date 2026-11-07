@@ -652,47 +652,54 @@ async def bulk_delete_detections(
     manual/unscored rows are immune (intended). ``dry_run`` returns the count
     that would be deleted without deleting.
     """
-    # Resolve the image scope into an IN-condition for Detection.image_id.
+    # Resolve the image scope into IN-conditions for Detection.image_id: one per
+    # chunk of explicit ids (SQLite caps bind parameters), or a single correlated
+    # subquery that never materializes the id list.
     if body.image_ids is not None:
-        # Explicit ids are bounded by the request body, so a literal IN is safe —
-        # no need to round-trip through Image to re-materialize the same list
-        # (a non-existent id simply matches no detections via the FK).
+        # A non-existent id simply matches no detections via the FK.
         if not body.image_ids:
             return {"deleted": 0, "dry_run": body.dry_run}
-        scope_condition = Detection.image_id.in_(body.image_ids)
+        scope_conditions = [
+            Detection.image_id.in_(chunk)
+            for chunk in chunked(list(dict.fromkeys(body.image_ids)))
+        ]
     else:
-        # Correlated subquery — never materialize the id list, which on a large
-        # dataset can exceed SQLite's bind-parameter ceiling (see utils.chunked).
-        scope_condition = Detection.image_id.in_(
+        scope_conditions = [Detection.image_id.in_(
             scope_query(body.dataset_id, body.subfolder, body.quality_flags)
-        )
+        )]
 
-    conditions = [scope_condition]
+    extra = []
     if body.labels:
-        conditions.append(Detection.label.in_(body.labels))
+        extra.append(Detection.label.in_(body.labels))
     if body.models:
-        conditions.append(Detection.model.in_(body.models))
+        extra.append(Detection.model.in_(body.models))
     if body.score_below is not None:
-        conditions.append(Detection.score < body.score_below)
+        extra.append(Detection.score < body.score_below)
 
     if body.dry_run:
-        count = await db.execute(
-            select(func.count()).select_from(Detection).where(and_(*conditions))
-        )
-        return {"deleted": count.scalar_one(), "dry_run": True}
+        total = 0
+        for scope_condition in scope_conditions:
+            count = await db.execute(
+                select(func.count()).select_from(Detection).where(and_(scope_condition, *extra))
+            )
+            total += count.scalar_one()
+        return {"deleted": total, "dry_run": True}
 
-    result = await db.execute(delete(Detection).where(and_(*conditions)))
+    deleted = 0
+    for scope_condition in scope_conditions:
+        result = await db.execute(delete(Detection).where(and_(scope_condition, *extra)))
+        deleted += result.rowcount or 0
     await db.commit()
-    return {"deleted": result.rowcount or 0, "dry_run": False}
+    return {"deleted": deleted, "dry_run": False}
 
 
 @router.post("/merge", response_model=DetectionOut)
 async def merge_detections(body: DetectionMergeRequest, db: AsyncSession = Depends(get_db)):
     """Merge ≥2 detections on the same image into one ``model="manual"`` row."""
-    result = await db.execute(
-        select(Detection).where(Detection.id.in_(body.detection_ids))
-    )
-    found = {d.id: d for d in result.scalars().all()}
+    found = {}
+    for chunk in chunked(list(dict.fromkeys(body.detection_ids))):
+        result = await db.execute(select(Detection).where(Detection.id.in_(chunk)))
+        found.update({d.id: d for d in result.scalars().all()})
     missing = [i for i in body.detection_ids if i not in found]
     if missing:
         raise HTTPException(404, f"Detection(s) not found: {missing}")

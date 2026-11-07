@@ -41,6 +41,10 @@ job and carries on without the window. Reopening it on the same frames picks the
 bar back up, and whether or not you are watching, the gallery, the open image and the
 video's **Extracted frames** list all refresh themselves when the run finishes.
 
+The completion message counts the frames re-extracted and any that failed. When some
+failed, it also names up to three of them and the first reason, and the **Logs** page keeps
+that line after you reload.
+
 Quality scores are deliberately left alone, since they were measured on the small frames.
 The dialog says so and so does the completion message; re-run scoring if you want numbers
 that describe the full-resolution images. If you took a snapshot beforehand, restoring it

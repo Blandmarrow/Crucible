@@ -38,6 +38,7 @@ from backend.services.dataset_service import refresh_stats, refresh_stats_after_
 from backend.services.image_scope import resolve_scope_ids
 from backend.services.image_service import generate_thumbnail
 from backend.services.label_service import copy_labels
+from backend.job_outcome import failure_summary, note_failure
 from backend.utils import (
     OUT_OF_TREE_MSG,
     chunked,
@@ -260,6 +261,8 @@ async def run_inpaint(body: InpaintRunRequest, db: AsyncSession = Depends(get_db
                 "failed": 0,
                 "thumbnails_stale": 0,
             }
+            # The reason for each failure, kept past the live `Failed:` message.
+            failures: list[dict] = []
 
             # Occupied/planned thumbnail stems for the copy path, keyed by
             # thumbnail directory: matched images can span multiple datasets (each
@@ -333,6 +336,7 @@ async def run_inpaint(body: InpaintRunRequest, db: AsyncSession = Depends(get_db
                         "message": f"Failed: {OUT_OF_TREE_MSG}",
                     })
                     counts["failed"] += 1
+                    note_failure(failures, img.filename, OUT_OF_TREE_MSG)
                     continue
                 src_path = Path(img.file_path)
 
@@ -417,6 +421,7 @@ async def run_inpaint(body: InpaintRunRequest, db: AsyncSession = Depends(get_db
                         "message": f"Failed: {exc}",
                     })
                     counts["failed"] += 1
+                    note_failure(failures, img.filename, str(exc))
                     continue
 
                 actual_out_path = info.get("out_path", dest_path_str)
@@ -484,8 +489,10 @@ async def run_inpaint(body: InpaintRunRequest, db: AsyncSession = Depends(get_db
                     # Nothing fallible between the (already-done) overwrite and this
                     # commit — a raise before here would roll back the row of every
                     # image the loop has already overwritten on disk (PM-013).
-                    await session.commit()
+                    # `touched` first, so a hard cancel landing in the commit
+                    # still refreshes; early is harmless.
                     touched.add(img.dataset_id)
+                    await session.commit()
 
                     # --- epilogue: best-effort, cannot undo the paint ---
                     # `expire_on_commit=False` (backend/database.py) keeps `img`
@@ -554,11 +561,11 @@ async def run_inpaint(body: InpaintRunRequest, db: AsyncSession = Depends(get_db
                     # session and this one rolls back **every** uncommitted
                     # derivative row while their `_nowm` files stay on disk.
                     session.add(new_img)
+                    touched.add(img.dataset_id)  # before the commit, as above
                     await session.commit()
                     # `expire_on_commit=False` (backend/database.py), so the id is
                     # readable after the commit without a refresh.
                     derivative_ids[img.id] = new_img.id
-                    touched.add(img.dataset_id)
                     last_image_id = new_img.id
                     try:
                         await loop.run_in_executor(
@@ -588,7 +595,12 @@ async def run_inpaint(body: InpaintRunRequest, db: AsyncSession = Depends(get_db
 
             job_row = await session.get(BackgroundJob, job_id)
             if job_row:
-                job_row.result_data = counts
+                job_row.result_data = {
+                    **counts, "failed_count": counts["failed"],
+                    "failure_summary": failure_summary(
+                        counts["failed"], failures, action="could not be cleaned up"
+                    ),
+                }
             # Above `raise_if_cancelled`, so a cancelled run keeps the counts for
             # everything it did manage — and so the completion handler that
             # re-fetches the job can see `thumbnails_stale`.

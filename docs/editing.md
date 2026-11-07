@@ -39,7 +39,7 @@ ML-based image upscaling via the [`spandrel`](https://github.com/chaiNNer-org/sp
 - Two output modes: **Replace** (overwrites source image, updates DB record) or **New file** (creates a new DB record, named `{stem}_upNx{ext}` — or `{stem}_1x{ext}` for a 1× restoration model, and `{stem}_upscale{ext}` when the scale cannot be read from the model's filename)
 - Optional target width × height — upscales first, then resizes down to fit, preserving aspect ratio
 - BMP, GIF, TIFF and AVIF cannot be written back, so the result is saved as **PNG** and the image is renamed to match — same as LUT grading. If a file of that name is already sitting in the folder untracked, the image is skipped (the job carries on) rather than overwriting it
-- The run reports how many images it upscaled, skipped and failed when it finishes. If it could not rebuild some of the small gallery previews — usually because the disk is full or the `thumbnails/` folder is read-only — the upscaled images are still correct and saved, and you get a separate warning saying how many previews are out of date. **Bulk Edit → Thumbnails** repairs them
+- The run reports how many images it upscaled, skipped and failed when it finishes. When some failed, it names up to three of them and the first reason, and the **Logs** page keeps that line after you reload. If it could not rebuild some of the small gallery previews — usually because the disk is full or the `thumbnails/` folder is read-only — the upscaled images are still correct and saved, and you get a separate warning saying how many previews are out of date. **Bulk Edit → Thumbnails** repairs them
 
 Available from: the **Upscale** button in the ImageDetailPage toolbar, the **Upscale** modal in SelectionToolbar, and the **Upscale** tab on the Bulk Edit page.
 
@@ -69,7 +69,7 @@ Options and behaviour:
 - The image is marked **scores stale**, because its watermark and quality scores were measured against pixels that no longer exist. The old numbers stay visible but flagged until you re-run scoring
 - **The first run downloads the model** — about 196 MB, into `models_cache/`. Progress shows in the job pill. On a CPU-only machine expect seconds to a minute or so per image; on a GPU it is fast
 - BMP, GIF, TIFF and AVIF cannot be written back, so the result is saved as **PNG** and the image renamed to match — same as upscaling and LUT grading
-- Like those, the run reports how many images it painted, skipped and failed, and warns separately if some gallery previews could not be rebuilt. Skips are reported by reason: *no detections* is the detection pass finding nothing to paint, while *name already taken* means an untracked file already occupies the `.png` the result would be saved as — that image is left completely alone
+- Like those, the run reports how many images it painted, skipped and failed (naming the failed files and why), and warns separately if some gallery previews could not be rebuilt. Skips are reported by reason: *no detections* is the detection pass finding nothing to paint, while *name already taken* means an untracked file already occupies the `.png` the result would be saved as — that image is left completely alone
 
 Available from: the **Remove Watermark** button in the Image Detail page toolbar (shown once the image has detections) and the **Remove WM** modal in the selection toolbar.
 

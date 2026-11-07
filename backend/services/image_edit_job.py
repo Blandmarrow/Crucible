@@ -23,7 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import undefer
 
 from backend.config import settings
-from backend.job_outcome import FAILURE_DETAIL_CAP, failure_summary
+from backend.job_outcome import failure_summary, note_failure
 from backend.licenses import copy_provenance
 from backend.models import BackgroundJob, Image
 from backend.services import version_service
@@ -190,8 +190,7 @@ async def _edit_loop(
                     i + 1, total, img, message=f"Failed: {OUT_OF_TREE_MSG}",
                 ))
                 counts["failed"] += 1
-                if len(failures) < FAILURE_DETAIL_CAP:
-                    failures.append({"file": img.filename, "error": OUT_OF_TREE_MSG})
+                note_failure(failures, img.filename, OUT_OF_TREE_MSG)
                 continue
             src_path = Path(img.file_path)
             dest_path_str: str
@@ -264,8 +263,7 @@ async def _edit_loop(
                     i + 1, total, img, message=f"Failed: {exc}",
                 ))
                 counts["failed"] += 1
-                if len(failures) < FAILURE_DETAIL_CAP:
-                    failures.append({"file": img.filename, "error": str(exc)})
+                note_failure(failures, img.filename, str(exc))
                 continue
 
             # The PNG fallback may have moved the output path.
@@ -306,9 +304,11 @@ async def _edit_loop(
                 record_in_place(img, spec.history_op, **spec.history_params)
                 # Nothing fallible between the (already-done) overwrite and
                 # this commit — a raise before here would roll the row back
-                # onto a file that no longer exists (PM-013).
-                await session.commit()
+                # onto a file that no longer exists (PM-013). `touched` first,
+                # so a hard cancel landing in the commit still refreshes; early
+                # is harmless, since an unchanged dataset refreshes the same.
                 touched.add(img.dataset_id)
+                await session.commit()
 
                 # --- epilogue: best-effort, cannot undo the edit ---
                 # `expire_on_commit=False` (backend/database.py) keeps `img`

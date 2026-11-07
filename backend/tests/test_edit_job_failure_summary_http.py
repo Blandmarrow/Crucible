@@ -6,8 +6,17 @@ on reload. Both now write `failed_count` and `failure_summary` beside their
 counts, the convention restore and captioning use: the detail page reads the
 summary into its error toast, and the Logs page keys its amber line on
 `failed_count` (`docs/dev/frontend-jobs.md`).
+
+Follow-up 8 brought batch resize and crop, detection crop, inpaint and video
+re-extraction into the same convention; re-extraction's tests are in
+`test_video_reextract_http.py`, beside its refusals.
 """
+import pytest
+
+from backend.models.detection import Detection
 from backend.tests.conftest import API, api_env, png_bytes, run, upload_image, wait_for_job
+from backend.tests.test_inpaint_http import _add_detection, _run_inpaint
+from backend.tests.test_inpaint_http import _install_fake as _install_fake_inpaint
 from backend.tests.test_lut_replace_extension_http import _identity_cube
 from backend.tests.test_upscale_png_fallback_http import MODEL, _install_fake
 
@@ -80,6 +89,100 @@ def test_a_clean_run_records_no_failure(tmp_path):
             job = await wait_for_job(env, r.json()["job_id"], timeout=60)
 
             rd = job["result_data"]
+            assert rd["failed_count"] == 0 and rd["failure_summary"] is None
+
+    run(scenario())
+
+
+# Follow-up 8: the other edit jobs keep the reason too. Each fails its edit with
+# a known message, which must reach `failure_summary` with the file's name.
+
+def _broken_edit(*_a, **_kw):
+    raise RuntimeError("the codec gave up")
+
+
+def _assert_kept_why(job: dict, done_key: str) -> None:
+    assert job["status"] == "completed", job
+    rd = job["result_data"]
+    assert rd[done_key] == 0 and rd["failed"] == 1, rd
+    assert rd["failed_count"] == 1, rd
+    assert "shot.png" in rd["failure_summary"], rd
+    assert "the codec gave up" in rd["failure_summary"], rd
+
+
+@pytest.mark.parametrize("route,body,fn", [
+    ("resize", {"scale": 0.5}, "resize_image"),
+    ("crop", {"target_ar": 1.0}, "crop_image_to_dest"),
+])
+def test_a_failed_batch_edit_records_why(tmp_path, monkeypatch, route, body, fn):
+    async def scenario():
+        import backend.routers.images as images_router
+
+        async with api_env(tmp_path) as env:
+            monkeypatch.setattr(images_router, fn, _broken_edit)
+            ds = await env.create_dataset("d")
+            img = await upload_image(env, ds["id"], "shot.png", png_bytes(size=(40, 20)))
+
+            r = await env.client.post(
+                f"{API}/images/batch/{route}", json={"image_ids": [img["id"]], **body}
+            )
+            job = await wait_for_job(env, r.json()["job_id"])
+            _assert_kept_why(job, "processed")
+
+    run(scenario())
+
+
+@pytest.mark.parametrize("replace", [True, False])
+def test_a_failed_detection_crop_records_why(tmp_path, monkeypatch, replace):
+    async def scenario():
+        import backend.routers.detection as detection_router
+
+        async with api_env(tmp_path) as env:
+            monkeypatch.setattr(detection_router, "crop_image_to_dest", _broken_edit)
+            ds = await env.create_dataset("d")
+            img = await upload_image(env, ds["id"], "shot.png", png_bytes(size=(40, 20)))
+            async with env.Session() as db:
+                db.add(Detection(
+                    image_id=img["id"], label="face", bbox=[0.25, 0.25, 0.75, 0.75],
+                    score=0.9, model="test", task="detect",
+                ))
+                await db.commit()
+
+            r = await env.client.post(f"{API}/detection/crop", json={
+                "dataset_id": ds["id"], "image_ids": [img["id"]], "replace": replace,
+            })
+            job = await wait_for_job(env, r.json()["job_id"])
+            _assert_kept_why(job, "cropped")
+
+    run(scenario())
+
+
+def test_a_failed_inpaint_records_why(tmp_path, monkeypatch):
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            _install_fake_inpaint(monkeypatch, fake=_broken_edit)
+            ds = await env.create_dataset("d")
+            img = await upload_image(env, ds["id"], "shot.png", png_bytes(size=(48, 32)))
+            await _add_detection(env, img["id"])
+
+            started = await _run_inpaint(env, ds["id"], [img["id"]])
+            job = await wait_for_job(env, started["job_id"], timeout=60)
+            _assert_kept_why(job, "inpainted")
+
+    run(scenario())
+
+
+def test_a_clean_batch_resize_records_no_failure(tmp_path):
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            img = await upload_image(env, ds["id"], "shot.png", png_bytes(size=(40, 20)))
+
+            r = await env.client.post(
+                f"{API}/images/batch/resize", json={"image_ids": [img["id"]], "scale": 0.5}
+            )
+            rd = (await wait_for_job(env, r.json()["job_id"]))["result_data"]
+            assert rd["processed"] == 1
             assert rd["failed_count"] == 0 and rd["failure_summary"] is None
 
     run(scenario())

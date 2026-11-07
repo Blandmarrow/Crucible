@@ -64,6 +64,7 @@ def test_replace_crop_commits_geometry_and_history_per_image(tmp_path):
             assert job["result_data"] == {
                 "cropped": 2, "skipped_no_detection": 0, "skipped_noop": 0,
                 "failed": 0, "thumbnails_stale": 0,
+                "failed_count": 0, "failure_summary": None,
             }
 
             rows = await _rows(env, ds["id"])

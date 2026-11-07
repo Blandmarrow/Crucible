@@ -346,6 +346,7 @@ def test_a_thumbnail_failure_is_counted_and_does_not_fail_the_item(tmp_path, mon
             assert job["result_data"] == {
                 "inpainted": 1, "skipped_no_detection": 0, "skipped_name_taken": 0,
                 "failed": 0, "thumbnails_stale": 1,
+                "failed_count": 0, "failure_summary": None,
             }
 
             async with env.Session() as db:

@@ -32,6 +32,7 @@ from backend.services.detection_service import remap_detections_for_crop
 from backend.services.image_scope import flag_exclusions, resolve_scope_ids, scope_query
 from backend.services.image_service import crop_image_to_dest, generate_thumbnail, temp_sibling
 from backend.services.label_service import copy_labels
+from backend.job_outcome import failure_summary, note_failure
 from backend.utils import (
     OUT_OF_TREE_MSG,
     chunked,
@@ -897,6 +898,21 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
 
     cfg = body.model_dump()
 
+    # Every dataset whose stored stats the run moved. Out here so
+    # `_run_with_stats` can still refresh them when `_run` raises.
+    touched_datasets: set[str] = set()
+
+    async def _run_with_stats(job_id: str) -> None:
+        # The loop's tail refreshes on completion and on a soft cancel; a raise
+        # outside the per-image `try` (the backup before a replace), or a hard
+        # cancel, skips it with earlier replaces already committed.
+        try:
+            await _run(job_id)
+        except BaseException:
+            from backend.services.dataset_service import refresh_stats_after_abort
+            await refresh_stats_after_abort(touched_datasets, context="Detection crop")
+            raise
+
     async def _run(job_id: str) -> None:
         from backend.database import AsyncSessionLocal
         from backend.workers.progress import broadcaster
@@ -923,6 +939,8 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
                 "cropped": 0, "skipped_no_detection": 0, "skipped_noop": 0,
                 "failed": 0, "thumbnails_stale": 0,
             }
+            # The reason for each failure, kept past the live `Failed:` message.
+            failures: list[dict] = []
 
             # Occupied/planned thumbnail stems for the non-replace path, keyed by
             # thumbnail directory: matched images can span multiple datasets (each
@@ -948,7 +966,6 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
             # deferred `source_meta`) rather than touched expired, which would
             # lazy-load on an async session and raise MissingGreenlet.
             needs_reload = False
-            touched_datasets: set[str] = set()
             for i, image_id in enumerate(image_ids):
                 if job_queue.cancel_requested(job_id):
                     cancelled = True
@@ -990,6 +1007,7 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
                     img.file_path, settings.datasets_dir, context="Detection crop", ident=img.id
                 ) is None:
                     counts["failed"] += 1
+                    note_failure(failures, img.filename, OUT_OF_TREE_MSG)
                     await broadcaster.emit(job_id, {
                         "type": "progress", "job_id": job_id, "job_type": "crop_to_detection",
                         "status": "running", "done": i + 1, "total": len(images),
@@ -1052,6 +1070,7 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
                             logger.warning("Detection crop: could not remove %s", tmp_path, exc_info=True)
                         logger.error("Detection crop failed for %s: %s", filename, exc)
                         counts["failed"] += 1
+                        note_failure(failures, filename, str(exc))
                         await broadcaster.emit(job_id, {
                             "type": "progress", "job_id": job_id, "job_type": "crop_to_detection",
                             "status": "running", "done": i + 1, "total": len(images),
@@ -1062,6 +1081,11 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
                         continue
                     # Per image: committing after the loop would let one raise
                     # roll back the rows of every image already swapped on disk.
+                    # `touched_datasets` first: a cancel landing in the commit or
+                    # the epilogue below would otherwise leave a committed replace
+                    # out of `_run_with_stats`' refresh. Early is harmless — an
+                    # unchanged dataset refreshes to the same numbers.
+                    touched_datasets.add(img.dataset_id)
                     await session.commit()
 
                     # --- epilogue: best-effort, cannot undo the crop ---
@@ -1125,6 +1149,7 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
                     except Exception as exc:
                         logger.error("Detection crop failed for %s: %s", img.filename, exc)
                         counts["failed"] += 1
+                        note_failure(failures, img.filename, str(exc))
                         await broadcaster.emit(job_id, {
                             "type": "progress", "job_id": job_id, "job_type": "crop_to_detection",
                             "status": "running", "done": i + 1, "total": len(images),
@@ -1154,9 +1179,9 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
                     await session.flush()
                     derivative_ids[img.id] = new_img.id
                     last_image_id = new_img.id
+                    touched_datasets.add(img.dataset_id)
 
                 counts["cropped"] += 1
-                touched_datasets.add(img.dataset_id)
                 await broadcaster.emit(job_id, {
                     "type": "progress", "job_id": job_id, "job_type": "crop_to_detection",
                     "status": "running", "done": i + 1, "total": len(images),
@@ -1170,7 +1195,12 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
 
             job_row = await session.get(BackgroundJob, job_id)
             if job_row:
-                job_row.result_data = counts
+                job_row.result_data = {
+                    **counts, "failed_count": counts["failed"],
+                    "failure_summary": failure_summary(
+                        counts["failed"], failures, action="could not be cropped"
+                    ),
+                }
             await session.commit()
 
             # Both modes moved `total_size_bytes` (a replace rewrote the file,
@@ -1186,7 +1216,7 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
             if cancelled:
                 job_queue.raise_if_cancelled(job_id)
 
-    await job_queue.enqueue(job, _run)
+    await job_queue.enqueue(job, _run_with_stats)
     return {"job_id": job.id, "total": total, "skipped": skipped}
 
 

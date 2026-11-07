@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import undefer
 
 from backend.config import settings
+from backend.job_outcome import failure_summary, note_failure
 from backend.utils import ALLOWED_FLAG_KEYS, OUT_OF_TREE_MSG, InsufficientDiskSpaceError, replace_retrying, chunked, contained_path, copy_with_sidecar, normalize_image_format, normalize_subfolder, parse_id_list_param, parse_license_filter_param, poster_path_for, record_in_place, rename_with_sidecar, require_free_space, safe_dataset_path, slugify_filename, sql_subtree, thumbnail_path_for, unique_filename_with_thumb, validate_label_filter_params
 from backend.database import get_db
 from backend.media_types import media_kind_for
@@ -49,7 +50,7 @@ from backend.schemas.image import (
     ImageResizeRequest,
     RenameImageRequest,
 )
-from backend.services.dataset_service import refresh_stats
+from backend.services.dataset_service import refresh_stats, refresh_stats_after_abort
 from backend.services import version_service
 from backend.services.dataset_busy import ensure_not_busy
 from backend.services.detection_service import remap_detections_for_crop
@@ -1255,7 +1256,7 @@ def _in_tree_thumbnail(img: Image, context: str) -> str | None:
 
 
 async def _refuse_out_of_tree(
-    img: Image, counts: dict, job_id: str, job_type: str, i: int, total: int
+    img: Image, counts: dict, failures: list[dict], job_id: str, job_type: str, i: int, total: int
 ) -> bool:
     """`_require_in_tree` for the batch resize and crop jobs: count the image as
     failed and say why, rather than fail the run. True when it was refused."""
@@ -1264,6 +1265,7 @@ async def _refuse_out_of_tree(
     from backend.workers.progress import broadcaster
 
     counts["failed"] += 1
+    note_failure(failures, img.filename, OUT_OF_TREE_MSG)
     await broadcaster.emit(job_id, {
         "type": "progress", "job_id": job_id, "job_type": job_type,
         "status": "running", "done": i + 1, "total": total,
@@ -1336,6 +1338,20 @@ async def batch_resize(body: BatchResizeRequest, db: AsyncSession = Depends(get_
     db.add(job)
     await db.commit()
 
+    # Every dataset whose stored stats the run moved. Out here so
+    # `_run_with_stats` can still refresh them when `_run` raises.
+    touched: set[str] = set()
+
+    async def _run_with_stats(job_id: str) -> None:
+        # The loop's tail refreshes on completion and on a soft cancel; a raise
+        # outside the per-image `try`, or a hard cancel, skips it with earlier
+        # images already committed.
+        try:
+            await _run(job_id)
+        except BaseException:
+            await refresh_stats_after_abort(touched, context="Batch resize")
+            raise
+
     async def _run(job_id: str) -> None:
         from backend.database import AsyncSessionLocal
         from backend.workers.progress import broadcaster
@@ -1360,7 +1376,8 @@ async def batch_resize(body: BatchResizeRequest, db: AsyncSession = Depends(get_
                 "failed": 0,
                 "thumbnails_stale": 0,
             }
-            touched: set[str] = set()
+            # The reason for each failure, kept past the live `Failed:` message.
+            failures: list[dict] = []
 
             cancelled = False
             total = len(image_ids)
@@ -1374,7 +1391,7 @@ async def batch_resize(body: BatchResizeRequest, db: AsyncSession = Depends(get_
                 if img is None:
                     counts["skipped"] += 1
                     continue
-                if await _refuse_out_of_tree(img, counts, job_id, "batch_resize", i, total):
+                if await _refuse_out_of_tree(img, counts, failures, job_id, "batch_resize", i, total):
                     continue
                 await version_service.protect_file_before_overwrite(img.id, img.file_path, session)
                 await session.commit()  # persist the COW hash backfill before the overwrite
@@ -1398,6 +1415,7 @@ async def batch_resize(body: BatchResizeRequest, db: AsyncSession = Depends(get_
                     _discard_temp(tmp_path)
                     logger.error("Batch resize failed for %s: %s", filename, exc)
                     counts["failed"] += 1
+                    note_failure(failures, filename, str(exc))
                     await broadcaster.emit(job_id, {
                         "type": "progress", "job_id": job_id, "job_type": "batch_resize",
                         "status": "running", "done": i + 1, "total": total,
@@ -1409,9 +1427,10 @@ async def batch_resize(body: BatchResizeRequest, db: AsyncSession = Depends(get_
                 # Per image, with only the commit after the swap. The commit used
                 # to sit outside the loop, so a raise on image N rolled back the
                 # geometry and processing_history of images 1..N — every one of
-                # them already rewritten on disk (PM-013).
-                await session.commit()
+                # them already rewritten on disk (PM-013). `touched` before the
+                # commit, so a hard cancel landing in it still refreshes.
                 touched.add(img.dataset_id)
+                await session.commit()
 
                 # --- epilogue: best-effort, cannot undo the resize ---
                 # `expire_on_commit=False` (backend/database.py) keeps `img`
@@ -1442,14 +1461,19 @@ async def batch_resize(body: BatchResizeRequest, db: AsyncSession = Depends(get_
                 await _refresh_stats_after_edit(session, ds_id)
             job_row = await session.get(BackgroundJob, job_id)
             if job_row:
-                job_row.result_data = counts
+                job_row.result_data = {
+                    **counts, "failed_count": counts["failed"],
+                    "failure_summary": failure_summary(
+                        counts["failed"], failures, action="could not be resized"
+                    ),
+                }
             # Above `raise_if_cancelled`, so a cancelled run keeps the counts for
             # everything it did manage — including any stale thumbnail.
             await session.commit()
             if cancelled:
                 job_queue.raise_if_cancelled(job_id)
 
-    await job_queue.enqueue(job, _run)
+    await job_queue.enqueue(job, _run_with_stats)
     return {"job_id": job.id}
 
 
@@ -1466,6 +1490,16 @@ async def batch_crop(body: BatchCropRequest, db: AsyncSession = Depends(get_db))
     )
     db.add(job)
     await db.commit()
+
+    # Out here for `_run_with_stats`, as in the resize twin above.
+    touched: set[str] = set()
+
+    async def _run_with_stats(job_id: str) -> None:
+        try:
+            await _run(job_id)
+        except BaseException:
+            await refresh_stats_after_abort(touched, context="Batch crop")
+            raise
 
     async def _run(job_id: str) -> None:
         from backend.database import AsyncSessionLocal
@@ -1487,7 +1521,8 @@ async def batch_crop(body: BatchCropRequest, db: AsyncSession = Depends(get_db))
                 "failed": 0,
                 "thumbnails_stale": 0,
             }
-            touched: set[str] = set()
+            # The reason for each failure, kept past the live `Failed:` message.
+            failures: list[dict] = []
 
             cancelled = False
             total = len(image_ids)
@@ -1500,7 +1535,7 @@ async def batch_crop(body: BatchCropRequest, db: AsyncSession = Depends(get_db))
                 if img is None:
                     counts["skipped"] += 1
                     continue
-                if await _refuse_out_of_tree(img, counts, job_id, "batch_crop", i, total):
+                if await _refuse_out_of_tree(img, counts, failures, job_id, "batch_crop", i, total):
                     continue
                 await version_service.protect_file_before_overwrite(img.id, img.file_path, session)
                 await session.commit()  # persist the COW hash backfill before the overwrite
@@ -1530,6 +1565,7 @@ async def batch_crop(body: BatchCropRequest, db: AsyncSession = Depends(get_db))
                     _discard_temp(tmp_path)
                     logger.error("Batch crop failed for %s: %s", filename, exc)
                     counts["failed"] += 1
+                    note_failure(failures, filename, str(exc))
                     await broadcaster.emit(job_id, {
                         "type": "progress", "job_id": job_id, "job_type": "batch_crop",
                         "status": "running", "done": i + 1, "total": total,
@@ -1538,8 +1574,8 @@ async def batch_crop(body: BatchCropRequest, db: AsyncSession = Depends(get_db))
                         "message": f"Failed: {exc}",
                     })
                     continue
+                touched.add(img.dataset_id)  # before the commit, as in resize
                 await session.commit()
-                touched.add(img.dataset_id)
 
                 # --- epilogue: best-effort, cannot undo the crop ---
                 thumb_target = _in_tree_thumbnail(img, "Batch crop thumbnail")
@@ -1568,12 +1604,17 @@ async def batch_crop(body: BatchCropRequest, db: AsyncSession = Depends(get_db))
                 await _refresh_stats_after_edit(session, ds_id)
             job_row = await session.get(BackgroundJob, job_id)
             if job_row:
-                job_row.result_data = counts
+                job_row.result_data = {
+                    **counts, "failed_count": counts["failed"],
+                    "failure_summary": failure_summary(
+                        counts["failed"], failures, action="could not be cropped"
+                    ),
+                }
             await session.commit()
             if cancelled:
                 job_queue.raise_if_cancelled(job_id)
 
-    await job_queue.enqueue(job, _run)
+    await job_queue.enqueue(job, _run_with_stats)
     return {"job_id": job.id}
 
 

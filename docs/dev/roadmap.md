@@ -71,9 +71,10 @@ restates its stages.
      deleting it means moving that durable record out first, as M5's cleanup plans for its own.
      Its § Still open keeps the gallery entity filter, unbuilt until someone misses it
      (decision 8).
-5. M8's follow-ups 8, 9, 10 and 11 can go any time; stage 3 left inpaint and detection crop
-   out, so item 8 no longer waits for it. Batch move and copy, in item 9, must wait for M4 to
-   merge. Items 7, 12 and 13 wait for stage 6, which replaces that code. M8 stages 5 and 6
+5. M8's follow-ups 8, 10 and 11 are done on `fix/m8-edit-job-followups` (PR 1); item 9 is on
+   `fix/m8-unchunked-in` (PR 2), built in the worktree `.claude/worktrees/m8-unchunked-in`.
+   Batch move and copy, in item 9, must wait for M4 to merge. Items 7, 12 and 13 wait for
+   stage 6, which replaces that code. M8 stages 5 and 6
    now wait only for M4, since M7 has merged. Stage 4 can go any time. What stages 2 and 3
    found and left alone is in [cleanup-plan/README.md](cleanup-plan/README.md) § Found during
    stages 2 and 3, left as they were.
@@ -216,12 +217,16 @@ Detail, hazards and what to leave alone:
   B4 (unchecked write path). Landed 2026-11-02 on `fix/m8-stage1-bugs`.
 - [x] Stage 1 follow-ups 1–6 (cleanup plan § Stage 1 follow-ups). Landed 2026-11-02 on
   `fix/m8-stage1-followups`. Items 7 and 8 there are folded into stages 6 and 3.
-- [ ] Stage 1 follow-ups 8 (a refusal's reason for the other edit jobs), 9 (the rest of the
-  unchunked `IN` class), 10 (batch resize, crop and detection crop's stats on a partway
-  failure) and 11 (two hard-cancel edges in the stats wrapper). No order between them; item
-  9's batch move and copy need M4 merged. Item 8 was folded into stage 3, which left inpaint
-  and detection crop out, so it is open again. Items 12 and 13 are folded into stage 6,
-  beside item 7.
+- [x] Stage 1 follow-ups 8 (a refusal's reason for the other edit jobs), 10 (batch resize, crop
+  and detection crop's stats on a partway failure) and 11 (two hard-cancel edges in the stats
+  wrapper). Landed 2026-11-07 on `fix/m8-edit-job-followups`; 11's shutdown edge is accepted,
+  not fixed.
+- [ ] Stage 1 follow-up 9 (the rest of the unchunked `IN` class), on `fix/m8-unchunked-in`.
+  `_apply_bulk_filters` takes a 422 cap at `SELECT_ALL_ID_CAP` rather than chunking, by the
+  user's choice on 2026-11-07. Batch move and copy need M4 merged and stay out. Items 12 and 13
+  are folded into stage 6, beside item 7.
+- [ ] Stage 1 follow-up 14: guard the copy-mode thumbnail in detection crop and the upscale and
+  LUT loop, as inpaint does. Found by the review of 8, 10 and 11; any time.
 - [x] Stage 2: one shared helper for a job's image scope. Landed 2026-11-04 on
   `refactor/m8-stages-2-3`.
 - [x] Stage 3: a shared job loop for upscale and LUT. Needs stage 2. Landed 2026-11-04 on the

@@ -4,12 +4,22 @@ A per-item loop that swallows a failure still returns, so `job_queue` marks the
 row `completed` and the live `Failed:` progress message is gone on reload. What
 survives is `result_data`: `failed_count` (which the Logs page keys its amber
 line on, see `docs/dev/frontend-jobs.md`) and the one-line `failure_summary`
-built here. Restore, checkout, upscale and LUT write it.
+built here. Restore, checkout, upscale, LUT, inpaint, detection crop, batch
+resize and crop, and video re-extraction write it.
 """
 
 # How many `{"file", "error"}` entries a job keeps for the summary; the count
 # itself is never capped.
 FAILURE_DETAIL_CAP = 50
+
+
+def note_failure(failures: list[dict], file: str, error: str) -> None:
+    """Keep one failure's detail for `failure_summary`, up to `FAILURE_DETAIL_CAP`.
+
+    Call it wherever the job increments its failed count, so the summary names
+    the same files the count counts."""
+    if len(failures) < FAILURE_DETAIL_CAP:
+        failures.append({"file": file, "error": error})
 
 
 def failure_summary(failed_count: int, failures: list[dict], *, action: str) -> str | None:

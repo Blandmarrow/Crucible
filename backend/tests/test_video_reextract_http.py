@@ -714,6 +714,9 @@ def test_a_frame_whose_file_resolves_outside_the_tree_is_refused(tmp_path):
             assert jobs[0]["status"] == "completed", jobs
             assert jobs[0]["result_data"]["rewritten"] == 0
             assert jobs[0]["result_data"]["failed"] == 1
+            # The reason outlives the live message (follow-up 8).
+            assert jobs[0]["result_data"]["failed_count"] == 1
+            assert "outside the datasets folder" in jobs[0]["result_data"]["failure_summary"]
             assert outside.read_bytes() == before
             assert sorted(p.name for p in outside.parent.iterdir()) == [outside.name]
 
@@ -769,6 +772,8 @@ def test_a_run_whose_every_frame_is_refused_still_completes(tmp_path, monkeypatc
             assert jobs[0]["status"] == "completed", jobs
             assert jobs[0]["result_data"]["rewritten"] == 0
             assert jobs[0]["result_data"]["failed"] == len(frames)
+            assert jobs[0]["result_data"]["failed_count"] == len(frames)
+            assert "already exists on disk" in jobs[0]["result_data"]["failure_summary"]
 
             for path in squatters.values():
                 assert path.read_bytes() == png_bytes(size=(7, 7))

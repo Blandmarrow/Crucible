@@ -47,7 +47,10 @@ function resultToast(result: Record<string, unknown>) {
   if (noop > 0) parts.push(`${noop} unchanged`);
   if (failed > 0) parts.push(`${failed} failed`);
   const msg = parts.join(", ");
-  failed > 0 ? toast(msg, { icon: "⚠️" }) : toast.success(msg);
+  // Why it failed outlives the live message only here (UpscaleForm's convention).
+  const summary = typeof result.failure_summary === "string" ? result.failure_summary : null;
+  if (failed > 0) toast(summary ? `${msg}. ${summary}` : msg, { icon: "⚠️", duration: 10000 });
+  else toast.success(msg);
 }
 
 export default function CropToDetectionForm({ datasetId, imageIds, selectionDatasetIds, subfolder, qualityFlags, availableLabels, disabled, onSuccess, onCancel, onRunningChange }: Props) {

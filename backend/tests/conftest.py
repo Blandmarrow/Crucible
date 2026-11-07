@@ -71,6 +71,32 @@ def _no_real_llm_server(monkeypatch):
 
     monkeypatch.setattr(run_service, "_LLM_TRANSPORT", httpx.MockTransport(_refuse))
 
+
+@pytest.fixture
+def stub_aesthetic_scorer(monkeypatch):
+    """Let a `quality_score` job run technical checks on the torch-free CI runner.
+
+    The job's body (`routers/quality.py`) imports `backend.ml.aesthetic_scorer` whatever
+    checks it was given, and that module defines its `nn.Module`s at import, so it needs
+    torch. A test of the job machinery (an automated run's Score stage) asks for the
+    technical check only, so it swaps in a stub whose functions fail if called. A developer
+    machine with torch hides the need. `monkeypatch.setitem` puts the real module back
+    afterwards. A test of the scorer itself
+    uses `needs_torch` instead.
+    """
+    import sys
+    import types
+
+    stub = types.ModuleType("backend.ml.aesthetic_scorer")
+
+    async def _not_in_these_tests(*a, **kw):
+        raise AssertionError("an aesthetic, watermark or CLIP check ran in a test that stubs the scorer")
+
+    stub.score_images_batch = _not_in_these_tests
+    stub.score_images_watermark = _not_in_these_tests
+    stub.extract_clip_embeddings_batch = _not_in_these_tests
+    monkeypatch.setitem(sys.modules, "backend.ml.aesthetic_scorer", stub)
+
 # Sentinel for "the variable was absent", which is not the same state as "" — clearing an
 # override pops HF_TOKEN rather than blanking it, and
 # test_settings_secrets.py::test_clearing_with_no_env_value_removes_the_variable asserts on

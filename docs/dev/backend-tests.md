@@ -26,7 +26,12 @@ suite's collection path goes there, not into a workflow's install line.
 Torch is the one
 dependency that will never arrive, so a test importing anything under `backend/ml/` past the
 pure-numpy modules carries `conftest.needs_torch` (the sibling of `needs_cv2`) — without it
-the module *errors* on the runner rather than skipping; a test that creates a real symlink
+the module *errors* on the runner rather than skipping. A test of the job *machinery* that
+merely passes through such an import takes the `conftest.stub_aesthetic_scorer` fixture
+instead of skipping: a `quality_score` job imports `backend.ml.aesthetic_scorer` even for a
+technical-only check, so an automated run's Score stage failed nine run tests on CI, while a
+developer machine with torch passed. The stub's functions fail if called. A test that
+creates a real symlink
 likewise carries `conftest.needs_symlinks` (Windows refuses one without privilege, and
 `backend-tests-windows` runs the suite there).
 

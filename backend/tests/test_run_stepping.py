@@ -14,6 +14,7 @@ through the stubbed openai-compat provider.
 """
 import asyncio
 
+import pytest
 from sqlalchemy import select
 
 from backend.models import BackgroundJob, Image, Run
@@ -23,6 +24,9 @@ from backend.tests.fake_comfy import FAIL_MARKER, FakeComfy
 from backend.tests.test_blueprint_top_up_http import SPEC
 from backend.tests.test_comfy_run_body import _add_row, _setup, _workflow
 from backend.workers.job_queue import job_queue
+
+# The Score stage's job imports the aesthetic scorer, which needs torch.
+pytestmark = pytest.mark.usefixtures("stub_aesthetic_scorer")
 
 STUB_CAPTION = "a stub caption"
 

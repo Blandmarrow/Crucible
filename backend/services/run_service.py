@@ -460,11 +460,19 @@ async def _disk_check(db: AsyncSession, plan: ComfyPlan, folder: str, images: in
 
 def _writable(output_dir: str) -> bool:
     """Whether the nearest existing folder of `output_dir` is writable. A warning only:
-    `os.access` is unreliable on Windows, and the export's own write is the real test."""
-    import os
-    from pathlib import Path
+    `os.access` is unreliable on Windows, and the export's own write is the real test.
 
-    probe = Path(output_dir)
+    A path `sanitize_abs_path` refuses (relative, or a null byte) answers True: the export
+    check has already made it an error, and probing it would walk up to the server's own
+    working folder."""
+    import os
+
+    from backend.utils import sanitize_abs_path
+
+    try:
+        probe = sanitize_abs_path(output_dir)
+    except HTTPException:
+        return True
     while not probe.exists() and probe.parent != probe:
         probe = probe.parent
     return os.access(probe, os.W_OK)

@@ -10,10 +10,12 @@ docs/dev/comfyui/automation.md § Cancel, pause, resume, restart):
 - the restart reconcile cancels a run whose cancel was waiting;
 - a resume never takes a second snapshot once one is done.
 
-Torch-free; the loop case needs cv2 for the gate, like `test_run_loop.py`.
+Torch-free through `conftest.stub_aesthetic_scorer`; the loop case needs cv2 for the
+gate, like `test_run_loop.py`.
 """
 import asyncio
 
+import pytest
 from sqlalchemy import select
 
 from backend.models import BackgroundJob, Run
@@ -26,6 +28,9 @@ from backend.tests.test_run_stepping import (
     _block_worker, _get, _jobs, _plan, _start, _statuses, wait_for_run,
 )
 from backend.workers.job_queue import job_queue
+
+# The Score stage's job imports the aesthetic scorer, which needs torch.
+pytestmark = pytest.mark.usefixtures("stub_aesthetic_scorer")
 
 
 async def _mode(env, mode: str) -> None:

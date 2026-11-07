@@ -195,6 +195,21 @@ def test_warnings_never_block_the_start(tmp_path, monkeypatch):
     run(go())
 
 
+def test_the_writable_probe_skips_a_path_the_export_check_refuses(tmp_path, monkeypatch):
+    """A relative or null-byte export folder is the export check's error already; the
+    probe must not walk it up to the server's own working folder. An absolute one is
+    probed at its nearest existing folder."""
+    import os
+
+    probed: list = []
+    monkeypatch.setattr(os, "access", lambda p, mode: probed.append(p) or False)
+    assert run_service._writable("relative/out") is True
+    assert run_service._writable("C:/bad\x00dir") is True
+    assert probed == []
+    assert run_service._writable(str(tmp_path / "new" / "deeper")) is False
+    assert probed == [tmp_path]
+
+
 def test_a_second_live_run_is_the_last_check(tmp_path, monkeypatch):
     async def go():
         async with api_env(tmp_path) as env:

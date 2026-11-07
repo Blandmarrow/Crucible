@@ -10,11 +10,13 @@ What is pinned (docs/dev/comfyui/run-loop.md, run-gate.md and run-budgets.md):
 - `next_pass` is idempotent; Apply and Top up refuse while a run is live;
 - the seed and paid-call start checks; the rewrite stage inside the loop.
 
-Torch-free; the gate's blur test needs cv2 (`needs_cv2`), like the varied fake's.
+Torch-free through `conftest.stub_aesthetic_scorer`; the gate's blur test needs cv2
+(`needs_cv2`), like the varied fake's.
 """
 import copy
 import functools
 
+import pytest
 from sqlalchemy import select
 
 from backend.models import Image, Run
@@ -28,7 +30,10 @@ from backend.tests.test_blueprint_rewrite_http import _fake as _fake_rewrite
 from backend.tests.test_comfy_run_body import PROMPT, _workflow
 from backend.tests.test_run_stepping import _block_worker, _start, wait_for_run
 
-GOOD = {"id": "k", "label": "Iron Knight", "descriptor": "an iron knight"}
+# The Score stage's job imports the aesthetic scorer, which needs torch.
+pytestmark = pytest.mark.usefixtures("stub_aesthetic_scorer")
+
+GOOD ={"id": "k", "label": "Iron Knight", "descriptor": "an iron knight"}
 BLURRY = {"id": "w", "label": "Salt Witch", "descriptor": f"a salt witch {BLURRY_MARKER}"}
 
 

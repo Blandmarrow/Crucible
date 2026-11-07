@@ -177,9 +177,11 @@ def _apply_bulk_filters(query, image_ids, subfolder, quality_flags, include_flag
 # bulk-delete, bulk-thumbnails) binds the whole id list in one `IN`, so it
 # refuses a longer list with a 422 at this value; that is why the cap must stay
 # under SQLite's 32,766 bind-parameter ceiling. `batch/move-dataset` and
-# `batch/copy-dataset` still bind every id in one unchunked statement too, so
-# the same ceiling applies to them. 20,000 is twice `utils.chunked`'s default
-# with a 1.6x margin to that ceiling; raising it means chunking those first.
+# `batch/copy-dataset` still bind every id in one unchunked statement and are
+# NOT capped: a body over 32,766 ids 500s there until they are chunked (they
+# wait for M4, which rewrites both routes). 20,000 is twice `utils.chunked`'s
+# default with a 1.6x margin to that ceiling; raising it means re-checking
+# `_apply_bulk_filters` first.
 SELECT_ALL_ID_CAP = 20_000
 
 
@@ -1004,7 +1006,9 @@ async def batch_reorder(body: BatchReorderRequest, db: AsyncSession = Depends(ge
             select(func.count()).where(Image.id.in_(chunk), Image.dataset_id == body.dataset_id)
         )
         found += count_result.scalar() or 0
-    if found != len(ids):
+    # Against the request's own length, not the deduped one: a repeated id was a
+    # 400 when one `IN` collapsed it, and the chunking keeps that contract.
+    if found != len(body.updates):
         raise HTTPException(400, "Some image IDs do not belong to the specified dataset")
     await db.execute(
         sa_update(Image),

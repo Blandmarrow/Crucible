@@ -366,7 +366,12 @@ def test_batch_reorder_chunks_and_still_rejects_foreign_ids(tmp_path, monkeypatc
             other = await env.create_dataset("other")
             stranger = await upload_image(env, other["id"], "z.png")
             ups = [{"id": i["id"], "sort_order": n} for n, i in enumerate(imgs)]
-            ups += ups[:2]
+            # Repeats are deduped before chunking, but still a 400, as they were
+            # when one `IN` collapsed them and the count fell short.
+            r = await env.client.patch(f"{API}/images/batch/reorder",
+                                       json={"dataset_id": ds["id"], "updates": ups + ups[:2]})
+            assert r.status_code == 400, r.text
+
             r = await env.client.patch(f"{API}/images/batch/reorder",
                                        json={"dataset_id": ds["id"], "updates": ups})
             assert r.status_code == 200, r.text

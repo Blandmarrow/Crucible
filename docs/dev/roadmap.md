@@ -17,16 +17,12 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-08, M6's folder-whitespace fix merged)
+## Next session (updated 2026-11-08, M6's plan folder retired)
 
-0. **Two of M6's loose ends closed on 2026-11-08** (item 4 below): the Ctrl+C hand check
-   passed, and the folder-segment whitespace fix merged as PR #121 (decision 12, migration
-   `b8d2f4a6c1e3`). Next is the third: retiring `comfy-automation-plan/`, a docs-only PR.
-   Its plan is to move the unique record (rulings not in the log, the §3–§6 settled points,
-   the §8 rationale with its mockup URL, the review fixes, the hand-checks table, the traps)
-   into `roadmap-archive/m6-comfy-automation.md` and the §8c drag table into
-   `comfyui/library-dnd.md`, then repoint the ten links, drop the `TRANSIENT_DIRS` entry and
-   delete the folder. Nothing goes into `page.md` or `queue.md`, which are over budget.
+0. **M6's loose ends are all closed** (item 4 below). On 2026-11-08 the Ctrl+C hand check
+   passed, the folder-segment whitespace fix merged as PR #121 (decision 12, migration
+   `b8d2f4a6c1e3`), and the M6 plan folder was retired by PR #122, a docs-only PR. **Next is M7**: the CLIP QuickGELU plan or Stage 3, neither of which
+   waits on anything (see M7 below).
    **M8's two "any time" items** (the coverage config and CLAUDE.md § Data flow) merged on
    2026-11-08 as PR #120; the branch is deleted. `test_restart_in_dev_mode_touches_the_reloader_trigger_and_never_signals`
    failed once in PR #120's CI and passed on a rerun: it reads the trigger file as soon as it
@@ -62,7 +58,7 @@ restates its stages.
 4. **M6 merged on 2026-11-07 as PR #110**, and `feat/m6-comfy-automation` is deleted. Its
    checklist and the last session's notes are archived in
    [roadmap-archive/m6-comfy-automation.md](roadmap-archive/m6-comfy-automation.md). What
-   stays open, none of it blocking:
+   stayed open, all closed by 2026-11-08:
    - [x] **The gallery's case-blind subtree match**, found in the §8b review: merged as PR
      #112 (2026-11-07) with `utils.sql_has_prefix`/`sql_subtree`,
      `sql_has_path_prefix` for the file browser's full paths, and an AST guard. The sweep also
@@ -80,12 +76,12 @@ restates its stages.
    - [x] **Ctrl+C on Vite under `manage.ps1 dev`**, pressed in a real terminal, closes the
      backend's own window (PM-033). Checked by the user on 2026-11-08: once Vite was serving,
      Ctrl+C left no backend, Vite or listener on :8000 or :5173.
-   - **The plan folder** [comfy-automation-plan/](comfy-automation-plan/README.md) is
-     transient and is deleted "when everything is done", by its own lifecycle note. Topic
-     files and this archive still link its § Hand checks on the box, § 8 and § Review fixes, so
-     deleting it means moving that durable record out first, as M5's cleanup plans for its own.
-     Its § Still open keeps the gallery entity filter, unbuilt until someone misses it
-     (decision 8).
+   - [x] **The plan folder**, retired on 2026-11-08 (PR #122) after an audit of every claim in it. The
+     reasons for its rejected designs went into the `docs/dev/comfyui/` topic files, and its
+     history (the user's rulings, the §8 mockup, the review fixes, the hand checks, the
+     traps) into the archive record's later sections. Its §8c drag table was out of date and
+     was dropped for `comfyui/library-dnd.md`. The gallery entity filter stays unbuilt until
+     someone misses it (decision 8).
 5. M8's follow-ups 8–11 merged on 2026-11-07 (PRs #114 and #115); both branches are deleted.
    On 2026-11-08 follow-up 14 (a copy-mode thumbnail guard) merged as PR #116 and stage 4
    (the `DatasetsPage` dialogs) as PR #117; both branches are deleted. Follow-up 15, `images.py`'s two

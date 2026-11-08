@@ -1,7 +1,7 @@
 # The library panel, Copy to plan and drag and drop
 
-M6 §8c on the ComfyUI page's Rows tab (`docs/dev/comfy-automation-plan/README.md` § 8c, which
-records the rulings). It covers the prompt library side panel (`ComfyLibraryPanel`) with its
+M6 §8c on the ComfyUI page's Rows tab (the rulings:
+`docs/dev/roadmap-archive/m6-comfy-automation.md` § The page rework). It covers the prompt library side panel (`ComfyLibraryPanel`) with its
 *Other plans* tab, Copy to plan, the row menu, and drag and drop with the button route behind
 every drag. The rest of the page is `docs/dev/comfyui/page.md`. The endpoints are
 `docs/dev/comfyui/queue.md` § Backend: the library's nested categories, `rows/place` and
@@ -129,7 +129,8 @@ One `DndContext` in `ComfyPage` wraps the Rows tab: the rail, the tree, the tabl
 panel. Desktop files are native events instead. The pieces:
 - `components/comfy/dnd.ts` is pure: what a draggable and a droppable carry
   (`DragData`/`DropData`), their namespaced ids, and **`resolveDrop`, the one drop matrix**
-  (the plan's § 8c table, with `describeDrop` for the overlay's words).
+  (the list under **What each drop does** below, with `describeDrop` for the overlay's
+  words).
 - `DndRow.tsx` is a row that is a drop target, a drag source, or both. The drag starts from a
   handle it passes back: a grip, or a label button, never a row holding inputs.
 - `runDrop` in `ComfyPage` turns an action into the mutation its button route calls.

@@ -64,8 +64,9 @@ function renest(src: string, destParent: string): string | null {
   return next === src ? null : next;
 }
 
-/** The drop matrix (the plan's § 8c table). null = not a drop target for this drag, which
- *  the collision filter also uses so an invalid target never lights up. */
+/** The drop matrix (docs/dev/comfyui/library-dnd.md § Drag and drop). null = not a drop
+ *  target for this drag, which the collision filter also uses so an invalid target never
+ *  lights up. */
 export function resolveDrop(drag: DragData, drop: DropData, ctx: DropContext): DropAction | null {
   switch (drag.kind) {
     case "row": {

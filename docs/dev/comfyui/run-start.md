@@ -31,7 +31,9 @@ it always did:
 - **the fill** (`blueprint_service.fill_plan`): `_compute` on the stored blueprint, the
   function `apply` runs, so an invalid blueprint or a first pass over the row cap is
   refused before the run exists. Rows a pass would generate in a folder are its new rows
-  plus its open ones, which `prepare_top_up` resets and lists;
+  plus its open ones, which `prepare_top_up` resets and lists. It is not Preview's count:
+  Preview lists at most `PREVIEW_LEAF_LIMIT` (500) leaves and counts rewrite calls the run
+  would not make;
 - **the caption and rewrite models**: the caption provider must exist (404; the request
   model checks only the id's prefix), and a model its server lists without the chosen
   one is a 400. A server that cannot be asked is a warning. The listing goes through
@@ -61,6 +63,11 @@ stages into `STAGE_ORDER` whatever order they arrive in.
 is **not keyed** by dataset id in `PageRenderer`. Its plan and base folder are kept per
 dataset, so a dataset switch shows that dataset's own; a `prevDatasetId` effect, as on
 `ComfyPage`, clears only the rewrite's ticked scenarios and the dry-run report.
+
+**A routed page of its own, not a third `ComfyPage` tab** (M6 §4): a run spans
+captioning, scoring, gating and export, and only its first stages are about ComfyUI. That
+a tab would skip the routed-page checklist in `docs/dev/panes-routing.md` and `PaneHeader`'s
+`PAGE_OPTIONS` was weighed and rejected.
 
 - The start form's state is one `RunFormState` (`components/runs/runRecipeForm.ts`).
   `formToRecipe` builds the recipe that Start, Dry run and saving a recipe all send;

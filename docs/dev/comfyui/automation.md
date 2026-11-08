@@ -16,7 +16,10 @@ user guide is `docs/runs.md`, with `docs/run-setup.md` and `docs/repeating-runs.
 
 The job queue has one worker, and it runs one job to the end before taking the next
 (`docs/dev/backend-infrastructure.md` § Job cancellation), so nothing on that queue may wait for
-another job on it. A run therefore **is not a job**. It is a `Run` row
+another job on it. A run therefore **is not a job**. Two other shapes were rejected (M6):
+a multi-worker queue, because the single worker is what keeps two GPU jobs off the card
+at once; and one job running every stage inline, which would have lifted each `_run`
+closure out of its router and lost each route's preflight checks. It is a `Run` row
 (`backend/models/run.py`, table `runs`):
 
 - `recipe`: the `schemas/run.RunRecipe` it was started with. That means which stages are
@@ -132,7 +135,9 @@ check. The order is always run lock, then dataset or plan lock, never the revers
   clears them too whenever a stage starts, so a stage that failed and then succeeds never
   still shows the old error. It is always explicit. Re-running `prompts` is safe,
   because per-leaf targets are absolute. Re-running `generate` runs only rows not
-  completed. A re-run `export` rewrites its output.
+  completed. A re-run `export` rewrites its output. A `done` snapshot is never taken
+  again, and one killed part-way leaves nothing behind, since `create_snapshot` commits
+  once, at its end.
 - **Restart.** `main.py`'s lifespan calls `reconcile_interrupted_runs()` right after
   `mark_interrupted_jobs()`. Every `running` run becomes `paused`, and its running stage
   goes back to `pending` with a note. **The exception is a stage whose child completed.**

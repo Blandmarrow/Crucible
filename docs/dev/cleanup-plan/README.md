@@ -76,7 +76,7 @@ failed first. What stays true lives in the files named beside them:
     `docs/dev/backend-infrastructure.md` § Shutdown: stopping the job queue, and
     `refresh_stats_after_abort`'s docstring.
 
-Item 14 landed on 2026-11-08 on `fix/m8-copy-thumbnail-guard`:
+Item 14 merged on 2026-11-08 as PR #116:
 
 14. **Every batch copy branch commits its row before the thumbnail**: the upscale and LUT
     loop and detection crop now take inpaint's PM-013 Tier 1 order, so a thumbnail raise is
@@ -123,8 +123,7 @@ LUT forms or `DatasetsPage.tsx`.
   Inpaint and `crop_to_detection` stayed out: their count keys, commit order and model lease
   would each need a flag. One intended change: a LUT replace now writes `width`/`height` from
   the result, as an upscale does. A grade keeps the size, so the values are the same.
-- **Stage 4 (landed 2026-11-08 on `refactor/m8-stage4-datasets-dialogs`): `DatasetsPage`
-  dialogs.** Five independent forms moved into `frontend/src/components/datasets/`, taking the
+- **Stage 4 (merged 2026-11-08 as PR #117): `DatasetsPage` dialogs.** Five independent forms moved into `frontend/src/components/datasets/`, taking the
   page from 1,805 lines to 1,334. One addition kept behaviour the same: each dialog's mutation
   has a shared `mutationKey`, read through `useIsMutating`, because a mutation owned by a
   dialog that unmounts no longer keeps a reopened dialog's submit disabled.

@@ -76,6 +76,13 @@ failed first. What stays true lives in the files named beside them:
     `docs/dev/backend-infrastructure.md` § Shutdown: stopping the job queue, and
     `refresh_stats_after_abort`'s docstring.
 
+Item 14 landed on 2026-11-08 on `fix/m8-copy-thumbnail-guard`:
+
+14. **Every batch copy branch commits its row before the thumbnail**: the upscale and LUT
+    loop and detection crop now take inpaint's PM-013 Tier 1 order, so a thumbnail raise is
+    a counted `thumbnails_stale`, not a failed run that rolls back every copy row.
+    `docs/dev/image-edit-job.md` § Copy mode commits each row before its thumbnail.
+
 Still open:
 
 7. **Crop+upscale's replace job** completes with `processed: 0` when its row vanished mid-run,
@@ -94,12 +101,11 @@ Still open:
     `frontend/e2e/detail-edit-outcome.spec.ts` sets a 1920px viewport to get past it. Seen only
     in Playwright's Chromium so far, so confirm by hand first. Stage 6 moves those controls into
     forms, so it is folded in there.
-14. **A copy-mode thumbnail raise fails the whole run** in detection crop and in the upscale
-    and LUT loop (`image_edit_job.py`): `generate_thumbnail` sits outside any `try` after the
-    copy is written, and the copy rows are only flushed, so a raise rolls back every earlier
-    copy row while their files stay on disk for a rescan to adopt. Inpaint's copy branch
-    commits first and guards the thumbnail (PM-013 Tier 1); the other two want the same.
-    Found by the review of items 8, 10 and 11.
+15. **`images.py`'s two single-image copy paths still cut the thumbnail before the row**:
+    the synchronous copy crop (`POST /images/{id}/crop` without an upscale) and the new-file
+    `crop_upscale` worker. A raise there leaves one orphan file and no row, not a batch
+    rollback, so this is milder than item 14 was. PM-013's last open Tier 3 instances. They
+    wait for M4, which rewrites `images.py`, and fit stage 8. Found while fixing item 14.
 
 ## Stages 2 to 4: no port conflict
 

@@ -938,8 +938,8 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
 
             replace = cfg["replace"]
             dest_subfolder = cfg["dest_subfolder"]  # None = inherit source subfolder
-            # `thumbnails_stale` counts replace-mode crops whose *preview* could not
-            # be recut in the post-commit epilogue. The image itself is correct and
+            # `thumbnails_stale` counts crops, in either mode, whose *preview* could
+            # not be cut in the post-commit epilogue. The image itself is correct and
             # committed; only the gallery tile is stale, and the realistic trigger
             # (a full volume, a read-only thumbnails/) hits every image in the run.
             counts = {
@@ -1166,7 +1166,6 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
                         })
                         continue
                     thumb_path = thumbnail_path_for(dest_path_str)
-                    await loop.run_in_executor(None, generate_thumbnail, dest_path_str, thumb_path)
                     new_img = Image(
                         dataset_id=img.dataset_id,
                         filename=new_filename,
@@ -1182,11 +1181,33 @@ async def crop_to_detection(body: DetectionCropRequest, db: AsyncSession = Depen
                         # A crop inherits its parent's source and license.
                         **copy_provenance(img),
                     )
+                    # PM-013 Tier 1, as inpaint's copy branch: commit the row
+                    # that describes the `_crop` file before anything fallible
+                    # runs. Cutting the thumbnail first, with the rows only
+                    # flushed, let one `OSError` fail the job and roll back
+                    # every derivative row of the run while their files stayed
+                    # on disk. `touched_datasets` first, as in the replace branch.
                     session.add(new_img)
-                    await session.flush()
+                    touched_datasets.add(img.dataset_id)
+                    await session.commit()
+                    # `expire_on_commit=False` (backend/database.py), so the id
+                    # is readable after the commit without a refresh.
                     derivative_ids[img.id] = new_img.id
                     last_image_id = new_img.id
-                    touched_datasets.add(img.dataset_id)
+                    # Derived from the gated source folder, so no gate of its
+                    # own (inpaint's copy branch).
+                    try:
+                        await loop.run_in_executor(
+                            None, generate_thumbnail, dest_path_str, thumb_path
+                        )
+                    except Exception as exc:
+                        # The crop is committed and serves; only the tile is
+                        # missing, and the count is what lets TopBar say so.
+                        counts["thumbnails_stale"] += 1
+                        logger.warning(
+                            "Detection crop: thumbnail for %s could not be "
+                            "generated: %s", new_filename, exc,
+                        )
 
                 counts["cropped"] += 1
                 await broadcaster.emit(job_id, {

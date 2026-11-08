@@ -168,6 +168,56 @@ def test_lut_replace_still_serves_the_image_when_the_thumbnail_fails(tmp_path, m
     run(scenario())
 
 
+def test_lut_copy_commits_each_row_before_cutting_its_thumbnail(tmp_path, monkeypatch):
+    """Copy mode's half of PM-013 (follow-up 14). The thumbnail used to be cut
+    before the insert, with the rows only flushed, so one `OSError` failed the
+    run and rolled back every derivative row while its file stayed on disk."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            a = await upload_image(env, ds["id"], "a.png", png_bytes((200, 90, 40)))
+            b = await upload_image(env, ds["id"], "b.png", png_bytes((200, 90, 40)))
+            lut = _identity_cube(tmp_path / "identity.cube")
+
+            from backend.services import image_edit_job
+
+            real = image_edit_job.generate_thumbnail
+
+            # Keyed on the name: the worker's query has no ORDER BY.
+            def flaky(src, dest):
+                if Path(src).name.startswith("a_"):
+                    raise OSError("no space left on device")
+                return real(src, dest)
+
+            monkeypatch.setattr(image_edit_job, "generate_thumbnail", flaky)
+
+            r = await env.client.post(f"{API}/lut/run", json={
+                "dataset_id": ds["id"], "image_ids": [a["id"], b["id"]],
+                "lut_path": str(lut), "intensity": 1.0, "replace": False,
+            })
+            assert r.status_code == 200, r.text
+            job = await wait_for_job(env, r.json()["job_id"], timeout=60)
+            assert job["status"] == "completed", job
+            assert job["result_data"]["processed"] == 2, job["result_data"]
+            assert job["result_data"]["thumbnails_stale"] == 1, job["result_data"]
+            assert job["result_data"]["failed"] == 0, job["result_data"]
+
+            async with env.Session() as db:
+                rows = (await db.execute(
+                    select(Image).where(Image.dataset_id == ds["id"])
+                )).scalars().all()
+            derived = [r for r in rows if r.id not in (a["id"], b["id"])]
+            assert len(derived) == 2, [r.filename for r in rows]
+            by_parent = {r.filename.split("_")[0]: r for r in derived}
+            assert set(by_parent) == {"a", "b"}, [r.filename for r in derived]
+            assert not Path(by_parent["a"].thumbnail_path).exists()
+            assert Path(by_parent["b"].thumbnail_path).exists()
+            for r in derived:
+                assert Path(r.file_path).exists()
+
+    run(scenario())
+
+
 def test_lut_reports_all_zero_counts_on_a_clean_run(tmp_path):
     """The counter has to be honest in both directions: a run where nothing went
     wrong reports four zeros beside its `processed`, so a non-zero

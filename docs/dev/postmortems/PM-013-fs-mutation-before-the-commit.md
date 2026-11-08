@@ -60,6 +60,18 @@ Two adjacent tiers were enumerated and deliberately **not** fixed here:
   holds it. **The other four remain open** — this amendment records a new router built to
   the rule, not a sweep that fixed them.
 
+  **Amended 2026-11-08 (M8 follow-up 14):** three of those four are fixed. LUT and upscale
+  now share one loop (`services/image_edit_job.py`, M8 stage 3), and its copy branch and
+  `routers/detection.py`'s take inpaint's order: add the row, commit it, then cut the
+  thumbnail in a `try/except` that counts `thumbnails_stale`. Both had inpaint's worse
+  shape, rows only flushed, so one raise rolled back every derivative of the run. The
+  `..._copy_commits_each_row_before_cutting_its_thumbnail` tests in
+  `test_upscale_png_fallback_http.py` and `test_lut_replace_extension_http.py`, and the
+  copy-mode test in `test_detection_crop_replace_http.py`, hold them. **Still open:**
+  `routers/images.py`'s single-image copy crop (the synchronous path) and the new-file
+  `crop_upscale` worker. Each handles one image, so a raise costs one orphan file and no row,
+  not a batch. They wait for M4, which rewrites that file (M8 cleanup plan, item 15).
+
 **Amended a fourth time 2026-10-27 (GPT-010): "DB-only" was not a safe harbour.** Every
 replace-mode crop — single, batch, `crop_upscale` and `crop_to_detection` — ran
 `remap_detections_for_crop` *after* the overwrite, on the reasoning that DB work above the
@@ -193,7 +205,7 @@ and `docs/dev/image-edit-job.md` § Replace mode follows the PNG fallback.
 ### Status & date
 
 MITIGATED — the four Tier-1 sites are fixed and tested, but the class is reachable by any
-new path that writes a file inside a transaction, and Tiers 2 and 3 above are known-unfixed
-instances of milder shapes. Only review catches a new one. Found in code review of the
+new path that writes a file inside a transaction, and Tier 3's two single-image copy paths in
+`routers/images.py` are known-unfixed instances of a milder shape (Tier 2 is empty). Only review catches a new one. Found in code review of the
 `experimental-video-support` branch (V-03), not in production.
 Last reviewed for staleness: 2026-07-29.

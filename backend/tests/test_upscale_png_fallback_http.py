@@ -221,6 +221,60 @@ def test_upscale_replace_still_serves_the_image_when_the_thumbnail_fails(tmp_pat
     run(scenario())
 
 
+def test_upscale_copy_commits_each_row_before_cutting_its_thumbnail(tmp_path, monkeypatch):
+    """PM-013 Tier 1 in the shared loop's copy branch (follow-up 14): a
+    thumbnail `OSError` costs a gallery tile, not the row — and not the *other*
+    image's row either.
+
+    Before the fix the branch cut the thumbnail before the insert and only
+    flushed its rows, so a raise propagated out of the loop, `job_queue` marked
+    the job failed, and the session rolled back every derivative row while
+    their files stayed on disk for a rescan to adopt."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            _install_fake(monkeypatch)
+            ds = await env.create_dataset("d")
+            a = await upload_image(env, ds["id"], "a.png")
+            b = await upload_image(env, ds["id"], "b.png")
+
+            import backend.services.image_edit_job as image_edit_job
+
+            real = image_edit_job.generate_thumbnail
+
+            # Keyed on the name, not a call counter: the worker's `IN (...)`
+            # query has no ORDER BY, so which derivative is cut first is not
+            # ours to say.
+            def flaky(src, dest):
+                if Path(src).name.startswith("a_"):
+                    raise OSError("no space left on device")
+                return real(src, dest)
+
+            monkeypatch.setattr(image_edit_job, "generate_thumbnail", flaky)
+            r = await env.client.post(f"{API}/upscaling/run", json={
+                "dataset_id": ds["id"], "image_ids": [a["id"], b["id"]],
+                "model_path": MODEL, "replace": False,
+            })
+            assert r.status_code == 200, r.text
+            job = await wait_for_job(env, r.json()["job_id"], timeout=60)
+            assert job["status"] == "completed", job
+            assert job["result_data"]["processed"] == 2, job["result_data"]
+            assert job["result_data"]["thumbnails_stale"] == 1, job["result_data"]
+            assert job["result_data"]["failed"] == 0, job["result_data"]
+
+            async with env.Session() as db:
+                rows = (await db.execute(
+                    select(Image).where(Image.dataset_id == ds["id"])
+                )).scalars().all()
+            by_name = {r.filename: r for r in rows}
+            assert "a_up2x.png" in by_name, "the row survives its thumbnail failure"
+            assert "b_up2x.png" in by_name, "and so does the other image's"
+            assert not Path(by_name["a_up2x.png"].thumbnail_path).exists()
+            assert _is_upscaled(by_name["b_up2x.png"].thumbnail_path)
+            assert _is_upscaled(by_name["a_up2x.png"].file_path), "the file is there regardless"
+
+    run(scenario())
+
+
 def test_upscale_reports_all_zero_counts_on_a_clean_run(tmp_path, monkeypatch):
     """What proves the counter is honest rather than hardcoded: a run where
     nothing went wrong reports zeros for all three failure kinds."""

@@ -5,9 +5,10 @@ The two jobs were about 95% the same code. What differs is held in an
 the pixel function, and the ``record_in_place`` entry. The routers keep the
 request half (scope, the ``BackgroundJob`` row, the enqueue) and build the spec.
 
-Inpaint and detection crop are not here on purpose: their count keys, commit
-order (inpaint commits a copy before its thumbnail), crop's stage/flush/swap and
-inpaint's model lease would each need a flag.
+Inpaint and detection crop are not here on purpose: their count keys, crop's
+stage/flush/swap and inpaint's model lease would each need a flag. All three
+share one copy-mode order, though: commit the derivative row, then cut its
+thumbnail as a counted best-effort step (PM-013 Tier 1).
 
 The spec's callables are built in the router and look up the router's own
 globals when called, so a test that patches ``upscale_image_sync`` or
@@ -352,9 +353,6 @@ async def _edit_loop(
             else:
                 dest_path = Path(actual_out_path)
                 thumb_path = thumbnail_path_for(actual_out_path)
-                await loop.run_in_executor(
-                    None, generate_thumbnail, actual_out_path, thumb_path
-                )
                 new_img = Image(
                     dataset_id=img.dataset_id,
                     filename=dest_path.name,
@@ -369,11 +367,34 @@ async def _edit_loop(
                     # A same-dataset derivative keeps its parent's source/license.
                     **copy_provenance(img),
                 )
+                # PM-013 Tier 1, as inpaint's copy branch: the row that
+                # describes the file now on disk is committed *before* anything
+                # fallible runs. Cutting the thumbnail first, with the rows only
+                # flushed, let one `OSError` propagate out of the loop, fail the
+                # job and roll back **every** derivative row of the run while
+                # their files stayed on disk. `touched` first, as above.
                 session.add(new_img)
-                await session.flush()
-                derivative_ids[img.id] = new_img.id
                 touched.add(img.dataset_id)
+                await session.commit()
+                # `expire_on_commit=False` (backend/database.py), so the id is
+                # readable after the commit without a refresh.
+                derivative_ids[img.id] = new_img.id
                 last_image_id = new_img.id
+                # The thumbnail path is derived from the gated source folder,
+                # so it needs no gate of its own (inpaint's copy branch).
+                try:
+                    await loop.run_in_executor(
+                        None, generate_thumbnail, actual_out_path, thumb_path
+                    )
+                except Exception as exc:
+                    # Same epilogue contract as the replace branch: the row is
+                    # committed and the image serves; only the tile is missing,
+                    # and the count is what lets TopBar say so.
+                    counts["thumbnails_stale"] += 1
+                    logger.warning(
+                        "%s: thumbnail for %s could not be generated: %s",
+                        spec.context, dest_path.name, exc,
+                    )
 
             await broadcaster.emit(job_id, _progress(
                 i + 1, total, img, image_id=last_image_id,

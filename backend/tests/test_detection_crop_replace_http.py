@@ -5,6 +5,10 @@ an un-`try`-wrapped `generate_thumbnail`, and the loop's only `commit()` sat aft
 the loop — the third instance of PM-013's worse shape, where the blast radius is
 not one image's stale geometry but every image already overwritten on disk. These
 pin the fixed order: write → assign → per-image `commit()` → epilogue.
+
+Copy mode had the same shape until follow-up 14: the thumbnail was cut before
+the insert and the rows only flushed, so one raise rolled back every derivative
+row while its `_crop` file stayed on disk. The last test pins its fix.
 """
 from pathlib import Path
 
@@ -209,5 +213,57 @@ def test_a_crop_failure_is_counted_and_leaves_its_row_alone(tmp_path):
             assert not failed_row.processing_history
             # no `_croptmp` leftover
             assert not list(Path(failed_row.file_path).parent.glob("*_croptmp*"))
+
+    run(scenario())
+
+
+def test_copy_mode_commits_each_row_before_cutting_its_thumbnail(tmp_path):
+    """Follow-up 14: a thumbnail `OSError` in copy mode costs a gallery tile,
+    not the derivative row — and not the other image's row either. Before the
+    fix the raise escaped the loop, the job failed, and both `_crop` rows were
+    rolled back while their files stayed on disk."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            imgs = await _two_images_with_detections(env, ds["id"])
+
+            from backend.routers import detection as detection_router
+            original = detection_router.generate_thumbnail
+
+            # Keyed on the name: the worker's query has no ORDER BY.
+            def selective(src, *a, **kw):
+                if Path(src).name.startswith("a_crop"):
+                    raise OSError("thumbnails/ is read-only")
+                return original(src, *a, **kw)
+
+            detection_router.generate_thumbnail = selective
+            try:
+                r = await env.client.post(f"{API}/detection/crop", json={
+                    "dataset_id": ds["id"],
+                    "image_ids": [i["id"] for i in imgs],
+                    "replace": False,
+                })
+                assert r.status_code == 200, r.text
+                job = await wait_for_job(env, r.json()["job_id"])
+            finally:
+                detection_router.generate_thumbnail = original
+
+            assert job["status"] == "completed", job
+            assert job["result_data"]["cropped"] == 2, job["result_data"]
+            assert job["result_data"]["thumbnails_stale"] == 1, job["result_data"]
+            assert job["result_data"]["failed"] == 0, job["result_data"]
+
+            rows = await _rows(env, ds["id"])
+            by_name = {row.filename: row for row in rows.values()}
+            assert "a_crop.png" in by_name, "the row survives its thumbnail failure"
+            assert "b_crop.png" in by_name, "and so does the other image's"
+            assert not Path(by_name["a_crop.png"].thumbnail_path).exists()
+            assert Path(by_name["b_crop.png"].thumbnail_path).exists()
+            for name in ("a_crop.png", "b_crop.png"):
+                assert Path(by_name[name].file_path).exists()
+                assert (by_name[name].width, by_name[name].height) == (20, 10)
+            # The sources are untouched — copy mode adds, it does not replace.
+            for i in imgs:
+                assert (rows[i["id"]].width, rows[i["id"]].height) == (40, 20)
 
     run(scenario())

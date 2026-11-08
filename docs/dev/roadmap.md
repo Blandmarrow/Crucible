@@ -17,13 +17,22 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-08, M9 added ahead of M7)
+## Next session (updated 2026-11-08, M9 stage 3 built)
 
 0. **M9 comes first** ([decision 13](decisions/13-scale-work-first.md)): the checked findings
    of an outside scaling review, planned in [scale-plan/README.md](scale-plan/README.md).
    Stages 1 and 2 merged on 2026-11-08: the gallery sort's tie-breaker as PR #124, and the
-   orphan sweep as PR #125. **Next is M9 stage 3**, chunked quality scoring, which needs
-   nothing. See M9 below.
+   orphan sweep as PR #125. Stage 3, chunked quality scoring, is built on
+   `fix/m9-stage3-chunked-scoring` with every local gate green, open as PR #126.
+   Hand-checked on 2026-11-08 against a throwaway instance: 2,500 images, Technical only,
+   the server hard-killed mid-run kept the first 1,000 scores and the job read
+   *Interrupted*; *Score what's missing* then scored exactly the other 1,500, and a second
+   press answered *Nothing left to score*. On the GPU, every scorer on 1,200 images (two
+   chunks per check) loaded each model once, wrote every column with the aesthetic marker
+   intact, sent a monotone percent, and auto-unloaded all four models; a cancel through
+   `DELETE /jobs/{id}` partway into the aesthetic check's second chunk kept 1,080 scores,
+   never started NSFW, and unloaded the models too. **Next is stage 4 or 5**, neither of which waits on anything; stage 8 (Retry)
+   is now unblocked too. See M9 below.
 1. **M6's loose ends are all closed** (item 5 below). On 2026-11-08 the Ctrl+C hand check
    passed, the folder-segment whitespace fix merged as PR #121 (decision 12, migration
    `b8d2f4a6c1e3`), and the M6 plan folder was retired by PR #122, a docs-only PR. **After
@@ -169,8 +178,10 @@ and resolves the overlap.
   them. Merged 2026-11-08 as PR #125: only a tree with no file is deleted (the user's call),
   and dot-named folders are skipped. Detail: `docs/dev/database.md` § The sweep moves data
   aside and never deletes it.
-- [ ] Stage 3: quality scoring commits per chunk within each check, with an "only unscored"
-  resume option. Needs nothing.
+- [x] Stage 3: quality scoring commits per chunk within each check, with an "only unscored"
+  resume option. Built 2026-11-08 on `fix/m9-stage3-chunked-scoring`, open as PR #126: the
+  option takes missing-or-stale rows and is a *Score what's missing* button (the user's
+  calls). Detail: `docs/dev/quality/scoring.md` § The chunked job loop.
 - [ ] Stage 4: Stats histograms built on the server instead of raw value lists. Comes before
   M8 stage 7.
 - [ ] Stage 5: page the single-layer style similarity branch. Needs nothing.

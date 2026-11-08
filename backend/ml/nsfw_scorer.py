@@ -1,6 +1,7 @@
 import asyncio
 import functools
 import logging
+from collections.abc import Awaitable, Callable
 
 import torch
 
@@ -38,6 +39,7 @@ async def score_images_nsfw_batch(
     model_entry: dict,
     threshold: float,
     job_id: str | None = None,
+    progress: Callable[[int], Awaitable[None]] | None = None,
 ) -> list[dict]:
     """Score a batch of images for NSFW content, emitting SSE progress.
 
@@ -74,7 +76,10 @@ async def score_images_nsfw_batch(
             "is_nsfw": score is not None and score >= threshold,
         })
 
-        if job_id and i % 10 == 0:
+        if progress is not None:
+            if i % 10 == 0:
+                await progress(i + 1)
+        elif job_id and i % 10 == 0:
             await broadcaster.emit(job_id, {
                 "type": "progress",
                 "job_id": job_id,

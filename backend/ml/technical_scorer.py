@@ -2,6 +2,7 @@ import asyncio
 import functools
 import itertools
 import logging
+from collections.abc import Awaitable, Callable
 import math
 import time
 
@@ -108,6 +109,7 @@ async def score_images_technical(
     blur_threshold: float = BLUR_THRESHOLD,
     noise_threshold: float = NOISE_THRESHOLD,
     uniformity_threshold: float = UNIFORMITY_THRESHOLD,
+    progress: Callable[[int], Awaitable[None]] | None = None,
 ) -> list[dict]:
     from backend.workers.progress import broadcaster
     from backend.workers.job_queue import job_queue
@@ -127,7 +129,10 @@ async def score_images_technical(
             scores = _unmeasured()
         results.append(scores)
 
-        if job_id and i % 10 == 0:
+        if progress is not None:
+            if i % 10 == 0:
+                await progress(i + 1)
+        elif job_id and i % 10 == 0:
             await broadcaster.emit(job_id, {
                 "type": "progress", "job_id": job_id, "job_type": "quality_score",
                 "status": "running", "done": i + 1, "total": total,

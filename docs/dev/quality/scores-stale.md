@@ -24,16 +24,26 @@ The consequence lands far from the edit. `exclude_flags` at export drops images 
 
 ## The clear predicate
 
-**The clear site** is the write loop in `routers/quality.py`, and it is set-covering over what the run actually *wrote*, never over `body.run_*`:
+**The clear site** is `_write_score_chunk` in `routers/quality.py`, run for every chunk of every check (the loop is `docs/dev/quality/scoring.md` § The chunked job loop). It is set-covering over what the run actually *wrote*, never over `body.run_*`:
 
 ```python
-if img.scores_stale and refreshed:
-    stale_left = {c for c in _JOB_SCORE_COLUMNS if getattr(img, c) is not None} - refreshed
+refreshed = done_cols | check.score_cols
+if check.score_cols and row.scores_stale and img_id in clearable:
+    stale_left = {c for c in _JOB_SCORE_COLUMNS if getattr(row, c) is not None} - refreshed
     if not stale_left:
-        img.scores_stale = False
+        cleared.append(img_id)
 ```
 
-`refreshed` is accumulated inside each `i < len(...)` guard, which is what makes all four partial modes fall out for free: a cancelled batch truncates a results list so rows past the cut never enter it, a per-image subset never visits the row, an unticked check contributes nothing, and — the fourth — **a run that measured nothing clears nothing**. That last one is what the `and refreshed` conjunct is for: a pass with only `run_embeddings` or only `run_dino` ticked writes no score column at all, so `refreshed` is empty, and `stale_left` would then be empty for any row whose job-score columns are all NULL — clearing the bit having taken no measurement. (`ScoreRequest` has no `run_duplicates`; duplicate flagging rides on `run_technical`, which does write scores.) So the common case — re-score with the same checks that produced the original numbers — clears the bit, and a watermark-only pass never declares a stale blur score fresh. The outer `if` avoids N pointless UPDATEs on a routine re-score. `quality_flags` needs no separate tracking, since each flag is written in the same guarded block as its score; `is_duplicate` derives from `phash`, which every in-place path re-derives, so duplicate flags were never stale.
+`row` is the state read just before this chunk's write, which is right: a column this check writes is in `refreshed` whatever it held, and a column it does not write is untouched by the write. `done_cols` is the union of the score columns of every check that has finished in this job, so a row is cleared in the last check that touches it even though no single chunk wrote all its scores.
+
+**The union is exact only because every earlier check wrote this row, and `clearable` is what holds that.** It is `stale_at_start - missed`: the rows stale when the job started (a snapshot), minus any some check should have written but did not, because its chunk came back short. Real scorers only come back short on a cancel, after which the job raises, but the predicate does not rest on that. Two consequences:
+
+- **A row that turns stale mid-job is never cleared by that job.** It was edited while the job ran, so a score an earlier check measured may describe pixels that are gone. Under the old single-commit job that race spanned the whole run.
+- **Under `only_unscored`, the snapshot rows pass every check's filter.** A check otherwise visits only rows missing its own output. Without the snapshot, a stale row whose aesthetic score was present would be skipped by the aesthetic check, and the technical check would then count `aesthetic_score` as refreshed and clear the bit over a stale score. That is why the user's ruling (2026-11-08) puts stale rows in "what's missing", and why the filter reads the snapshot rather than the live bit (`docs/dev/quality/scoring.md` § The chunked job loop).
+
+One race is left, and it predates chunking: a row stale at the start and edited *again* between an earlier check's write and a later one's can still be cleared over the earlier check's pre-edit scores. Closing it would need a per-row edit counter read beside the paths.
+
+The partial modes fall out of the same test: a cancel truncates a chunk so rows past the cut are never written, a per-image subset never visits the row, an unticked check contributes nothing, and **a run that measured nothing clears nothing**. That last one is what the `check.score_cols` conjunct is for: the CLIP and DINOv2 checks write no score column, and `stale_left` would otherwise be empty for any row whose job-score columns are all NULL — clearing the bit having taken no measurement. (`ScoreRequest` has no `run_duplicates`; duplicate flagging rides on `run_technical`, which does write scores.) So the common case — re-score with the same checks that produced the original numbers — clears the bit, and a watermark-only pass never declares a stale blur score fresh. The cleared ids go out as one `UPDATE … WHERE id IN (…)` per chunk, beside the bulk write. `quality_flags` needs no separate tracking, since each flag is written in the same guarded block as its score; `is_duplicate` derives from `phash`, which every in-place path re-derives, so duplicate flags were never stale.
 
 **`_JOB_SCORE_COLUMNS` is `score_columns(Image) - _UNREFRESHABLE_SCORE_COLUMNS`** — derived from the same source as the set site, so the two ends of the bit are provably over one set. Derivation is the safe default because the failure directions are asymmetric: a hand-written list that misses an eleventh column **over-clears**, so the badge vanishes while a score is stale — silent, and the exact bug the feature exists to prevent — while a derived set that gains a column the job cannot refresh makes the bit **un-clearable**, a permanent badge that gets reported within the hour. `test_the_clear_universe_is_the_nine_scores_the_job_writes` pins the resulting nine names, so an eleventh score column fails CI with a decision to make rather than either outcome. `_TECHNICAL_SCORE_COLUMNS` stays an explicit literal: it names what one block writes, not a property of the schema.
 

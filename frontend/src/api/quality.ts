@@ -115,6 +115,10 @@ export const qualityApi = {
     /** Re-score only rows a *different* model already scored. Never-scored rows
      *  are excluded — plain scoring covers those. */
     only_mismatched?: boolean;
+    /** Each check visits only rows missing its own output or marked stale — the
+     *  resume path after a stopped run. Cannot be combined with `only_mismatched`
+     *  (a 422). */
+    only_unscored?: boolean;
     run_technical: boolean;
     run_watermark?: boolean;
     run_embeddings?: boolean;

@@ -454,17 +454,23 @@ export default function QualityPage() {
     staleTime: 60_000,
   });
 
-  // `onlyMismatched` is the re-score offer: same run, narrowed selection. A
-  // mutation variable rather than a second mutation, so the two buttons cannot
-  // drift on which checks they run or which model they run them with.
+  // `onlyMismatched` is the re-score offer and `onlyUnscored` the "Score what's
+  // missing" button: same run, narrowed selection. Mutation variables rather than
+  // more mutations, so the buttons cannot drift on which checks they run or which
+  // model they run them with. Neither is persisted, so a later full run can never
+  // quietly inherit a narrowed scope.
   const scoreMutation = useMutation({
-    mutationFn: ({ onlyMismatched = false }: { onlyMismatched?: boolean } = {}) =>
+    mutationFn: (
+      { onlyMismatched = false, onlyUnscored = false }:
+        { onlyMismatched?: boolean; onlyUnscored?: boolean } = {},
+    ) =>
       qualityApi.score({
         dataset_id: datasetId!,
         subfolder: activeSubfolder,
         run_aesthetic: runAesthetic,
         aesthetic_model: aestheticModel,
         only_mismatched: onlyMismatched || undefined,
+        only_unscored: onlyUnscored || undefined,
         run_technical: runTechnical,
         run_watermark: runWatermark,
         run_embeddings: runEmbeddings,
@@ -831,6 +837,19 @@ export default function QualityPage() {
             style={{ width: 180, fontSize: 12 }}
             title="Optional name shown in the job queue"
           />
+          {/* The resume path: re-running after a stopped job picks up where it
+              left off, because scores are saved chunk by chunk. */}
+          <button
+            className="btn"
+            onClick={() => scoreMutation.mutate({ onlyUnscored: true })}
+            disabled={isRunning}
+            title={
+              "Runs the ticked checks only on images that are missing that check's " +
+              "result or are marked stale. Use it to finish a run that stopped partway."
+            }
+          >
+            Score what's missing
+          </button>
           <button className="btn primary" onClick={() => scoreMutation.mutate({})} disabled={isRunning}>
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
               <path d="M2.5 8a5.5 5.5 0 1010-2"/><path d="M11 3.5l1.5 2.5L10 7"/>

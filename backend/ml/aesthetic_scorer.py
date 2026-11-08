@@ -1,6 +1,7 @@
 import asyncio
 import functools
 import logging
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 import numpy as np
@@ -101,6 +102,7 @@ async def score_images_watermark(
     model_entry_dict: dict,
     job_id: str | None = None,
     watermark_threshold: float = 0.6,
+    progress: Callable[[int], Awaitable[None]] | None = None,
 ) -> list[dict]:
     from backend.workers.progress import broadcaster
     from backend.workers.job_queue import job_queue
@@ -128,7 +130,10 @@ async def score_images_watermark(
             r = {"watermark_score": None, "has_watermark": False}
         results.append(r)
 
-        if job_id and i % 10 == 0:
+        if progress is not None:
+            if i % 10 == 0:
+                await progress(i + 1)
+        elif job_id and i % 10 == 0:
             await broadcaster.emit(job_id, {
                 "type": "progress", "job_id": job_id, "job_type": "quality_score",
                 "status": "running", "done": i + 1, "total": total,
@@ -167,6 +172,7 @@ async def extract_clip_embeddings_batch(
     image_paths: list[str],
     model_entry_dict: dict,
     job_id: str | None = None,
+    progress: Callable[[int], Awaitable[None]] | None = None,
 ) -> list[bytes | None]:
     from backend.workers.progress import broadcaster
     from backend.workers.job_queue import job_queue
@@ -185,7 +191,10 @@ async def extract_clip_embeddings_batch(
             r = None
         results.append(r)
 
-        if job_id and i % 10 == 0:
+        if progress is not None:
+            if i % 10 == 0:
+                await progress(i + 1)
+        elif job_id and i % 10 == 0:
             await broadcaster.emit(job_id, {
                 "type": "progress", "job_id": job_id, "job_type": "quality_score",
                 "status": "running", "done": i + 1, "total": total,
@@ -201,6 +210,7 @@ async def score_images_batch(
     model_handle,
     job_id: str | None = None,
     model: str = "laion",
+    progress: Callable[[int], Awaitable[None]] | None = None,
 ) -> list[float | None]:
     """Score a batch with either aesthetic producer.
 
@@ -245,7 +255,10 @@ async def score_images_batch(
             score = None
         scores.append(score)
 
-        if job_id and i % 10 == 0:
+        if progress is not None:
+            if i % 10 == 0:
+                await progress(i + 1)
+        elif job_id and i % 10 == 0:
             await broadcaster.emit(job_id, {
                 "type": "progress", "job_id": job_id, "job_type": "quality_score",
                 "status": "running", "done": i + 1, "total": total,

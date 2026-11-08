@@ -485,13 +485,13 @@ def _patch_scorers(monkeypatch, *, technical=True, aesthetic=True, watermark=Tru
 
     # `model` is the marker the router will store, not the weights — mirroring
     # the real signature, whose second parameter is the per-model handle.
-    async def score_images_batch(paths, model_handle, job_id=None, model="laion"):
+    async def score_images_batch(paths, model_handle, job_id=None, model="laion", progress=None):
         return _cut([0.75] * len(paths)) if aesthetic else []
 
-    async def score_images_watermark(paths, model, job_id=None, watermark_threshold=0.5):
+    async def score_images_watermark(paths, model, job_id=None, watermark_threshold=0.5, progress=None):
         return _cut([{"watermark_score": 0.1, "has_watermark": False}] * len(paths)) if watermark else []
 
-    async def extract_clip_embeddings_batch(paths, model, job_id=None):
+    async def extract_clip_embeddings_batch(paths, model, job_id=None, progress=None):
         return []
 
     aesthetic_mod.score_images_batch = score_images_batch

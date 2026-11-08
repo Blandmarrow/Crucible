@@ -100,3 +100,24 @@ test('style similarity defaults to layer 7 and refuses to run without embeddings
   await expect(score).toBeDisabled()
   await expect(score).toHaveAttribute('title', /would fail/)
 })
+
+// "Score what's missing" is the resume path: the same run, narrowed to images
+// missing a check's result or marked stale. The POST is answered here rather than
+// by the backend, so no scorer runs (they need torch); what is checked is the
+// request the button sends and the page's answer to "nothing left".
+test("score what's missing sends only_unscored and reports nothing left", async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-quality-missing-${Date.now()}`)
+  await uploadViaApi(request, ds.id, 'a.png')
+
+  let body: Record<string, unknown> | null = null
+  await page.route('**/api/v1/quality/score', async (route) => {
+    body = route.request().postDataJSON()
+    await route.fulfill({ json: { job_id: null, message: 'Nothing left to score' } })
+  })
+
+  await page.goto(`/datasets/${ds.id}/quality`)
+  await page.getByRole('button', { name: "Score what's missing" }).click()
+  await expect(page.getByText('Nothing left to score')).toBeVisible()
+  expect(body).toMatchObject({ dataset_id: ds.id, only_unscored: true })
+  expect(body).not.toHaveProperty('only_mismatched')
+})

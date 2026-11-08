@@ -162,14 +162,15 @@ These files carry port changes. M4 changes `GalleryPage` by 187 lines and `image
 - **Stage 8: split `backend/routers/images.py` by section**, and move `_apply_bulk_filters` out. It
   has the most changes and fix commits of any file, and its sections are mostly independent.
 
-## Any time
+## Any time (both done 2026-11-08 on `chore/m8-any-time`)
 
 - Add a coverage config with `concurrency = greenlet,thread`, and update
   `docs/dev/backend-tests.md`. The documented `--cov=backend` loses lines after an `await`:
-  `images.py` reads 50% instead of 87%.
+  `images.py` reads 50% instead of 87%. Done 2026-11-08 as `.coveragerc`: `images.py` went
+  from 55% to 89% and the backend total, tests and migrations omitted, reads 78%.
 - Correct CLAUDE.md § Data flow, which says logic lives in the service layer. Job bodies are
   closures in routers, and apart from stage 3's upscale and LUT loop that stays true after this
-  plan.
+  plan. Done 2026-11-08; the rewrite also names `run_service.py`'s automated runs.
 
 ## Leave alone
 

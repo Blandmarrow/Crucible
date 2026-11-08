@@ -101,13 +101,23 @@ contents intact, and that a second startup leaves `.orphaned` alone.
 
 ## Stage 3 — Chunked quality scoring, stage by stage
 
-**Built 2026-11-08** on `fix/m9-stage3-chunked-scoring`, as below, plus two rulings by the
-user: "only unscored" picks, per check, rows missing that check's output **or marked stale**,
+**Done 2026-11-08** (PR #126), as below, plus two rulings by the user: "only unscored" picks, per check, rows missing that check's output **or marked stale**,
 and it is a separate *Score what's missing* button rather than a saved checkbox. Two
 departures from the approach: the request reads ids only and the job reads each chunk's
 paths itself, and progress goes through an optional `progress` callback on the seven
 scorers. The as-built rules: `docs/dev/quality/scoring.md` § The chunked job loop. Peak
 memory is not yet measured; that is stage 6's harness.
+
+**Hand-checked 2026-11-08** on a throwaway instance:
+
+- **CPU crash.** 2,500 images, Technical only. A server hard-killed mid-run kept the first
+  1,000 scores, and the job read *Interrupted*. *Score what's missing* then scored exactly
+  the other 1,500, and a second press answered *Nothing left to score*.
+- **GPU, every scorer** on 1,200 images, two chunks per check. Each model loaded once, every
+  column was written with the aesthetic marker intact, the percent was monotone (skipping
+  the loader's `-1.0` "indeterminate" events), and all four models auto-unloaded.
+- **GPU cancel** through `DELETE /jobs/{id}`, partway into the aesthetic check's second
+  chunk. It kept 1,080 scores, never started NSFW, and unloaded the models.
 
 **Problem.** `start_score_job` (`backend/routers/quality.py:167-474`) loads every matching
 row as a full ORM object inside the request (line 199), only to read ids and paths. Its job

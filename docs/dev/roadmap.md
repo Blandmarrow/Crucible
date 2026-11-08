@@ -17,11 +17,16 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-08, M6's plan folder retired)
+## Next session (updated 2026-11-08, M9 added ahead of M7)
 
-0. **M6's loose ends are all closed** (item 4 below). On 2026-11-08 the Ctrl+C hand check
+0. **M9 comes first** ([decision 13](decisions/13-scale-work-first.md)): the checked findings
+   of an outside scaling review, planned in [scale-plan/README.md](scale-plan/README.md).
+   **Next is M9 stage 1**, the gallery sort's tie-breaker, then stage 2, the orphan sweep.
+   Neither waits on anything. See M9 below.
+1. **M6's loose ends are all closed** (item 5 below). On 2026-11-08 the Ctrl+C hand check
    passed, the folder-segment whitespace fix merged as PR #121 (decision 12, migration
-   `b8d2f4a6c1e3`), and the M6 plan folder was retired by PR #122, a docs-only PR. **Next is M7**: the CLIP QuickGELU plan or Stage 3, neither of which
+   `b8d2f4a6c1e3`), and the M6 plan folder was retired by PR #122, a docs-only PR. **After
+   M9, M7 is next**: the CLIP QuickGELU plan or Stage 3, neither of which
    waits on anything (see M7 below).
    **M8's two "any time" items** (the coverage config and CLAUDE.md § Data flow) merged on
    2026-11-08 as PR #120; the branch is deleted. `test_restart_in_dev_mode_touches_the_reloader_trigger_and_never_signals`
@@ -31,10 +36,10 @@ restates its stages.
    2026-11-08 as PR #119; the branch is deleted. What is left in M7 that needs nothing else:
    the CLIP QuickGELU plan and Stage 3.
 
-1. M5's five stages merged on 2026-10-30 as PR #101. Only its cleanup is open, and that waits
+2. M5's five stages merged on 2026-10-30 as PR #101. Only its cleanup is open, and that waits
    a release. See [server-state-plan/README.md](server-state-plan/README.md) for what was
    checked by hand.
-2. **M4 is implemented but held.** The port is complete on `feat/m4-rating-port` (pushed,
+3. **M4 is implemented but held.** The port is complete on `feat/m4-rating-port` (pushed,
    not merged): the rating column, phase 0, rebindable rating keys and the docs, with every
    gate green. The user chose on 2026-11-02 not to ship it yet, so PR #106 was closed and the
    branch waits. On that branch only, for now: decision 4 (rating keys and old snapshots), the
@@ -44,9 +49,12 @@ restates its stages.
    first migration `c3b8e1d7a52f` re-parents from `f2a6c8e4b1d7` onto M7's `c2b8e4f6a1d7`, and
    M4 resolves the overlap in `SelectionToolbar.tsx`, `queryKeys.ts` and `ImageDetailPage.tsx`.
    M6 merged first (2026-11-07), so `c3b8e1d7a52f` re-parents onto M6's last migration,
-   `a3c7e9b1d5f2`, instead. M4's decision, number 4 on its branch, is unaffected; `main`'s
-   next new decision is 11.
-3. **The M7 port merged on 2026-11-03 as PR #108**: layer 7 at 0.30/0.70 is the style
+   `a3c7e9b1d5f2`, instead. Since then decision 12's `b8d2f4a6c1e3` follows it, and M9 may
+   add more (its stages 4 and 7), so re-parent onto whatever `main`'s head is at the time.
+   M4 also resolves M9's overlap, listed in
+   [scale-plan/README.md § Interaction with the other milestones](scale-plan/README.md#interaction-with-the-other-milestones).
+   M4's decision, number 4 on its branch, is unaffected; `main`'s next new decision is 14.
+4. **The M7 port merged on 2026-11-03 as PR #108**: layer 7 at 0.30/0.70 is the style
    default, each run records its blend weights, and the layer picker warns before a run that
    must fail. The user had both `style-embedding-measurement` and `feat/m7-style-port`
    deleted afterwards, and `exp/dinov3-test` and `exp/style-models` too: all three research
@@ -55,7 +63,7 @@ restates its stages.
    now [style-embedding-plan/README.md](style-embedding-plan/README.md), and the research
    folder's findings moved into `docs/dev/quality/style-evaluation.md`. What is left in M7 is
    below.
-4. **M6 merged on 2026-11-07 as PR #110**, and `feat/m6-comfy-automation` is deleted. Its
+5. **M6 merged on 2026-11-07 as PR #110**, and `feat/m6-comfy-automation` is deleted. Its
    checklist and the last session's notes are archived in
    [roadmap-archive/m6-comfy-automation.md](roadmap-archive/m6-comfy-automation.md). What
    stayed open, all closed by 2026-11-08:
@@ -82,7 +90,7 @@ restates its stages.
      traps) into the archive record's later sections. Its §8c drag table was out of date and
      was dropped for `comfyui/library-dnd.md`. The gallery entity filter stays unbuilt until
      someone misses it (decision 8).
-5. M8's follow-ups 8–11 merged on 2026-11-07 (PRs #114 and #115); both branches are deleted.
+6. M8's follow-ups 8–11 merged on 2026-11-07 (PRs #114 and #115); both branches are deleted.
    On 2026-11-08 follow-up 14 (a copy-mode thumbnail guard) merged as PR #116 and stage 4
    (the `DatasetsPage` dialogs) as PR #117; both branches are deleted. Follow-up 15, `images.py`'s two
    single-image copies, waits for M4. Batch move and copy, the rest of item 9, must wait for
@@ -90,7 +98,7 @@ restates its stages.
    6 now wait only for M4, since M7 has merged. What stages 2 and 3 found and left alone is in
    [cleanup-plan/README.md](cleanup-plan/README.md) § Found during stages 2 and 3, left as
    they were.
-6. Four docs seams stay queued in [pending-splits.md](pending-splits.md) on `main` with nothing
+7. Four docs seams stay queued in [pending-splits.md](pending-splits.md) on `main` with nothing
    over budget: `README.md`'s § Features deletion (deferred when its budget went to 4,000),
    `docs/scoring.md`'s residual seam, `docs/dev/quality/style-similarity.md` at 91% after
    the M7 port, and `docs/dev/image-processing-models.md` at 98% after M8 stage 3. This
@@ -98,7 +106,7 @@ restates its stages.
    2026-11-03 and its family hubbed (pending-splits.md records how). Each is picked up by the
    next session that appends to its file. Re-measure first and check both halves land under 60% of budget — five of
    M3's seven recorded seams had to be re-cut on execution.
-7. A split moves sections, so `§` pointers that named a section in the same file now
+8. A split moves sections, so `§` pointers that named a section in the same file now
    point across files. `check_docs.py` does not check them, so grep `§` in every touched
    file and check each against the destination's headings by hand.
 
@@ -142,6 +150,27 @@ add migrations, and M6 merged first, so **M4 re-parents its first migration** on
    branch. M4's port branch is still held unmerged.
 
 ## Milestones
+
+### M9 — Scale and data safety
+
+Comes before every other open milestone
+([decision 13](decisions/13-scale-work-first.md)). Gate: stages 1–5 merged with their tests
+and docs, and stage 6's numbers recorded; stage 7 is then built or ruled out by a decision.
+Plan: [scale-plan/README.md](scale-plan/README.md). Does not wait for M4, which lands second
+and resolves the overlap.
+
+- [ ] Stage 1: a unique tie-breaker (`Image.id`) for every gallery sort. Needs nothing.
+- [ ] Stage 2: the startup orphan sweep moves folders into `.orphaned/` instead of deleting
+  them. Needs nothing.
+- [ ] Stage 3: quality scoring commits per chunk within each check, with an "only unscored"
+  resume option. Needs nothing.
+- [ ] Stage 4: Stats histograms built on the server instead of raw value lists. Comes before
+  M8 stage 7.
+- [ ] Stage 5: page the single-layer style similarity branch. Needs nothing.
+- [ ] Stage 6: extend `bench_scaling.py` (layer blobs, the migrated column order) and
+  re-measure. Best after stages 1, 3 and 4, so it measures them.
+- [ ] Stage 7: decide on, then maybe build, an embeddings table of its own. Needs stage 6.
+- [ ] Stage 8: Retry for interrupted jobs. Needs stage 3.
 
 ### M5 — App-stored prompts
 

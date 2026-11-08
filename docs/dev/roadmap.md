@@ -17,10 +17,12 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-08, M7 Stage 2b merged)
+## Next session (updated 2026-11-08, M8's "any time" items done)
 
-0. **M7 Stage 2b** (the layer labels) merged on 2026-11-08 as PR #119; the branch is deleted.
-   What is left in M7 that needs nothing else: the CLIP QuickGELU plan and Stage 3.
+0. **M8's two "any time" items** (the coverage config and CLAUDE.md § Data flow) are done on
+   `chore/m8-any-time`, waiting on a PR. **M7 Stage 2b** (the layer labels) merged on
+   2026-11-08 as PR #119; the branch is deleted. What is left in M7 that needs nothing else:
+   the CLIP QuickGELU plan and Stage 3.
 
 1. M5's five stages merged on 2026-10-30 as PR #101. Only its cleanup is open, and that waits
    a release. See [server-state-plan/README.md](server-state-plan/README.md) for what was
@@ -243,7 +245,9 @@ Detail, hazards and what to leave alone:
 - [ ] Stage 6: the detail page's inline tools onto those forms. Needs M4 merged (M7 has), and B1.
 - [ ] Stage 7: `StatsPage` into files. Needs M4 merged.
 - [ ] Stage 8: split `images.py` by section. Needs M4 merged and stage 2.
-- [ ] Any time: fix the coverage config, and correct CLAUDE.md § Data flow.
+- [x] Any time: fix the coverage config, and correct CLAUDE.md § Data flow. Done 2026-11-08 on
+  `chore/m8-any-time`: `.coveragerc` sets `concurrency = greenlet,thread`, which lifts
+  `images.py` from 55% to 89%.
 - [ ] Remove the `minimatch` override in `frontend/package.json` (PR #111, for
   GHSA-g3hv-75wg-m249) once `eslint` and `typescript-eslint` depend on `minimatch ^11`
   themselves. Waits on upstream; check with `npm view eslint dependencies.minimatch`.

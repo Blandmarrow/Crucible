@@ -206,7 +206,7 @@ hand check: the fake has no pause.
 
 ### The plan rail, the folder tree and the grouped table
 
-M6 §8b (`docs/dev/comfy-automation-plan/README.md` § 8b, which records the rulings). The rail
+M6 §8b (rulings: `docs/dev/roadmap-archive/m6-comfy-automation.md` § The page rework). The rail
 is the Rows tab's left column, and it also shows when there are no plans, so the empty state
 can make one. The approved mockup put it on the Rows tab only, so switching plans from
 another tab means going back to Rows.
@@ -281,7 +281,7 @@ another tab means going back to Rows.
 
 ### The layout
 
-M6 §8a (`docs/dev/comfy-automation-plan/README.md` § 8a). The CSS is the `.comfy-head` and
+M6 §8a (`docs/dev/roadmap-archive/m6-comfy-automation.md`). The CSS is the `.comfy-head` and
 `.bp-*` rules in `frontend/src/index.css`.
 
 - **`ComfyPage` is its own bounded scroller** (`height: 100%; minHeight: 0; overflowY: auto`),

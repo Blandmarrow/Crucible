@@ -10,7 +10,7 @@
   rewrite into prose is an optional pass, not the default. Each leaf is filed by **folder**,
   and the leaf records which entities it combines; there are no labels per axis value. A
   **Top up** action, which fills only the leaves that are short, comes before any unattended
-  loop. Plan: [comfy-automation-plan/README.md](../comfy-automation-plan/README.md).
+  loop. Record: [roadmap-archive/m6-comfy-automation.md](../roadmap-archive/m6-comfy-automation.md).
 - **Rationale:** templates keep each character the same in every leaf, can be repeated, and
   cost nothing per leaf. Tag-based image models, which Crucible's users often train, suit
   them best. The August plan's per-leaf calls are what made its retry and budget work (§3)

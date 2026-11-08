@@ -185,7 +185,6 @@ GENERATED_DOCS: set[str] = set()
 # then the folder is deleted.
 TRANSIENT_DIRS: set[str] = {
     "docs/dev/cleanup-plan",
-    "docs/dev/comfy-automation-plan",
     "docs/dev/gpt-review",
     "docs/dev/rating-plan",
     "docs/dev/server-state-plan",

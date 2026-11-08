@@ -9,7 +9,8 @@
   existing worker calls `advance_run()` after the job has committed. That function reads the
   result and enqueues the next stage, or marks the run done, failed or paused, and it logs
   rather than raises. Stages call service functions, not router handlers, so M8 stages 2 and
-  3 land first. Plan: [comfy-automation-plan/README.md](../comfy-automation-plan/README.md) § 4.
+  3 land first. Built as `docs/dev/comfyui/automation.md`; record:
+  [roadmap-archive/m6-comfy-automation.md](../roadmap-archive/m6-comfy-automation.md).
 - **Rationale:** nothing waits, so nothing can be stuck waiting. The August plan's own list
   of quiet failures came from its waiting parent: a long-lived session that never sees the
   child finish, a second queue the test harness must rebuild or the suite hangs, and a parent

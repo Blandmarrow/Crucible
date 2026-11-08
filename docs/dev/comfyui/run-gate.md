@@ -25,8 +25,9 @@ the score stage, and an aesthetic minimum without aesthetic scoring.
 rejected. For each failure it copies `quality_flags`, sets `gate_rejected: true` and
 `gate_reasons` (a payload key, not allowlisted, like `duplicate_of`), reassigns the dict,
 and files the image under `join_subfolder(base, "rejects", row.subfolder)`. That is one
-tree for every reject (the user's ruling, 2026-11-04), with the leaf's path kept. The
-move goes through `services/image_move.move_to_subfolder(..., rename_on_move=False,
+tree for every reject (the user's ruling, 2026-11-04), with the leaf's path kept.
+**The gate moves, it never deletes:** a move can be undone and looked at, and it fits the
+per-row folders. The move goes through `services/image_move.move_to_subfolder(..., rename_on_move=False,
 commit=False)`. Subfolders are DB labels, so no file moves, and the flags, the moves and
 the job's numbers commit once.
 

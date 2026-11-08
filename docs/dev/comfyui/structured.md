@@ -7,8 +7,8 @@ templates, the template walk) are `docs/dev/comfyui/structured-expansion.md`; th
 call that drafts a spec with an LLM is `docs/dev/comfyui/structured-llm.md`. The queue
 itself (plans, pins, rows and the row's `subfolder`/`leaf_id` columns) is
 `docs/dev/comfyui/queue.md`; how a run files each row is `docs/dev/comfyui/run.md`; the
-page is `docs/dev/comfyui/page.md`, and its Blueprint tab `docs/dev/comfyui/blueprint-tab.md`. The arc's remaining stages are in
-`docs/dev/comfy-automation-plan/README.md`, and the rulings behind it are decision 8
+page is `docs/dev/comfyui/page.md`, and its Blueprint tab `docs/dev/comfyui/blueprint-tab.md`. M6's record is
+`docs/dev/roadmap-archive/m6-comfy-automation.md`, and the rulings behind it are decision 8
 (`docs/dev/decisions/08-templates-first-filed-by-folder.md`).
 
 ## The idea
@@ -27,7 +27,10 @@ pasted verbatim into every prompt that names them.
   plan.
 - `comfy_leaves`: one row per folder the blueprint expands to. It holds `scenario`,
   `path`, `target`, `entity_ids` (`{axis: [ids]}`), `cursor` and `sort_order`. It has a
-  unique index on `(blueprint_id, path)` and CASCADEs from the blueprint.
+  unique index on `(blueprint_id, path)` and CASCADEs from the blueprint. `target` is set
+  per scenario (`Scenario.count`) and stored per leaf. `entity_ids` is why there are no
+  labels per axis value (decision 8): "which character is this image" is image → row
+  (`image_ids`) → leaf (`leaf_id`) → `entity_ids`.
 - **A leaf is its folder.** Leaf identity is the rendered path. Renaming an entity's label
   renders a new path, so it makes a new leaf. The old leaf is deleted, and its rows become
   orphans (see § Orphans). Keying leaves by entity ids instead would keep a renamed leaf's
@@ -104,8 +107,8 @@ This was the user's ruling on the plan's open question about edit-then-top-up.
 
 ## Moving a blueprint row
 
-M6 §8b, the user's ruling of 2026-11-05 (`docs/dev/comfy-automation-plan/README.md` § The
-open questions, ruled). **A leaf counts its rows by `leaf_id`, never by folder**, so a row
+M6 §8b, the user's ruling of 2026-11-05 (`docs/dev/roadmap-archive/m6-comfy-automation.md` §
+The page rework). **A leaf counts its rows by `leaf_id`, never by folder**, so a row
 whose folder changes while it keeps its `leaf_id` breaks "a leaf is its folder". The leaf
 went on counting the row's images as kept, and Top up re-ran it into the new folder.
 

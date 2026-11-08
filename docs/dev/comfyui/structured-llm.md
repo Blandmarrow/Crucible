@@ -90,7 +90,9 @@ verified by hand.
 models that read sentences. Off by default, switched on per scenario (`Scenario.rewrite`).
 The outline schema leaves the flag out, so the LLM never sets it. It is its own job type,
 `comfy_rewrite`, not `comfy_prompts`: that job appends rows and reports "N generated",
-while this one updates rows and reports different numbers.
+while this one updates rows and reports different numbers. Reuse would have kept the 409
+guards for free, but the job, `TopBar` and `jobReconcile.ts` would all have branched on a
+mode flag; the user overturned it on 2026-11-03, and the guards were added by hand.
 
 **Which rows it touches.** `blueprint_rewrite.select_targets` picks rows that:
 - belong to a current leaf whose scenario has `rewrite` on, by the *saved* spec

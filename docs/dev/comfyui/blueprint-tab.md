@@ -135,7 +135,7 @@ edits the plan's blueprint.
 
 ## The layout
 
-M6 §8a (`docs/dev/comfy-automation-plan/README.md` § 8a). The CSS is the `.bp-*` rules in
+M6 §8a (`docs/dev/roadmap-archive/m6-comfy-automation.md`). The CSS is the `.bp-*` rules in
 `frontend/src/index.css`. The page scroller and the sticky header it sits under, and the
 `--comfy-head-h`/`--comfy-view-h` offsets these rules read, are `docs/dev/comfyui/page.md`
 § The layout.

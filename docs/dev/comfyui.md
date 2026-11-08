@@ -9,8 +9,8 @@ pass after pass until every folder is full, its settings kept as recipes. This f
 entry point: the tables below route from a code path to whichever file in
 `docs/dev/comfyui/` owns it. LLM providers themselves are `docs/dev/llm-providers.md`; the
 user-facing guides are `docs/comfyui.md`, `docs/comfy-queue.md`, `docs/comfy-structured.md`, `docs/runs.md`,
-`docs/run-setup.md` and `docs/repeating-runs.md`. M6's plan is
-`docs/dev/comfy-automation-plan/README.md`.
+`docs/run-setup.md` and `docs/repeating-runs.md`. M6's record is
+`docs/dev/roadmap-archive/m6-comfy-automation.md`.
 
 ## The family
 

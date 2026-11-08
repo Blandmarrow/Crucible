@@ -7,6 +7,18 @@ export interface SubfolderNode extends SubfolderInfo {
   totalCount: number;
 }
 
+/** A typed folder path spelled as the server stores it (`utils._subfolder_parts`):
+ *  backslashes folded, each segment trimmed, blank and `.` segments dropped. For
+ *  comparing a typed path against server values; the server still validates it. */
+export function normalizeSubfolder(raw: string): string {
+  return raw
+    .replace(/\\/g, "/")
+    .split("/")
+    .map((p) => p.trim())
+    .filter((p) => p && p !== ".")
+    .join("/");
+}
+
 export function buildSubfolderTree(items: SubfolderInfo[]): SubfolderNode[] {
   const map = new Map<string, SubfolderNode>();
   for (const item of items) {

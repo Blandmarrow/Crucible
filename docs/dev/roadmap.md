@@ -65,14 +65,13 @@ restates its stages.
      stored rows are rewritten after a backup, and the file browser's exact matches take
      `utils.sql_path_equals`. Detail: `docs/dev/database.md` § The datasets root's one
      spelling.
-   - **Whitespace inside a folder segment**, found in the §8 review and left open on
-     purpose: `utils.normalize_subfolder` keeps it, so a hand-typed `knight ` (or
-     `knight /  `) is a folder of its own, which blueprint leaf `knight` (whose segments are
-     stripped) never adopts or locks. It predates §8, and stripping now would re-read stored
-     rows, so it wants a ruling and a data migration rather than a quiet change.
-   - **Ctrl+C on Vite under `manage.ps1 dev`**, pressed in a real terminal, should close the
-     backend's own window (PM-033). The same `finally` was checked by a Vite exit; the key
-     press is left to the user's eye.
+   - [x] **Whitespace inside a folder segment**, found in the §8 review: ruled by the user on
+     2026-11-08 ([decision 12](decisions/12-strip-folder-segment-whitespace.md)). Each
+     segment is stripped, and migration `b8d2f4a6c1e3` rewrites stored rows after a backup.
+     On `fix/m6-subfolder-whitespace`.
+   - [x] **Ctrl+C on Vite under `manage.ps1 dev`**, pressed in a real terminal, closes the
+     backend's own window (PM-033). Checked by the user on 2026-11-08: once Vite was serving,
+     Ctrl+C left no backend, Vite or listener on :8000 or :5173.
    - **The plan folder** [comfy-automation-plan/](comfy-automation-plan/README.md) is
      transient and is deleted "when everything is done", by its own lifecycle note. Topic
      files and this archive still link its § Hand checks on the box, § 8 and § Review fixes, so

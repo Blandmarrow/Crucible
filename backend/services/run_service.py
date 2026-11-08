@@ -557,6 +557,8 @@ async def start_run(db: AsyncSession, body: RunStartRequest) -> Run:
     plan = await db.get(ComfyPlan, body.plan_id)
     assert plan is not None
     recipe = body.recipe
+    # Stored as the shared rule spells it; `plan_run` above already refused a `..`.
+    recipe.generate.subfolder = normalize_subfolder(recipe.generate.subfolder)
 
     run = Run(
         dataset_id=body.dataset_id,

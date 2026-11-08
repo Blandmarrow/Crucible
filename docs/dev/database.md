@@ -10,7 +10,7 @@ SQLite in WAL mode (`synchronous=NORMAL`). ORM models live in `backend/models/`.
 
 **Per-connection pragmas / foreign-key enforcement**: `foreign_keys` and `synchronous` are *per-connection* SQLite settings (not persisted in the DB file), so they are applied in a `@event.listens_for(engine.sync_engine, "connect")` listener in `backend/database.py` that runs `PRAGMA foreign_keys=ON` and `PRAGMA synchronous=NORMAL` on every new DBAPI connection. `journal_mode=WAL` is persistent per-DB-file and stays a one-time `init_db()` call. **FK enforcement is ON**, so `ondelete` clauses actually fire: `images.dataset_id` → `CASCADE` (with `passive_deletes=True` on `Dataset.images`, so `delete_dataset` issues a single DELETE and the DB cascades images → `detections` also `CASCADE`); `videos.dataset_id` → `CASCADE` likewise (`passive_deletes=True` on `Dataset.videos`, mirroring `Dataset.images`); `background_jobs.dataset_id` → `SET NULL` (deleting a dataset keeps its job history, nulling the link); the versioning tables already cascade (`dataset_branches`/`dataset_versions`/`version_image_states` on `datasets`/`dataset_versions`). Of the intra-versioning links, only `dataset_versions.branch_id` has a real DB-level FK (`SET NULL`, created by migration `a2b3c4d5e6f7`); `dataset_versions.parent_id` and `dataset_branches.head_version_id` were created as **plain columns** in that migration (no FK), so their model-level `ForeignKey` declarations are decorative (the schema comes solely from Alembic, never `create_all`). Consequence: deleting a version leaves any children's `parent_id` dangling — harmless, it's informational only — and branch-head reassignment on delete is handled in code by `delete_version` (`backend/routers/versioning.py`), not by the DB. Migration `f7e8d9c0b1a2` purges pre-existing orphans and recreates the two enforced FKs (`images.dataset_id`, `background_jobs.dataset_id`; SQLite requires `batch_alter_table` table-recreates for FK changes). The Alembic migration engine keeps `foreign_keys` OFF (env.py doesn't enable it), which is required for batch recreates.
 
-**Subfolders** (`Image.subfolder`, `Dataset.declared_subfolders`): images are physically flat in `{dataset.folder_path}/images/`; `subfolder` is pure string metadata (empty string = root/ungrouped; nested paths use `/`). `Dataset.declared_subfolders` (JSON column, default `[]`) stores explicitly-created subfolder paths so empty subfolders survive a `list_subfolders()` call — that function GROUP BYs images, so any path not in `declared_subfolders` with zero images would disappear. `declare_subfolder()` adds a path; `delete_subfolder()` bulk-moves images to root and removes the declared entry. `normalize_subfolder()` in `backend/utils.py` sanitizes path strings before storage. API: `GET/POST/DELETE /datasets/{id}/subfolders`.
+**Subfolders** (`Image.subfolder`, `Dataset.declared_subfolders`): images are physically flat in `{dataset.folder_path}/images/`; `subfolder` is pure string metadata (empty string = root/ungrouped; nested paths use `/`). `Dataset.declared_subfolders` (JSON column, default `[]`) stores explicitly-created subfolder paths so empty subfolders survive a `list_subfolders()` call — that function GROUP BYs images, so any path not in `declared_subfolders` with zero images would disappear. `declare_subfolder()` adds a path; `delete_subfolder()` bulk-moves images to root and removes the declared entry. `normalize_subfolder()` in `backend/utils.py` sanitizes path strings before storage, stripping the whitespace around each segment (§ Folder paths are stored stripped (migration b8d2f4a6c1e3)). API: `GET/POST/DELETE /datasets/{id}/subfolders`.
 
 **`fk_images_source_video_id_videos`** (`images.source_video_id` → `videos.id`, `ON DELETE SET NULL`) is the one FK this branch added, and belongs in the inventory above: deleting a source video must never destroy the frames curated from it. `ondelete` covers only deleting the *parent*, though, and an UPDATE onto a missing parent key still raises — which is what PM-016 turned into an incident, invisible to the suite because the harness leaves the pragma off. See `docs/dev/video/extract.md` § Frame lineage.
 
@@ -39,6 +39,36 @@ The repair reads with the exact `sql_has_prefix` negated, so a healthy database 
 The repair writes only after `db_maintenance.write_named_backup_sync("root-spelling")` succeeds. That function refuses a database that fails `quick_check`, and refuses when there is no database file. It writes `backups/<stem>.pre-root-spelling.db`, a name outside the `<stem>-*.db` rotation, so a repair that fails at every boot overwrites its one copy rather than flushing the pre-session backups out of `BACKUP_KEEP` or postponing the next integrity check. If the backup fails, the repair logs a warning, returns None and changes nothing.
 
 On Linux a case variant is another folder, and nothing here runs. `backend/tests/test_root_spelling.py` covers it. The orphan sweep compares folded under `PATHS_FOLD_CASE` too: macOS's `resolve()` keeps the spelling it is given, so a row naming `foo` did not protect the folder `Foo`, renamed by case outside the app, from `rmtree`.
+
+## Folder paths are stored stripped (migration b8d2f4a6c1e3)
+
+`utils._subfolder_parts` strips the whitespace around every segment, so `knight ` and
+`knight` are one folder ([decision 12](decisions/12-strip-folder-segment-whitespace.md)).
+Every folder match is an exact compare, so the rows written before the rule were rewritten
+once by migration `b8d2f4a6c1e3`, with the rule copied into the migration rather than
+imported. The copy is `join_subfolder`'s form, so a `..` segment is **dropped**: the old
+rule stored ` .. ` as a plain name, and stripped it would become a `..` that every
+normalizing route refuses (it also repairs `..` rows from before the write-time guard).
+It covers `images.subfolder`, `comfy_rows.subfolder`, the snapshot mirror
+`version_image_states.subfolder`, the JSON lists `datasets.declared_subfolders` and
+`comfy_plans.declared_folders` (entries stripped, blanks and duplicates dropped), and
+`generate.subfolder` inside `runs.recipe` and `run_recipes.recipe`. `comfy_leaves.path` is
+only counted, since expansion already strips it and a rewrite could collide on its
+`(blueprint_id, path)` unique index.
+
+- **The backup is the migration's own.** Migrations run before the app starts, so neither
+  § Startup database backup nor `write_named_backup_sync` has run yet. When there is
+  anything to change, the migration copies the database through its own connection to
+  `backups/<stem>.pre-subfolder-strip.db` (outside the rotation glob) before the first
+  UPDATE, and a failed copy raises, so `manage start` stops instead of rewriting
+  unprotected rows. A clean database takes no copy and prints nothing.
+- **Writers that bypassed the rule were fixed with it.** Folder import (the request folder
+  and each `preserve_structure` path), the folder delete's `path` query and a saved or
+  started run recipe's base folder now go through `normalize_subfolder` or
+  `join_subfolder`. Raw copies of already-stored values (duplicate, snapshot capture and
+  restore, copy rows) need nothing, since what they copy is clean.
+- **Not reversible.** `downgrade()` is a no-op, because which rows were padded is not
+  recorded. The backup is the way back.
 
 ## Migration drift check
 

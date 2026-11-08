@@ -265,12 +265,16 @@ def contained_path(
 
 
 def _subfolder_parts(s: str) -> list[str]:
-    """The segments of a subfolder path: backslashes folded, blanks and `.` dropped.
+    """The segments of a subfolder path: backslashes folded, each segment stripped of
+    surrounding whitespace, blanks and `.` dropped. Interior spaces are kept.
 
     Shared by `normalize_subfolder` and `join_subfolder` so the two disagree only
-    about what `..` means, never about anything else.
+    about what `..` means, never about anything else. The strip makes `knight ` and
+    `knight` one folder, as a blueprint leaf and a library category already treat
+    them (decision 12); migration `b8d2f4a6c1e3` rewrote the rows stored before it.
     """
-    return [p for p in s.replace("\\", "/").split("/") if p and p != "."]
+    parts = (p.strip() for p in s.replace("\\", "/").split("/"))
+    return [p for p in parts if p and p != "."]
 
 
 SUBFOLDER_MAX_LEN = 512  # the longest subfolder path a blueprint leaf or a folder move may make

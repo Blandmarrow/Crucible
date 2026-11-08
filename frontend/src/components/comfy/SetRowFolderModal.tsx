@@ -5,6 +5,7 @@ import { apiErrorDetail } from "../../utils/apiError";
 import { comfyApi, type ComfyRow, type LinkedMode } from "../../api/comfy";
 import { datasetsApi } from "../../api/datasets";
 import { useModalBehavior } from "../../hooks/useModalBehavior";
+import { normalizeSubfolder } from "../../utils/subfolderTree";
 
 interface Props {
   planId: string;
@@ -53,8 +54,8 @@ export default function SetRowFolderModal({ planId, datasetId, rows, onClose }: 
   });
 
   const trimmed = folder.trim();
-  // The server folds slashes; compare on the same spelling so a no-op never asks.
-  const target = trimmed.replace(/^\/+|\/+$/g, "").replace(/\/+/g, "/");
+  // Compare on the server's spelling so a no-op never asks.
+  const target = normalizeSubfolder(trimmed);
   const linkedMoving = rows.filter((r) => r.blueprint_linked && r.subfolder !== target).length;
 
   function apply() {

@@ -45,3 +45,24 @@ def test_normalize_still_normalizes():
     assert normalize_subfolder("/a//b/") == "a/b"
     assert normalize_subfolder("a\\b") == "a/b"
     assert normalize_subfolder("") == ""
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("knight ", "knight"),
+    (" knight /  a b ", "knight/a b"),   # interior spaces are part of the name
+    ("knight /  ", "knight"),             # an all-space segment is a blank one
+    ("\tknight\t/a", "knight/a"),
+    (" . / a", "a"),
+    ("   ", ""),
+])
+def test_both_strip_each_segment(raw, expected):
+    """Decision 12: `knight ` and `knight` are one folder, for both functions."""
+    assert normalize_subfolder(raw) == expected
+    assert join_subfolder(raw) == expected
+
+
+def test_a_padded_dot_dot_is_still_dot_dot():
+    """Stripping must not let ` .. ` slip past the write-time guard."""
+    with pytest.raises(HTTPException):
+        normalize_subfolder("a/ .. /b")
+    assert join_subfolder("a/ .. /b") == "a/b"

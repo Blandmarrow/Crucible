@@ -36,7 +36,7 @@ edits the plan's blueprint.
   its cap. The pieces box cannot be stopped by `maxLength`, so it saves the first 100
   lines, each cut to 300 characters, and shows a warning for what it left out.
 - **Read-only while the plan runs.** A disabled `<fieldset>`, since Apply would 409 anyway.
-- **The outline draft.** *✨ Draft from a description…* opens `OutlineModal`, which queues
+- **The outline draft.** *Draft from a description…* opens `OutlineModal`, which queues
   the `comfy_outline` job (`docs/dev/comfyui/structured-llm.md` § The outline call).
   - Like `GeneratePromptsModal`, it derives its job from `jobStore` and adds no
     `useJobSSE`. Its provider and model default to the plan's saved "Generate prompts"
@@ -184,5 +184,5 @@ M6 §8a (`docs/dev/roadmap-archive/m6-comfy-automation.md`). The CSS is the `.bp
     (`docs/dev/persistence.md`), all open by default, which the e2e relies on.
 - **The jump bar** (`.bp-jump`, `blueprint-jump`) is sticky under the header in the left
   column: one button per section (it opens a folded one, then scrolls to it), *Collapse
-  all*, *Expand all* and *✨ Draft from a description…* (`outline-open`). They are buttons,
+  all*, *Expand all* and *Draft from a description…* (`outline-open`). They are buttons,
   not `#hash` links: no router hash, and no duplicate ids when two panes show the page.

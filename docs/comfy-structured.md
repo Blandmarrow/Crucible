@@ -61,7 +61,7 @@ Everything saves as you type.
 
 ## Drafting a blueprint from a description
 
-**✨ Draft from a description…** asks an LLM to write the blueprint for you. Describe the
+**Draft from a description…** asks an LLM to write the blueprint for you. Describe the
 dataset in a sentence or two, for example *"a medieval set: six characters, each in four
 biomes, alone and in pairs, ten images each"*. Then pick a provider from Settings → LLM
 Providers → [details](settings.md), and click **Draft**.

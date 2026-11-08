@@ -219,7 +219,7 @@ function BlueprintForm({ planId, datasetId, hasPromptPin, running, liveRun, subf
         <button type="button" className="btn ghost sm" onClick={() => writeSections(ALL_OPEN)}>Expand all</button>
         <button className="btn sm" disabled={running} data-testid="outline-open" onClick={() => setOutlining(true)}
           title={running ? "A run is in progress on this plan" : "Have an LLM draft a blueprint from a description"}>
-          ✨ Draft from a description…
+          Draft from a description…
         </button>
       </div>
       {/* Each section carries its own read-only fieldset, so it still collapses mid-run. */}

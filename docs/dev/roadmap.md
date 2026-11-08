@@ -21,8 +21,7 @@ restates its stages.
 
 0. **M6's loose ends are all closed** (item 4 below). On 2026-11-08 the Ctrl+C hand check
    passed, the folder-segment whitespace fix merged as PR #121 (decision 12, migration
-   `b8d2f4a6c1e3`), and the M6 plan folder was retired on `docs/retire-m6-plan-folder`, a
-   docs-only branch. **Next is M7**: the CLIP QuickGELU plan or Stage 3, neither of which
+   `b8d2f4a6c1e3`), and the M6 plan folder was retired by PR #122, a docs-only PR. **Next is M7**: the CLIP QuickGELU plan or Stage 3, neither of which
    waits on anything (see M7 below).
    **M8's two "any time" items** (the coverage config and CLAUDE.md § Data flow) merged on
    2026-11-08 as PR #120; the branch is deleted. `test_restart_in_dev_mode_touches_the_reloader_trigger_and_never_signals`
@@ -77,7 +76,7 @@ restates its stages.
    - [x] **Ctrl+C on Vite under `manage.ps1 dev`**, pressed in a real terminal, closes the
      backend's own window (PM-033). Checked by the user on 2026-11-08: once Vite was serving,
      Ctrl+C left no backend, Vite or listener on :8000 or :5173.
-   - [x] **The plan folder**, retired on 2026-11-08 after an audit of every claim in it. The
+   - [x] **The plan folder**, retired on 2026-11-08 (PR #122) after an audit of every claim in it. The
      reasons for its rejected designs went into the `docs/dev/comfyui/` topic files, and its
      history (the user's rulings, the §8 mockup, the review fixes, the hand checks, the
      traps) into the archive record's later sections. Its §8c drag table was out of date and

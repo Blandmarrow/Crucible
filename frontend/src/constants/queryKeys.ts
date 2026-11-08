@@ -138,3 +138,6 @@ export function invalidateLabelScope(qc: QueryClient) {
   qc.invalidateQueries({ queryKey: ["images"] });
   qc.invalidateQueries({ queryKey: ["label-counts"] });
 }
+
+/** The declared (possibly empty) dataset categories held on the server. */
+export const DECLARED_CATEGORIES_QUERY_KEY = ["app-data", "categories"];

@@ -235,7 +235,8 @@ Detail, hazards and what to leave alone:
   `refactor/m8-stages-2-3`.
 - [x] Stage 3: a shared job loop for upscale and LUT. Needs stage 2. Landed 2026-11-04 on the
   same branch.
-- [ ] Stage 4: `DatasetsPage` dialogs into components.
+- [x] Stage 4: `DatasetsPage` dialogs into components. Landed 2026-11-08 on
+  `refactor/m8-stage4-datasets-dialogs`.
 - [ ] Stage 5: `SelectionToolbar` dialogs into forms. Needs M4 merged (M7 has).
 - [ ] Stage 6: the detail page's inline tools onto those forms. Needs M4 merged (M7 has), and B1.
 - [ ] Stage 7: `StatsPage` into files. Needs M4 merged.

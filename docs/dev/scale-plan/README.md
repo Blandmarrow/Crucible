@@ -45,6 +45,8 @@ Two gaps make the July numbers optimistic:
 
 ## Stage 1 — A unique tie-breaker for the gallery sort
 
+**Done 2026-11-08** (PR #124), as below; `bulk_rename` gained the same `id` key.
+
 **Problem.** `_apply_image_ordering` (`backend/routers/images.py:420-456`) sorts by one
 column. Its `sort_order` and nulls-last branches break ties with `created_at`, which is not
 unique either. When values tie, SQLite may return rows in a different order on each query.
@@ -66,7 +68,13 @@ to the nulls-last sorts. That's a trivial conflict, which M4 resolves.
 
 ## Stage 2 — The orphan sweep moves folders instead of deleting them
 
-**Problem.** `sweep_orphan_dataset_folders` (`backend/services/dataset_service.py:132-210`)
+**Done 2026-11-08** (PR #125), as below, plus two rulings: a folder
+whose tree holds no file is still deleted, by the user's choice, and every dot-named child is
+skipped. The user doc went into `docs/datasets.md`, which already described the sweep, not
+`docs/server.md`. The as-built rules: `docs/dev/database.md` § The sweep moves data aside and
+never deletes it.
+
+**Problem.** `sweep_orphan_dataset_folders` (`backend/services/dataset_service.py:176-337`)
 runs at every startup and calls `rmtree` on any folder under `datasets_dir` with no dataset
 row. Its guards stop it when the whole tree looks wrong: rows outside the root, no row's
 folder existing, or no rows beside real datasets. Nothing stops it when **one** folder is

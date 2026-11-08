@@ -151,7 +151,8 @@ async def _sweep_old_jobs() -> None:
 
 
 async def _sweep_orphan_dataset_folders() -> None:
-    """Reconcile data/datasets/ against the DB at startup, removing folders with no row."""
+    """Reconcile data/datasets/ against the DB at startup, moving folders with no row
+    into `.orphaned/` (and removing only empty ones)."""
     from backend.database import AsyncSessionLocal
     from backend.services.dataset_service import sweep_orphan_dataset_folders
 

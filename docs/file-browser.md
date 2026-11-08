@@ -4,7 +4,7 @@ A three-panel filesystem explorer built into the app: browsing and previewing fi
 
 Available from: the **File Browser** sidebar item.
 
-- Left panel: drive roots + quick-access shortcut to the datasets folder
+- Left panel: drive roots + quick-access shortcut to the datasets folder. Opening the datasets folder may show a `.orphaned` folder in the list: it holds folders Crucible found at startup with no dataset record, kept rather than deleted → [what to do with them](datasets.md#creating-and-managing-datasets)
 - Centre panel: breadcrumb navigation, file list with **sort by Name / Size / Modified date** (click column header to toggle ascending/descending), **Media only** toggle to hide anything that is neither an image nor a video, context menu (rename / delete / import into dataset)
 - Right panel: preview + size and modified date. For an image, also dimensions/format and generation metadata (A1111 / ComfyUI); for a video, a player you can scrub
 - The video preview steps aside for anything that changes the file. Start a rename, or open the delete or import dialog, and the player is replaced by **Preview paused** until you are done — a file still being played cannot be renamed or deleted on Windows, and the player is released so the change goes through. Cancel, and the preview comes back

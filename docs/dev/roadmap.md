@@ -21,8 +21,9 @@ restates its stages.
 
 0. **M9 comes first** ([decision 13](decisions/13-scale-work-first.md)): the checked findings
    of an outside scaling review, planned in [scale-plan/README.md](scale-plan/README.md).
-   **Stage 1** (the gallery sort's tie-breaker) is done on `fix/m9-stage1-sort-tiebreak`;
-   **next is stage 2**, the orphan sweep. It waits on nothing. See M9 below.
+   Stages 1 and 2 merged on 2026-11-08: the gallery sort's tie-breaker as PR #124, and the
+   orphan sweep as PR #125. **Next is M9 stage 3**, chunked quality scoring, which needs
+   nothing. See M9 below.
 1. **M6's loose ends are all closed** (item 5 below). On 2026-11-08 the Ctrl+C hand check
    passed, the folder-segment whitespace fix merged as PR #121 (decision 12, migration
    `b8d2f4a6c1e3`), and the M6 plan folder was retired by PR #122, a docs-only PR. **After
@@ -51,6 +52,9 @@ restates its stages.
    M6 merged first (2026-11-07), so `c3b8e1d7a52f` re-parents onto M6's last migration,
    `a3c7e9b1d5f2`, instead. Since then decision 12's `b8d2f4a6c1e3` follows it, and M9 may
    add more (its stages 4 and 7), so re-parent onto whatever `main`'s head is at the time.
+   **Until it is rebased past M9 stage 2, do not start the M4 branch on a real datasets
+   folder**: its startup sweep has no dot-skip and deletes `.orphaned` with everything
+   parked there (`docs/dev/database.md` § Two known costs).
    M4 also resolves M9's overlap, listed in
    [scale-plan/README.md § Interaction with the other milestones](scale-plan/README.md#interaction-with-the-other-milestones).
    M4's decision, number 4 on its branch, is unaffected; `main`'s next new decision is 14.
@@ -159,10 +163,12 @@ and docs, and stage 6's numbers recorded; stage 7 is then built or ruled out by 
 Plan: [scale-plan/README.md](scale-plan/README.md). Does not wait for M4, which lands second
 and resolves the overlap.
 
-- [x] Stage 1: a unique tie-breaker (`Image.id`) for every gallery sort. Done on
-  `fix/m9-stage1-sort-tiebreak`.
-- [ ] Stage 2: the startup orphan sweep moves folders into `.orphaned/` instead of deleting
-  them. Needs nothing.
+- [x] Stage 1: a unique tie-breaker (`Image.id`) for every gallery sort. Merged 2026-11-08
+  as PR #124.
+- [x] Stage 2: the startup orphan sweep moves folders into `.orphaned/` instead of deleting
+  them. Merged 2026-11-08 as PR #125: only a tree with no file is deleted (the user's call),
+  and dot-named folders are skipped. Detail: `docs/dev/database.md` § The sweep moves data
+  aside and never deletes it.
 - [ ] Stage 3: quality scoring commits per chunk within each check, with an "only unscored"
   resume option. Needs nothing.
 - [ ] Stage 4: Stats histograms built on the server instead of raw value lists. Comes before

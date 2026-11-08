@@ -237,3 +237,18 @@ utilities → `docs/dev/shared-utilities.md`.
   the folder tree and the grouped table; `styling.md` points at `page.md` for the rail and
   tree's `ContextMenu`. The `planBusy` bullet sits inside the run-bar bullet but belongs with
   the Rows tab's controls.
+
+## docs/dev/database.md
+
+- **Moves:** the five dataset-folder paragraphs in § SQLite engine and schema conventions,
+  from **Dataset-folder deletion & the startup orphan sweep** through **The sweep touches
+  nothing when the DB and the tree visibly disagree**, given `##` headings on the way
+- **New file:** docs/dev/dataset-folders.md (the delete endpoint's folder removal and the
+  startup orphan sweep)
+- **Why here:** M9 stage 2 took the file to ~3,300 of 3,500 words (2026-11-08), not yet over.
+  Those paragraphs are about files on disk, not the schema; the rest of the section is
+  pragmas, FKs and column conventions. Moving them leaves both near 60%.
+- **Watch for:** `roadmap.md` and `scale-plan/README.md` cite "§ The sweep moves data aside
+  and never deletes it", a bold lead-in today, not a heading. § The datasets root's one
+  spelling names "the orphan sweep's refusal in § SQLite engine and schema conventions" and
+  ends on the sweep's case fold; both pointers become cross-file. `multiple-installs.md` and CLAUDE.md's Map row for database.md name the sweep.

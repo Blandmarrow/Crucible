@@ -215,7 +215,8 @@ def test_an_unknown_embedding_type_is_422_and_records_nothing(tmp_path):
 
 
 def test_dino_all_layers_records_its_mode(tmp_path):
-    """Also `_score_all_layers_paginated`'s first test of any kind."""
+    """Also the first test of any kind for the keyset paginator (now `_score_paginated`,
+    which every branch uses; `test_style_similarity_paging.py` runs it over several pages)."""
     async def scenario():
         async with api_env(tmp_path) as env:
             ds = await env.create_dataset("layers")

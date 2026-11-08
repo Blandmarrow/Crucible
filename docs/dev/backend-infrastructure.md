@@ -19,10 +19,13 @@ check (`docs/dev/styling.md`), only when a file it compares changes.
 **The Windows job.** `backend-tests.yml` also runs the same suite on `windows-latest` as
 `backend-tests-windows` — the platform most users run, and the one whose filesystem rules
 (PM-021's open-file unlink, privileged symlinks, `\` separators) the Linux job cannot see. It
-mirrors `backend-tests`' installs under `shell: bash` and is **`continue-on-error: true` until
-it has run green once**; then that line comes out and it blocks like the Linux job. The
-workflow also carries `workflow_dispatch`, so it can be run on a branch from the Actions tab
-before a PR exists. Its first two steps parse `manage.ps1` under Windows PowerShell 5.1 and
+mirrors `backend-tests`' installs under `shell: bash`. It **does not run on pull requests**
+(`if: github.event_name != 'pull_request'`, decision 11): at about 43 minutes against the
+Linux job's 10 it was the whole wait on every backend PR, so it runs on each push to `main`
+and on demand. It stays `continue-on-error: true`, so a Windows break is reported on `main`
+right after the merge that caused it rather than blocking one. The workflow's
+`workflow_dispatch` runs it on a branch from the Actions tab — the way to check a change to
+Windows-sensitive filesystem code before merging. Its first two steps parse `manage.ps1` under Windows PowerShell 5.1 and
 PowerShell 7 (`Parser::ParseFile`, failing on any error); nothing else in CI can, since the Linux
 runners have no PowerShell. Those two steps sit under the same `continue-on-error` and do not
 run the script. Tests that need a real symlink carry `conftest.needs_symlinks`

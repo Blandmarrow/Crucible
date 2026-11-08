@@ -26,7 +26,8 @@ on:
       - "backend/**"
       - "scripts/check_migrations.py"
       - ".github/workflows/backend-tests.yml"
-  # Manual runs, so the Windows job below can be exercised on a branch before a PR.
+  # Manual runs, so the Windows job below (which skips pull requests) can be run
+  # on a branch.
   workflow_dispatch:
 
 # Every job here only reads the repo and runs tests; nothing writes back to
@@ -83,11 +84,13 @@ jobs:
   # (Git Bash, present on windows-latest) keeps the quoted `>=`/`!=` specifiers
   # byte-identical to the Linux job's rather than re-quoting them for pwsh.
   #
-  # NON-BLOCKING until it has run green once: `continue-on-error` keeps a Windows-
-  # only failure from failing the workflow while the suite's remaining POSIX
-  # assumptions are found and fixed. Once it is green, delete `continue-on-error`
-  # so it blocks like the Linux job.
+  # NOT RUN ON PULL REQUESTS (decision 11): it takes ~43 min against Linux's ~10,
+  # so it runs after each merge to main and on demand (`workflow_dispatch`, from
+  # the Actions tab, for a branch with Windows-sensitive filesystem changes).
+  # Advisory: `continue-on-error` keeps a Windows-only failure from failing the
+  # workflow, and a break shows up on main right after the merge that caused it.
   backend-tests-windows:
+    if: github.event_name != 'pull_request'
     runs-on: windows-latest
     continue-on-error: true
     defaults:

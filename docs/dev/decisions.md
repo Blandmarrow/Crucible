@@ -90,3 +90,10 @@ before ComfyUI generates, so captioning and prompt writing can run on a 16 GB ca
 ComfyUI; **Leaning** on the mechanism: an HTTP unload behind an opt-in setting, and no load
 step, since Strata reloads on the next request. Full record:
 [decisions/10-unload-strata-while-comfyui-generates.md](decisions/10-unload-strata-while-comfyui-generates.md).
+
+## 11. Windows backend tests run after merge, not on pull requests
+
+**Decided** (2026-11-08, by the user): `backend-tests-windows` runs on each push to `main` and
+on demand, no longer on pull requests, and stays advisory. It took about 43 minutes to the
+Linux job's 10, so it was the whole wait on every backend PR. Full record:
+[decisions/11-windows-tests-after-merge.md](decisions/11-windows-tests-after-merge.md).

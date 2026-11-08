@@ -21,8 +21,8 @@ restates its stages.
 
 0. **M9 comes first** ([decision 13](decisions/13-scale-work-first.md)): the checked findings
    of an outside scaling review, planned in [scale-plan/README.md](scale-plan/README.md).
-   **Next is M9 stage 1**, the gallery sort's tie-breaker, then stage 2, the orphan sweep.
-   Neither waits on anything. See M9 below.
+   **Stage 1** (the gallery sort's tie-breaker) is done on `fix/m9-stage1-sort-tiebreak`;
+   **next is stage 2**, the orphan sweep. It waits on nothing. See M9 below.
 1. **M6's loose ends are all closed** (item 5 below). On 2026-11-08 the Ctrl+C hand check
    passed, the folder-segment whitespace fix merged as PR #121 (decision 12, migration
    `b8d2f4a6c1e3`), and the M6 plan folder was retired by PR #122, a docs-only PR. **After
@@ -159,7 +159,8 @@ and docs, and stage 6's numbers recorded; stage 7 is then built or ruled out by 
 Plan: [scale-plan/README.md](scale-plan/README.md). Does not wait for M4, which lands second
 and resolves the overlap.
 
-- [ ] Stage 1: a unique tie-breaker (`Image.id`) for every gallery sort. Needs nothing.
+- [x] Stage 1: a unique tie-breaker (`Image.id`) for every gallery sort. Done on
+  `fix/m9-stage1-sort-tiebreak`.
 - [ ] Stage 2: the startup orphan sweep moves folders into `.orphaned/` instead of deleting
   them. Needs nothing.
 - [ ] Stage 3: quality scoring commits per chunk within each check, with an "only unscored"

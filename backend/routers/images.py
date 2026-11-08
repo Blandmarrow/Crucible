@@ -141,9 +141,10 @@ _ALLOWED_SORT_FIELDS = _ALLOWED_SCORE_FIELDS | {
     "source_timestamp_ms", "source_shot_index",
 }
 
-# Lineage sorts need nulls-last plus a stable tiebreak; the generic branch has
-# neither, so an ASC sort would float every non-frame image to the top and leave
-# equal-timestamp frames in whatever order SQLite scanned them.
+# Lineage sorts need nulls-last, or an ASC sort would float every non-frame
+# image to the top. Every gallery sort (this branch included) ends with
+# `created_at ASC, id ASC`, so OFFSET paging is deterministic: ties are never
+# left to SQLite's scan order.
 _NULLS_LAST_SORT_FIELDS = frozenset({"source_timestamp_ms", "source_shot_index"})
 
 def _apply_bulk_filters(query, image_ids, subfolder, quality_flags, include_flagged: bool = False):
@@ -423,6 +424,10 @@ def _apply_image_ordering(q, sort: str, order: str):
     in the order the user is looking at* rather than an arbitrary slice. Safe to
     apply after every filter even though this block used to sit between two of
     them: `where` clauses accumulate order-independently.
+
+    Every ordering ends `created_at ASC, id ASC` (`id` is unique), so ties such
+    as NULL scores or equal timestamps cannot make OFFSET paging repeat or skip
+    an image. The `created_at` key is omitted when it is the sort column itself.
     """
     # Coerce rather than 400: an unknown name already fell back today, and a
     # stale persisted `sortIdx` must degrade to a working gallery.
@@ -435,15 +440,20 @@ def _apply_image_ordering(q, sort: str, order: str):
         # something the drag-and-drop grid can mean. This branch matches first,
         # which is why `sort_order` is absent from `_NULLS_LAST_SORT_FIELDS`
         # below: an entry there could never be reached.
-        return q.order_by(Image.sort_order.asc().nulls_last(), Image.created_at.asc())
+        return q.order_by(
+            Image.sort_order.asc().nulls_last(), Image.created_at.asc(), Image.id.asc(),
+        )
     if sort in _NULLS_LAST_SORT_FIELDS:
         # NULL here means "not a video frame", which belongs at the end whichever
         # direction the frames run in, with `created_at` breaking the ties that
         # two frames at the same timestamp or in the same shot would otherwise
         # leave to SQLite's scan order.
         direction = sort_col.desc() if order == "desc" else sort_col.asc()
-        return q.order_by(direction.nulls_last(), Image.created_at.asc())
-    return q.order_by(sort_col.desc() if order == "desc" else sort_col.asc())
+        return q.order_by(direction.nulls_last(), Image.created_at.asc(), Image.id.asc())
+    direction = sort_col.desc() if order == "desc" else sort_col.asc()
+    if sort == "created_at":
+        return q.order_by(direction, Image.id.asc())
+    return q.order_by(direction, Image.created_at.asc(), Image.id.asc())
 
 
 @router.get("/", response_model=list[ImageListItem])
@@ -865,9 +875,9 @@ async def bulk_rename(body: BulkRenameRequest, db: AsyncSession = Depends(get_db
         raise HTTPException(400, "new_stem produces empty slug")
 
     order_clause = (
-        (Image.sort_order.asc().nulls_last(), Image.created_at.asc())
+        (Image.sort_order.asc().nulls_last(), Image.created_at.asc(), Image.id)
         if body.sort_by_sort_order
-        else (Image.created_at,)
+        else (Image.created_at, Image.id)
     )
     query = _apply_bulk_filters(
         select(Image.id, Image.file_path, Image.filename).where(Image.dataset_id == body.dataset_id),

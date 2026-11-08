@@ -96,7 +96,7 @@ Which gate runs where — the one place this list lives:
 | Gate | Command | Locally | CI job | Blocks a PR |
 |---|---|---|---|---|
 | Backend tests | `python -m pytest backend/tests/ -q` | `qa-smoke` | `backend-tests` (Ubuntu) | yes |
-| Backend tests on Windows | the same | — | `backend-tests-windows` | **no** — `continue-on-error` until it runs green |
+| Backend tests on Windows | the same | — | `backend-tests-windows`, on push to `main` and manual runs only | **no** — not run on PRs (decision 11) |
 | Backend lint | `ruff check backend` | by hand (not in the venv; CI installs it) | `backend-lint` | yes |
 | Migration drift | `python scripts/check_migrations.py` | after a model or migration change | `migration-drift` | yes |
 | `src/` typecheck + build | `npm run build` | `qa-smoke` | `frontend-build` | yes |
@@ -113,7 +113,8 @@ Which gate runs where — the one place this list lives:
 - **scenedetect and ffmpeg in e2e**, deliberately absent so the `capabilities: false`
   branches are exercised (`docs/dev/video/tests.md`).
 - **Windows filesystem rules** — the open-file locks of PM-021, symlink privilege — reach
-  only the non-blocking Windows job; `manage.ps1` is parse-checked, never run.
+  only the Windows job, which runs after a merge rather than on the PR; `manage.ps1` is
+  parse-checked, never run.
 - **A real ComfyUI, the booru lookup, Restart and Shutdown**, which `qa-smoke` and e2e leave
   out. e2e runs ComfyUI journeys against a fake one (`docs/dev/comfyui/run.md` § Testing the
   run), so a change in what real ComfyUI sends still reaches no gate.

@@ -235,7 +235,7 @@ the same decision.
 
 ## Stage 8 — Retry for interrupted jobs
 
-**Built 2026-11-08** on `feat/m9-stage8-retry`, for `quality_score` only, with three rulings by
+**Done 2026-11-08** (PR #127), for `quality_score` only, with three rulings by
 the user: a retry **resumes** (it turns on `only_unscored`, except for an `only_mismatched`
 job, which is resubmitted as it was); Retry shows on **failed and cancelled** jobs; and a job
 an automated run owns gets **no** Retry. The as-built rules: `docs/dev/backend-infrastructure.md`

@@ -17,10 +17,10 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-08, M7 Stage 2b done on `fix/m7-stage2b-layer-labels`)
+## Next session (updated 2026-11-08, M7 Stage 2b merged)
 
-0. **M7 Stage 2b** (the layer labels) is done on `fix/m7-stage2b-layer-labels`, awaiting its
-   PR. What is left in M7 that needs nothing else: the CLIP QuickGELU plan and Stage 3.
+0. **M7 Stage 2b** (the layer labels) merged on 2026-11-08 as PR #119; the branch is deleted.
+   What is left in M7 that needs nothing else: the CLIP QuickGELU plan and Stage 3.
 
 1. M5's five stages merged on 2026-10-30 as PR #101. Only its cleanup is open, and that waits
    a release. See [server-state-plan/README.md](server-state-plan/README.md) for what was
@@ -205,8 +205,8 @@ Stage 2 there (DINOv3) is not built, by
   `feat/m7-style-port` and merged the same day as PR #108; 1d816ec was plan-file prose only
   and arrived with the plan folder.
 - [x] Stage 2b: stop the layer labels asserting things nobody measured
-  (`DINO_LAYER_LABELS`). Done 2026-11-08 on `fix/m7-stage2b-layer-labels`: each label is a
-  depth word plus a measured lean. Detail:
+  (`DINO_LAYER_LABELS`). Merged 2026-11-08 as PR #119: each label is a depth word plus a
+  measured lean. Detail:
   [style-embedding-plan/README.md § Stage 2b](style-embedding-plan/README.md#stage-2b--stop-the-layer-labels-asserting-things-nobody-measured).
 - [ ] Stage 3: dense features for prompt-free subject masks. Untested; separate from style
   scoring.

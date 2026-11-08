@@ -22,7 +22,8 @@ restates its stages.
 0. **M8's two "any time" items** (the coverage config and CLAUDE.md § Data flow) merged on
    2026-11-08 as PR #120; the branch is deleted. `test_restart_in_dev_mode_touches_the_reloader_trigger_and_never_signals`
    failed once in PR #120's CI and passed on a rerun: it reads the trigger file as soon as it
-   exists, which can be before `write_text` has filled it. **M7 Stage 2b** (the layer labels) merged on
+   exists, which can be before `write_text` has filled it. Fixed the same day on `main`: it
+   now polls for the text. **M7 Stage 2b** (the layer labels) merged on
    2026-11-08 as PR #119; the branch is deleted. What is left in M7 that needs nothing else:
    the CLIP QuickGELU plan and Stage 3.
 

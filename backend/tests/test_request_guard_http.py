@@ -283,11 +283,14 @@ def test_restart_in_dev_mode_touches_the_reloader_trigger_and_never_signals(_no_
     trigger = tmp_path / "trigger.py"
     monkeypatch.setattr(main_mod, "_DEV_RELOAD_TRIGGER", trigger)
     _post_control("restart")
+    # Poll for the text, not just the file: write_text creates the file before it fills it,
+    # so a read right after exists() can see it empty (failed once in PR #120's CI).
+    prefix = "# touched by POST /restart"
     for _ in range(100):
-        if trigger.exists():
+        if trigger.exists() and trigger.read_text().startswith(prefix):
             break
         time.sleep(0.05)
-    assert trigger.exists() and trigger.read_text().startswith("# touched by POST /restart")
+    assert trigger.exists() and trigger.read_text().startswith(prefix)
     assert not _no_real_shutdown.is_set()
     assert not (tmp_path / ".restart").exists()
 

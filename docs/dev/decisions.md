@@ -105,3 +105,11 @@ the whitespace at its ends, keeping interior spaces, so `knight ` and `knight` a
 Migration `b8d2f4a6c1e3` rewrites stored rows, snapshot rows included, after a backup. Full
 record:
 [decisions/12-strip-folder-segment-whitespace.md](decisions/12-strip-folder-segment-whitespace.md).
+
+## 13. Scale and data-safety work comes first
+
+**Decided** (2026-11-08, by the user) that milestone M9, the checked findings of an outside
+scaling review, goes ahead of every other open milestone; **Leaning** on what it leaves out:
+cursor paging before a measurement, a job checkpoint system, keychain-stored keys, broad
+router splits, and new infrastructure. Full record:
+[decisions/13-scale-work-first.md](decisions/13-scale-work-first.md).

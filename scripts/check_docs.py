@@ -187,6 +187,7 @@ TRANSIENT_DIRS: set[str] = {
     "docs/dev/cleanup-plan",
     "docs/dev/gpt-review",
     "docs/dev/rating-plan",
+    "docs/dev/scale-plan",
     "docs/dev/server-state-plan",
     "docs/dev/style-embedding-plan",
 }

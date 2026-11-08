@@ -117,7 +117,12 @@ LUT forms or `DatasetsPage.tsx`.
   Inpaint and `crop_to_detection` stayed out: their count keys, commit order and model lease
   would each need a flag. One intended change: a LUT replace now writes `width`/`height` from
   the result, as an upscale does. A grade keeps the size, so the values are the same.
-- **Stage 4: `DatasetsPage` dialogs.** Five independent forms move out, about 40% of the file.
+- **Stage 4 (landed 2026-11-08 on `refactor/m8-stage4-datasets-dialogs`): `DatasetsPage`
+  dialogs.** Five independent forms moved into `frontend/src/components/datasets/`, taking the
+  page from 1,805 lines to 1,334. One addition kept behaviour the same: each dialog's mutation
+  has a shared `mutationKey`, read through `useIsMutating`, because a mutation owned by a
+  dialog that unmounts no longer keeps a reopened dialog's submit disabled.
+  `docs/dev/datasets-page.md`.
 
 ### Found during stages 2 and 3, left as they were
 

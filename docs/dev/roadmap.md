@@ -17,7 +17,7 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-07, M8 follow-ups 8–11 merged)
+## Next session (updated 2026-11-08, M8 follow-up 14 and stage 4 landed)
 
 1. M5's five stages merged on 2026-10-30 as PR #101. Only its cleanup is open, and that waits
    a release. See [server-state-plan/README.md](server-state-plan/README.md) for what was
@@ -72,12 +72,14 @@ restates its stages.
      Its § Still open keeps the gallery entity filter, unbuilt until someone misses it
      (decision 8).
 5. M8's follow-ups 8–11 merged on 2026-11-07 (PRs #114 and #115); both branches are deleted.
-   Follow-up 14 (a copy-mode thumbnail guard) can go any time. Batch move and copy, the rest
-   of item 9, must wait for M4 to merge. Items 7, 12 and 13 wait for stage 6, which replaces
-   that code. M8 stages 5 and 6
-   now wait only for M4, since M7 has merged. Stage 4 can go any time. What stages 2 and 3
-   found and left alone is in [cleanup-plan/README.md](cleanup-plan/README.md) § Found during
-   stages 2 and 3, left as they were.
+   On 2026-11-08 follow-up 14 (a copy-mode thumbnail guard) landed on
+   `fix/m8-copy-thumbnail-guard` and stage 4 (the `DatasetsPage` dialogs) on
+   `refactor/m8-stage4-datasets-dialogs`, each with its own PR. Follow-up 15, `images.py`'s two
+   single-image copies, waits for M4. Batch move and copy, the rest of item 9, must wait for
+   M4 to merge. Items 7, 12 and 13 wait for stage 6, which replaces that code. M8 stages 5 and
+   6 now wait only for M4, since M7 has merged. What stages 2 and 3 found and left alone is in
+   [cleanup-plan/README.md](cleanup-plan/README.md) § Found during stages 2 and 3, left as
+   they were.
 6. Four docs seams stay queued in [pending-splits.md](pending-splits.md) on `main` with nothing
    over budget: `README.md`'s § Features deletion (deferred when its budget went to 4,000),
    `docs/scoring.md`'s residual seam, `docs/dev/quality/style-similarity.md` at 91% after
@@ -231,7 +233,8 @@ Detail, hazards and what to leave alone:
   `refactor/m8-stages-2-3`.
 - [x] Stage 3: a shared job loop for upscale and LUT. Needs stage 2. Landed 2026-11-04 on the
   same branch.
-- [ ] Stage 4: `DatasetsPage` dialogs into components.
+- [x] Stage 4: `DatasetsPage` dialogs into components. Landed 2026-11-08 on
+  `refactor/m8-stage4-datasets-dialogs`.
 - [ ] Stage 5: `SelectionToolbar` dialogs into forms. Needs M4 merged (M7 has).
 - [ ] Stage 6: the detail page's inline tools onto those forms. Needs M4 merged (M7 has), and B1.
 - [ ] Stage 7: `StatsPage` into files. Needs M4 merged.

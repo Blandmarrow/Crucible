@@ -178,7 +178,7 @@ function BlueprintForm({ planId, datasetId, hasPromptPin, running, liveRun, subf
           style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 13, margin: "0 0 12px",
             padding: "10px 12px", border: "1px solid var(--accent)", borderRadius: 6, background: "var(--accent-glow)" }}>
           <span style={{ flex: 1 }}>
-            ✨ <strong>A drafted blueprint is waiting for you:</strong>{" "}
+            <strong>A drafted blueprint is waiting for you:</strong>{" "}
             {Object.keys(draft.axes).length} axes, {draft.scenarios.length} scenarios. Nothing changes until you use it.
           </span>
           <button className="btn sm" disabled={busy} data-testid="blueprint-draft-review"

@@ -49,8 +49,7 @@ dropped there, including the old one, so it is a property of the task rather tha
 model: telling six photographers apart is a far finer discrimination than telling two media
 apart. UI copy promising more is promising the easy case.
 
-The full method, the leave-one-out validation and the open stages (the layer labels, dense
-features) are in `docs/dev/style-embedding-plan/README.md` while that folder exists.
+The full method, the leave-one-out validation and the open stage (dense features) are in `docs/dev/style-embedding-plan/README.md` while that folder exists.
 
 ## Which layer, and why it moved twice
 

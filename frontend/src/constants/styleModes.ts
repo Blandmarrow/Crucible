@@ -70,10 +70,14 @@ export const STYLE_MODE_NOTE =
  *  the deeper a layer sits, the more it ranks on *what is depicted* rather than on
  *  how it is drawn, so a user hunting a look wants the low end of the band and one
  *  hunting more of the same scene wants the high end. That is a measured tradeoff
- *  (`docs/dev/quality/style-evaluation.md` § Which layer, and why it moved twice), not the
- *  per-layer semantics `DINO_LAYER_LABELS` still asserts. */
+ *  (`docs/dev/quality/style-evaluation.md` § Which layer, and why it moved twice), and
+ *  the per-layer labels in `dinoLabels.ts` carry the same lean.
+ *
+ *  It used to open "Each transformer block captures increasingly abstract
+ *  features" — the same unmeasured depth gloss the old layer labels were, so it
+ *  went with them (M7 Stage 2b). The opening now states what was measured. */
 export const DINO_LAYER_NOTE =
-  "Each transformer block captures increasingly abstract features. The middle of the stack separates styles best — layer 7 is the default and the last layer is measurably the weakest, so raw score range is a poor guide to which layer to use. Deeper layers lean further toward subject and framing over how an image is drawn: try 5–6 to weight the look more heavily, 9–10 to find more of the same scene. \"All layers\" scores each layer independently and stores the breakdown for the image detail view.";
+  "Low layers score almost every image alike; the middle of the stack separates styles best — layer 7 is the default and the last layer is measurably the weakest, so raw score range is a poor guide to which layer to use. Deeper layers lean further toward subject and framing over how an image is drawn: try 5–6 to weight the look more heavily, 9–10 to find more of the same scene. \"All layers\" scores each layer independently and stores the breakdown for the image detail view.";
 
 /** How a stored `embedding_type` reads on screen.
  *

@@ -17,7 +17,7 @@ Ollama and OpenAI-compat have no entry, so the style picker is hidden for them. 
 
 ## `constants/dinoLabels.ts`
 
-`frontend/src/constants/dinoLabels.ts` — `DINO_LAYER_LABELS: Record<string, string>` mapping layer number (1–12) to a human-readable description. Shared by both layer pickers (`QualityPage`, `SelectionToolbar`) and `ImageDetailPage`'s `DinoLayerBreakdown`. Layer 12 reads "Last block, pre-layernorm" so it cannot be confused with the pickers' separate *Final embedding* option. The other eleven names were never measured; replacing them is Stage 2b in `docs/dev/style-embedding-plan/README.md`.
+`frontend/src/constants/dinoLabels.ts` — `DINO_LAYER_LABELS: Record<string, string>` mapping layer number (1–12) to a depth word plus a measured property ("Low: scores bunch close together", "Middle: balances look and subject", "Deep: leans toward subject"). Shared by both layer pickers (`QualityPage`, `SelectionToolbar`) and `ImageDetailPage`'s `DinoLayerBreakdown`. **Every label must trace to a measurement**: the old semantic names ("Object parts", "Scene composition") were unmeasured, sat beside a measured default, and one pointed at the wrong end of the stack (M7 Stage 2b, 2026-11-08). The module doc names the source of each band's claim; the measurements are in `docs/dev/quality/style-evaluation.md` § Which layer, and why it moved twice. No label says "default", so moving `DEFAULT_DINO_LAYER` never leaves one stale. Layer 12 keeps "Last block, pre-layernorm" so it cannot be confused with the pickers' separate *Final embedding* option.
 
 ## `constants/flags.ts`
 

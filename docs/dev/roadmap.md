@@ -23,7 +23,7 @@ restates its stages.
    of an outside scaling review, planned in [scale-plan/README.md](scale-plan/README.md).
    Stages 1 and 2 merged on 2026-11-08: the gallery sort's tie-breaker as PR #124, and the
    orphan sweep as PR #125. Stage 3, chunked quality scoring, is built on
-   `fix/m9-stage3-chunked-scoring` with every local gate green; its PR waits on the user.
+   `fix/m9-stage3-chunked-scoring` with every local gate green, open as PR #126.
    Hand-checked on 2026-11-08 against a throwaway instance: 2,500 images, Technical only,
    the server hard-killed mid-run kept the first 1,000 scores and the job read
    *Interrupted*; *Score what's missing* then scored exactly the other 1,500, and a second
@@ -179,7 +179,7 @@ and resolves the overlap.
   and dot-named folders are skipped. Detail: `docs/dev/database.md` § The sweep moves data
   aside and never deletes it.
 - [x] Stage 3: quality scoring commits per chunk within each check, with an "only unscored"
-  resume option. Built 2026-11-08 on `fix/m9-stage3-chunked-scoring`, PR not yet open: the
+  resume option. Built 2026-11-08 on `fix/m9-stage3-chunked-scoring`, open as PR #126: the
   option takes missing-or-stale rows and is a *Score what's missing* button (the user's
   calls). Detail: `docs/dev/quality/scoring.md` § The chunked job loop.
 - [ ] Stage 4: Stats histograms built on the server instead of raw value lists. Comes before

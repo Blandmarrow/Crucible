@@ -1,6 +1,8 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import toast from "react-hot-toast";
 import { jobsApi } from "../api/jobs";
+import { apiErrorDetail } from "../utils/apiError";
 import { useErrorConsoleStore, errorTypeLabel } from "../store/errorConsoleStore";
 import CopyErrorsButton from "../components/common/CopyErrorsButton";
 import type { Job } from "../types";
@@ -36,6 +38,20 @@ function partialFailure(job: Job): string | null {
   return typeof summary === "string" && summary ? summary : `${failed} item${failed !== 1 ? "s" : ""} failed`;
 }
 
+/** The row's item count. Only an automated run's own steps write `done_items`, so a
+ *  bare `done/total` read `0/N` on every other job, however much it finished. A
+ *  completed job did all of its items, as its own terminal event says (`done = total`,
+ *  the rule `jobRowToProgress` follows); a row with a real count shows it; anything
+ *  else shows only how many items the job was given, since a stopped job's progress
+ *  is not stored (and for a scoring job it restarts at each check, PM-008). */
+function itemCount(job: Job): string | null {
+  const total = job.total_items;
+  if (total <= 0) return null;
+  if (job.status === "completed") return `${total}/${total}`;
+  if (job.done_items > 0) return `${job.done_items}/${total}`;
+  return `${total} item${total !== 1 ? "s" : ""}`;
+}
+
 function PartialFailureLine({ job }: { job: Job }) {
   const text = partialFailure(job);
   if (!text) return null;
@@ -68,6 +84,33 @@ function StatusBadge({ status }: { status: Job["status"] }) {
     >
       {s.label}
     </span>
+  );
+}
+
+/** Resubmits a stopped job (`POST /jobs/{id}/retry`). Shown only where the server says
+ *  `retryable`; a scoring job resumes, visiting only what the stopped one left. The new
+ *  job reaches TopBar over SSE like any other, and TopBar's watcher invalidates what it
+ *  changes when it ends, so this only refreshes the list. */
+function RetryButton({ job }: { job: Job }) {
+  const queryClient = useQueryClient();
+  const retry = useMutation({
+    mutationFn: () => jobsApi.retry(job.id),
+    onSuccess: (res) => {
+      toast.success(res.job_id ? "Retry queued" : (res.message ?? "Nothing left to do"));
+      queryClient.invalidateQueries({ queryKey: ["jobs"] });
+    },
+    onError: (err) => toast.error(apiErrorDetail(err, "Retry failed")),
+  });
+  return (
+    <button
+      className="btn sm"
+      style={{ flexShrink: 0 }}
+      onClick={() => retry.mutate()}
+      disabled={retry.isPending}
+      title="Run this job again. A scoring job scores only images with no score or a stale one; images that already had a score keep it."
+    >
+      {retry.isPending ? "Retrying…" : "Retry"}
+    </button>
   );
 }
 
@@ -170,11 +213,13 @@ function HistoryTab() {
                   </span>
                 )}
 
-                {job.total_items > 0 && (
+                {itemCount(job) && (
                   <span style={{ color: "var(--fg-mute)", fontSize: 11, flexShrink: 0, fontFamily: "var(--font-mono, monospace)" }}>
-                    {job.done_items}/{job.total_items}
+                    {itemCount(job)}
                   </span>
                 )}
+
+                {job.retryable && <RetryButton job={job} />}
               </div>
 
               {job.error_msg && (

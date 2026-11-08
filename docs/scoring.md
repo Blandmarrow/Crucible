@@ -33,6 +33,8 @@ A run saves its scores as it goes, about 1,000 images at a time, one scorer afte
 
 To finish the run, press **Score what's missing** beside **Run scoring**, with the same scorers ticked. Each scorer then runs only on the images that lack its result, plus any image whose scores are marked stale (see [Stale scores](#stale-scores)). Images that already have a result are skipped, so the run picks up where the last one stopped. An image a scorer failed to read counts as missing too, so the button also retries those. When nothing is left, it says so and starts no job.
 
+You can also finish a stopped run from [Logs](workspace.md#logs): its **Retry** button does the same as **Score what's missing**, with the scorers and scope that run used, so you don't need to tick them again. Like that button, it skips every image that already has a result, so it cannot finish a run that was replacing existing scores; press **Run scoring** again for that. A stopped **Re-score N with …** run is simply run again, which skips the images it already moved onto the new model.
+
 The progress bar covers the whole run, across every scorer. The text under it counts images for the scorer running now, and says which step of how many it is on.
 
 ### VRAM after a run

@@ -256,8 +256,10 @@ async def start_score_job(
     run_id: str | None = None,
     run_stage: str | None = None,
     label_prefix: str = "",
+    extra_config: dict | None = None,
 ) -> dict:
-    """Queue a quality-scoring job; the `/score` route and an automated run both start here.
+    """Queue a quality-scoring job; the `/score` route, an automated run and a Retry
+    (`services/job_retry.py`, which passes `extra_config={"retry_of": ...}`) all start here.
 
     Answers `{"job_id": None, ...}` when nothing is in scope. **`image_ids: []` widens
     to the whole dataset** (`if body.image_ids:`), so a caller from code must not pass
@@ -323,7 +325,7 @@ async def start_score_job(
         label=run_job_label(label_prefix, body.label or auto_label),
         dataset_id=body.dataset_id,
         total_items=len(ids),
-        config=run_job_config(body.model_dump(), run_id, run_stage),
+        config=run_job_config({**body.model_dump(), **(extra_config or {})}, run_id, run_stage),
     )
     db.add(job)
     await db.commit()

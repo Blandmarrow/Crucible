@@ -17,14 +17,21 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-08, M9 stage 3 merged)
+## Next session (updated 2026-11-08, M9 stage 8 built)
 
 0. **M9 comes first** ([decision 13](decisions/13-scale-work-first.md)): the checked findings
    of an outside scaling review, planned in [scale-plan/README.md](scale-plan/README.md).
    Stages 1–3 merged on 2026-11-08: the gallery sort's tie-breaker as PR #124, the orphan
    sweep as PR #125, and chunked quality scoring with *Score what's missing* as PR #126
-   (hand-checked on CPU and GPU; see the plan's Stage 3). Its branch is deleted. **Next is
-   stage 4, 5 or 8**, none of which waits on anything. See M9 below.
+   (hand-checked on CPU and GPU; see the plan's Stage 3). Its branch is deleted. **Stage 8**
+   (Retry on the Logs page) is built and hand-checked on `feat/m9-stage8-retry`, not yet
+   merged (see the plan's Stage 8). **Then stage 4 or 5**, neither of which waits on anything. See M9
+   below.
+   **Open bug found on the way (2026-11-08), not yet ruled on:** an automated run's
+   paid-call cap counts caption calls as `done_items` summed over its `caption` children
+   (`run_service._spent`), and no caption job writes `done_items`, so the caption half of
+   the cap counts nothing and never stops a run. Only a stubbed `_Spent` is tested
+   (`test_run_extend.py`). Fix it in its own change, with a test over real job rows.
 1. **M6's loose ends are all closed** (item 5 below). On 2026-11-08 the Ctrl+C hand check
    passed, the folder-segment whitespace fix merged as PR #121 (decision 12, migration
    `b8d2f4a6c1e3`), and the M6 plan folder was retired by PR #122, a docs-only PR. **After
@@ -180,7 +187,10 @@ and resolves the overlap.
 - [ ] Stage 6: extend `bench_scaling.py` (layer blobs, the migrated column order) and
   re-measure. Best after stages 1, 3 and 4, so it measures them.
 - [ ] Stage 7: decide on, then maybe build, an embeddings table of its own. Needs stage 6.
-- [ ] Stage 8: Retry for interrupted jobs. Needed stage 3, now merged; needs nothing.
+- [ ] Stage 8: Retry for interrupted jobs. Built 2026-11-08 on `feat/m9-stage8-retry` for
+  `quality_score` (a retry resumes; failed and cancelled jobs; none for a run's child, by the
+  user's calls) and hand-checked; not yet merged. Detail:
+  `docs/dev/backend-infrastructure.md` § Retrying a stopped job.
 
 ### M5 — App-stored prompts
 

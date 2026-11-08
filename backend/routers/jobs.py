@@ -9,6 +9,7 @@ from sse_starlette.sse import EventSourceResponse
 from backend.database import get_db
 from backend.models import BackgroundJob
 from backend.schemas.job import JobOut
+from backend.services.job_retry import RetryRefused, is_retryable, retry_job
 from backend.workers.job_queue import job_queue
 from backend.workers.progress import broadcaster
 
@@ -23,6 +24,10 @@ MAX_IDS_FILTER = 500
 
 def _csv(value: str | None) -> list[str]:
     return [part.strip() for part in (value or "").split(",") if part.strip()]
+
+
+def _out(job: BackgroundJob) -> JobOut:
+    return JobOut.model_validate(job).model_copy(update={"retryable": is_retryable(job)})
 
 
 @router.get("/", response_model=list[JobOut])
@@ -53,7 +58,7 @@ async def list_jobs(
             raise HTTPException(422, f"At most {MAX_IDS_FILTER} ids per request")
         query = query.where(BackgroundJob.id.in_(id_list))
     result = await db.execute(query.order_by(BackgroundJob.created_at.desc()).limit(limit))
-    return result.scalars().all()
+    return [_out(job) for job in result.scalars().all()]
 
 
 @router.get("/{job_id}", response_model=JobOut)
@@ -61,7 +66,24 @@ async def get_job(job_id: str, db: AsyncSession = Depends(get_db)):
     job = await db.get(BackgroundJob, job_id)
     if not job:
         raise HTTPException(404, "Job not found")
-    return job
+    return _out(job)
+
+
+@router.post("/{job_id}/retry")
+async def retry(job_id: str, db: AsyncSession = Depends(get_db)):
+    """Resubmit a failed or cancelled job's stored config (`services/job_retry.py`).
+
+    Answers `{"job_id", "total"}`, or `{"job_id": None, "message"}` when the stopped job
+    left nothing to do. 409 when the job cannot be retried, or a retry of it is still
+    queued or running; 404 when the job or its dataset is gone.
+    """
+    job = await db.get(BackgroundJob, job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    try:
+        return await retry_job(db, job)
+    except RetryRefused as exc:
+        raise HTTPException(exc.status_code, exc.detail) from exc
 
 
 @router.delete("/{job_id}", status_code=204)

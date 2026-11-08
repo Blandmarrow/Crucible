@@ -18,6 +18,9 @@ class JobOut(BaseModel):
     created_at: UtcDatetime
     started_at: UtcDatetime | None
     finished_at: UtcDatetime | None
+    # Filled by the jobs router from `services/job_retry.is_retryable`; the Logs page shows
+    # Retry when it is true.
+    retryable: bool = False
 
     model_config = {"from_attributes": True}
 

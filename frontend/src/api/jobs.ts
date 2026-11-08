@@ -1,5 +1,5 @@
 import client from "./client";
-import type { Job } from "../types";
+import type { Job, JobRetryResult } from "../types";
 
 export interface JobListFilters {
   /** Only jobs in these statuses (the server 422s an unknown one). */
@@ -25,4 +25,8 @@ export const jobsApi = {
   // the SSE stream is the source of truth. The common HTTP failure (404: job row
   // already gone) is not actionable, so cancel never rejects.
   cancel: (id: string) => client.delete(`/jobs/${id}`).catch(() => {}),
+  // Unlike cancel, a refusal (409: not retryable, or a retry already queued; 404: the
+  // dataset is gone) is the user's answer, so it rejects for the caller to show.
+  retry: (id: string) =>
+    client.post<JobRetryResult>(`/jobs/${id}/retry`).then((r) => r.data),
 };

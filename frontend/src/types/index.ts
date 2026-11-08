@@ -257,6 +257,16 @@ export interface Job {
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
+  /** The server's call (`services/job_retry.is_retryable`): failed or cancelled, a type
+   *  with a retry handler, and not owned by an automated run. */
+  retryable: boolean;
+}
+
+export interface JobRetryResult {
+  /** Null when the stopped job left nothing to do; `message` then says so. */
+  job_id: string | null;
+  total?: number;
+  message?: string;
 }
 
 export interface JobProgress {

@@ -235,6 +235,28 @@ the same decision.
 
 ## Stage 8 — Retry for interrupted jobs
 
+**Done 2026-11-08** (PR #127), for `quality_score` only, with three rulings by
+the user: a retry **resumes** (it turns on `only_unscored`, except for an `only_mismatched`
+job, which is resubmitted as it was); Retry shows on **failed and cancelled** jobs; and a job
+an automated run owns gets **no** Retry. The as-built rules: `docs/dev/backend-infrastructure.md`
+§ Retrying a stopped job.
+
+**Hand-checked 2026-11-08** on a throwaway instance (:8299, scratch DB): 2,500 images,
+Technical only, CPU. A server hard-killed mid-run kept 1,000 scores, and after the restart the
+job read *Interrupted* with `retryable` true. Retry queued `Retry: Quality: technical — 1500
+images`, which scored exactly the other 1,500. A second Retry while it ran was a 409, and one
+after it finished answered *Nothing left to score*. A second run drove the real page with
+Playwright (3,000 images, 1,000 kept): Logs showed one Retry, the click toasted *Retry
+queued*, a gallery tab open on the dataset showed the retry in its TopBar and refetched its
+images once the retry ended, and afterwards only the original row kept its button.
+
+**Found on the way:** no job but an automated run's steps writes
+`BackgroundJob.done_items`, so every Logs row read `0/N` whatever it finished. The Logs page
+now shows `N/N` for a completed job and `N items` for any other row without a count
+(`itemCount` in `LogsPage.tsx`); nothing stored changed. The same gap leaves the run's
+paid-caption cap counting nothing (`_spent` sums `done_items` over `caption` children), which
+is left for its own change.
+
 Once stage 3 makes scoring resumable, "recovery" is mostly re-running a job. Add a Retry
 action on failed and interrupted jobs that resubmits the stored `BackgroundJob.config`
 (written by `run_job_config`). Start with `quality_score`, whose config rebuilds the request

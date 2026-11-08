@@ -40,7 +40,7 @@ Two buttons sit at the right of the top bar. Both ask for confirmation first, an
 
 If a job is running when you restart or shut down, it is asked to stop and given about **10 seconds** to do so. Snapshot, restore and branch-checkout jobs get up to **2 minutes**, because stopping one halfway would leave the dataset half-changed. After that the server stops it regardless, so a restart can take that much longer while a job is running. Jobs still waiting in the queue are not started.
 
-Jobs that were running when the server stopped are not resumed — they are marked failed with "Interrupted by server shutdown or restart" so nothing shows as stuck forever in the [Logs](workspace.md#logs) history. Work a job finished before it stopped is kept, as it is when you cancel one. If the app lost touch with the server while a job finished, the top bar and the open page catch up by themselves once the connection is back, with no reload needed.
+Jobs that were running when the server stopped are not resumed — they are marked failed with "Interrupted by server shutdown or restart" so nothing shows as stuck forever in the [Logs](workspace.md#logs) history. Work a job finished before it stopped is kept, as it is when you cancel one. A stopped scoring job can be picked up again with its **Retry** button in Logs. If the app lost touch with the server while a job finished, the top bar and the open page catch up by themselves once the connection is back, with no reload needed.
 
 ## Database backups
 

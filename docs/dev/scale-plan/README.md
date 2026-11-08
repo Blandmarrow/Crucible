@@ -66,7 +66,13 @@ to the nulls-last sorts. That's a trivial conflict, which M4 resolves.
 
 ## Stage 2 — The orphan sweep moves folders instead of deleting them
 
-**Problem.** `sweep_orphan_dataset_folders` (`backend/services/dataset_service.py:132-210`)
+**Done 2026-11-08** (`fix/m9-stage2-orphan-sweep`), as below, plus two rulings: a folder
+whose tree holds no file is still deleted, by the user's choice, and every dot-named child is
+skipped. The user doc went into `docs/datasets.md`, which already described the sweep, not
+`docs/server.md`. The as-built rules: `docs/dev/database.md` § The sweep moves data aside and
+never deletes it.
+
+**Problem.** `sweep_orphan_dataset_folders` (`backend/services/dataset_service.py:176-337`)
 runs at every startup and calls `rmtree` on any folder under `datasets_dir` with no dataset
 row. Its guards stop it when the whole tree looks wrong: rows outside the root, no row's
 folder existing, or no rows beside real datasets. Nothing stops it when **one** folder is

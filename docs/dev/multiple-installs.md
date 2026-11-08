@@ -18,11 +18,12 @@ their browser storage too.
 ## Never share a datasets folder
 
 **Never point two installs at one datasets folder**, nor at a folder that holds anything
-else. At every start, an install deletes each folder in its datasets folder that its own
-database does not list (the orphan sweep, `docs/dev/database.md`). The sweep refuses to run
-in the cases it can recognise (a row outside the folder, rows whose folders are all missing,
-an empty database beside dataset folders), but a second install that has datasets of its
-own looks like none of those, and would delete the first one's. So:
+else. At every start, an install moves each folder in its datasets folder that its own
+database does not list into `.orphaned/` there (the orphan sweep, `docs/dev/database.md`).
+The sweep refuses to run in the cases it can recognise (a row outside the folder, rows whose
+folders are all missing, an empty database beside dataset folders), but a second install
+that has datasets of its own looks like none of those, and would move the first one's aside
+at each start, breaking every one of them until moved back by hand. So:
 
 - each install gets its own datasets folder, e.g. `/mnt/nas/crucible-main/datasets`;
 - exports go beside it (`/mnt/nas/crucible-main/exports`), never inside it;

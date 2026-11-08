@@ -1,10 +1,11 @@
 import asyncio
 import logging
+import os
 import re
 import shutil
 import statistics
 from collections.abc import Iterable
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
 from uuid import uuid4
@@ -34,6 +35,7 @@ from backend.utils import (
     poster_path_for,
     read_caption_sidecar,
     remap_declared_paths,
+    rename_retrying,
     require_free_space,
     sql_has_prefix,
     sql_subtree,
@@ -105,7 +107,9 @@ def remove_dataset_dir(folder: Path) -> None:
     Unlike ``shutil.rmtree(..., ignore_errors=True)``, partial/failed removals are surfaced
     as warnings so an orphaned directory left behind by a locked file or permission mismatch
     is visible in the logs instead of silently persisting. Use this everywhere a dataset
-    folder is deleted (the delete endpoint and the startup orphan sweep).
+    folder is deleted on the user's say-so (the delete endpoint). The startup orphan
+    sweep does not use it: it moves folders aside and removes only empty trees, one
+    `os.rmdir` at a time.
     """
     if not folder.exists():
         return
@@ -129,15 +133,64 @@ def remove_dataset_dir(folder: Path) -> None:
         )
 
 
+ORPHANED_DIRNAME = ".orphaned"
+
+
+def _is_link(path: str | Path) -> bool:
+    """A symlink, or a Windows junction, which `os.path.islink` does not report and
+    `os.walk` would walk into."""
+    return os.path.islink(path) or os.path.isjunction(path)
+
+
+def _empty_tree_dirs(folder: Path) -> list[str] | None:
+    """Every directory in `folder`'s tree, deepest first, or None if the tree holds content.
+
+    Content is any file, any link (symlink or junction, never followed), and anything
+    the walk cannot read, since `os.walk` silently skips an unreadable folder and would
+    otherwise call its tree empty. Only a tree proven empty may be deleted.
+    """
+    if _is_link(folder):
+        return None
+    unreadable: list[OSError] = []
+    dirs: list[str] = []
+    for dirpath, dirnames, filenames in os.walk(folder, onerror=unreadable.append):
+        if filenames or any(_is_link(os.path.join(dirpath, d)) for d in dirnames):
+            return None
+        dirs.append(dirpath)
+    if unreadable:
+        return None
+    # The walk is top-down, so reversed it lists every folder before its parent.
+    return dirs[::-1]
+
+
+def _orphan_destination(orphan_root: Path, name: str, stamp: str) -> Path:
+    """`.orphaned/<name>-<stamp>`, with `-2`, `-3`… added while that name is taken."""
+    dest = orphan_root / f"{name}-{stamp}"
+    n = 2
+    while dest.exists() or dest.is_symlink():
+        dest = orphan_root / f"{name}-{stamp}-{n}"
+        n += 1
+    return dest
+
+
 async def sweep_orphan_dataset_folders(db: AsyncSession) -> list[str]:
-    """Remove child directories of datasets_dir that no dataset row references.
+    """Move child directories of datasets_dir that no dataset row references into
+    `datasets_dir/.orphaned/`, and delete only the ones whose tree holds no file.
 
     Dataset deletion removes the DB row and then the folder, but a folder can be left
     behind if the row disappeared by another route (DB reset/migration/swap) so the
     delete endpoint never ran for it. This reconciles disk against the DB at startup.
-    Returns the names of the folders removed.
+    It never deletes data: restoring an older database backup leaves every dataset
+    created since without a row, and a folder copied in by hand has none either, so
+    each such folder goes to `.orphaned/<name>-<UTC stamp>` for the user to check and
+    delete by hand (M9 stage 2). A same-volume rename is instant whatever the size.
+    Children whose name starts with `.` are skipped: that is `.orphaned` itself and
+    other tools' marker folders, and no dataset folder can start with one, since
+    `_name_to_slug` strips dots. A folder that cannot be moved (locked, no permission)
+    stays where it is and the sweep goes on. Returns the names of the folders moved or
+    deleted.
 
-    It removes nothing when the DB and the tree visibly disagree, because then "no row"
+    It touches nothing when the DB and the tree visibly disagree, because then "no row"
     means the wrong tree, not an orphan: a row whose folder lies outside datasets_dir
     (a DB copied from another machine, or DATASETS_DIR changed under it), rows none of
     whose folders exist (a network share that is not mounted), or no rows at all beside
@@ -166,6 +219,29 @@ async def sweep_orphan_dataset_folders(db: AsyncSession) -> list[str]:
         return str(p).casefold() if _utils.PATHS_FOLD_CASE else str(p)
 
     known_keys = {_key(k) for k in known}
+    # Spelling can still miss a live folder: a case-insensitive mount where
+    # PATHS_FOLD_CASE is False (a share served from Windows, exFAT), or macOS storing an
+    # accented slug decomposed on disk and composed in the row. The same file identity
+    # catches those. It is used only to keep a folder, never to move one, and a zero
+    # inode (some SMB clients) proves nothing.
+    known_ids: set[tuple[int, int]] = set()
+    for k in known:
+        try:
+            st = k.stat()
+        except OSError:
+            continue
+        if st.st_ino:
+            known_ids.add((st.st_dev, st.st_ino))
+
+    def _is_known(child: Path) -> bool:
+        if _key(child.resolve()) in known_keys:
+            return True
+        try:
+            st = child.stat()
+        except OSError:
+            return False
+        return bool(st.st_ino) and (st.st_dev, st.st_ino) in known_ids
+
     if not stored:
         holding = sorted(c.name for c in datasets_dir.iterdir() if (c / "images").is_dir())
         if holding:
@@ -193,21 +269,72 @@ async def sweep_orphan_dataset_folders(db: AsyncSession) -> list[str]:
         )
         return []
 
-    removed: list[str] = []
-    for child in datasets_dir.iterdir():
-        if not child.is_dir():
+    orphan_root = datasets_dir / ORPHANED_DIRNAME
+    # One stamp per sweep, in UTC so two machines sharing a log agree on it.
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    moved: list[tuple[str, Path]] = []
+    deleted: list[str] = []
+    handled: list[str] = []  # moved or deleted, in sweep order
+    can_move = True
+    for child in sorted(datasets_dir.iterdir()):
+        if child.name.startswith(".") or not child.is_dir():
             continue
-        if _key(child.resolve()) in known_keys:
+        if _is_known(child):
             continue
-        remove_dataset_dir(child)
-        removed.append(child.name)
+        empty_dirs = _empty_tree_dirs(child)
+        if empty_dirs is not None:
+            # A failed create's empty shell. `os.rmdir` refuses a folder that is not
+            # empty, so even a file written since the walk cannot be deleted here.
+            try:
+                for d in empty_dirs:
+                    os.rmdir(d)
+            except OSError as exc:
+                logger.warning(
+                    "Empty orphan dataset folder %s could not be removed (%s); it was "
+                    "left where it is.", child, exc,
+                )
+            if not os.path.lexists(child):
+                deleted.append(child.name)
+                handled.append(child.name)
+            continue
+        if not can_move:
+            continue
+        try:
+            orphan_root.mkdir(exist_ok=True)
+        except OSError as exc:
+            # `.orphaned` exists as a file, or the root is read-only. Moving nothing
+            # is the safe answer: the folders stay where they are until the next start.
+            logger.warning(
+                "Orphan dataset-folder sweep could not create %s (%s); every orphan "
+                "folder with files was left where it is.", orphan_root, exc,
+            )
+            can_move = False
+            continue
+        dest = _orphan_destination(orphan_root, child.name, stamp)
+        try:
+            await rename_retrying(child, dest)
+        except OSError as exc:  # FileInUseError is an OSError
+            logger.warning(
+                "Orphan dataset folder %s has no DB row but could not be moved to %s "
+                "(%s); it was left where it is.", child, dest, exc,
+            )
+            continue
+        moved.append((child.name, dest))
+        handled.append(child.name)
 
-    if removed:
+    if moved:
         logger.warning(
-            "Removed %d orphan dataset folder(s) with no DB row: %s",
-            len(removed), ", ".join(removed),
+            "Moved %d dataset folder(s) with no DB row into %s: %s. Nothing was deleted. "
+            "Check them: rename one back if its dataset record returns, import any you want "
+            "back as a new dataset, or delete them by hand.",
+            len(moved), orphan_root, ", ".join(f"{name} -> {dest.name}" for name, dest in moved),
         )
-    return removed
+    if deleted:
+        logger.warning(
+            "Removed %d empty orphan dataset folder(s) with no DB row: %s",
+            len(deleted), ", ".join(deleted),
+        )
+    return handled
 
 
 def _capture_provenance(src_file: Path, dest_file: Path) -> dict:

@@ -265,6 +265,10 @@ async def import_folder(dataset_id: str, body: DatasetImportWithOptions, db: Asy
     if not ds:
         raise HTTPException(404, "Dataset not found")
 
+    # Normalized before the job row records it, so a `..` is a 400 here rather than
+    # a failed job, and the folder the images land in is the one the gallery lists.
+    body.subfolder = normalize_subfolder(body.subfolder)
+
     from pathlib import Path as _Path
     job = BackgroundJob(
         job_type="import",
@@ -458,6 +462,11 @@ async def remove_subfolder(
     # Rewrites Image.subfolder, which a snapshot restore also writes — the same
     # reason repath_subfolder_endpoint guards.
     ensure_not_busy(dataset_id)
+    # Normalized like rename and move, so a padded or slash-wrapped path names the
+    # folder the gallery lists (decision 12).
+    path = normalize_subfolder(path)
+    if not path:
+        raise HTTPException(400, "Subfolder path is required")
     moved = await delete_subfolder(db, dataset_id, path)
     return {"deleted": path, "images_moved_to_root": moved}
 

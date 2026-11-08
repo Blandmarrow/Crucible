@@ -263,8 +263,8 @@ everywhere without duplicating plans. Since M6 §8c a category is a `/` path sho
 
 - **A category is normalized on every write** by `services/comfy_library.py`'s
   `normalize_category`: `\` folds to `/`, every segment is trimmed, blank and `.` segments
-  drop. Not `normalize_subfolder`, on purpose: a category is a label, so a trailing space
-  must not make a twin, and `..` means nothing. Empty after normalizing is a 400. The
+  drop. Not `normalize_subfolder`, on purpose: the two trim alike (decision 12), but in a
+  category `..` means nothing, so it is not refused. Empty after normalizing is a 400. The
   request models cap it at 512 (`CATEGORY_MAX_LEN`); SQLite never enforced the column's
   width, so Pydantic is the real limit. Migration `e7d1c5a9b3f2` widened the column and
   normalized the categories saved before, merging the duplicates that made.

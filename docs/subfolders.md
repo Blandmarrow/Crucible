@@ -4,6 +4,8 @@ Filing a dataset's images into subfolders from the gallery's left sidebar: dragg
 
 Available from: the subfolder sidebar on the left of any dataset's **Gallery**.
 
+**Spaces at the start or end of a folder name are dropped.** `knight ` and `knight` are the same folder, and so are `knight / a` and `knight/a`. Spaces inside a name stay, so `dark knight` is still its own folder. This holds wherever a folder name is typed: the sidebar, an upload or import, a move, and a ComfyUI run's folder. Updating to this version merges any existing folders that differed only by those spaces. A copy of the database from before the change is saved as `backups/dataset_manager.pre-subfolder-strip.db` next to the database (the name follows your database file's).
+
 ## Moving images into a subfolder
 
 **Drag an image card onto a subfolder row** in the left sidebar to move it there — this works in any sort mode. Drop onto **(root)** to move an image back out of its subfolder; that row is always available, even when it's empty. Missing the rows — dropping on **All** or on empty sidebar space — does nothing.

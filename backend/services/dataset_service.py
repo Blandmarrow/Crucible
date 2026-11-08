@@ -30,6 +30,7 @@ from backend.services.video_service import UnreadableVideoError, claimed_poster_
 from backend.utils import (
     chunked,
     copy_with_sidecar,
+    join_subfolder,
     poster_path_for,
     read_caption_sidecar,
     remap_declared_paths,
@@ -832,12 +833,12 @@ async def import_images_from_folder(
         if job_id and job_queue.cancel_requested(job_id):
             break
         try:
+            # Through the shared rule, so an on-disk `knight ` folder (possible on
+            # Linux) files as `knight` and a blank or `.` segment is dropped.
             if preserve_structure:
-                rel_subfolder = str(src_file.parent.relative_to(src)).replace("\\", "/")
-                if rel_subfolder == ".":
-                    rel_subfolder = ""
+                rel_subfolder = join_subfolder(str(src_file.parent.relative_to(src)))
             else:
-                rel_subfolder = subfolder
+                rel_subfolder = join_subfolder(subfolder or "")
 
             slug = slugify_filename(src_file.stem) or "image"
             new_name = unique_filename_with_thumb(

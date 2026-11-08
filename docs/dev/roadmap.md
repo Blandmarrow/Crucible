@@ -17,9 +17,17 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-08, M8's "any time" items merged)
+## Next session (updated 2026-11-08, M6's folder-whitespace fix merged)
 
-0. **M8's two "any time" items** (the coverage config and CLAUDE.md § Data flow) merged on
+0. **Two of M6's loose ends closed on 2026-11-08** (item 4 below): the Ctrl+C hand check
+   passed, and the folder-segment whitespace fix merged as PR #121 (decision 12, migration
+   `b8d2f4a6c1e3`). Next is the third: retiring `comfy-automation-plan/`, a docs-only PR.
+   Its plan is to move the unique record (rulings not in the log, the §3–§6 settled points,
+   the §8 rationale with its mockup URL, the review fixes, the hand-checks table, the traps)
+   into `roadmap-archive/m6-comfy-automation.md` and the §8c drag table into
+   `comfyui/library-dnd.md`, then repoint the ten links, drop the `TRANSIENT_DIRS` entry and
+   delete the folder. Nothing goes into `page.md` or `queue.md`, which are over budget.
+   **M8's two "any time" items** (the coverage config and CLAUDE.md § Data flow) merged on
    2026-11-08 as PR #120; the branch is deleted. `test_restart_in_dev_mode_touches_the_reloader_trigger_and_never_signals`
    failed once in PR #120's CI and passed on a rerun: it reads the trigger file as soon as it
    exists, which can be before `write_text` has filled it. Fixed the same day on `main`: it
@@ -65,14 +73,13 @@ restates its stages.
      stored rows are rewritten after a backup, and the file browser's exact matches take
      `utils.sql_path_equals`. Detail: `docs/dev/database.md` § The datasets root's one
      spelling.
-   - **Whitespace inside a folder segment**, found in the §8 review and left open on
-     purpose: `utils.normalize_subfolder` keeps it, so a hand-typed `knight ` (or
-     `knight /  `) is a folder of its own, which blueprint leaf `knight` (whose segments are
-     stripped) never adopts or locks. It predates §8, and stripping now would re-read stored
-     rows, so it wants a ruling and a data migration rather than a quiet change.
-   - **Ctrl+C on Vite under `manage.ps1 dev`**, pressed in a real terminal, should close the
-     backend's own window (PM-033). The same `finally` was checked by a Vite exit; the key
-     press is left to the user's eye.
+   - [x] **Whitespace inside a folder segment**, found in the §8 review: ruled by the user on
+     2026-11-08 ([decision 12](decisions/12-strip-folder-segment-whitespace.md)). Each
+     segment is stripped, and migration `b8d2f4a6c1e3` rewrites stored rows after a backup.
+     Merged 2026-11-08 as PR #121.
+   - [x] **Ctrl+C on Vite under `manage.ps1 dev`**, pressed in a real terminal, closes the
+     backend's own window (PM-033). Checked by the user on 2026-11-08: once Vite was serving,
+     Ctrl+C left no backend, Vite or listener on :8000 or :5173.
    - **The plan folder** [comfy-automation-plan/](comfy-automation-plan/README.md) is
      transient and is deleted "when everything is done", by its own lifecycle note. Topic
      files and this archive still link its § Hand checks on the box, § 8 and § Review fixes, so

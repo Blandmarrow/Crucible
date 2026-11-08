@@ -46,10 +46,11 @@ def recipe_out(row: SavedRunRecipe) -> RecipeOut:
 def checked(draft: RunRecipeDraft) -> dict:
     """The draft as stored, after the checks every save runs: an export folder must be
     absolute (this machine's, so the start can use it) and the base folder may not
-    climb with `..`. Raises the 400s those helpers raise."""
+    climb with `..`; it is stored as the shared rule spells it (decision 12). Raises
+    the 400s those helpers raise."""
     if draft.export is not None and draft.export.output_dir.strip():
         sanitize_abs_path(draft.export.output_dir.strip())
-    normalize_subfolder(draft.generate.subfolder)
+    draft.generate.subfolder = normalize_subfolder(draft.generate.subfolder)
     return draft.model_dump()
 
 

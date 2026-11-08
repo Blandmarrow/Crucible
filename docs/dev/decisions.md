@@ -97,3 +97,11 @@ step, since Strata reloads on the next request. Full record:
 on demand, no longer on pull requests, and stays advisory. It took about 43 minutes to the
 Linux job's 10, so it was the whole wait on every backend PR. Full record:
 [decisions/11-windows-tests-after-merge.md](decisions/11-windows-tests-after-merge.md).
+
+## 12. Folder segments are stripped of surrounding whitespace
+
+**Decided** (2026-11-08, by the user): every segment of a gallery or ComfyUI folder path loses
+the whitespace at its ends, keeping interior spaces, so `knight ` and `knight` are one folder.
+Migration `b8d2f4a6c1e3` rewrites stored rows, snapshot rows included, after a backup. Full
+record:
+[decisions/12-strip-folder-segment-whitespace.md](decisions/12-strip-folder-segment-whitespace.md).

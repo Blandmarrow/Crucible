@@ -519,6 +519,13 @@ Worth **0.7904 → 0.9065** pooled, but the honest split is 0.96 on cross-medium
 
 ### Stage 2b — stop the layer labels asserting things nobody measured
 
+**Done 2026-11-08**, by option 1 below. Each label is now a depth word plus a measured
+property — "Low: scores bunch close together" (1–4), "Middle: leans toward the look" (5–6),
+"Middle: balances look and subject" (7), "leans toward subject" from 8 on, and layer 12
+"leans most toward subject". `DINO_LAYER_NOTE`'s opening "Each transformer block captures
+increasingly abstract features" went too, being the same unmeasured gloss. The module doc in
+`dinoLabels.ts` cites each claim. The text below is the proposal as written.
+
 Cheap, independent of Stage 2, and the only item here that is a *defect* rather than an
 improvement. `DINO_LAYER_LABELS` gives all twelve layers a confident semantic name — "Object
 parts", "Scene composition", "Abstract semantics" — none of which came from a measurement.
@@ -568,6 +575,7 @@ the above measures it.
   modes write `DEFAULT_DINO_LAYER`'s. Still worth re-checking when a second model lands:
   the constant is DINOv2's best band, and DINOv3's optimum sits elsewhere.
 - **An unsourced label is indistinguishable from a finding once it is on screen.**
+  *(The instance closed 2026-11-08 with Stage 2b; the general form still applies.)*
   `DINO_LAYER_LABELS` is twelve confident semantic claims with no measurement behind any of
   them, sitting in the picker beside a default that *was* measured — so a reader has no way
   to tell which of the two is evidence. It is the reason § Does layer 9 make it more of a

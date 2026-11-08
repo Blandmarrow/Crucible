@@ -1,0 +1,11 @@
+# Coverage config for `python -m pytest backend/tests/ --cov=backend` (run from the repo root;
+# pytest-cov reads this file from the working directory). See docs/dev/backend-tests.md.
+[run]
+# Without these, the default tracer follows only the main thread's plain call stack. SQLAlchemy's
+# async layer runs each query in a greenlet, and inference and file work goes through
+# run_in_executor/to_thread, so every line after an `await db.execute(...)` and every line in a
+# worker thread reads as missed: routers/images.py measured 55% without this and 89% with it.
+concurrency = greenlet,thread
+omit =
+    backend/tests/*
+    backend/alembic/*

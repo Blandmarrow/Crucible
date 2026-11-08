@@ -3,5 +3,6 @@
 # (which installs requirements.txt).
 pytest>=8.0
 # Coverage is opt-in: pass --cov=backend on the command line. There is no
-# pytest addopts anywhere, so CI stays plain (no coverage gate).
+# pytest addopts anywhere, so CI stays plain (no coverage gate). The config is
+# .coveragerc at the repo root (see docs/dev/backend-tests.md).
 pytest-cov>=5.0

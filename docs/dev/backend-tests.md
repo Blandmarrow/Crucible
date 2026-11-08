@@ -53,6 +53,12 @@ with a comment saying why.
 
 Coverage is opt-in:
 add `--cov=backend` (or `--cov=backend/routers`) — there is no pytest `addopts`, so
-CI runs plain. Lint the backend with `ruff check backend` (config in `ruff.toml`,
+CI runs plain. Its config is `.coveragerc` at the repo root, which pytest-cov finds only when
+pytest runs from there. It sets `concurrency = greenlet,thread` and omits `backend/tests/` and
+`backend/alembic/`. Do not drop the concurrency line: SQLAlchemy's async layer runs each query
+in a greenlet, and model and file work goes through `run_in_executor`, so the default tracer
+marks every line after an `await db.execute(...)` and every line in a worker thread as missed.
+On 2026-11-08 that read `routers/images.py` at 55% against a real 89%, and `comfy.py` at 51%
+against 83%. Lint the backend with `ruff check backend` (config in `ruff.toml`,
 scoped to `E9`+`F`). Run `python scripts/check_migrations.py`
 after a model/migration change (CI job `migration-drift`; see `docs/dev/database.md` § Migration drift check).

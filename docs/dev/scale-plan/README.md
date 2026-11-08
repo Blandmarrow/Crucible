@@ -45,7 +45,7 @@ Two gaps make the July numbers optimistic:
 
 ## Stage 1 — A unique tie-breaker for the gallery sort
 
-**Problem.** `_apply_image_ordering` (`backend/routers/images.py:419-446`) sorts by one
+**Problem.** `_apply_image_ordering` (`backend/routers/images.py:420-456`) sorts by one
 column. Its `sort_order` and nulls-last branches break ties with `created_at`, which is not
 unique either. When values tie, SQLite may return rows in a different order on each query.
 Score sorts tie often, because unscored rows are all NULL. So with `OFFSET` paging, an image

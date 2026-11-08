@@ -17,7 +17,7 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-08, M9 stage 5 built)
+## Next session (updated 2026-11-08, M9 stage 5 merged)
 
 0. **M9 comes first** ([decision 13](decisions/13-scale-work-first.md)): the checked findings
    of an outside scaling review, planned in [scale-plan/README.md](scale-plan/README.md).
@@ -25,9 +25,9 @@ restates its stages.
    sweep as PR #125, and chunked quality scoring with *Score what's missing* as PR #126
    (hand-checked on CPU and GPU; see the plan's Stage 3). **Stage 8** (Retry on the Logs
    page) merged on 2026-11-08 as PR #127 (see the plan's Stage 8). Both branches are
-   deleted. **Stage 5** (every style-similarity branch keyset-paged) is built on
-   `feat/m9-stage5-style-paging`, with its tests and docs, and waits for its PR. **Next is
-   stage 4**, which waits on nothing. See M9 below.
+   deleted. **Stage 5** (every style-similarity branch keyset-paged, hand-checked against
+   `main` on real embeddings) merged on 2026-11-08 as PR #128 (see the plan's Stage 5).
+   **Next is stage 4**, which waits on nothing. See M9 below.
    **Open bug found on the way (2026-11-08), not yet ruled on:** an automated run's
    paid-call cap counts caption calls as `done_items` summed over its `caption` children
    (`run_service._spent`), and no caption job writes `done_items`, so the caption half of
@@ -184,9 +184,9 @@ and resolves the overlap.
   `docs/dev/quality/scoring.md` § The chunked job loop.
 - [ ] Stage 4: Stats histograms built on the server instead of raw value lists. Comes before
   M8 stage 7.
-- [x] Stage 5: page the style similarity branches. Done 2026-11-08 on
-  `feat/m9-stage5-style-paging` (not yet merged): every branch pages, not just the one the
-  plan named. Detail: `docs/dev/quality/style-similarity.md` § Paged and all-layers scoring.
+- [x] Stage 5: page the style similarity branches. Merged 2026-11-08 as PR #128: every
+  branch pages, not just the one the plan named, and the one-score branches write after the
+  scan so the write lock stays short. Detail: `docs/dev/quality/style-similarity.md` § Paged and all-layers scoring.
 - [ ] Stage 6: extend `bench_scaling.py` (layer blobs, the migrated column order) and
   re-measure. Best after stages 1, 3 and 4, so it measures them.
 - [ ] Stage 7: decide on, then maybe build, an embeddings table of its own. Needs stage 6.

@@ -186,7 +186,7 @@ The payload drops to a few KB, so the review's memory-aware cache is no longer n
 
 ## Stage 5 — Page the single-layer style similarity branch
 
-**Done 2026-11-08** (branch `feat/m9-stage5-style-paging`), wider than below: **every**
+**Done 2026-11-08** (PR #128), wider than below: **every**
 branch now pages through the helper, renamed `_score_paginated`, with the page size in
 `_STYLE_PAGE_SIZE`. The plain `dino` branch at a layer read the 18 KB blob whole too and was
 missed here; `clip` and `dino` on the final embedding read small blobs but grew without

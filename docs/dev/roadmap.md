@@ -17,10 +17,12 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-08, M8's "any time" items done)
+## Next session (updated 2026-11-08, M8's "any time" items merged)
 
-0. **M8's two "any time" items** (the coverage config and CLAUDE.md § Data flow) are done on
-   `chore/m8-any-time`, waiting on a PR. **M7 Stage 2b** (the layer labels) merged on
+0. **M8's two "any time" items** (the coverage config and CLAUDE.md § Data flow) merged on
+   2026-11-08 as PR #120; the branch is deleted. `test_restart_in_dev_mode_touches_the_reloader_trigger_and_never_signals`
+   failed once in PR #120's CI and passed on a rerun: it reads the trigger file as soon as it
+   exists, which can be before `write_text` has filled it. **M7 Stage 2b** (the layer labels) merged on
    2026-11-08 as PR #119; the branch is deleted. What is left in M7 that needs nothing else:
    the CLIP QuickGELU plan and Stage 3.
 
@@ -245,8 +247,8 @@ Detail, hazards and what to leave alone:
 - [ ] Stage 6: the detail page's inline tools onto those forms. Needs M4 merged (M7 has), and B1.
 - [ ] Stage 7: `StatsPage` into files. Needs M4 merged.
 - [ ] Stage 8: split `images.py` by section. Needs M4 merged and stage 2.
-- [x] Any time: fix the coverage config, and correct CLAUDE.md § Data flow. Done 2026-11-08 on
-  `chore/m8-any-time`: `.coveragerc` sets `concurrency = greenlet,thread`, which lifts
+- [x] Any time: fix the coverage config, and correct CLAUDE.md § Data flow. Merged 2026-11-08
+  as PR #120: `.coveragerc` sets `concurrency = greenlet,thread`, which lifts
   `images.py` from 55% to 89%.
 - [ ] Remove the `minimatch` override in `frontend/package.json` (PR #111, for
   GHSA-g3hv-75wg-m249) once `eslint` and `typescript-eslint` depend on `minimatch ^11`

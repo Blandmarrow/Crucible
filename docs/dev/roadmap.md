@@ -17,9 +17,17 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-08, M8's "any time" items merged)
+## Next session (updated 2026-11-08, M6's folder-whitespace fix merged)
 
-0. **M8's two "any time" items** (the coverage config and CLAUDE.md § Data flow) merged on
+0. **Two of M6's loose ends closed on 2026-11-08** (item 4 below): the Ctrl+C hand check
+   passed, and the folder-segment whitespace fix merged as PR #121 (decision 12, migration
+   `b8d2f4a6c1e3`). Next is the third: retiring `comfy-automation-plan/`, a docs-only PR.
+   Its plan is to move the unique record (rulings not in the log, the §3–§6 settled points,
+   the §8 rationale with its mockup URL, the review fixes, the hand-checks table, the traps)
+   into `roadmap-archive/m6-comfy-automation.md` and the §8c drag table into
+   `comfyui/library-dnd.md`, then repoint the ten links, drop the `TRANSIENT_DIRS` entry and
+   delete the folder. Nothing goes into `page.md` or `queue.md`, which are over budget.
+   **M8's two "any time" items** (the coverage config and CLAUDE.md § Data flow) merged on
    2026-11-08 as PR #120; the branch is deleted. `test_restart_in_dev_mode_touches_the_reloader_trigger_and_never_signals`
    failed once in PR #120's CI and passed on a rerun: it reads the trigger file as soon as it
    exists, which can be before `write_text` has filled it. Fixed the same day on `main`: it
@@ -68,7 +76,7 @@ restates its stages.
    - [x] **Whitespace inside a folder segment**, found in the §8 review: ruled by the user on
      2026-11-08 ([decision 12](decisions/12-strip-folder-segment-whitespace.md)). Each
      segment is stripped, and migration `b8d2f4a6c1e3` rewrites stored rows after a backup.
-     On `fix/m6-subfolder-whitespace`.
+     Merged 2026-11-08 as PR #121.
    - [x] **Ctrl+C on Vite under `manage.ps1 dev`**, pressed in a real terminal, closes the
      backend's own window (PM-033). Checked by the user on 2026-11-08: once Vite was serving,
      Ctrl+C left no backend, Vite or listener on :8000 or :5173.

@@ -138,7 +138,7 @@ because `model_manager` evicts the least recently used model. So:
    paths, selects the columns the write depends on (`scores_stale`, the current
    `_JOB_SCORE_COLUMNS`, `quality_flags`), builds one dict per row, writes them with a bulk
    `update(Image)`, commits, and calls `job_queue.raise_if_cancelled`.
-3. Copy `_score_all_layers_paginated` (`quality.py:800`), which already does keyset paging
+3. Copy `_score_all_layers_paginated` (`quality.py:800`; `_score_paginated` since stage 5), which already does keyset paging
    plus a bulk `update(Image), updates` write.
 4. Add an "only unscored" option, a `score IS NULL` filter in the style of
    `only_mismatched`. It is the resume path: re-running the same job picks up where the
@@ -185,6 +185,28 @@ The payload drops to a few KB, so the review's memory-aware cache is no longer n
 `get_dataset_stats`'s select. M8 stage 7 (StatsPage into files) comes after this stage.
 
 ## Stage 5 — Page the single-layer style similarity branch
+
+**Done 2026-11-08** (PR #128), wider than below: **every**
+branch now pages through the helper, renamed `_score_paginated`, with the page size in
+`_STYLE_PAGE_SIZE`. The plain `dino` branch at a layer read the 18 KB blob whole too and was
+missed here; `clip` and `dino` on the final embedding read small blobs but grew without
+bound, so they page as well. Those four score page by page but write after the last page
+(`defer_write`), so they hold SQLite's write lock only for the writes, as before; writing
+page by page would have held it through the whole scan, which an Opus review caught. The
+optional SQL `substr` slice was not done: paging already caps the raw blobs at about 36 MB a
+page (about two pages at peak, since the last page lives on while the next is read), and
+`substr` would skip `slice_layer_embedding`'s length check. Stage 6 can revisit it with
+numbers. The as-built
+rules: `docs/dev/quality/style-similarity.md` § Paged and all-layers scoring.
+
+**Hand-checked 2026-11-08** on scratch copies of the dev DB, calling
+`_score_style_similarity` directly with `main`'s code and the branch's: dataset `test2`
+(804 images, all three embeddings), eight modes, whole and scoped to every third image. The
+responses matched exactly. Of 8,576 stored scores, 1 differed at the default page size and 7
+at a page of 37, each by 0.0001. The cause is float32 rounding, not the change: the same
+rows scored by the same code flip that digit when only their order changes, and five of the
+seven came from the all-layers branches, whose code did not change. So the acceptance
+criterion holds to one step of stored precision, not bit for bit.
 
 **Problem.** The single-layer and final-layer branch of `_score_style_similarity`
 (`quality.py:999-1031`) fetches every candidate's full blob in one result set, inside an

@@ -48,6 +48,12 @@ _DINO_DIM = 768
 # `dino` on the post-layernorm final embedding).
 _UNBLENDED_FINAL = {"dino_layer": None, "clip_weight": None, "dino_weight": None}
 
+# Candidates per keyset page in `_score_style_similarity`. The scan runs inside the
+# HTTP request, so one page is all it may hold: 2,000 × the 18 KB per-layer blob is
+# about 36 MB, where the whole set was ~1.8 GB at 100k images. A module constant so
+# `test_style_similarity_paging.py` can shrink it and run the loop over several pages.
+_STYLE_PAGE_SIZE = 2000
+
 # The six columns the technical block of the scoring loop writes, in one go.
 _TECHNICAL_SCORE_COLUMNS = frozenset({
     "blur_score", "noise_score", "uniformity_score",
@@ -1060,15 +1066,42 @@ async def _score_style_similarity(body: StyleSimilarityRequest, db: AsyncSession
         )
         total_images += total_count_result.scalar() or 0
 
-    async def _score_all_layers_paginated(select_cols, extra_filters, score_chunk) -> int:
-        """Keyset-paginate the candidate set and score each chunk off the event loop.
+    async def _score_paginated(select_cols, extra_filters, score_chunk, *, defer_write: bool = False) -> int:
+        """Keyset-paginate the candidate set and score each page off the event loop.
 
-        Avoids loading every ~18 KB per-layer blob into one result set (~1.8 GB at
-        100k images). `score_chunk(rows) -> list[dict]` runs in an executor; `rows`
-        are SQLAlchemy Rows whose first column is `Image.id`. Returns the number of
-        rows updated. Used by both all-layers branches.
+        Avoids loading every candidate's blob into one result set (~1.8 GB at 100k
+        images for the ~18 KB per-layer blob). `score_chunk(rows) -> list[dict]` runs
+        in an executor; `rows` are SQLAlchemy Rows whose first column is `Image.id`.
+        Returns the number of rows updated. Used by **every** branch (M9 stage 5): a
+        branch that selects its candidates whole is the bug this exists to prevent.
+
+        Paging moves a score by at most one step in its 4th decimal. Each candidate is
+        scored against the reference mean on its own, but a float32 matrix product's
+        last bits depend on the batch's shape and row order, so a value sitting on a
+        rounding boundary can flip. That was already true before paging: the old
+        whole-set SELECT had no ORDER BY, so its order was SQLite's choice. A hand
+        check on 804 real images (16 runs, 8,576 scores) found 1 such flip at this
+        page size and 7 at a page of 37.
+
+        The commit comes once, at the end, so a run that raises partway leaves the
+        column as it was — which `compute_style_similarity`'s success-only descriptor
+        write relies on. **When the UPDATEs run decides how long the write lock is
+        held.** SQLite's first UPDATE takes the database's one write lock until the
+        commit, and other writers (a scoring job's chunk commit, a caption save) wait
+        the driver's default 5 s and then fail with "database is locked". So:
+
+        - `defer_write=True` (the four one-score branches) keeps only `(id, score)`
+          per row while scanning, about 100 bytes, and writes them all after the
+          last page. The lock is held for the writes alone, as it was when these
+          branches selected their candidates whole.
+        - `defer_write=False` (the two `*_all_layers` branches) writes each page as it
+          goes, because each row carries a 12-entry `dino_layer_scores` dict that is
+          too big to hold for the whole dataset. Those two hold the lock for the whole
+          scan, and always have.
         """
         total_updated = 0
+        pending_ids: list[str] = []
+        pending_scores: list[float] = []
         for id_filter in id_filters:
             last_id = ""
             while True:
@@ -1081,20 +1114,44 @@ async def _score_style_similarity(body: StyleSimilarityRequest, db: AsyncSession
                         Image.id > last_id,
                     )
                     .order_by(Image.id)
-                    .limit(2000)
+                    .limit(_STYLE_PAGE_SIZE)
                 )).all()
                 if not chunk_rows:
                     break
                 updates = await loop.run_in_executor(None, score_chunk, chunk_rows)
-                if updates:
+                if defer_write:
+                    for u in updates:
+                        pending_ids.append(u["id"])
+                        pending_scores.append(u["style_similarity_score"])
+                elif updates:
                     await db.execute(update(Image), updates)
                     total_updated += len(updates)
                 last_id = chunk_rows[-1][0]
+        for start in range(0, len(pending_ids), _STYLE_PAGE_SIZE):
+            await db.execute(update(Image), [
+                {"id": i, "style_similarity_score": s}
+                for i, s in zip(
+                    pending_ids[start:start + _STYLE_PAGE_SIZE],
+                    pending_scores[start:start + _STYLE_PAGE_SIZE],
+                )
+            ])
+        total_updated += len(pending_ids)
         if total_updated:
             await db.commit()
         return total_updated
 
-    # --- CLIP branch (unchanged behaviour) ---
+    def _cosine_chunk(ref_embs: list[bytes], layer: int | None = None):
+        """A `score_chunk` for the one-vector modes: rows are `(Image.id, blob)`, and
+        `layer` slices that numbered layer out of a per-layer blob first."""
+        def score(chunk_rows) -> list[dict]:
+            blobs = [r[1] for r in chunk_rows]
+            if layer is not None:
+                blobs = [slice_layer_embedding(b, layer) for b in blobs]
+            scores = _cosine_sim(ref_embs, blobs)
+            return [{"id": r[0], "style_similarity_score": s} for r, s in zip(chunk_rows, scores)]
+        return score
+
+    # --- CLIP branch ---
     if body.embedding_type == "clip":
         col = Image.clip_embedding
         ref_embs: list[bytes] = []
@@ -1105,18 +1162,10 @@ async def _score_style_similarity(body: StyleSimilarityRequest, db: AsyncSession
             ref_embs.append(base64.b64decode(b64))
         if not ref_embs:
             raise HTTPException(status_code=400, detail="No CLIP embeddings found for reference images. Run embedding extraction first, or upload local reference images.")
-        cand_rows = []
-        for id_filter in id_filters:
-            cand_result = await db.execute(
-                select(Image.id, col).where(Image.dataset_id == body.dataset_id, col.isnot(None), *id_filter)
-            )
-            cand_rows.extend((r[0], r[1]) for r in cand_result.all())
-        if not cand_rows:
+        updated = await _score_paginated((Image.id, col), (col.isnot(None),), _cosine_chunk(ref_embs), defer_write=True)
+        if updated == 0:
             raise HTTPException(status_code=400, detail="No CLIP embeddings found for dataset images. Run embedding extraction first.")
-        scores = await loop.run_in_executor(None, _cosine_sim, ref_embs, [r[1] for r in cand_rows])
-        await db.execute(update(Image), [{"id": img_id, "style_similarity_score": s} for (img_id, _), s in zip(cand_rows, scores)])
-        await db.commit()
-        return {"updated": len(cand_rows), "skipped": total_images - len(cand_rows), **_UNBLENDED_FINAL}
+        return {"updated": updated, "skipped": total_images - updated, **_UNBLENDED_FINAL}
 
     # --- DINOv2 branch ---
     if body.embedding_type == "dino":
@@ -1131,18 +1180,10 @@ async def _score_style_similarity(body: StyleSimilarityRequest, db: AsyncSession
                 ref_embs.append(base64.b64decode(b64))
             if not ref_embs:
                 raise HTTPException(status_code=400, detail="No DINOv2 embeddings found for reference images. Run embedding extraction first.")
-            cand_rows = []
-            for id_filter in id_filters:
-                cand_result = await db.execute(
-                    select(Image.id, col).where(Image.dataset_id == body.dataset_id, col.isnot(None), *id_filter)
-                )
-                cand_rows.extend((r[0], r[1]) for r in cand_result.all())
-            if not cand_rows:
+            updated = await _score_paginated((Image.id, col), (col.isnot(None),), _cosine_chunk(ref_embs), defer_write=True)
+            if updated == 0:
                 raise HTTPException(status_code=400, detail="No DINOv2 embeddings found for dataset images. Run embedding extraction first.")
-            scores = await loop.run_in_executor(None, _cosine_sim, ref_embs, [r[1] for r in cand_rows])
-            await db.execute(update(Image), [{"id": img_id, "style_similarity_score": s} for (img_id, _), s in zip(cand_rows, scores)])
-            await db.commit()
-            return {"updated": len(cand_rows), "skipped": total_images - len(cand_rows), **_UNBLENDED_FINAL}
+            return {"updated": updated, "skipped": total_images - updated, **_UNBLENDED_FINAL}
         else:
             # Per-layer mode
             layer = body.dino_layer
@@ -1160,19 +1201,10 @@ async def _score_style_similarity(body: StyleSimilarityRequest, db: AsyncSession
                 ref_embs.append(slice_layer_embedding(base64.b64decode(b64), layer))
             if not ref_embs:
                 raise HTTPException(status_code=400, detail="No per-layer DINOv2 embeddings found for reference images. Run per-layer embedding extraction first.")
-            cand_rows_raw = []
-            for id_filter in id_filters:
-                cand_result = await db.execute(
-                    select(Image.id, col).where(Image.dataset_id == body.dataset_id, col.isnot(None), *id_filter)
-                )
-                cand_rows_raw.extend((r[0], r[1]) for r in cand_result.all())
-            cand_rows = [(img_id, slice_layer_embedding(blob, layer)) for img_id, blob in cand_rows_raw]
-            if not cand_rows:
+            updated = await _score_paginated((Image.id, col), (col.isnot(None),), _cosine_chunk(ref_embs, layer), defer_write=True)
+            if updated == 0:
                 raise HTTPException(status_code=400, detail="No per-layer DINOv2 embeddings found for dataset images. Run per-layer embedding extraction first.")
-            scores = await loop.run_in_executor(None, _cosine_sim, ref_embs, [r[1] for r in cand_rows])
-            await db.execute(update(Image), [{"id": img_id, "style_similarity_score": s} for (img_id, _), s in zip(cand_rows, scores)])
-            await db.commit()
-            return {"updated": len(cand_rows), "skipped": total_images - len(cand_rows),
+            return {"updated": updated, "skipped": total_images - updated,
                     "dino_layer": layer, "clip_weight": None, "dino_weight": None}
 
     # --- Combined branch ---
@@ -1247,7 +1279,7 @@ async def _score_style_similarity(body: StyleSimilarityRequest, db: AsyncSession
                     results.append({"id": img_id, "dino_layer_scores": layer_scores, "style_similarity_score": layer_scores[str(DEFAULT_DINO_LAYER)]})
                 return results
 
-            updated = await _score_all_layers_paginated(
+            updated = await _score_paginated(
                 (Image.id, Image.clip_embedding, Image.dino_layer_embeddings),
                 (Image.clip_embedding.isnot(None), Image.dino_layer_embeddings.isnot(None)),
                 _score_chunk_combined,
@@ -1260,42 +1292,35 @@ async def _score_style_similarity(body: StyleSimilarityRequest, db: AsyncSession
 
         # Single layer or final layer combined score
         dino_cand_col = Image.dino_layer_embeddings if use_layer_col else Image.dino_embedding
-        cand_rows_full = []
-        for id_filter in id_filters:
-            cand_result = await db.execute(
-                select(Image.id, Image.clip_embedding, dino_cand_col)
-                .where(
-                    Image.dataset_id == body.dataset_id,
-                    Image.clip_embedding.isnot(None),
-                    dino_cand_col.isnot(None),
-                    *id_filter,
-                )
-            )
-            cand_rows_full.extend((r[0], r[1], r[2]) for r in cand_result.all())
-        if not cand_rows_full:
+        ref_dino = (
+            [slice_layer_embedding(b, layer) for b in ref_dino_raw] if layer is not None else ref_dino_raw
+        )
+
+        def _score_chunk_combined_one(chunk_rows) -> list[dict]:
+            cand_clip = [r[1] for r in chunk_rows]
+            cand_dino = [r[2] for r in chunk_rows]
+            if layer is not None:
+                cand_dino = [slice_layer_embedding(b, layer) for b in cand_dino]
+            scores = compute_combined_similarity(ref_clip, cand_clip, ref_dino, cand_dino)
+            return [{"id": r[0], "style_similarity_score": s} for r, s in zip(chunk_rows, scores)]
+
+        updated = await _score_paginated(
+            (Image.id, Image.clip_embedding, dino_cand_col),
+            (Image.clip_embedding.isnot(None), dino_cand_col.isnot(None)),
+            _score_chunk_combined_one,
+            defer_write=True,
+        )
+        if updated == 0:
             detail = (
                 "No dataset images have both CLIP and per-layer DINOv2 embeddings. Run per-layer embedding extraction first."
                 if use_layer_col else
                 "No dataset images have both CLIP and DINOv2 embeddings. Run embedding extraction (CLIP + DINOv2) first."
             )
             raise HTTPException(status_code=400, detail=detail)
-
-        cand_clip = [r[1] for r in cand_rows_full]
-        cand_dino_raw = [r[2] for r in cand_rows_full]
-
-        if layer is not None:
-            ref_dino = [slice_layer_embedding(b, layer) for b in ref_dino_raw]
-            cand_dino = [slice_layer_embedding(b, layer) for b in cand_dino_raw]
-        else:
-            ref_dino = ref_dino_raw
-            cand_dino = cand_dino_raw
-        scores = await loop.run_in_executor(None, compute_combined_similarity, ref_clip, cand_clip, ref_dino, cand_dino)
-        await db.execute(update(Image), [{"id": r[0], "style_similarity_score": s} for r, s in zip(cand_rows_full, scores)])
-        await db.commit()
         # `layer` is None when the run used `dino_embedding`, the post-layernorm
         # final vector — which is not any of the twelve numbered layers, so None is
         # the honest record rather than a missing one.
-        return {"updated": len(cand_rows_full), "skipped": total_images - len(cand_rows_full),
+        return {"updated": updated, "skipped": total_images - updated,
                 "dino_layer": layer,
                 "clip_weight": STYLE_CLIP_WEIGHT, "dino_weight": STYLE_DINO_WEIGHT}
 
@@ -1323,7 +1348,7 @@ async def _score_style_similarity(body: StyleSimilarityRequest, db: AsyncSession
                 results.append({"id": img_id, "dino_layer_scores": layer_scores, "style_similarity_score": layer_scores[str(DEFAULT_DINO_LAYER)]})
             return results
 
-        updated = await _score_all_layers_paginated(
+        updated = await _score_paginated(
             (Image.id, Image.dino_layer_embeddings),
             (Image.dino_layer_embeddings.isnot(None),),
             _score_chunk_dino,

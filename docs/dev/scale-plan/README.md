@@ -45,7 +45,9 @@ Two gaps make the July numbers optimistic:
 
 ## Stage 1 — A unique tie-breaker for the gallery sort
 
-**Problem.** `_apply_image_ordering` (`backend/routers/images.py:419-446`) sorts by one
+**Done 2026-11-08** (PR #124), as below; `bulk_rename` gained the same `id` key.
+
+**Problem.** `_apply_image_ordering` (`backend/routers/images.py:420-456`) sorts by one
 column. Its `sort_order` and nulls-last branches break ties with `created_at`, which is not
 unique either. When values tie, SQLite may return rows in a different order on each query.
 Score sorts tie often, because unscored rows are all NULL. So with `OFFSET` paging, an image
@@ -66,7 +68,7 @@ to the nulls-last sorts. That's a trivial conflict, which M4 resolves.
 
 ## Stage 2 — The orphan sweep moves folders instead of deleting them
 
-**Done 2026-11-08** (`fix/m9-stage2-orphan-sweep`), as below, plus two rulings: a folder
+**Done 2026-11-08** (PR #125), as below, plus two rulings: a folder
 whose tree holds no file is still deleted, by the user's choice, and every dot-named child is
 skipped. The user doc went into `docs/datasets.md`, which already described the sweep, not
 `docs/server.md`. The as-built rules: `docs/dev/database.md` § The sweep moves data aside and

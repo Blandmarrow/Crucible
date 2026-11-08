@@ -21,9 +21,9 @@ restates its stages.
 
 0. **M9 comes first** ([decision 13](decisions/13-scale-work-first.md)): the checked findings
    of an outside scaling review, planned in [scale-plan/README.md](scale-plan/README.md).
-   Stage 2, the orphan sweep, is done on `fix/m9-stage2-orphan-sweep` (2026-11-08), and
-   stage 1, the gallery sort's tie-breaker, on its own branch. **Next is M9 stage 3**,
-   chunked quality scoring, which needs nothing. See M9 below.
+   Stages 1 and 2 merged on 2026-11-08: the gallery sort's tie-breaker as PR #124, and the
+   orphan sweep as PR #125. **Next is M9 stage 3**, chunked quality scoring, which needs
+   nothing. See M9 below.
 1. **M6's loose ends are all closed** (item 5 below). On 2026-11-08 the Ctrl+C hand check
    passed, the folder-segment whitespace fix merged as PR #121 (decision 12, migration
    `b8d2f4a6c1e3`), and the M6 plan folder was retired by PR #122, a docs-only PR. **After
@@ -163,11 +163,12 @@ and docs, and stage 6's numbers recorded; stage 7 is then built or ruled out by 
 Plan: [scale-plan/README.md](scale-plan/README.md). Does not wait for M4, which lands second
 and resolves the overlap.
 
-- [ ] Stage 1: a unique tie-breaker (`Image.id`) for every gallery sort. Needs nothing.
+- [x] Stage 1: a unique tie-breaker (`Image.id`) for every gallery sort. Merged 2026-11-08
+  as PR #124.
 - [x] Stage 2: the startup orphan sweep moves folders into `.orphaned/` instead of deleting
-  them. Done 2026-11-08 on `fix/m9-stage2-orphan-sweep`: only a tree with no file is
-  deleted (the user's call), and dot-named folders are skipped. Detail:
-  `docs/dev/database.md` § The sweep moves data aside and never deletes it.
+  them. Merged 2026-11-08 as PR #125: only a tree with no file is deleted (the user's call),
+  and dot-named folders are skipped. Detail: `docs/dev/database.md` § The sweep moves data
+  aside and never deletes it.
 - [ ] Stage 3: quality scoring commits per chunk within each check, with an "only unscored"
   resume option. Needs nothing.
 - [ ] Stage 4: Stats histograms built on the server instead of raw value lists. Comes before

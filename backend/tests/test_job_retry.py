@@ -215,6 +215,14 @@ def test_only_mismatched_is_resubmitted_as_it_was(tmp_path, monkeypatch):
     """`only_unscored` cannot join `only_mismatched` (a 422), and needs not: rows the
     first run re-scored now carry the new model's marker, so a re-run skips them."""
     calls = _install(monkeypatch)
+    from backend.ml.model_manager import ModelEntry, model_manager
+
+    # `_install` stubs the LAION loader only. V2.5 has its own, which imports a package
+    # CI does not install, so without this the job fails there before scoring anything.
+    async def _load_v2_5(*a, **kw):
+        return ModelEntry(object(), object(), vram_mb=0)
+
+    monkeypatch.setattr(model_manager, "load_aesthetic_v2_5", _load_v2_5)
 
     async def scenario():
         async with api_env(tmp_path) as env:
@@ -236,6 +244,7 @@ def test_only_mismatched_is_resubmitted_as_it_was(tmp_path, monkeypatch):
             assert r.status_code == 200, r.text
             assert r.json()["total"] == 2
             done = await wait_for_job(env, r.json()["job_id"], timeout=60)
+            assert done["status"] == "completed", done
             assert done["config"]["only_mismatched"] is True
             assert done["config"]["only_unscored"] is False
             # The one already on the new model is skipped; the other two are moved.

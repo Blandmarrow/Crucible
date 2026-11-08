@@ -101,6 +101,14 @@ contents intact, and that a second startup leaves `.orphaned` alone.
 
 ## Stage 3 — Chunked quality scoring, stage by stage
 
+**Built 2026-11-08** on `fix/m9-stage3-chunked-scoring`, as below, plus two rulings by the
+user: "only unscored" picks, per check, rows missing that check's output **or marked stale**,
+and it is a separate *Score what's missing* button rather than a saved checkbox. Two
+departures from the approach: the request reads ids only and the job reads each chunk's
+paths itself, and progress goes through an optional `progress` callback on the seven
+scorers. The as-built rules: `docs/dev/quality/scoring.md` § The chunked job loop. Peak
+memory is not yet measured; that is stage 6's harness.
+
 **Problem.** `start_score_job` (`backend/routers/quality.py:167-474`) loads every matching
 row as a full ORM object inside the request (line 199), only to read ids and paths. Its job
 then runs each check across the whole set, all aesthetic scores, then technical, watermark,

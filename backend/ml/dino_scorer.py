@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 
 import numpy as np
 import torch
@@ -68,6 +69,7 @@ async def extract_layer_embeddings_dino(
     image_paths: list[str],
     model_entry,
     job_id: str | None = None,
+    progress: Callable[[int], Awaitable[None]] | None = None,
 ) -> list[bytes | None]:
     from backend.workers.progress import broadcaster
     from backend.workers.job_queue import job_queue
@@ -88,7 +90,10 @@ async def extract_layer_embeddings_dino(
             r = None
         results.append(r)
 
-        if job_id and i % 10 == 0:
+        if progress is not None:
+            if i % 10 == 0:
+                await progress(i + 1)
+        elif job_id and i % 10 == 0:
             await broadcaster.emit(job_id, {
                 "type": "progress", "job_id": job_id, "job_type": "quality_score",
                 "status": "running", "done": i + 1, "total": total,
@@ -103,6 +108,7 @@ async def extract_embeddings_dino(
     image_paths: list[str],
     model_entry,
     job_id: str | None = None,
+    progress: Callable[[int], Awaitable[None]] | None = None,
 ) -> list[bytes | None]:
     from backend.workers.progress import broadcaster
     from backend.workers.job_queue import job_queue
@@ -123,7 +129,10 @@ async def extract_embeddings_dino(
             r = None
         results.append(r)
 
-        if job_id and i % 10 == 0:
+        if progress is not None:
+            if i % 10 == 0:
+                await progress(i + 1)
+        elif job_id and i % 10 == 0:
             await broadcaster.emit(job_id, {
                 "type": "progress", "job_id": job_id, "job_type": "quality_score",
                 "status": "running", "done": i + 1, "total": total,

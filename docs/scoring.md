@@ -27,6 +27,14 @@ so those do add to the total.
 
 A **subfolder** dropdown in the page header (shown only when subfolders exist) scopes the run, so you can score one subset at a time without touching the rest of the dataset. An optional **job label** field names the run in the queue and in [Logs](workspace.md#logs).
 
+### Stopping and finishing a run
+
+A run saves its scores as it goes, about 1,000 images at a time, one scorer after another. If a run stops partway — you cancel it, the app restarts, or the machine goes down — the images it already finished keep their scores. Only the chunk in progress is lost.
+
+To finish the run, press **Score what's missing** beside **Run scoring**, with the same scorers ticked. Each scorer then runs only on the images that lack its result, plus any image whose scores are marked stale (see [Stale scores](#stale-scores)). Images that already have a result are skipped, so the run picks up where the last one stopped. An image a scorer failed to read counts as missing too, so the button also retries those. When nothing is left, it says so and starts no job.
+
+The progress bar covers the whole run, across every scorer. The text under it counts images for the scorer running now, and says which step of how many it is on.
+
 ### VRAM after a run
 
 When a run finishes, the models it loaded are unloaded and their VRAM is returned — including when the run is cancelled or fails partway. Only the scoring models go: a captioning or detection model you loaded for other work stays where it is.

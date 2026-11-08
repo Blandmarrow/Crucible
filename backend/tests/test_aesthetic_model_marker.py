@@ -77,14 +77,14 @@ def _no_real_scorers(monkeypatch):
 
     aesthetic_mod = types.ModuleType("backend.ml.aesthetic_scorer")
 
-    async def score_images_batch(paths, model_handle, job_id=None, model="laion"):
+    async def score_images_batch(paths, model_handle, job_id=None, model="laion", progress=None):
         calls.append(("batch", model, model_handle))
         return [7.0] * len(paths)
 
-    async def score_images_watermark(paths, model_handle, job_id=None, watermark_threshold=0.5):
+    async def score_images_watermark(paths, model_handle, job_id=None, watermark_threshold=0.5, progress=None):
         return []
 
-    async def extract_clip_embeddings_batch(paths, model_handle, job_id=None):
+    async def extract_clip_embeddings_batch(paths, model_handle, job_id=None, progress=None):
         return []
 
     aesthetic_mod.score_images_batch = score_images_batch

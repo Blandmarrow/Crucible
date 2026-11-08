@@ -223,7 +223,7 @@ def _install_scorer_stub(monkeypatch, scores: list[float]) -> None:
     on a developer machine that has torch."""
     stub = types.ModuleType("backend.ml.aesthetic_scorer")
 
-    async def score_images_batch(paths, handle, job_id=None, model=None):
+    async def score_images_batch(paths, handle, job_id=None, model=None, progress=None):
         return list(scores)[: len(paths)]
 
     async def score_images_watermark(*a, **kw):  # pragma: no cover - unticked here
@@ -419,11 +419,11 @@ def test_unload_route_skips_a_leased_model_and_reports_it(tmp_path, monkeypatch)
 def _install_dino_stub(monkeypatch, seen: list[bool]) -> None:
     stub = types.ModuleType("backend.ml.dino_scorer")
 
-    async def extract_embeddings_dino(paths, entry, job_id=None):
+    async def extract_embeddings_dino(paths, entry, job_id=None, progress=None):
         seen.append(entry.in_use)
         return [None for _ in paths]
 
-    async def extract_layer_embeddings_dino(paths, entry, job_id=None):  # pragma: no cover
+    async def extract_layer_embeddings_dino(paths, entry, job_id=None, progress=None):  # pragma: no cover
         return [None for _ in paths]
 
     stub.extract_embeddings_dino = extract_embeddings_dino
@@ -443,7 +443,7 @@ def test_job_leases_each_stage_and_auto_unload_survives_a_leased_id(tmp_path, mo
     dino_weights = _FakeWeights()
     seen_aesthetic: list[int] = []
 
-    async def score_images_batch(paths, handle, job_id=None, model=None):
+    async def score_images_batch(paths, handle, job_id=None, model=None, progress=None):
         seen_aesthetic.append(aesthetic.leases)
         return [6.25 for _ in paths]
 

@@ -190,6 +190,7 @@ TRANSIENT_DIRS: set[str] = {
     "docs/dev/scale-plan",
     "docs/dev/server-state-plan",
     "docs/dev/style-embedding-plan",
+    "docs/dev/throughput-plan",
 }
 
 # Inline-code tokens that look like paths but are illustrative, not files.

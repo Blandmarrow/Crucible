@@ -43,9 +43,39 @@ Two gaps make the July numbers optimistic:
   estimate is about 20 GB touched for a cold stats scan at 1M rows with layer embeddings.
   That figure comes from the layout, not a timing. Stage 6 measures it.
 
+### The 2026-11-09 run
+
+A review on 2026-11-09 closed both gaps by hand for 100k rows: a scratch DB built from a
+migrated database's own DDL, with all three blobs seeded. Every number is in the last
+addendum of `backend/scripts/scaling_bottlenecks_report.md`, with the method and caveats
+(raw SQLite, warm cache, one dataset). What it changed in this plan:
+
+- **Stage 1 shipped a regression.** A score sort went from 1.4 ms to 323 ms on page 1, and
+  to 4.5 s at a deep offset. Stage 9 is the fix; PM-036 is the record.
+- **The overflow cost is real and measured.** A pass that reads a column after the blobs
+  costs 1.0–1.4 s per 100k rows, against about 0.3 s for one that does not. Stage 7 has its
+  evidence, for a warm cache at least.
+- **`generation_metadata` is the larger blob.** On the dev DB's ComfyUI dataset it averages
+  54,895 bytes a row, against 21,504 for the three embeddings together. It sits right after
+  them in the row, it is not deferred, and the gallery list returns it. Stages 7 and 11
+  now cover it.
+- **Stage 4's SQL bins do not speed the scan**, though they still fix the memory and the
+  payload. One pass in place of nine is what saves time. Stage 4 is amended below.
+- **Three cheap fixes** turned up on the way (`count(*)`, an index for the Stats cache
+  check, a narrower thumbnail read). They are stages 9 and 11.
+
 ## Stage 1 — A unique tie-breaker for the gallery sort
 
 **Done 2026-11-08** (PR #124), as below; `bulk_rename` gained the same `id` key.
+
+**Regression found 2026-11-09.** The pages are disjoint, as the acceptance test proves, but
+the score sorts lost their index: with `created_at ASC, id ASC` after the sort column,
+SQLite scans the dataset through an unrelated index and sorts all of it for every page. The
+"USE TEMP B-TREE FOR RIGHT PART OF ORDER BY" line this stage expected appears only for the
+`created_at` sort. A score sort gets `USE TEMP B-TREE FOR ORDER BY`, a full sort. The
+`EXPLAIN QUERY PLAN` check below was the right instinct, but nothing ran it at a row count
+where it shows. [Stage 9](#stage-9--give-the-score-sorts-their-index-back) is the fix, and
+`docs/dev/postmortems/PM-036-tie-breaker-cost-the-sort-index.md` the record.
 
 **Problem.** `_apply_image_ordering` (`backend/routers/images.py:420-456`) sorts by one
 column. Its `sort_order` and nulls-last branches break ties with `created_at`, which is not
@@ -172,14 +202,52 @@ image, and the browser bins them. At 1M images that's roughly 80–100 MB of JSO
 400 MB of Python floats held in `_stats_cache` for each entry. `get_dataset_stats` also
 reads `caption_text` for every row, only to count words.
 
-**Approach.** Return fixed bins built in SQL. SQLite has no `width_bucket`, so use
-`floor((x - lo) / w)` plus `GROUP BY`, as the July report suggests. Pin the bin edges in
-tests, and read PM-020 first (a histogram drawn on the wrong scale). Then update the
-StatsPage consumers of `ScoreValues` (`frontend/src/api/datasets.ts`). For the word count,
-use an SQL expression if tests show it buckets the same as `str.split()`. If not, add a
-`caption_word_count` column that follows `caption_token_count` exactly: derived by the same
-ORM listener and listed in `NOT_MIRRORED` in `backend/tests/test_video_lineage_mirrors.py`.
-The payload drops to a few KB, so the review's memory-aware cache is no longer needed.
+**Approach (amended 2026-11-09).** Return bins built in SQL, and read PM-020 first (a
+histogram drawn on the wrong scale). The first version of this approach said
+`floor((x - lo) / w)` plus `GROUP BY`. Five things in it did not hold up:
+
+1. **Most bins are uneven.** Only watermark and style similarity have ten equal bins. The
+   other eleven metrics use hand-picked edges (blur is `20, 40, 80, 150, 300`), which
+   `floor()` cannot express. Use one count per edge pair instead:
+   `sum(x >= lo AND x < hi)`, half-open like `_bucket` and `rebucketValues`, with the top
+   bin open. `docs/dev/statistics.md` § Bucket drill-down states the half-open rule that
+   every bar's click-through filter depends on.
+2. **The pencil editor needs the raw lists today.** Every score histogram can be rebucketed
+   with the user's own edges, kept per dataset in `stats-hist-edges-{metric}-{datasetId}`,
+   and `rebucketValues()` does that in the browser from the `score-values` arrays. Without
+   the arrays the feature dies unless the edges go to the server. So the endpoint takes
+   optional edges per metric, and they join the cache key.
+3. **Two edge tables is what was rejected before.** `docs/dev/statistics.md` § Backend
+   aggregation records SQL-side bucketing as "considered and rejected", because it would
+   duplicate `DEFAULT_EDGES` from `StatsPage.tsx`. Make the server the only owner: each
+   histogram comes back as its edges plus its counts, and the page reads the defaults from
+   the response. `DEFAULT_EDGES`, `SAT_EDGES` and the "must stay numerically identical"
+   comments in `dataset_service.py` all go, and with them PM-020's failure class. Rewrite
+   that sentence in `statistics.md` in the same change.
+4. **Two consumers take means from the raw lists**: the CSV export's MEAN SCORES section
+   and the "Mean aesthetic" card. Return `AVG` per metric. `file_size_summary`'s median and
+   p95 need the sorted sizes; fetch that one integer column, or use `ORDER BY … LIMIT 1
+   OFFSET n`.
+5. **Binning in SQL does not make the scan faster.** At 100k rows the aggregate query took
+   1,377 ms against 1,232 ms for fetching the rows, because the cost is reaching the
+   columns after the blobs. What it does fix is the Python loop, the 13 lists held in
+   `_stats_cache` and the JSON payload. The time saving is **one pass in place of nine**:
+   today the validator runs twice and seven more queries scan the same rows (about 5.3 s
+   of SQL at 100k); every count, flag sum, histogram and mean fits in one `SELECT` (about
+   1.4 s). Keep the license group as its own query. Merge `get_dataset_stats` and
+   `get_score_values` behind one scan, so a poll costs one pass, not two.
+
+For the word count, use an SQL expression if tests show it buckets the same as
+`str.split()`. If not, add a `caption_word_count` column that follows `caption_token_count`
+exactly: derived by the same ORM listener and listed in `NOT_MIRRORED` in
+`backend/tests/test_video_lineage_mirrors.py`. The payload drops to a few KB, so the
+review's memory-aware cache is no longer needed. `HistPanel`'s unmemoized
+`rebucketValues` call goes away with the arrays.
+
+**Acceptance.** For every metric, the SQL bins equal `_bucket`'s on a fixture with a value
+on each edge, for default and for custom edges. The existing
+`backend/tests/test_stats_click_through_edges.py` and `frontend/e2e/stats.spec.ts` still
+pass. The CSV's means match the old ones on a fixture.
 
 **Overlap.** M4 adds `rating_distribution` to `_aggregate_dataset_stats` and a column to
 `get_dataset_stats`'s select. M8 stage 7 (StatsPage into files) comes after this stage.
@@ -224,16 +292,28 @@ memory, though SQLite still walks the overflow chain to reach the slice.
 
 ## Stage 6 — Measure what is left
 
-Extend `bench_scaling.py` before deciding anything structural:
+Extend `bench_scaling.py` before deciding anything structural. Since 2026-11-09 the stage
+has two halves, so that stages 4 and 11 are measured before and after.
 
-- Seed `dino_layer_embeddings` (18,432 bytes) at realistic coverage.
+**6a, the harness, before stage 4:**
+
+- Seed `dino_layer_embeddings` (18,432 bytes) at realistic coverage, and
+  `generation_metadata` at two sizes: a few hundred bytes (photos) and about 55 KB (ComfyUI
+  output).
 - Build the scratch DB with `alembic upgrade head` instead of `create_all`, so the column
-  order matches a real install.
-- Re-run stats, pagination and similarity at 100k, 250k and 1M. Capture `EXPLAIN QUERY PLAN`
-  for every gallery sort (with stage 1's tie-breaker), each with and without
-  `PRAGMA optimize`.
+  order matches a real install. The 2026-11-09 run copied the `images` DDL out of a
+  migrated database's `sqlite_master`, which gives the same order with no Alembic run.
+- Capture `EXPLAIN QUERY PLAN` for every gallery sort, each with and without
+  `PRAGMA optimize`. Add a cold-cache mode if the platform allows one.
+- Time the query shapes the 2026-11-09 run timed, so its addendum is the baseline: each
+  gallery sort at page 1 and at a deep offset, the count, the Stats validator, each Stats
+  pass, and a lookup by id.
+
+**6b, the numbers, after stages 4 and 11:**
+
+- Re-run stats, pagination and similarity at 100k, 250k and 1M.
 - Record the numbers as a dated addendum to `scaling_bottlenecks_report.md`, with hardware
-  and settings.
+  and settings. Keep owner-specific hardware out of the tracked file.
 
 M4 also edits `bench_scaling.py` (three lines). Whichever lands second resolves it.
 
@@ -242,6 +322,18 @@ M4 also edits `bench_scaling.py` (three lines). Whichever lands second resolves 
 **Decide first.** Stage 6 must show the overflow cost, and the ruling gets its own decision
 entry. The July report deferred this split "until DB-file bloat is a concrete operational
 pain". The column-order finding is new evidence for that question, not an answer to it.
+
+**Evidence so far (2026-11-09, 100k rows, warm cache).** With the three blobs in a table of
+their own, the one-pass Stats aggregate went from 1,377 ms to 528 ms, and to 325 ms in
+table order. Stage 6b still owes the cold-cache and 1M numbers.
+
+**`generation_metadata` belongs in the same decision.** It is the larger blob on ComfyUI
+images (54,895 bytes a row on average in the dev DB, against 21,504 for the embeddings),
+it sits right after them in the row, and unlike them it is not `deferred`. So every
+`select(Image)` and `db.get(Image, …)` loads it, and every read of a later column walks
+past it. On a ComfyUI-shaped scratch DB the Stats pass cost 35 µs a row against 14 µs.
+Stage 11 takes it out of the gallery list, which needs no schema change. Whether it also
+moves out of the row (into this table, or a sibling one) is for this decision.
 
 **If yes:** an `image_embeddings(image_id PK → images.id ON DELETE CASCADE, clip, dino,
 dino_layers)` table, and a migration that copies the blobs and drops the columns. Run it
@@ -286,8 +378,142 @@ completely (`body.model_dump()`). Leave out job types whose config does not, unt
 checked. Automated runs already reconcile on their own (`reconcile_interrupted_runs`). The
 user doc for the jobs list gains a line.
 
+## Stage 9 — Give the score sorts their index back
+
+Added 2026-11-09. It fixes stage 1's regression and waits on nothing. All times are from the
+report's 2026-11-09 addendum: 100k rows, warm cache, raw SQLite.
+
+**Problem.** Since stage 1, a sort on an indexed score column ends
+`created_at ASC, id ASC`. No index carries those two keys, and with them the planner stops
+using the score's index at all: it reaches the dataset's rows through whichever
+`dataset_id` index it picks and sorts every row, whole rows included, for each page.
+Aesthetic "best first" went from 1.4 ms to 323 ms on page 1, and to 4.5 s at
+`OFFSET 60000`. On a ComfyUI-shaped dataset of 20,000 rows, page 100 took 6.9 s, since the
+sorter carries each row's 55 KB of `generation_metadata`. `ANALYZE` does not change the
+choice, and neither does a wider index for a descending sort, whose `DESC, ASC, ASC` matches
+no index in either direction.
+
+**Approach.**
+
+1. **Break ties on `rowid`, in the sort's own direction.** `Image.id` is a string key, so
+   `images` has SQLite's hidden integer `rowid`, and every index entry already ends with
+   it. `ORDER BY aesthetic_score DESC, rowid DESC` is then exactly the index's order read
+   backwards: no sort step, no new index, 1.5 ms on page 1 and 4.5 ms at `OFFSET 60000`.
+   A deep offset over an index only steps index entries, which is why
+   [decision 13](../decisions/13-scale-work-first.md)'s rejected cursor paging stays
+   rejected. SQLAlchemy has no attribute for it; use `literal_column("images.rowid")`.
+2. **Know what `rowid` promises.** It is unique at any moment, which is all paging needs
+   between two requests. It is not permanent: `VACUUM` and a table rebuild in a migration
+   may renumber it. Both copy the table in `rowid` order, so the *order* of ties should
+   survive; confirm that with a test that vacuums a fixture. Ties fall in insertion order,
+   which is `created_at` order for nearly every row.
+   State that in the function's docstring, which today promises `created_at ASC, id ASC`.
+3. **The other branches.** The `sort_order` and nulls-last branches keep a full sort unless
+   their `NULLS LAST` can follow an index; check each with `EXPLAIN QUERY PLAN` and leave
+   them be if not, since both are rare and small. `filename` needs no tie-breaker at all:
+   `uq_dataset_filename` makes it unique within a dataset. `bulk_rename` took stage 1's
+   `id` key as well; give it the same review.
+4. **Sorts with no index** (`updated_at`, `file_size_bytes`, `width`, `height`,
+   `nsfw_score`, and the noise, uniformity, watermark, color, saturation and luminance
+   scores) still sort the dataset. Pick the page's ids first in a narrow inner query, then
+   load those rows and re-apply the order to them. That took a deep page from 4,184 ms to
+   314 ms, because the sorter then carries ids and not whole rows. Add an index for one of
+   these only if stage 6b shows it pays.
+5. **`count(*)`, not `count(Image.id)`.** `func.count(Image.id)` makes SQLite visit the
+   table for every row (292 ms); `func.count()` is answered from an index alone (3.4 ms).
+   It appears 28 times outside the tests, eleven of them in `dataset_service.py`. Change
+   it where the query has no join that could multiply rows: `GET /images/count` first (it
+   runs on every gallery page), then `_image_validator` and `refresh_stats`.
+6. **A guard test on the plan.** For each indexed sort, in both directions, run
+   `EXPLAIN QUERY PLAN` on the statement `_apply_image_ordering` builds and fail on
+   `USE TEMP B-TREE FOR ORDER BY`. The plan does not depend on the row count, so the test
+   needs no large fixture. It is torch-free and belongs in the ordinary suite.
+
+**One case gets slightly worse.** With a narrow subfolder filter, the planner walks the
+score index and filters (27.3 ms), where today it takes the subfolder's rows and sorts them
+(21.8 ms). Accepted; record it in the test file.
+
+**Acceptance.** Stage 1's disjoint-pages test still passes under every sort. The guard
+test passes. Stage 6a's harness shows page 1 and a deep page of each indexed sort within a
+few milliseconds at 100k rows. PM-036 moves from LIVE to MITIGATED in the same change.
+
+**Overlap.** M4 edits the same function (it adds `aesthetic_rating` to the nulls-last
+sorts) and lands second, so it resolves this too.
+
+## Stage 10 — The paid-call cap counts caption calls
+
+Added 2026-11-09; found during stage 8 and until now recorded only in the roadmap's prose.
+
+**Problem.** An automated run's paid-call cap reads what it has spent from its child jobs
+(`run_service._spent`). The rewrite half reads `result_data["calls"]`, which the rewrite
+job writes. The caption half sums `done_items` over the run's `caption` children, and no
+caption job writes `done_items`: only `run_service.py`'s own steps do. So a run that
+captions through a billed provider counts zero caption calls and never stops at its cap.
+Only a stubbed `_Spent` is tested (`backend/tests/test_run_extend.py`), which is how it
+passed.
+
+**Approach.** Its own change. Either the caption job writes `done_items` as it goes, or it
+records a call count in `result_data` as the rewrite job does; pick the one that also
+counts a call that failed after it was sent, since the provider billed it. Writing
+`done_items` would also give the Logs page its real `N/M` (stage 8 papered over that with
+`itemCount`). Check what a cancelled or interrupted caption job leaves behind, because the
+cap must count those calls too.
+
+**Acceptance.** A test over real `BackgroundJob` rows, not a stub: a run with a billed
+caption provider and a cap of N stops after N caption calls, with a failed and a cancelled
+caption job among them.
+
+## Stage 11 — Hot-path quick wins
+
+Added 2026-11-09. Each item is small, independent and measured or read in the code that
+day. It sits after stage 4 only so that stage 6b measures both together.
+
+- **An index for the Stats cache check.** `_image_validator` runs
+  `count(id), max(updated_at)` on every poll of the Stats page (every 5 s while a job runs,
+  twice per poll), and no index carries `updated_at`: 294 ms. With
+  `(dataset_id, updated_at)` and `count(*)` it is 7.1 ms. It is a migration, so M4
+  re-parents onto it. The index is one more to maintain on every image write; that cost is
+  why it is here and not in stage 9.
+- **`generation_metadata` out of the gallery list.** `ImageListItem` returns the whole
+  JSON for every row, 5.6 MB for a page of 100 ComfyUI images, and the card only asks
+  whether it exists (`ImageCard`'s button; `GalleryPage` then shows it in a modal). Send a
+  boolean and fetch the JSON when the modal opens. `GET /images/{id}` already returns it.
+  Select the list's columns, or mark the column `deferred` and `undefer` it where an entity
+  reader needs it. The second is the `source_meta` trap (`MissingGreenlet` on an async
+  session), so the first is safer.
+- **The thumbnail and file routes read two columns.** `serve_thumbnail` and `serve_file`
+  call `db.get(Image, image_id)`, which loads every non-deferred column to read one path:
+  once per tile, per page. Select `thumbnail_path` and `file_path`. Keep the entity load for
+  `serve_thumbnail`'s generate-on-demand branch, which writes the row.
+- **A cache header on versioned thumbnails.** The routes return a bare `FileResponse`.
+  Starlette 1.10.0 sets `ETag` and `Last-Modified` on it but no `Cache-Control`, and its
+  `FileResponse` never answers 304, so a revalidation resends the file. The card's URL
+  already carries `?v=` from `updated_at` (`thumbnailUrlVersioned`). Send
+  `Cache-Control: public, max-age=31536000, immutable` **only when `v` is present**: two
+  callers still use the unversioned `thumbnailUrl`. First check that every path that
+  rewrites a thumbnail also moves `updated_at`
+  (`docs/dev/bulk-image-jobs.md` covers the rebuild's bump), or a stale tile becomes
+  permanent. Fewer refetches also means fewer open handles on Windows (PM-021).
+- **The live gallery refetch.** `TopBar` invalidates `["images", datasetId]` each time a
+  caption, ComfyUI or extract job's `done` count advances, so a job over N images refetches
+  the open gallery page up to N times, payload and all. Throttle it (one refetch per few
+  seconds, plus one at the end). `docs/dev/job-invalidation.md` owns the pattern.
+- **`ImageCard` re-renders.** Each card calls `useSelectionStore()` with no selector and
+  is not wrapped in `React.memo`, so one selection change re-renders all 100 to 200 tiles.
+  Give the card a per-id selector and memoize it. The grid is not windowed; leave that
+  until this is measured, since the page size tops out at 200.
+
+**Acceptance.** Stage 6b's numbers for the validator and a ComfyUI gallery page; an e2e
+check that the generation-metadata modal still opens; a test that an unversioned thumbnail
+URL gets no `immutable` header.
+
 ## Interaction with the other milestones
 
+- **Stages 9 and 11 overlap M4 again**: `_apply_image_ordering`, `GalleryPage.tsx`,
+  `schemas/image.py` and one more migration (stage 11's index) for M4 to re-parent onto.
+- **M10** (job throughput, `docs/dev/throughput-plan/README.md`) shares no file with this
+  plan. It comes after M9 by order, not by dependency
+  ([decision 14](../decisions/14-job-throughput-is-its-own-milestone.md)).
 - **M4** (held on `feat/m4-rating-port`) overlaps stages 1, 4 and 6: `_apply_image_ordering`,
   `get_dataset_stats` and `_aggregate_dataset_stats`, `StatsPage.tsx`, `GalleryPage.tsx`,
   `bench_scaling.py` and `models/image.py`, plus two guards M9 relies on:

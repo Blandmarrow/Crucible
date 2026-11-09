@@ -104,7 +104,36 @@ changed the tense.
 
   Decisions 7–10 came with the merge, so the next decision is number 11.
 
-What stayed open is in the roadmap's Next session item for M6.
+What stayed open is in [§ Loose ends closed after the merge](#loose-ends-closed-after-the-merge).
+
+## Loose ends closed after the merge
+
+Moved from the roadmap's Next session item for M6 on 2026-11-09, word for word, with links
+and paths repointed to this folder. All were closed by 2026-11-08.
+
+- [x] **The gallery's case-blind subtree match**, found in the §8b review: merged as PR
+  #112 (2026-11-07) with `utils.sql_has_prefix`/`sql_subtree`,
+  `sql_has_path_prefix` for the file browser's full paths, and an AST guard. The sweep also
+  found the gallery subfolder filter (feeding select-all) and a Linux-only wrong-rows
+  delete in `POST /filesystem/delete`. Record: PM-034.
+- [x] **One stored spelling for the datasets root**, found in PM-034's review: merged as
+  PR #113 (2026-11-07). The root is respelled to its on-disk case at startup,
+  stored rows are rewritten after a backup, and the file browser's exact matches take
+  `utils.sql_path_equals`. Detail: `docs/dev/database.md` § The datasets root's one
+  spelling.
+- [x] **Whitespace inside a folder segment**, found in the §8 review: ruled by the user on
+  2026-11-08 ([decision 12](../decisions/12-strip-folder-segment-whitespace.md)). Each
+  segment is stripped, and migration `b8d2f4a6c1e3` rewrites stored rows after a backup.
+  Merged 2026-11-08 as PR #121.
+- [x] **Ctrl+C on Vite under `manage.ps1 dev`**, pressed in a real terminal, closes the
+  backend's own window (PM-033). Checked by the user on 2026-11-08: once Vite was serving,
+  Ctrl+C left no backend, Vite or listener on :8000 or :5173.
+- [x] **The plan folder**, retired on 2026-11-08 (PR #122) after an audit of every claim in it. The
+  reasons for its rejected designs went into the `docs/dev/comfyui/` topic files, and its
+  history (the user's rulings, the §8 mockup, the review fixes, the hand checks, the
+  traps) into this record's later sections. Its §8c drag table was out of date and
+  was dropped for `docs/dev/comfyui/library-dnd.md`. The gallery entity filter stays unbuilt until
+  someone misses it (decision 8).
 
 ## Rulings by the user
 

@@ -17,53 +17,18 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-09, Copy from plan pushed)
+## Next session (updated 2026-11-09, review findings recorded)
 
-0. **M9 comes first** ([decision 13](decisions/13-scale-work-first.md)): the checked findings
-   of an outside scaling review, planned in [scale-plan/README.md](scale-plan/README.md).
-   Stages 1–3 merged on 2026-11-08: the gallery sort's tie-breaker as PR #124, the orphan
-   sweep as PR #125, and chunked quality scoring with *Score what's missing* as PR #126
-   (hand-checked on CPU and GPU; see the plan's Stage 3). **Stage 8** (Retry on the Logs
-   page) merged on 2026-11-08 as PR #127 (see the plan's Stage 8). Both branches are
-   deleted. **Stage 5** (every style-similarity branch keyset-paged, hand-checked against
-   `main` on real embeddings) merged on 2026-11-08 as PR #128 (see the plan's Stage 5).
-   **Next is stage 4**, which waits on nothing. See M9 below.
-   **Open bug found on the way (2026-11-08), not yet ruled on:** an automated run's
-   paid-call cap counts caption calls as `done_items` summed over its `caption` children
-   (`run_service._spent`), and no caption job writes `done_items`, so the caption half of
-   the cap counts nothing and never stops a run. Only a stubbed `_Spent` is tested
-   (`test_run_extend.py`). Fix it in its own change, with a test over real job rows.
-
-   **GPU work on one thread (PM-035):** merged on 2026-11-09 as PR #131; the branch is deleted. Every
-   load and inference call now goes through `device.run_on_gpu`, guarded in CI. Before it,
-   a long scoring run left ~3 GB of VRAM on the card after every model had unloaded
-   ([ml-models.md](ml-models.md) § One GPU thread). Production on both machines needs a pull and a
-   restart to drop what the old process holds. **Follow-up, not started:**
-   a first-run model download inside a loader now holds up every other GPU call; fetching
-   the weights on the default pool before the load would end that.
-
-   **Copy from plan (2026-11-09):** pushed straight to `main` at the user's request, no PR.
-   The Workflow & Pins and Blueprint tabs each copy from another plan in any dataset,
-   through one dialog and the existing GET/PATCH/PUT routes ([comfyui/page.md](comfyui/page.md)
-   § Frontend, `CopyFromPlanModal`). Nothing open.
-
-   **Instruction presets for Generate prompts (2026-11-09):** merged as PR #132; the branch is
-   deleted. Named saves of the modal's *Instructions* text, in their own table
-   (`prompt_gen_presets`, migration `c3e7a9d1f5b2`), apart from the caption presets
-   ([comfyui/prompts.md](comfyui/prompts.md) § Frontend). It moved the migration head, so any
-   branch holding a migration re-parents onto `c3e7a9d1f5b2`. Nothing open.
-1. **M6's loose ends are all closed** (item 5 below). On 2026-11-08 the Ctrl+C hand check
-   passed, the folder-segment whitespace fix merged as PR #121 (decision 12, migration
-   `b8d2f4a6c1e3`), and the M6 plan folder was retired by PR #122, a docs-only PR. **After
-   M9, M7 is next**: the CLIP QuickGELU plan or Stage 3, neither of which
-   waits on anything (see M7 below).
-   **M8's two "any time" items** (the coverage config and CLAUDE.md § Data flow) merged on
-   2026-11-08 as PR #120; the branch is deleted. `test_restart_in_dev_mode_touches_the_reloader_trigger_and_never_signals`
-   failed once in PR #120's CI and passed on a rerun: it reads the trigger file as soon as it
-   exists, which can be before `write_text` has filled it. Fixed the same day on `main`: it
-   now polls for the text. **M7 Stage 2b** (the layer labels) merged on
-   2026-11-08 as PR #119; the branch is deleted. What is left in M7 that needs nothing else:
-   the CLIP QuickGELU plan and Stage 3.
+0. **M9 comes first** ([decision 13](decisions/13-scale-work-first.md)), planned in
+   [scale-plan/README.md](scale-plan/README.md). Stages 1–3, 5 and 8 are merged. A review on
+   2026-11-09 timed the hot queries on a scratch database with the migrated column order and
+   added stages 9–11 (decision 13's amendment; the numbers are in the plan's Evidence base).
+   **Next is stage 9**, which waits on nothing: stage 1's tie-breaker cost the gallery's
+   score sorts their index, so each page of a score sort now sorts the whole dataset
+   (PM-036, LIVE). The order after it is **9 → 10 → 6a → 4 → 11 → 6b → 7**. See M9 below.
+1. **M10, job throughput, follows M9**
+   ([decision 14](decisions/14-job-throughput-is-its-own-milestone.md)). After it comes M7:
+   the CLIP QuickGELU plan or Stage 3, neither of which waits on anything (see M7 below).
 
 2. M5's five stages merged on 2026-10-30 as PR #101. Only its cleanup is open, and that waits
    a release. See [server-state-plan/README.md](server-state-plan/README.md) for what was
@@ -78,67 +43,23 @@ restates its stages.
    first migration `c3b8e1d7a52f` re-parents from `f2a6c8e4b1d7` onto M7's `c2b8e4f6a1d7`, and
    M4 resolves the overlap in `SelectionToolbar.tsx`, `queryKeys.ts` and `ImageDetailPage.tsx`.
    M6 merged first (2026-11-07), so `c3b8e1d7a52f` re-parents onto M6's last migration,
-   `a3c7e9b1d5f2`, instead. Since then decision 12's `b8d2f4a6c1e3` follows it, and M9 may
-   add more (its stages 4 and 7), so re-parent onto whatever `main`'s head is at the time.
+   `a3c7e9b1d5f2`, instead. Since then decision 12's `b8d2f4a6c1e3` and PR #132's
+   `c3e7a9d1f5b2` follow it (the head on 2026-11-09), and M9 may add more (its stages 4, 7
+   and 11), so re-parent onto whatever `main`'s head is at the time.
    **Until it is rebased past M9 stage 2, do not start the M4 branch on a real datasets
    folder**: its startup sweep has no dot-skip and deletes `.orphaned` with everything
    parked there (`docs/dev/database.md` § Two known costs).
    M4 also resolves M9's overlap, listed in
    [scale-plan/README.md § Interaction with the other milestones](scale-plan/README.md#interaction-with-the-other-milestones).
-   M4's decision, number 4 on its branch, is unaffected; `main`'s next new decision is 14.
-4. **The M7 port merged on 2026-11-03 as PR #108**: layer 7 at 0.30/0.70 is the style
-   default, each run records its blend weights, and the layer picker warns before a run that
-   must fail. The user had both `style-embedding-measurement` and `feat/m7-style-port`
-   deleted afterwards, and `exp/dinov3-test` and `exp/style-models` too: all three research
-   runs live on `exp/style-media`, which contains the other two and is the record the docs
-   cite. Its plan is
-   now [style-embedding-plan/README.md](style-embedding-plan/README.md), and the research
-   folder's findings moved into `docs/dev/quality/style-evaluation.md`. What is left in M7 is
-   below.
-5. **M6 merged on 2026-11-07 as PR #110**, and `feat/m6-comfy-automation` is deleted. Its
-   checklist and the last session's notes are archived in
-   [roadmap-archive/m6-comfy-automation.md](roadmap-archive/m6-comfy-automation.md). What
-   stayed open, all closed by 2026-11-08:
-   - [x] **The gallery's case-blind subtree match**, found in the §8b review: merged as PR
-     #112 (2026-11-07) with `utils.sql_has_prefix`/`sql_subtree`,
-     `sql_has_path_prefix` for the file browser's full paths, and an AST guard. The sweep also
-     found the gallery subfolder filter (feeding select-all) and a Linux-only wrong-rows
-     delete in `POST /filesystem/delete`. Record: PM-034.
-   - [x] **One stored spelling for the datasets root**, found in PM-034's review: merged as
-     PR #113 (2026-11-07). The root is respelled to its on-disk case at startup,
-     stored rows are rewritten after a backup, and the file browser's exact matches take
-     `utils.sql_path_equals`. Detail: `docs/dev/database.md` § The datasets root's one
-     spelling.
-   - [x] **Whitespace inside a folder segment**, found in the §8 review: ruled by the user on
-     2026-11-08 ([decision 12](decisions/12-strip-folder-segment-whitespace.md)). Each
-     segment is stripped, and migration `b8d2f4a6c1e3` rewrites stored rows after a backup.
-     Merged 2026-11-08 as PR #121.
-   - [x] **Ctrl+C on Vite under `manage.ps1 dev`**, pressed in a real terminal, closes the
-     backend's own window (PM-033). Checked by the user on 2026-11-08: once Vite was serving,
-     Ctrl+C left no backend, Vite or listener on :8000 or :5173.
-   - [x] **The plan folder**, retired on 2026-11-08 (PR #122) after an audit of every claim in it. The
-     reasons for its rejected designs went into the `docs/dev/comfyui/` topic files, and its
-     history (the user's rulings, the §8 mockup, the review fixes, the hand checks, the
-     traps) into the archive record's later sections. Its §8c drag table was out of date and
-     was dropped for `comfyui/library-dnd.md`. The gallery entity filter stays unbuilt until
-     someone misses it (decision 8).
-6. M8's follow-ups 8–11 merged on 2026-11-07 (PRs #114 and #115); both branches are deleted.
-   On 2026-11-08 follow-up 14 (a copy-mode thumbnail guard) merged as PR #116 and stage 4
-   (the `DatasetsPage` dialogs) as PR #117; both branches are deleted. Follow-up 15, `images.py`'s two
-   single-image copies, waits for M4. Batch move and copy, the rest of item 9, must wait for
-   M4 to merge. Items 7, 12 and 13 wait for stage 6, which replaces that code. M8 stages 5 and
-   6 now wait only for M4, since M7 has merged. What stages 2 and 3 found and left alone is in
-   [cleanup-plan/README.md](cleanup-plan/README.md) § Found during stages 2 and 3, left as
-   they were.
-7. Four docs seams stay queued in [pending-splits.md](pending-splits.md) on `main` with nothing
-   over budget: `README.md`'s § Features deletion (deferred when its budget went to 4,000),
-   `docs/scoring.md`'s residual seam, `docs/dev/quality/style-similarity.md` at 91% after
-   the M7 port, and `docs/dev/image-processing-models.md` at 98% after M8 stage 3. This
-   branch's own, comfy-structured.md, was split three ways on
-   2026-11-03 and its family hubbed (pending-splits.md records how). Each is picked up by the
-   next session that appends to its file. Re-measure first and check both halves land under 60% of budget — five of
-   M3's seven recorded seams had to be re-cut on execution.
-8. A split moves sections, so `§` pointers that named a section in the same file now
+   M4's decision, number 4 on its branch, is unaffected; `main`'s next new decision is 15.
+4. Five docs seams are queued in [pending-splits.md](pending-splits.md) (counted
+   2026-11-09): `docs/dev/comfyui/page.md` and `docs/dev/comfyui/queue.md`, both over budget
+   (3,932 and 3,538 words of 3,500), `docs/dev/database.md`, `docs/scoring.md`'s residual
+   seam, and `README.md`'s § Features deletion (deferred when its budget went to 4,000). Each
+   is picked up by the next session that appends to its file. Re-measure first and check both
+   halves land under 60% of budget — five of M3's seven recorded seams had to be re-cut on
+   execution.
+5. A split moves sections, so `§` pointers that named a section in the same file now
    point across files. `check_docs.py` does not check them, so grep `§` in every touched
    file and check each against the destination's headings by hand.
 
@@ -158,6 +79,10 @@ restates its stages.
   the goal loop, gate, budgets, dry run, snapshot and recipes, the ComfyUI page rework, and two
   installs sharing a 16 GB card. Record:
   [roadmap-archive/m6-comfy-automation.md](roadmap-archive/m6-comfy-automation.md).
+- **Handoff notes, 2 to 9 November 2026**: the closed items of this file's Next session
+  block (M6's loose ends, the M7 port, M8's follow-ups, PRs #131 and #132, Copy from plan),
+  moved out on 2026-11-09. Record:
+  [roadmap-archive/handoff-2026-11.md](roadmap-archive/handoff-2026-11.md).
 
 ## Porting the unmerged branches
 
@@ -186,13 +111,13 @@ add migrations, and M6 merged first, so **M4 re-parents its first migration** on
 ### M9 — Scale and data safety
 
 Comes before every other open milestone
-([decision 13](decisions/13-scale-work-first.md)). Gate: stages 1–5 merged with their tests
-and docs, and stage 6's numbers recorded; stage 7 is then built or ruled out by a decision.
-Plan: [scale-plan/README.md](scale-plan/README.md). Does not wait for M4, which lands second
-and resolves the overlap.
+([decision 13](decisions/13-scale-work-first.md)). Gate: stages 1–5 and 9–11 merged with
+their tests and docs, and stage 6's numbers recorded; stage 7 is then built or ruled out by
+a decision. Plan: [scale-plan/README.md](scale-plan/README.md). Does not wait for M4, which
+lands second and resolves the overlap. Order of what is left: 9, 10, 6a, 4, 11, 6b, 7.
 
 - [x] Stage 1: a unique tie-breaker (`Image.id`) for every gallery sort. Merged 2026-11-08
-  as PR #124.
+  as PR #124. It cost the score sorts their index (PM-036); stage 9 is the fix.
 - [x] Stage 2: the startup orphan sweep moves folders into `.orphaned/` instead of deleting
   them. Merged 2026-11-08 as PR #125: only a tree with no file is deleted (the user's call),
   and dot-named folders are skipped. Detail: `docs/dev/database.md` § The sweep moves data
@@ -202,17 +127,51 @@ and resolves the overlap.
   is a *Score what's missing* button (the user's calls). Detail:
   `docs/dev/quality/scoring.md` § The chunked job loop.
 - [ ] Stage 4: Stats histograms built on the server instead of raw value lists. Comes before
-  M8 stage 7.
+  M8 stage 7, and after stage 6a so it is measured before and after. Its design was amended
+  on 2026-11-09: the server owns the bin edges, takes the user's custom edges, and reads
+  everything in one pass.
 - [x] Stage 5: page the style similarity branches. Merged 2026-11-08 as PR #128: every
   branch pages, not just the one the plan named, and the one-score branches write after the
   scan so the write lock stays short. Detail: `docs/dev/quality/style-similarity.md` § Paged and all-layers scoring.
-- [ ] Stage 6: extend `bench_scaling.py` (layer blobs, the migrated column order) and
-  re-measure. Best after stages 1, 3 and 4, so it measures them.
-- [ ] Stage 7: decide on, then maybe build, an embeddings table of its own. Needs stage 6.
+- [ ] Stage 6: extend `bench_scaling.py` and re-measure, in two halves. **6a** builds the
+  harness (the migrated column order, layer blobs, `generation_metadata`, query plans) and
+  comes before stage 4. **6b** re-measures after stages 4 and 11 and records the numbers. A
+  partial run by hand on 2026-11-09 is the last addendum of
+  `backend/scripts/scaling_bottlenecks_report.md`.
+- [ ] Stage 7: decide on, then maybe build, a table of their own for the embeddings and for
+  `generation_metadata`, which is the larger of the two on ComfyUI images. Needs stage 6b.
 - [x] Stage 8: Retry for interrupted jobs. Merged 2026-11-08 as PR #127, for `quality_score`
   (a retry resumes; failed and cancelled jobs; none for a run's child, by the user's calls),
   hand-checked through the API and the page. Detail:
   `docs/dev/backend-infrastructure.md` § Retrying a stopped job.
+- [ ] Stage 9: give the gallery's score sorts their index back (PM-036), with `count(*)` for
+  the gallery count and a guard test that reads the query plan. Waits on nothing; next.
+- [ ] Stage 10: make an automated run's paid-call cap count caption calls. `run_service._spent`
+  sums `done_items` over the run's `caption` children, and no caption job writes
+  `done_items`, so the caption half of the cap counts nothing and never stops a run. Only a
+  stubbed `_Spent` is tested (`test_run_extend.py`). Its own change, with a test over real
+  job rows. Waits on nothing.
+- [ ] Stage 11: hot-path quick wins: an index for the Stats cache check,
+  `generation_metadata` out of the gallery list, the thumbnail route's narrow read and
+  cache header, the live gallery refetch, and `ImageCard`'s re-renders. Adds a migration.
+  Waits on nothing; it sits after stage 4 so that 6b measures both.
+
+### M10 — Job throughput
+
+After M9 and before M7
+([decision 14](decisions/14-job-throughput-is-its-own-milestone.md)). Gate: T1–T3 merged
+with their tests, T4's timing recorded, and T5 then built or ruled out by that timing. Plan:
+[throughput-plan/README.md](throughput-plan/README.md). PM-035's one-GPU-thread rule is not
+touched: only CPU work moves. Stages stay one line each until M9 is done:
+
+- T1: the technical scorer on several cores.
+- T2: concurrent requests and a reused client for the OpenAI-compatible and Ollama
+  captioners.
+- T3: parallel import, with one decode per file.
+- T4: time how much of a GPU scoring run is image decoding.
+- T5: decode ahead of the GPU call, on the default pool. Only if T4 shows it pays.
+- [ ] T6: fetch a model's weights off the GPU thread, so a first-run download inside a
+  loader no longer holds up every other GPU call (PM-035's follow-up). Waits on nothing.
 
 ### M5 — App-stored prompts
 

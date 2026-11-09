@@ -25,6 +25,7 @@ from sqlalchemy.orm import undefer
 
 from backend.config import settings
 from backend.job_outcome import failure_summary, note_failure
+from backend.ml import device as _device
 from backend.licenses import copy_provenance
 from backend.models import BackgroundJob, Image
 from backend.services import version_service
@@ -69,6 +70,12 @@ class EditSpec:
     """``record_in_place``'s operation name."""
     history_params: dict = field(default_factory=dict)
     """``record_in_place``'s keyword params, such as the model's filename."""
+    gpu: bool = True
+    """Whether ``process`` runs on the accelerator, and so on ``device.run_on_gpu``'s
+    single thread rather than the default pool (PM-035). The structural guard
+    cannot see through ``spec.process``, so this flag is the rule's only enforcer
+    here; it defaults to True so a forgotten flag lands on the safe side. LUT
+    grading is numpy and says ``gpu=False``."""
 
 
 async def run_image_edit_job(
@@ -255,9 +262,12 @@ async def _edit_loop(
                 await session.commit()  # persist the COW hash backfill before the overwrite
 
             try:
-                info = await loop.run_in_executor(
-                    None, spec.process, str(src_path), dest_path_str,
-                )
+                if spec.gpu:
+                    info = await _device.run_on_gpu(spec.process, str(src_path), dest_path_str)
+                else:
+                    info = await loop.run_in_executor(
+                        None, spec.process, str(src_path), dest_path_str,
+                    )
             except Exception as exc:
                 logger.error("%s failed for %s: %s", spec.context, img.filename, exc)
                 await broadcaster.emit(job_id, _progress(

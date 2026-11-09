@@ -1,4 +1,3 @@
-import asyncio
 import functools
 import logging
 from collections.abc import Awaitable, Callable
@@ -50,7 +49,6 @@ async def score_images_nsfw_batch(
     from backend.workers.progress import broadcaster
     from backend.workers.job_queue import job_queue
 
-    loop = asyncio.get_event_loop()
     results = []
     total = len(image_paths)
 
@@ -59,7 +57,7 @@ async def score_images_nsfw_batch(
             break
         try:
             fn = functools.partial(score_image_sync, path, model_entry)
-            score = await loop.run_in_executor(None, fn)
+            score = await _device.run_on_gpu(fn)
         except Exception:
             # NULL, not 0.0 — the technical scorer's failure contract
             # (docs/dev/quality/scoring.md § The failure contract). A 0.0 asserted the

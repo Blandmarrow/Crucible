@@ -1,4 +1,3 @@
-import asyncio
 import logging
 
 from backend.ml.image_utils import preprocess_for_caption
@@ -82,8 +81,7 @@ async def caption_image(
     target_h: int | None = None,
 ) -> str:
     prompt = STYLE_PROMPTS.get(style, STYLE_PROMPTS["detailed"])
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, infer_sync, image_path, model_entry, prompt, target_w, target_h)
+    return await _device.run_on_gpu(infer_sync, image_path, model_entry, prompt, target_w, target_h)
 
 
 def infer_sync_detection(
@@ -144,8 +142,7 @@ async def detect_image(
     task: str,
     text_input: str = "",
 ) -> list[dict]:
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, infer_sync_detection, image_path, model_entry, task, text_input)
+    return await _device.run_on_gpu(infer_sync_detection, image_path, model_entry, task, text_input)
 
 
 async def caption_batch(

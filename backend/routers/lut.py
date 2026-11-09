@@ -56,6 +56,7 @@ async def run_lut(body: LutRunRequest, db: AsyncSession = Depends(get_db)):
         process=_process,
         history_op="lut",
         history_params={"lut": Path(lut_path).name, "intensity": intensity},
+        gpu=False,  # numpy grading: stays on the default pool
     )
     await job_queue.enqueue(job, run_image_edit_job, image_ids=image_ids, replace=replace, spec=spec)
     return {"job_id": job.id, "total": total}

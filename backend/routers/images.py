@@ -16,6 +16,7 @@ from backend.config import settings
 from backend.job_outcome import failure_summary, note_failure
 from backend.utils import ALLOWED_FLAG_KEYS, OUT_OF_TREE_MSG, InsufficientDiskSpaceError, replace_retrying, chunked, contained_path, copy_with_sidecar, normalize_image_format, normalize_subfolder, parse_id_list_param, parse_license_filter_param, poster_path_for, record_in_place, rename_with_sidecar, require_free_space, safe_dataset_path, slugify_filename, sql_subtree, thumbnail_path_for, unique_filename_with_thumb, validate_label_filter_params
 from backend.database import get_db
+from backend.ml import device as _device
 from backend.media_types import media_kind_for
 from backend.licenses import (
     PROVENANCE_FIELDS,
@@ -1827,9 +1828,8 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
 
             loop2 = asyncio.get_running_loop()
             try:
-                info = await loop2.run_in_executor(
-                    None, upscale_image_sync,
-                    replace_cfg["tmp_path"], replace_cfg["out_tmp_path"], replace_cfg["upscale_model"], False,
+                info = await _device.run_on_gpu(
+                    upscale_image_sync, replace_cfg["tmp_path"], replace_cfg["out_tmp_path"], replace_cfg["upscale_model"], False,
                     replace_cfg["upscale_target_width"], replace_cfg["upscale_target_height"],
                 )
             except BaseException:
@@ -2033,9 +2033,8 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
             dst = cfg["dest_path"]
             loop2 = asyncio.get_running_loop()
             try:
-                info = await loop2.run_in_executor(
-                    None, upscale_image_sync,
-                    tmp, dst, cfg["upscale_model"], False,
+                info = await _device.run_on_gpu(
+                    upscale_image_sync, tmp, dst, cfg["upscale_model"], False,
                     cfg["upscale_target_width"], cfg["upscale_target_height"],
                 )
             finally:

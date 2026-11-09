@@ -27,6 +27,7 @@ from sqlalchemy.orm import undefer
 from backend.config import settings
 from backend.database import get_db
 from backend.licenses import copy_provenance
+from backend.ml import device as _device
 from backend.ml.lama_inpainter import inpaint_image_sync
 from backend.ml.mask_utils import rasterize_detections
 from backend.ml.model_manager import model_manager
@@ -406,9 +407,8 @@ async def run_inpaint(body: InpaintRunRequest, db: AsyncSession = Depends(get_db
                     dest_path_str = str(dest_images / new_filename)
 
                 try:
-                    info = await loop.run_in_executor(
-                        None, inpaint_image_sync,
-                        str(src_path), dest_path_str, mask_bytes, replace,
+                    info = await _device.run_on_gpu(
+                        inpaint_image_sync, str(src_path), dest_path_str, mask_bytes, replace,
                     )
                 except Exception as exc:
                     # One bad image never fails the run.

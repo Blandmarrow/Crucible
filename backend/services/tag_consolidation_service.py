@@ -16,6 +16,7 @@ import numpy as np
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.ml import device as _device
 from backend.ml import tag_embedder
 from backend.ml.model_manager import model_manager
 from backend.models import Image
@@ -74,7 +75,7 @@ async def analyze(
     entry = await model_manager.load_tag_embedder(job_id=job_id, loop=asyncio.get_running_loop(), dataset_id=dataset_id)
     with model_manager.lease(entry):
         loop = asyncio.get_running_loop()
-        embeddings = await loop.run_in_executor(None, tag_embedder.embed_texts_sync, vocab, entry)
+        embeddings = await _device.run_on_gpu(tag_embedder.embed_texts_sync, vocab, entry)
         await broadcaster.emit(job_id, {
             "type": "progress", "job_id": job_id, "status": "running",
             "done": 0, "total": image_count, "percent": 50.0,

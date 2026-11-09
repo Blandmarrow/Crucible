@@ -78,7 +78,7 @@ not a see-also, and says which part of the code it owns.
 | `frontend/src/components/comfy/ComfyPlanRail.tsx`, `ComfyFolderTree.tsx`, `folderTree.ts`, `rowsView.ts`, `DuplicatePlanModal.tsx`, `FolderNameModal.tsx` | `docs/dev/comfyui/page.md` § The plan rail, the folder tree and the grouped table; the endpoints behind them are `docs/dev/comfyui/queue.md` § Backend |
 | `frontend/src/hooks/useStickyOffsets.ts`, the `.comfy-head` and `.comfy-rail*`/`.comfy-rows-*` rules in `frontend/src/index.css` | `docs/dev/comfyui/page.md` § The layout |
 | `frontend/src/components/comfy/BlueprintSection.tsx`, the `.bp-*` rules in `frontend/src/index.css` | `docs/dev/comfyui/blueprint-tab.md` § The layout |
-| `frontend/src/components/comfy/WorkflowPinPanel.tsx`, `WorkflowScanModal.tsx` | `docs/dev/comfyui/page.md` § Frontend; + `docs/dev/comfyui/sync.md` § Frontend for the *Sync from canvas* button |
+| `frontend/src/components/comfy/WorkflowPinPanel.tsx`, `WorkflowScanModal.tsx`, `CopyFromPlanModal.tsx` | `docs/dev/comfyui/page.md` § Frontend; + `docs/dev/comfyui/sync.md` § Frontend for the *Sync from canvas* button; + `docs/dev/comfyui/blueprint-tab.md` § The panel for the Blueprint tab's *Copy from plan…* |
 | `frontend/src/components/comfy/SyncCanvasModal.tsx` | `docs/dev/comfyui/sync.md` § Frontend |
 | `frontend/src/components/comfy/ComfyLibraryPanel.tsx`, `CopyRowsToPlanModal.tsx`, `copyRows.ts`, `dnd.ts`, `DndRow.tsx`, `LinkedAskDialog.tsx`, the row menu and drop targets in `ComfyRowsTable.tsx`, `frontend/e2e/comfy-library.spec.ts`, `comfy-dnd.spec.ts` | `docs/dev/comfyui/library-dnd.md`; the endpoints they call are `docs/dev/comfyui/queue.md` § Backend |
 | `frontend/src/components/comfy/SaveToLibraryModal.tsx` | `docs/dev/comfyui/page.md` § Frontend |

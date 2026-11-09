@@ -20,7 +20,7 @@ Apply needs a pinned parameter marked as the prompt (★).
 - **Axes, Variations and Scenarios fold away.** Click a section's title to fold or open
   it. Its *+ Add* button stays visible, and opens the section when you press it.
 - **The bar above the editors** jumps to a section and opens it, folds or opens them all,
-  and holds *Draft from a description*. Which sections are open is remembered for each
+  and holds *Draft from a description* and *Copy from plan*. Which sections are open is remembered for each
   plan, in this browser.
 
 ## The three parts
@@ -58,6 +58,19 @@ repeat. They still make different images, because each run gets its own seed.
 Names of axes and variations use letters, digits and `_`, like `main_character`.
 
 Everything saves as you type.
+
+## Copying a blueprint from another plan
+
+**Copy from plan…** in the bar above the editors takes the blueprint of another plan, in
+this dataset or any other. Pick the dataset and the plan; the dialog shows how many axes,
+variations and scenarios it has. **Copy blueprint** (or **Replace blueprint**, when this
+plan already has one) replaces this plan's axes, variations, scenarios and sampling seed
+with that plan's, and saves them like any edit. The same seed means the same folders get
+sampled. No rows are written until you **Apply**, and the other plan is not changed. It is
+off while a run is in progress on this plan.
+
+To copy a plan's workflow instead, use **Copy from plan…** on the **Workflow & Pins** tab
+→ [details](comfyui.md#loading-a-workflow).
 
 ## Drafting a blueprint from a description
 

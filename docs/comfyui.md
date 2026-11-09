@@ -27,7 +27,7 @@ A **plan** holds one workflow template, the parameters pinned on it, and a queue
 
 ## Loading a workflow
 
-Four ways to get a workflow into a plan, from the **Workflow & Pins** section:
+Five ways to get a workflow into a plan, from the **Workflow & Pins** section:
 
 | Route | Use it when |
 |---|---|
@@ -35,10 +35,13 @@ Four ways to get a workflow into a plan, from the **Workflow & Pins** section:
 | **Load .json file** | The export is a file on the machine running your browser |
 | **Scan folder…** | You keep exports in a folder on the Crucible machine — lists every `.json` found, badged by format, and only API-format files can be loaded |
 | **Sync from canvas** | You want whatever is open in ComfyUI right now, without re-exporting |
+| **Copy from plan…** | Another plan, in this dataset or any other, already has the workflow you want |
 
 **Only API-format workflows work.** This is the most common first-run problem: a normal ComfyUI save (and the `.json` in your `workflows` folder) is *UI-format*, which describes the canvas — nodes, links, positions — and cannot be executed as-is. Crucible detects it and asks for an API export instead. In ComfyUI use **Workflow → Export (API)**, or enable dev mode and use **Save (API Format)**. This is why a folder scan often finds many files but offers none of them.
 
 **Sync from canvas** shows what it found — the live canvas (via the bridge) or your last queued prompt — before replacing anything, along with any pins that will be dropped because the parameter no longer exists in the new workflow. Pins that still match are kept.
+
+**Copy from plan…** lets you pick a dataset and a plan, shows how many nodes and pins that plan has, and loads its workflow into the editor. Leave **Also copy its pinned parameters and output settings** ticked to bring its pins, its **Import images from** choice and its **Output is synthetic** setting too, since pins name nodes in that workflow. Untick it to keep this plan's own pins. Like a loaded file, nothing changes until you press **Save**. To copy a plan's blueprint, use **Copy from plan…** on the **Blueprint** tab → [details](comfy-structured.md#copying-a-blueprint-from-another-plan).
 
 **Import images from** controls which nodes' images are imported. Left alone (**Auto — SaveImage outputs**) it imports whatever your Save nodes write. Selecting nodes explicitly imports their images even if they are previews — so a workflow whose only output is a **PreviewImage** node still works, and nothing accumulates in ComfyUI's output folder. If your workflow has no Save node and you have not selected an output node, the panel warns you; runs would otherwise produce nothing to import.
 

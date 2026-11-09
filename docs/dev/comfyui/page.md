@@ -51,7 +51,8 @@ hand check: the fake has no pause.
   `docs/dev/comfyui/blueprint-tab.md`.
 - **`WorkflowPinPanel`** — paste textarea + `.json` file loader + *Scan folder…* button
   (opens `WorkflowScanModal`) + *Sync from canvas* button (`canvas-workflow` →
-  `SyncCanvasModal`, see `docs/dev/comfyui/sync.md`); validates API-format client-side; warns (non-blocking) when no
+  `SyncCanvasModal`, see `docs/dev/comfyui/sync.md`) + *Copy from plan…* button
+  (`CopyFromPlanModal`, below); validates API-format client-side; warns (non-blocking) when no
   node's `class_type` matches `/save/i` **and** no output node is selected, and when selected
   output nodes no longer exist in the workflow (runs then fail with a review-the-workflow row
   error — deliberate, no auto-heal). *Import images from*: toggle chips for Save/Preview-type
@@ -65,6 +66,19 @@ hand check: the fake has no pause.
   node (connection-only nodes like PreviewImage get a "no editable inputs" note) with Pin
   toggles and a search box filtering by id/class_type/title/input name/value. Saves via
   `PATCH /comfy/plans/{id}`.
+- **`CopyFromPlanModal`** — one dialog, two `kind`s: `"workflow"` here and `"blueprint"` on
+  the Blueprint tab (`docs/dev/comfyui/blueprint-tab.md` § The panel). A dataset select
+  (starts on the page's) and a plan select (the current plan left out), the same pair as the
+  library's *Other plans* tab. It reads the source through the ordinary `GET /comfy/plans/{id}`
+  or `GET …/blueprint`; there is **no copy endpoint**, because each tab already has a write
+  path to stage into. The workflow kind feeds the JSON through `handleTextChange`, exactly as
+  *Scan folder…* does, so it still needs Save; with *Also copy its pinned parameters and
+  output settings* (default on) it also replaces the panel's pins, `output_node_ids` and
+  `output_is_synthetic`, since pins name the source's node ids. Unticked, the plan's own pins
+  stay and any that do not resolve show "not in workflow" — unlike Sync, nothing is dropped.
+  The blueprint read uses its own key, `["comfy", "blueprint-source", id]`, never the tab's
+  `["comfy", "blueprint", id]`: that gate latches its first value, so a read from here would
+  become what a later visit to that plan opens on.
 - **`WorkflowScanModal`** — lists `GET /comfy/workflow-files` for the settings folder (or a
   per-scan override via `DirPickerModal`), format badge per file. Load fetches
   `workflow-file` and feeds the JSON through the panel's normal paste/validate flow (still

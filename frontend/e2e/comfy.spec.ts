@@ -316,6 +316,61 @@ test('a plan duplicates from the rail, rows reset to pending', async ({ page, re
   expect(rows.map((r: { status: string }) => r.status)).toEqual(['pending', 'pending'])
 })
 
+test('a workflow and its pins copy from a plan in another dataset', async ({ page, request }) => {
+  const stamp = Date.now()
+  const srcDs = await createDatasetViaApi(request, `e2e-comfy-wfsrc-${stamp}`)
+  const dstDs = await createDatasetViaApi(request, `e2e-comfy-wfdst-${stamp}`)
+  const source = await createPlanViaApi(request, srcDs.id, 'wf source')
+  const made = await request.post('/api/v1/comfy/plans', { data: { dataset_id: dstDs.id, name: 'wf target' } })
+  expect(made.status(), await made.text()).toBe(200)
+  const target = await made.json()
+
+  await page.goto(`/datasets/${dstDs.id}/comfy`)
+  await page.getByRole('button', { name: 'Workflow & Pins' }).click()
+  await page.getByRole('button', { name: 'Copy from plan…' }).click()
+  await expect(page.getByRole('heading', { name: 'Copy workflow from plan' })).toBeVisible()
+  await page.getByRole('combobox', { name: 'Source dataset' }).selectOption(srcDs.id)
+  await expect(page.getByTestId('copy-from-plan-summary')).toHaveText('2 nodes, 1 pinned parameter, prompt pin "prompt".')
+  await page.getByRole('button', { name: 'Load workflow' }).click()
+
+  // Staged, not saved: the plan changes only on Save.
+  expect(Object.keys((await (await request.get(`/api/v1/comfy/plans/${target.id}`)).json()).workflow_json)).toEqual([])
+  await page.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect
+    .poll(async () => {
+      const p = await (await request.get(`/api/v1/comfy/plans/${target.id}`)).json()
+      return [p.workflow_json, p.pinned_params.map((x: { alias: string }) => x.alias), p.output_node_ids]
+    })
+    .toEqual([source.workflow_json, ['prompt'], ['9']])
+})
+
+test('a blueprint copies from another plan', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-comfy-bpcopy-${Date.now()}`)
+  const source = await createPlanViaApi(request, ds.id, 'bp source')
+  const target = await createPlanViaApi(request, ds.id, 'bp target')
+  const spec = {
+    axes: { character: [{ id: 'c0', label: 'Knight', descriptor: 'a knight' }] },
+    variations: {},
+    scenarios: [{ name: 'solo', combine: ['character'], count: 1, path: '{character}', template: '{character}' }],
+  }
+  const put = await request.put(`/api/v1/comfy/plans/${source.id}/blueprint`, { data: { spec, seed: 4242 } })
+  expect(put.status(), await put.text()).toBe(200)
+  const saved = (await put.json()).value
+
+  await page.goto(`/datasets/${ds.id}/comfy`)
+  await page.getByTestId('comfy-plan-rail').getByRole('button', { name: /^bp target/ }).click()
+  await expect(page.getByTestId('comfy-plan-name')).toHaveText('bp target')
+  await page.getByRole('button', { name: 'Blueprint', exact: true }).click()
+  await page.getByTestId('blueprint-copy-open').click()
+  await expect(page.getByTestId('copy-from-plan-summary')).toHaveText('1 axis, 0 variations, 1 scenario.')
+  await page.getByRole('button', { name: 'Copy blueprint' }).click()
+
+  // Autosaved like any edit: the spec as the server stored it, and the seed.
+  await expect
+    .poll(async () => (await (await request.get(`/api/v1/comfy/plans/${target.id}/blueprint`)).json()).value)
+    .toMatchObject({ spec: saved.spec, seed: 4242 })
+})
+
 test('folders are made, renamed and picked in the tree', async ({ page, request }) => {
   const ds = await createDatasetViaApi(request, `e2e-comfy-tree-${Date.now()}`)
   const plan = await createPlanViaApi(request, ds.id, 'tree plan')

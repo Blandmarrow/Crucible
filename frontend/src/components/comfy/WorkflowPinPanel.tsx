@@ -3,6 +3,7 @@ import toast from "react-hot-toast";
 import { apiErrorDetail } from "../../utils/apiError";
 import { coerceCellValue, comfyApi } from "../../api/comfy";
 import type { CanvasWorkflowResponse, ComfyPlan, PinnedParam } from "../../api/comfy";
+import CopyFromPlanModal from "./CopyFromPlanModal";
 import SyncCanvasModal from "./SyncCanvasModal";
 import WorkflowScanModal from "./WorkflowScanModal";
 
@@ -52,6 +53,7 @@ export default function WorkflowPinPanel({ plan, onSave, saving }: Props) {
   const [parseError, setParseError] = useState<string | null>(null);
   const [nodeFilter, setNodeFilter] = useState("");
   const [showScan, setShowScan] = useState(false);
+  const [showCopy, setShowCopy] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncSnapshot, setSyncSnapshot] = useState<CanvasWorkflowResponse | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -306,6 +308,10 @@ export default function WorkflowPinPanel({ plan, onSave, saving }: Props) {
             {syncing ? "Syncing…" : "Sync from canvas"}
           </button>
           <button className="btn ghost sm" onClick={() => setShowScan(true)}>Scan folder…</button>
+          <button className="btn ghost sm" title="Load the workflow of another plan, in this dataset or another"
+            onClick={() => setShowCopy(true)}>
+            Copy from plan…
+          </button>
           <button className="btn ghost sm" onClick={() => fileRef.current?.click()}>Load .json file</button>
           <input
             ref={fileRef} type="file" accept=".json,application/json" style={{ display: "none" }}
@@ -591,6 +597,25 @@ export default function WorkflowPinPanel({ plan, onSave, saving }: Props) {
           droppedPins={pins.filter((p) => !pinResolves(p, syncSnapshot.workflow))}
           onApply={() => applySync(syncSnapshot)}
           onClose={() => setSyncSnapshot(null)}
+        />
+      )}
+
+      {showCopy && (
+        <CopyFromPlanModal
+          kind="workflow" datasetId={plan.dataset_id} planId={plan.id}
+          onCopy={(src, withPins) => {
+            // Staged like Scan folder: the editor holds it until Save. Pins and output
+            // nodes name the source's node ids, so they travel with its workflow.
+            handleTextChange(JSON.stringify(src.workflow_json));
+            if (withPins) {
+              setPins(structuredClone(src.pinned_params));
+              setOutputNodeIds([...src.output_node_ids]);
+              setOutputIsSynthetic(src.output_is_synthetic);
+            }
+            setShowCopy(false);
+            toast.success(`Loaded the workflow of "${src.name}" — review and Save to apply`);
+          }}
+          onClose={() => setShowCopy(false)}
         />
       )}
 

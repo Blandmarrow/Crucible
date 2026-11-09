@@ -7,6 +7,7 @@ import toast from "react-hot-toast";
 import { apiErrorDetail } from "../../utils/apiError";
 import ConfirmDialog from "../common/ConfirmDialog";
 import OutlineModal from "./OutlineModal";
+import CopyFromPlanModal from "./CopyFromPlanModal";
 import {
   blueprintPath, comfyApi, EMPTY_BLUEPRINT_SPEC,
   type BlueprintSpec, type BlueprintValue,
@@ -73,6 +74,7 @@ function BlueprintForm({ planId, datasetId, hasPromptPin, running, liveRun, subf
   const value: BlueprintValue = { spec, seed };
   const [outlining, setOutlining] = useState(false);
   const [confirmUse, setConfirmUse] = useState(false);
+  const [copying, setCopying] = useState(false);
   const [busy, setBusy] = useState(false);
 
   // The draft comes from its own query: the gate above latches its first value and never
@@ -221,7 +223,24 @@ function BlueprintForm({ planId, datasetId, hasPromptPin, running, liveRun, subf
           title={running ? "A run is in progress on this plan" : "Have an LLM draft a blueprint from a description"}>
           Draft from a description…
         </button>
+        <button className="btn sm" disabled={running} data-testid="blueprint-copy-open" onClick={() => setCopying(true)}
+          title={running ? "A run is in progress on this plan" : "Use another plan's blueprint, from this dataset or another"}>
+          Copy from plan…
+        </button>
       </div>
+      {copying && (
+        <CopyFromPlanModal
+          kind="blueprint" datasetId={datasetId} planId={planId} replacing={!specIsEmpty}
+          onCopy={(v, sourceName) => {
+            // Saved by the autosave below, like any edit.
+            setSpec(v.spec);
+            setSeed(v.seed);
+            setCopying(false);
+            toast.success(`Copied the blueprint of "${sourceName}"`);
+          }}
+          onClose={() => setCopying(false)}
+        />
+      )}
       {/* Each section carries its own read-only fieldset, so it still collapses mid-run. */}
       <BlueprintAxesEditor axes={spec.axes} onChange={(axes) => setSpec({ ...spec, axes })}
         onRename={(from, to) => setSpec(renameRefs(spec, "axes", from, to))}

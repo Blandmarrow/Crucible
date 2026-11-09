@@ -36,6 +36,11 @@ edits the plan's blueprint.
   its cap. The pieces box cannot be stopped by `maxLength`, so it saves the first 100
   lines, each cut to 300 characters, and shows a warning for what it left out.
 - **Read-only while the plan runs.** A disabled `<fieldset>`, since Apply would 409 anyway.
+- **Copy from plan.** *Copy from plan…* (`blueprint-copy-open`, disabled while `running`)
+  opens `CopyFromPlanModal` with `kind="blueprint"` (`docs/dev/comfyui/page.md` § Frontend
+  owns the dialog). Its `onCopy` only calls `setSpec` and `setSeed` with a `structuredClone`
+  of the source; the autosave writes it, as for any edit. The draft and brief are not
+  copied, and no leaves or rows: Apply mints those for this plan.
 - **The outline draft.** *Draft from a description…* opens `OutlineModal`, which queues
   the `comfy_outline` job (`docs/dev/comfyui/structured-llm.md` § The outline call).
   - Like `GeneratePromptsModal`, it derives its job from `jobStore` and adds no
@@ -184,5 +189,6 @@ M6 §8a (`docs/dev/roadmap-archive/m6-comfy-automation.md`). The CSS is the `.bp
     (`docs/dev/persistence.md`), all open by default, which the e2e relies on.
 - **The jump bar** (`.bp-jump`, `blueprint-jump`) is sticky under the header in the left
   column: one button per section (it opens a folded one, then scrolls to it), *Collapse
-  all*, *Expand all* and *Draft from a description…* (`outline-open`). They are buttons,
+  all*, *Expand all*, *Draft from a description…* (`outline-open`) and *Copy from plan…*
+  (`blueprint-copy-open`). They are buttons,
   not `#hash` links: no router hash, and no duplicate ids when two panes show the page.

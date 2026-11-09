@@ -17,7 +17,7 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-09, GPU-thread fix merged)
+## Next session (updated 2026-11-09, Copy from plan pushed)
 
 0. **M9 comes first** ([decision 13](decisions/13-scale-work-first.md)): the checked findings
    of an outside scaling review, planned in [scale-plan/README.md](scale-plan/README.md).
@@ -41,6 +41,11 @@ restates its stages.
    restart to drop what the old process holds. **Follow-up, not started:**
    a first-run model download inside a loader now holds up every other GPU call; fetching
    the weights on the default pool before the load would end that.
+
+   **Copy from plan (2026-11-09):** pushed straight to `main` at the user's request, no PR.
+   The Workflow & Pins and Blueprint tabs each copy from another plan in any dataset,
+   through one dialog and the existing GET/PATCH/PUT routes ([comfyui/page.md](comfyui/page.md)
+   § Frontend, `CopyFromPlanModal`). Nothing open.
 1. **M6's loose ends are all closed** (item 5 below). On 2026-11-08 the Ctrl+C hand check
    passed, the folder-segment whitespace fix merged as PR #121 (decision 12, migration
    `b8d2f4a6c1e3`), and the M6 plan folder was retired by PR #122, a docs-only PR. **After

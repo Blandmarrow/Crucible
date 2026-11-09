@@ -17,7 +17,7 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-09, GPU-thread fix on its branch)
+## Next session (updated 2026-11-09, GPU-thread fix merged)
 
 0. **M9 comes first** ([decision 13](decisions/13-scale-work-first.md)): the checked findings
    of an outside scaling review, planned in [scale-plan/README.md](scale-plan/README.md).
@@ -34,11 +34,11 @@ restates its stages.
    the cap counts nothing and never stops a run. Only a stubbed `_Spent` is tested
    (`test_run_extend.py`). Fix it in its own change, with a test over real job rows.
 
-   **GPU work on one thread (PM-035), 2026-11-09:** on `fix/gpu-single-thread`, PR #131. Every
+   **GPU work on one thread (PM-035):** merged on 2026-11-09 as PR #131; the branch is deleted. Every
    load and inference call now goes through `device.run_on_gpu`, guarded in CI. Before it,
    a long scoring run left ~3 GB of VRAM on the card after every model had unloaded
-   ([ml-models.md](ml-models.md) § One GPU thread). After it merges, production on both
-   machines needs a restart to drop what the old process holds. **Follow-up, not started:**
+   ([ml-models.md](ml-models.md) § One GPU thread). Production on both machines needs a pull and a
+   restart to drop what the old process holds. **Follow-up, not started:**
    a first-run model download inside a loader now holds up every other GPU call; fetching
    the weights on the default pool before the load would end that.
 1. **M6's loose ends are all closed** (item 5 below). On 2026-11-08 the Ctrl+C hand check

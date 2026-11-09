@@ -34,7 +34,7 @@ restates its stages.
    the cap counts nothing and never stops a run. Only a stubbed `_Spent` is tested
    (`test_run_extend.py`). Fix it in its own change, with a test over real job rows.
 
-   **GPU work on one thread (PM-035), 2026-11-09:** on `fix/gpu-single-thread`. Every
+   **GPU work on one thread (PM-035), 2026-11-09:** on `fix/gpu-single-thread`, PR #131. Every
    load and inference call now goes through `device.run_on_gpu`, guarded in CI. Before it,
    a long scoring run left ~3 GB of VRAM on the card after every model had unloaded
    ([ml-models.md](ml-models.md) § One GPU thread). After it merges, production on both

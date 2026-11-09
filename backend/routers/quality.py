@@ -15,6 +15,7 @@ from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
+from backend.ml import device as _device
 from backend.ml.model_manager import ModelInUseError, model_manager
 from backend.ml.similarity_scorer import (
     DEFAULT_DINO_LAYER,
@@ -960,7 +961,6 @@ async def embed_references(files: list[UploadFile] = File(...)):
     from backend.ml.aesthetic_scorer import extract_clip_embedding_from_bytes_sync
 
     entry = await model_manager.load_aesthetic()
-    loop = asyncio.get_running_loop()
     embeddings = []
     # Held for every file: a scoring job's auto-unload (or the Unload button)
     # between two files would otherwise `del` the weights under the next one.
@@ -968,7 +968,7 @@ async def embed_references(files: list[UploadFile] = File(...)):
         for f in files:
             img_bytes = await f.read()
             fn = functools.partial(extract_clip_embedding_from_bytes_sync, img_bytes, entry.model)
-            emb_bytes = await loop.run_in_executor(None, fn)
+            emb_bytes = await _device.run_on_gpu(fn)
             embeddings.append(base64.b64encode(emb_bytes).decode())
     return {"embeddings": embeddings}
 

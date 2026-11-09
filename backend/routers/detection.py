@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.config import settings
 from backend.database import get_db
 from backend.licenses import copy_provenance
+from backend.ml import device as _device
 from backend.ml.mask_utils import detection_crop_rect, merge_detection_geometry
 from backend.ml.model_manager import model_manager
 from backend.models import BackgroundJob, Image
@@ -249,7 +250,7 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
                             body.point_labels,
                             gdino_threshold,
                         )
-                        detections = await loop.run_in_executor(None, fn)
+                        detections = await _device.run_on_gpu(fn)
                         inference_ok = True
                     except Exception:
                         logger.error("SAM2 prediction failed for %s", file_path, exc_info=True)
@@ -330,7 +331,7 @@ async def run_detection(body: DetectionJobRequest, db: AsyncSession = Depends(ge
                             body.custom_prompt,
                             sam3_threshold,
                         )
-                        detections = await loop.run_in_executor(None, fn)
+                        detections = await _device.run_on_gpu(fn)
                         inference_ok = True
                     except Exception:
                         logger.error("SAM3 prediction failed for %s", file_path, exc_info=True)
@@ -815,7 +816,7 @@ async def create_manual_detection(
                 fn = functools.partial(
                     predict_sync, file_path, sam2_entry.model, "box", "", None, None, 0.35, bbox,
                 )
-                detections = await loop.run_in_executor(None, fn)
+                detections = await _device.run_on_gpu(fn)
         except Exception:
             logger.error("Manual-box SAM2 prediction failed for %s", file_path, exc_info=True)
 
@@ -1339,7 +1340,7 @@ async def refine_detection(
                     refine_sync, file_path, sam2_entry.model, mask_json, bbox,
                     point_prompts, point_labels,
                 )
-                result = await loop.run_in_executor(None, fn)
+                result = await _device.run_on_gpu(fn)
         except Exception:
             logger.error("Mask refine failed for %s", file_path, exc_info=True)
 

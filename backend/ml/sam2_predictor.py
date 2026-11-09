@@ -1,4 +1,3 @@
-import asyncio
 import functools
 import json
 import logging
@@ -388,12 +387,11 @@ async def predict_batch(
     job_id: str | None = None,
 ) -> list[list[dict]]:
     """Async batch wrapper — runs predict_sync in a thread executor per image."""
-    loop = asyncio.get_event_loop()
     results = []
     for path in image_paths:
         fn = functools.partial(
             predict_sync, path, model_entry, mode, text_prompt, point_prompts, point_labels
         )
-        preds = await loop.run_in_executor(None, fn)
+        preds = await _device.run_on_gpu(fn)
         results.append(preds)
     return results

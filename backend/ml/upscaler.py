@@ -76,8 +76,8 @@ def upscale_image_sync(
 
     # Load or reuse cached model — handed back already leased, so an unload or an
     # LRU eviction (another load's `_evict_lru`) cannot `del` the weights under
-    # this image (GPT-032). Per image, not per job: a miss simply reloads, and the
-    # HTTP crop+upscale routes call this concurrently with the job worker.
+    # this image (GPT-032). Per image, not per job: a miss simply reloads. Every
+    # caller runs it on the single GPU thread (`device.run_on_gpu`, PM-035).
     entry = _ensure_upscaler_loaded(model_id, model_path, device)
     try:
         upscale_model = entry.model

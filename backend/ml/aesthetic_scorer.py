@@ -1,4 +1,3 @@
-import asyncio
 import functools
 import logging
 from collections.abc import Awaitable, Callable
@@ -107,7 +106,6 @@ async def score_images_watermark(
     from backend.workers.progress import broadcaster
     from backend.workers.job_queue import job_queue
 
-    loop = asyncio.get_event_loop()
     text_feats = _precompute_watermark_text_features(model_entry_dict)
     results = []
     total = len(image_paths)
@@ -117,7 +115,7 @@ async def score_images_watermark(
             break
         try:
             fn = functools.partial(score_watermark_sync, path, model_entry_dict, text_feats, watermark_threshold)
-            r = await loop.run_in_executor(None, fn)
+            r = await _device.run_on_gpu(fn)
         except Exception:
             # "Nothing measured", not a zero — the technical scorer's contract
             # (docs/dev/quality/scoring.md § The failure contract). A 0.0 here claimed the
@@ -177,7 +175,6 @@ async def extract_clip_embeddings_batch(
     from backend.workers.progress import broadcaster
     from backend.workers.job_queue import job_queue
 
-    loop = asyncio.get_event_loop()
     results = []
     total = len(image_paths)
 
@@ -186,7 +183,7 @@ async def extract_clip_embeddings_batch(
             break
         try:
             fn = functools.partial(extract_clip_embedding_sync, path, model_entry_dict)
-            r = await loop.run_in_executor(None, fn)
+            r = await _device.run_on_gpu(fn)
         except Exception:
             r = None
         results.append(r)
@@ -236,7 +233,6 @@ async def score_images_batch(
     else:
         score_one = score_image_sync
 
-    loop = asyncio.get_event_loop()
     scores: list[float | None] = []
     total = len(image_paths)
 
@@ -244,7 +240,7 @@ async def score_images_batch(
         if job_id and job_queue.cancel_requested(job_id):
             break
         try:
-            score = await loop.run_in_executor(None, score_one, path, model_handle)
+            score = await _device.run_on_gpu(score_one, path, model_handle)
         except Exception:
             # NULL, not 0.0 — the technical scorer's failure contract
             # (docs/dev/quality/scoring.md § The failure contract). `aesthetic_score` is

@@ -42,7 +42,7 @@ A model a job is using must not be released under it: `unload` runs `del entry.m
 
 Internal callers never see the refusal as a failure: `evict_all`, the scoring job's `finally` and `POST /quality/models/unload` all catch `ModelInUseError` per id, skip that id and report it as `in_use`.
 
-**A hard cancel can outlive a lease, harmlessly.** Only `JobQueue.stop()`'s `task.cancel()` can end an `await run_in_executor` while its thread is still running inference, so the lease exits before the thread does. `.cpu()` swaps `param.data`, so the thread's own references stay valid, and the process is exiting anyway. A user cancel is cooperative and lands between awaits, never under one.
+**A hard cancel can outlive a lease, harmlessly.** Only `JobQueue.stop()`'s `task.cancel()` can end an `await run_on_gpu` while its thread is still running inference, so the lease exits before the thread does. `.cpu()` swaps `param.data`, so the thread's own references stay valid, and the process is exiting anyway. Since every GPU call runs on one thread (`docs/dev/ml-models.md` § One GPU thread), the abandoned call also holds that thread until it returns, and any later GPU call queues behind it. That is equally harmless in a process that is exiting. A user cancel is cooperative and lands between awaits, never under one.
 
 ### Releasing an entry's weights
 

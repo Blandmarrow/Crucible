@@ -1,4 +1,3 @@
-import asyncio
 import logging
 
 from backend.ml.image_utils import preprocess_for_caption
@@ -78,5 +77,4 @@ async def caption_image(
     target_h: int | None = None,
 ) -> str:
     prompt = custom_prompt.strip() if custom_prompt.strip() else STYLE_PROMPTS.get(style, STYLE_PROMPTS["descriptive"])
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, infer_sync, image_path, model_entry, prompt, target_w, target_h)
+    return await _device.run_on_gpu(infer_sync, image_path, model_entry, prompt, target_w, target_h)

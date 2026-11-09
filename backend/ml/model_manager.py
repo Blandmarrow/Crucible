@@ -80,8 +80,9 @@ class ModelManager:
         self._registry: dict[str, ModelEntry] = {}
         self._locks: dict[str, asyncio.Lock] = {}
         self._global_lock = asyncio.Lock()
-        # threading.Lock protects _registry mutations inside executor threads,
-        # where asyncio.Lock is not usable (multiple models can load in parallel threads)
+        # threading.Lock: asyncio.Lock is not usable inside executor threads. Loads now run
+        # on the single GPU thread (`device.run_on_gpu`), but this lock still guards the
+        # registry against the event-loop thread (lease/unload/evict_all).
         self._sync_lock = threading.Lock()
         self.max_vram_mb = max_vram_mb
 
@@ -197,8 +198,8 @@ class ModelManager:
                 return entry
 
             _loop = loop or asyncio.get_event_loop()
-            entry = await _loop.run_in_executor(
-                None, self._load_florence2_sync, model_id, variant, job_id, _loop, dataset_id
+            entry = await _device.run_on_gpu(
+                self._load_florence2_sync, model_id, variant, job_id, _loop, dataset_id,
             )
             with self._sync_lock:
                 self._registry[model_id] = entry
@@ -311,8 +312,8 @@ class ModelManager:
                 return entry
 
             _loop = loop or asyncio.get_event_loop()
-            entry = await _loop.run_in_executor(
-                None, self._load_paligemma2_sync, job_id, _loop, dataset_id
+            entry = await _device.run_on_gpu(
+                self._load_paligemma2_sync, job_id, _loop, dataset_id,
             )
             with self._sync_lock:
                 self._registry[model_id] = entry
@@ -399,8 +400,8 @@ class ModelManager:
                 return entry
 
             _loop = loop or asyncio.get_event_loop()
-            entry = await _loop.run_in_executor(
-                None, self._load_joycaption_sync, model_id, variant, job_id, _loop, dataset_id
+            entry = await _device.run_on_gpu(
+                self._load_joycaption_sync, model_id, variant, job_id, _loop, dataset_id,
             )
             with self._sync_lock:
                 self._registry[model_id] = entry
@@ -482,8 +483,8 @@ class ModelManager:
                 entry.last_used = time.time()
                 return entry
             _loop = loop or asyncio.get_event_loop()
-            entry = await _loop.run_in_executor(
-                None, self._load_aesthetic_sync, job_id, _loop, dataset_id
+            entry = await _device.run_on_gpu(
+                self._load_aesthetic_sync, job_id, _loop, dataset_id,
             )
             with self._sync_lock:
                 self._registry[model_id] = entry
@@ -583,8 +584,8 @@ class ModelManager:
                 entry.last_used = time.time()
                 return entry
             _loop = loop or asyncio.get_event_loop()
-            entry = await _loop.run_in_executor(
-                None, self._load_aesthetic_v2_5_sync, job_id, _loop, dataset_id
+            entry = await _device.run_on_gpu(
+                self._load_aesthetic_v2_5_sync, job_id, _loop, dataset_id,
             )
             with self._sync_lock:
                 self._registry[model_id] = entry
@@ -663,8 +664,8 @@ class ModelManager:
                 entry.last_used = time.time()
                 return entry
             _loop = loop or asyncio.get_event_loop()
-            entry = await _loop.run_in_executor(
-                None, self._load_dino_sync, job_id, _loop, dataset_id
+            entry = await _device.run_on_gpu(
+                self._load_dino_sync, job_id, _loop, dataset_id,
             )
             with self._sync_lock:
                 self._registry[model_id] = entry
@@ -731,8 +732,8 @@ class ModelManager:
                 entry.last_used = time.time()
                 return entry
             _loop = loop or asyncio.get_event_loop()
-            entry = await _loop.run_in_executor(
-                None, self._load_nsfw_sync, job_id, _loop, dataset_id
+            entry = await _device.run_on_gpu(
+                self._load_nsfw_sync, job_id, _loop, dataset_id,
             )
             with self._sync_lock:
                 self._registry[model_id] = entry
@@ -807,8 +808,8 @@ class ModelManager:
             _loop = loop or asyncio.get_event_loop()
             from backend.ml.sam2_predictor import _load_sam2_sync
             self._evict_lru(1800)
-            entry = await _loop.run_in_executor(
-                None, _load_sam2_sync, job_id, _loop, dataset_id
+            entry = await _device.run_on_gpu(
+                _load_sam2_sync, job_id, _loop, dataset_id,
             )
             with self._sync_lock:
                 self._registry[model_id] = entry
@@ -829,8 +830,8 @@ class ModelManager:
             _loop = loop or asyncio.get_event_loop()
             from backend.ml.sam3_predictor import _load_sam3_sync
             self._evict_lru(3500)
-            entry = await _loop.run_in_executor(
-                None, _load_sam3_sync, job_id, _loop, dataset_id
+            entry = await _device.run_on_gpu(
+                _load_sam3_sync, job_id, _loop, dataset_id,
             )
             with self._sync_lock:
                 self._registry[model_id] = entry
@@ -851,8 +852,8 @@ class ModelManager:
             _loop = loop or asyncio.get_event_loop()
             from backend.ml.lama_inpainter import _load_lama_sync
             self._evict_lru(2000)
-            entry = await _loop.run_in_executor(
-                None, _load_lama_sync, job_id, _loop, dataset_id
+            entry = await _device.run_on_gpu(
+                _load_lama_sync, job_id, _loop, dataset_id,
             )
             with self._sync_lock:
                 self._registry[model_id] = entry
@@ -910,8 +911,8 @@ class ModelManager:
                 entry.last_used = time.time()
                 return entry
             _loop = loop or asyncio.get_event_loop()
-            entry = await _loop.run_in_executor(
-                None, self._load_tag_embedder_sync, job_id, _loop, dataset_id
+            entry = await _device.run_on_gpu(
+                self._load_tag_embedder_sync, job_id, _loop, dataset_id,
             )
             with self._sync_lock:
                 self._registry[model_id] = entry

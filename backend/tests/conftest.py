@@ -72,6 +72,21 @@ def _no_real_llm_server(monkeypatch):
     monkeypatch.setattr(run_service, "_LLM_TRANSPORT", httpx.MockTransport(_refuse))
 
 
+@pytest.fixture(autouse=True)
+def _fresh_gpu_thread():
+    """Give every test its own GPU thread (`device.run_on_gpu`, PM-035).
+
+    The executor is a module global, so one test's call left blocked on it — a
+    fake inference waiting on an Event the test never set, after a failure — would
+    make every later GPU path in the session hang instead of fail. Dropping it
+    without waiting leaves any stuck thread behind for that test alone.
+    """
+    yield
+    from backend.ml import device
+
+    device._reset_gpu_executor_for_tests(wait=False)
+
+
 @pytest.fixture
 def stub_aesthetic_scorer(monkeypatch):
     """Let a `quality_score` job run technical checks on the torch-free CI runner.

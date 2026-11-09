@@ -3,7 +3,7 @@
 The load-bearing test here is `test_a_three_label_image_appears_once`: the filter
 is built from correlated `EXISTS` clauses rather than a join precisely because
 `GET /images/count` runs the same shared builder over
-`select(func.count(Image.id))`. A join to `image_labels` would count a
+`select(func.count())`. A join to `image_labels` would count a
 three-label image three times and return its row three times in the grid — a
 regression that looks like nothing at all until someone puts two labels on one
 image.

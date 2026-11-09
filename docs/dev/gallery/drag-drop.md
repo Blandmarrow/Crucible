@@ -9,7 +9,7 @@ path to the file that owns it. The action modals the toolbar shares with this pa
 
 ## Manual image ordering
 
-`Image.sort_order: int | None` (nullable, default `NULL`) — stores the custom display position of an image within its `(dataset_id, subfolder)` scope. `NULL` means no custom order has been assigned; such images sort last (`NULLS LAST`) with `created_at ASC, id ASC` as a tiebreak.
+`Image.sort_order: int | None` (nullable, default `NULL`) — stores the custom display position of an image within its `(dataset_id, subfolder)` scope. `NULL` means no custom order has been assigned; such images sort last (`NULLS LAST`) with `rowid ASC` (insertion order) as a tiebreak, as every gallery sort has (`docs/dev/gallery/filters.md`).
 
 **Activation**: the gallery sort dropdown includes a **"Custom order"** option (`sort=sort_order`). When it is selected for the first time and no image in the current page has `sort_order` set, the frontend silently initialises order from the current page's arrangement by calling `PATCH /images/batch/reorder` with `pageOffset + index` values so that page 2+ images receive sort_orders starting at `(page-1)*pageSize` rather than 0.
 

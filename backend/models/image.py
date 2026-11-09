@@ -156,10 +156,11 @@ class Image(Base):
         Index("ix_images_dataset_caption_tokens", "dataset_id", "caption_token_count"),
         Index("ix_images_dataset_created_at", "dataset_id", "created_at"),
         Index("ix_images_dataset_caption", "dataset_id", "caption_text"),
-        # Frame lineage in video order. Covers both shapes the gallery asks for:
-        # filter-then-order ("frames from video X", sorted by timeline — the
-        # dominant use) and the unfiltered whole-dataset lineage sort, whose
-        # nulls-last ASC scan walks this index instead of sorting the table.
+        # Frame lineage in video order. Covers the filter-then-order shape
+        # ("frames from video X", sorted by timeline — the dominant use). It
+        # does not cover the unfiltered whole-dataset lineage sort, which an
+        # earlier comment here claimed: the index leads with `source_video_id`,
+        # so that sort is a full sort (`backend/tests/test_image_sort_plan.py`).
         # `ix_images_source_video_id` is now a redundant prefix of this; dropping
         # it would touch the delete-video NULLing UPDATE and `frames-summary`, so
         # it stays for now.

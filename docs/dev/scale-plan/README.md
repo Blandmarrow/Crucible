@@ -51,7 +51,7 @@ addendum of `backend/scripts/scaling_bottlenecks_report.md`, with the method and
 (raw SQLite, warm cache, one dataset). What it changed in this plan:
 
 - **Stage 1 shipped a regression.** A score sort went from 1.4 ms to 323 ms on page 1, and
-  to 4.5 s at a deep offset. Stage 9 is the fix; PM-036 is the record.
+  to 4.5 s at a deep offset. Stage 9 fixed it (PR #134); PM-036 is the record.
 - **The overflow cost is real and measured.** A pass that reads a column after the blobs
   costs 1.0–1.4 s per 100k rows, against about 0.3 s for one that does not. Stage 7 has its
   evidence, for a warm cache at least.
@@ -74,8 +74,9 @@ SQLite scans the dataset through an unrelated index and sorts all of it for ever
 "USE TEMP B-TREE FOR RIGHT PART OF ORDER BY" line this stage expected appears only for the
 `created_at` sort. A score sort gets `USE TEMP B-TREE FOR ORDER BY`, a full sort. The
 `EXPLAIN QUERY PLAN` check below was the right instinct, but nothing ran it at a row count
-where it shows. [Stage 9](#stage-9--give-the-score-sorts-their-index-back) is the fix, and
-`docs/dev/postmortems/PM-036-tie-breaker-cost-the-sort-index.md` the record.
+where it shows. [Stage 9](#stage-9--give-the-score-sorts-their-index-back) replaced the
+tail described below with `rowid` in the sort's own direction, and
+`docs/dev/postmortems/PM-036-tie-breaker-cost-the-sort-index.md` is the record.
 
 **Problem.** `_apply_image_ordering` (`backend/routers/images.py:420-456`) sorts by one
 column. Its `sort_order` and nulls-last branches break ties with `created_at`, which is not
@@ -382,6 +383,57 @@ user doc for the jobs list gains a line.
 
 Added 2026-11-09. It fixes stage 1's regression and waits on nothing. All times are from the
 report's 2026-11-09 addendum: 100k rows, warm cache, raw SQLite.
+
+**Done 2026-11-09** (PR #134), as below except where
+this note says otherwise. Detail: `docs/dev/gallery/filters.md`.
+
+- **Ids first for every sort, not only the unindexed ones** (item 4). On an indexed sort
+  it costs what the one-statement read did, so `list_images` has one code path:
+  `_page_ids_query`, then the rows by `IN`. One statement with an `IN (subquery)` was
+  tried and dropped: it re-sorts the page's whole rows, 6 to 10 ms slower on ComfyUI rows.
+- **`sort_order` reads its index** (item 3). `sort_order ASC NULLS LAST, rowid ASC` has no
+  sort step. The two lineage sorts have no usable index and stay a full sort, over ids.
+  `filename` takes the `rowid` tail like the rest; the plan is the same.
+- **`bulk_rename` takes the `rowid` tail too** (item 3). It is not paged and never needed
+  the index, so the first cut left its `created_at, id` key alone. A review caught what
+  that broke: Renumber is offered from the custom-order grid, whose unpositioned tail now
+  ties on `rowid`, so the files were numbered in an order the grid did not show wherever
+  `created_at` tied. One import ties many rows on Windows, where the clock is coarse.
+- **A rebuild keeps the order** (item 2). `VACUUM` renumbered nothing on SQLite 3.49.1,
+  so a vacuum test cannot fail there. The test that can is a table rebuild, the shape of
+  an Alembic batch migration, which does renumber and keeps the ties in order.
+- **The `ORDER BY` tail is asserted from the SQL.** With no tie-breaker at all, every
+  ascending paging test still passed, because an index walk returns ties in `rowid` order
+  by itself.
+- **`count(*)` pays only where the count is alone** (item 5). `GET /images/count` and the
+  `/ids` total gain. `_image_validator` and `refresh_stats` were changed and gain nothing
+  yet, since `max(updated_at)` and `sum(file_size_bytes)` still read every row. Stage 11's
+  index is what pays there. The other `count(Image.id)` sites were not touched. Which
+  covering index a bare count reads is the planner's pick among the `dataset_id` ones: the
+  narrow similarity index on a migrated database, the wide caption index on a
+  `create_all` one. Nothing pins it, so 1.7 ms is not a promise for long captions.
+- **The "slightly worse" case below does not happen.** The report timed `subfolder = ?`.
+  The route's filter is `sql_subtree`, an `OR` over `substr`, which no index serves, so
+  `main` scanned the dataset there too. Raw SQLite, a subfolder of 100 rows in 100,000:
+  57 ms against 59 ms.
+
+Through the ORM, on scratch databases built to the report's method (best of three, warm
+cache, `LIMIT 100`; `main`'s statement against this branch's two):
+
+| Query | `main` | Stage 9 |
+|---|---|---|
+| Aesthetic desc, page 1 (photo, 100k rows) | 287 ms | 3.0 ms |
+| Aesthetic desc, `OFFSET 60000` | 2,908 ms | 5.0 ms |
+| Created desc, page 1 | 1.2 ms | 2.4 ms |
+| Created desc, `OFFSET 90000` | 693 ms | 6.9 ms |
+| Width desc (no index), `OFFSET 60000` | 2,886 ms | 155 ms |
+| Aesthetic desc, page 1, one subfolder of 20 | 324 ms | 10.2 ms |
+| `count`, whole dataset | 268 ms | 1.7 ms |
+| Aesthetic desc, `OFFSET 10000` (ComfyUI, 20k rows) | 7,056 ms | 11.1 ms |
+| Created desc, page 1 (ComfyUI) | 9.8 ms | 10.8 ms |
+
+Page 1 of the default sort is the one request that got slower, by the cost of the second
+statement. Stage 6a's harness repeats these when it lands.
 
 **Problem.** Since stage 1, a sort on an indexed score column ends
 `created_at ASC, id ASC`. No index carries those two keys, and with them the planner stops

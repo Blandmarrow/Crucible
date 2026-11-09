@@ -71,13 +71,34 @@ sort gains a key, or changes a key's direction:
 
 ### Fix
 
-Not fixed yet. M9 stage 9 (`docs/dev/scale-plan/README.md` § Stage 9) is the planned
-change: break ties on `rowid` in the sort's own direction, which took the three queries
-above to 1.5 ms, 4.5 ms and 5.2 ms with no new index; pick ids first for the sorts that
-have no index; and add a test that reads the plan of every indexed sort and fails on a full
-sort.
+M9 stage 9 (`docs/dev/scale-plan/README.md` § Stage 9), merged 2026-11-09 as PR #134.
+Three parts, and no new index:
+
+- **Ties break on `rowid`, in the sort's own direction.** Every index entry already ends
+  with `rowid`, so `aesthetic_score DESC, rowid DESC` is the index read backwards.
+  `_apply_image_ordering` applies the one rule to every branch.
+- **`GET /images/` picks the page's ids first, then loads those rows.** Thirteen sort
+  columns have no index and still sort the dataset; the sorter now holds an id per row.
+- **`backend/tests/test_image_sort_plan.py` reads the plan.** Each sort field is listed as
+  indexed or unindexed. An indexed one fails on a `TEMP B-TREE` step, an unindexed one
+  fails without it, and an unlisted one fails until it is classified. Run against the old
+  ordering, the plan it reads is the full sort above.
+
+Timed through the ORM on scratch databases shaped like the table above (best of three,
+warm cache, `LIMIT 100`):
+
+| Query | Before | After |
+|---|---|---|
+| Aesthetic, best first, page 1 | 287 ms | 3.0 ms |
+| The same, `OFFSET 60000` | 2,908 ms | 5.0 ms |
+| The same, `OFFSET 10000`, 20,000 ComfyUI images | 7,056 ms | 11.1 ms |
+
+One request got slower: page 1 of the default sort (`created_at`, newest first) went from
+1.2 ms to 2.4 ms, the price of the second statement. `docs/dev/gallery/filters.md` holds the
+rule as it now stands.
 
 ### Status & date
 
-LIVE — found 2026-11-09, fix planned as M9 stage 9.
+MITIGATED — found 2026-11-09, fixed the same day by M9 stage 9. The guard test covers the
+gallery's sorts only; another paged query that gains an `ORDER BY` key has no guard.
 Last reviewed for staleness: 2026-11-09.

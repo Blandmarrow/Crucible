@@ -71,8 +71,8 @@ sort gains a key, or changes a key's direction:
 
 ### Fix
 
-M9 stage 9 (`docs/dev/scale-plan/README.md` § Stage 9), implemented 2026-11-09 on
-`fix/m9-stage9-sort-index`. Three parts, and no new index:
+M9 stage 9 (`docs/dev/scale-plan/README.md` § Stage 9), merged 2026-11-09 as PR #134.
+Three parts, and no new index:
 
 - **Ties break on `rowid`, in the sort's own direction.** Every index entry already ends
   with `rowid`, so `aesthetic_score DESC, rowid DESC` is the index read backwards.

@@ -51,8 +51,7 @@ addendum of `backend/scripts/scaling_bottlenecks_report.md`, with the method and
 (raw SQLite, warm cache, one dataset). What it changed in this plan:
 
 - **Stage 1 shipped a regression.** A score sort went from 1.4 ms to 323 ms on page 1, and
-  to 4.5 s at a deep offset. Stage 9 fixed it (implemented 2026-11-09); PM-036 is the
-  record.
+  to 4.5 s at a deep offset. Stage 9 fixed it (PR #134); PM-036 is the record.
 - **The overflow cost is real and measured.** A pass that reads a column after the blobs
   costs 1.0–1.4 s per 100k rows, against about 0.3 s for one that does not. Stage 7 has its
   evidence, for a warm cache at least.
@@ -385,7 +384,7 @@ user doc for the jobs list gains a line.
 Added 2026-11-09. It fixes stage 1's regression and waits on nothing. All times are from the
 report's 2026-11-09 addendum: 100k rows, warm cache, raw SQLite.
 
-**Done 2026-11-09** on `fix/m9-stage9-sort-index` (not yet merged), as below except where
+**Done 2026-11-09** (PR #134), as below except where
 this note says otherwise. Detail: `docs/dev/gallery/filters.md`.
 
 - **Ids first for every sort, not only the unindexed ones** (item 4). On an indexed sort

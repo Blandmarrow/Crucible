@@ -135,3 +135,128 @@ different algorithm. At 1M the dedup pass now
 costs ~3.5 min inside a quality-scoring job whose per-image ML inference
 dominates by orders of magnitude, so finding 1 is closed and the next
 bottlenecks are findings 2 (pagination indexes) and 3 (stats aggregation).
+
+## Addendum 2026-11-09 — a partial stage 6 run, by hand
+
+A review of the roadmap timed the hot query shapes ahead of M9 stage 6
+(`docs/dev/scale-plan/README.md`). It is **partial**: raw SQL through Python's `sqlite3`
+(SQLite 3.49.1), with no SQLAlchemy, Pydantic or HTTP on top, so every number is a floor for
+what a request costs. The scripts were scratch files and are not in the repo. Stage 6a
+rebuilds them into `bench_scaling.py` from the method below.
+
+**Method.**
+
+- The scratch DB takes its `images` DDL (table and all 13 indexes) from a migrated
+  database's `sqlite_master`, not from `create_all`. So the three embedding blobs are
+  columns 27–29 of 48, with 19 columns after them, as in a real install.
+- **Photo-shaped:** 100,000 rows in one dataset, 1.75 GB. 70% of rows are scored and carry
+  all three blobs (1,536 + 1,536 + 18,432 bytes). 80% have a caption of about 270
+  characters. `generation_metadata` is 400 bytes.
+- **ComfyUI-shaped:** 20,000 rows, 1.45 GB, the same but with a 55,000-byte
+  `generation_metadata`. The dev DB's ComfyUI dataset averages 54,895 bytes a row (largest
+  58,921).
+- **Split layout:** the photo DB with the three blobs moved to a table of their own and the
+  file vacuumed. It stands in for stage 7.
+- Each time is the best of three runs. Python's default page cache applies (2 MB), which is
+  what the app runs with.
+
+**Caveats.** The disk cache was warm, so a cold start is worse, and worst for the scans
+that walk overflow pages. One dataset holds every row. No `ANALYZE` had run unless a row
+says so, which matches the app (it never runs one). The machine is the owner's Windows dev
+box; compare rows with each other, not with the July tables.
+
+### Gallery sorts and deep pages
+
+`TODAY` is the order `_apply_image_ordering` builds since stage 1 (`created_at ASC, id ASC`
+after the sort column). `ROWID` breaks ties on `rowid` in the sort's own direction. Each
+query selects every non-deferred column, `LIMIT 100`.
+
+| Query (photo DB, 100k rows) | TODAY | ROWID |
+|---|---|---|
+| Aesthetic desc, page 1 | 323.3 ms | 1.5 ms |
+| Aesthetic desc, `OFFSET 60000` | 4,508.6 ms | 4.5 ms |
+| Aesthetic asc, page 1 (30k NULL ties first) | 311.4 ms | 0.5 ms |
+| Blur desc, `OFFSET 60000` | not run | 4.2 ms |
+| Created desc, page 1 | 0.6 ms | 0.5 ms |
+| Created desc, `OFFSET 90000` | 713.2 ms | 5.8 ms |
+| Aesthetic desc, page 1, one subfolder of 20 | 21.8 ms | 27.3 ms |
+
+| Query (ComfyUI DB, 20k rows) | TODAY | ROWID |
+|---|---|---|
+| Aesthetic desc, page 1 | 211.4 ms | not run |
+| Aesthetic desc, `OFFSET 10000` | 6,902.3 ms | 5.2 ms |
+
+- **The plan.** `TODAY` on a score sort reads
+  `SEARCH images USING INDEX ix_images_dataset_similarity (dataset_id=?)` then
+  `USE TEMP B-TREE FOR ORDER BY`: it ignores the aesthetic index and sorts the whole
+  dataset, full rows included. A copy of the real dev DB picks the same plan. `ROWID` reads
+  `SEARCH images USING INDEX ix_images_dataset_aesthetic` with no sort step.
+- **Before stage 1** (`ORDER BY aesthetic_score DESC` alone): 1.4 ms, on the aesthetic index.
+- **`ANALYZE` does not fix it.** With `analysis_limit=1000` the plan and time were unchanged
+  (327.4 ms). After a full `ANALYZE` the planner switched to the `created_at` index and
+  still sorted everything (148.6 ms on page 1, 4,183.9 ms at `OFFSET 60000`).
+- **A wider index does not fix the descending sort either.** With
+  `(dataset_id, aesthetic_score, created_at, id)` the ascending sort took 0.5 ms and the
+  descending one stayed at 146–148 ms, because `DESC, ASC, ASC` matches the index in neither
+  direction.
+- **Forcing the index** (`INDEXED BY ix_images_dataset_aesthetic`, today's order): 1.5 ms
+  descending, 72.7 ms ascending. So the planner's choice is the cost, not the index.
+- **Ids first, then rows** (`WHERE id IN (SELECT id … ORDER BY … LIMIT … OFFSET …)`), with
+  today's order: aesthetic at `OFFSET 60000` 314.3 ms (after `ANALYZE`); created at
+  `OFFSET 90000` 138.2 ms. With a covering index for the inner query: 12.0 ms and 15.3 ms.
+  This is the fallback for the sort columns that have no index.
+- **The one case `ROWID` loses**: with a narrow subfolder filter the planner still walks
+  the aesthetic index and filters (27.3 ms against 21.8 ms).
+
+### Counts and the Stats cache check
+
+| Query (photo DB, 100k rows) | Time |
+|---|---|
+| `count(id)`, one dataset | 291.9 ms |
+| `count(*)`, one dataset | 3.4 ms |
+| `count(id)`, one subfolder | 14.8 ms |
+| `count(*)`, one subfolder | 0.1 ms |
+| Validator `count(id), max(updated_at)` | 294.0 ms |
+| Validator as `count(*), max(updated_at)` with an index on `(dataset_id, updated_at)` | 7.1 ms |
+
+`count(id)` reads the table once per row, because `id` is in no index the planner picks.
+`count(*)` is answered from the index alone (`USING COVERING INDEX`).
+
+### The Stats page's passes
+
+| Pass (100k rows) | Today's layout | Split layout |
+|---|---|---|
+| Validator (runs twice per page open) | 294.0 ms | 249.9 ms |
+| `get_dataset_stats` 15-column row fetch | 1,231.6 ms | 460.7 ms |
+| `get_score_values` 14-column row fetch | 1,218.6 ms | 456.0 ms |
+| Coverage counts (columns before the blobs) | 295.2 ms | 251.8 ms |
+| `aesthetic_model` group (a column after the blobs) | 1,034.3 ms | 269.2 ms |
+| Eight flag sums (`json_extract`) | 333.8 ms | 288.0 ms |
+| Embedding count | 298.9 ms | 252.1 ms |
+| License group | 320.6 ms | 271.1 ms |
+| **All nine, as the page runs them** | **about 5.3 s** | **about 2.7 s** |
+| One aggregate query: every histogram, count, mean and flag | 1,377.1 ms | 528.3 ms |
+| The same, forced to table order (`NOT INDEXED`) | 1,105.3 ms | 325.4 ms |
+
+- **Binning in SQL is not faster than fetching the rows** (1,377 ms against 1,232 ms). The
+  cost is reaching the columns that sit after the blobs: a pass that reads only columns
+  before them takes about 0.3 s, one that reads any column after them about 1.0–1.4 s.
+- **One pass against nine** is the saving that needs no schema change: about 5.3 s to 1.4 s.
+- **The split layout** takes that one pass to 0.33–0.53 s.
+- **ComfyUI DB, 20k rows:** the one aggregate pass took 707.6 ms, about 35 µs a row against
+  14 µs on the photo DB, because each row's overflow chain is about 77 KB long.
+
+### Row width on the read paths
+
+| Measure | Value |
+|---|---|
+| One gallery page of 100 ComfyUI rows, text columns | 5.6 MB |
+| `json.loads` of that page's JSON columns | 4.3 ms (0.3 ms without `generation_metadata`) |
+| 2,000 lookups by id, every non-deferred column, photo DB | 86.0 ms |
+| The same, ComfyUI DB | 136.7 ms |
+| 2,000 lookups by id, `thumbnail_path, file_path` only, either DB | 55–58 ms |
+
+### What this run does not cover
+
+Cold-cache times, 250k and 1M rows, several datasets of mixed size, filters beyond one
+subfolder, the ORM and HTTP layers, and peak memory. Those are stage 6a and 6b.

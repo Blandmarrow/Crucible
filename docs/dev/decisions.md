@@ -111,5 +111,14 @@ record:
 **Decided** (2026-11-08, by the user) that milestone M9, the checked findings of an outside
 scaling review, goes ahead of every other open milestone; **Leaning** on what it leaves out:
 cursor paging before a measurement, a job checkpoint system, keychain-stored keys, broad
-router splits, and new infrastructure. Full record:
+router splits, and new infrastructure. Amended 2026-11-09: M9 gained stages 9 to 11. Full
+record:
 [decisions/13-scale-work-first.md](decisions/13-scale-work-first.md).
+
+## 14. Job throughput is its own milestone
+
+**Decided** (2026-11-09, by the user) that job throughput is milestone M10, after M9 and
+before M7; **Leaning** on how it is built: CPU-only work first, the GPU scorers' decode
+change only after a timing, and no batched forward passes. PM-035's one-GPU-thread rule is
+not reopened. Full record:
+[decisions/14-job-throughput-is-its-own-milestone.md](decisions/14-job-throughput-is-its-own-milestone.md).

@@ -11,7 +11,8 @@ M7 style port and M6 (ComfyUI structured generation and automated runs, PR #110)
 M4, the rating feature, is ported on `feat/m4-rating-port` but held unmerged until the user
 decides to ship it; it re-parents onto `main`'s migration head when it does. M9, scale and data
 safety (`docs/dev/scale-plan/README.md`, decision 13), now comes before every other open
-milestone. Order and the session handoff are in `docs/dev/roadmap.md`.
+milestone, and M10, job throughput (`docs/dev/throughput-plan/README.md`, decision 14),
+follows it. Order and the session handoff are in `docs/dev/roadmap.md`.
 
 ## Commands
 
@@ -232,8 +233,8 @@ substantial edit.
 | `docs/dev/server-start.md` | Working on the bind address or `--lan`, or the startup splash at launch — `bind_host.py`/`CRUCIBLE_HOST` precedence, `splash_server.py`'s handover to uvicorn | ~1300 |
 | `docs/dev/comfyui.md` | **Start here for anything ComfyUI** — the `comfy` router, `comfy_service.py` and ComfyClient, plans, pins and prompt rows, the `comfy_generate` run and the fake ComfyUI, `ComfyPage`, the prompt library panel, Copy to plan and drag and drop, LLM prompt generation (`prompt_generator.py`), blueprints (`comfy_leaves`, `blueprint_expand.py`/`blueprint_service.py`, Apply, Top up, the `comfy_outline` draft job, the `comfy_rewrite` prose pass and `prompt_origin`), workflow sync and the bridge extension, automated runs (`Run`, `run_service.py`, `advance_run`, the Runs page) and their goal loop (`next_pass`, the gate and `rejects/`, budgets, the paid-call cap, carrying on past a cap), the snapshot stage, the dry run and shared start check (`plan_run`), run recipes (`run_recipes`, export/import) and the remembered start form; its § Where things live table routes from a code path to the file in `docs/dev/comfyui/` that owns it | ~1700 (+ details) |
 | `docs/dev/postmortems.md` | Doing a code review or investigating a bug — the postmortem index: past incidents as one-line rows with LIVE/MITIGATED/STRUCTURAL status, linking `docs/dev/postmortems/` | ~2450 |
-| `docs/dev/roadmap.md` | Deciding what to work on next, landing a task, or picking up a branch mid-way — order and dependencies of open work and the dated "Next session" handoff; tick it in the same session | ~3300 |
-| `docs/dev/decisions.md` | Asking *why* the project does X, or proposing to change direction — the decision log: what was decided, by whom, and what was rejected | ~850 |
+| `docs/dev/roadmap.md` | Deciding what to work on next, landing a task, or picking up a branch mid-way — order and dependencies of open work and the dated "Next session" handoff; tick it in the same session | ~2950 |
+| `docs/dev/decisions.md` | Asking *why* the project does X, or proposing to change direction — the decision log: what was decided, by whom, and what was rejected | ~900 |
 | `docs/dev/multiple-installs.md` | Running a second install, on this machine or another — ports per install, the never-share-a-datasets-folder rule, datasets on a network share, moving a database between machines, running as a systemd service | ~600 |
 
 ### Code review & bug investigation

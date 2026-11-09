@@ -47,3 +47,21 @@
   - **Postgres, a vector database, or a distributed queue.** The July report and this
     review agree: none of the findings is a database-engine limit, and each adds a service
     that a single-user local app should not need.
+- **Amendments:**
+  - **2026-11-09.** A review timed the hot queries on a scratch database with the migrated
+    column order (the last addendum of `backend/scripts/scaling_bottlenecks_report.md`).
+    At the user's request its findings went onto the roadmap, and M9 gained three stages:
+    stage 9 (stage 1's tie-breaker cost the score sorts their index; PM-036), stage 10 (an
+    automated run's paid-call cap counts no caption calls) and stage 11 (hot-path quick
+    wins). Stage 6 was split into a harness half before stage 4 and a numbers half after
+    it, stage 4's design was amended, and stage 7 now covers `generation_metadata` as well
+    as the embeddings. The order of what is left is 9, 10, 6a, 4, 11, 6b, 7. These are the
+    review's recommendations and carry the same **Leaning** status as the list above.
+  - **2026-11-09, cursor paging.** The first rejected alternative said to revisit it after
+    stage 6's numbers. The partial run gives one: with the sort following its index, a
+    page 60,000 rows deep costs about 5 ms at 100k rows, because skipping rows only steps
+    index entries. Numbered pages stay, and cursor paging stays rejected. The 1M figure is
+    still owed by stage 6b.
+  - **2026-11-09, order.** Job throughput became M10, directly after M9
+    ([decision 14](14-job-throughput-is-its-own-milestone.md)). It sits between M9 and M7;
+    the other open milestones keep their own order.

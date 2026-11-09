@@ -17,15 +17,16 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-09, review findings recorded)
+## Next session (updated 2026-11-09, stage 9 implemented)
 
 0. **M9 comes first** ([decision 13](decisions/13-scale-work-first.md)), planned in
    [scale-plan/README.md](scale-plan/README.md). Stages 1–3, 5 and 8 are merged. A review on
    2026-11-09 timed the hot queries on a scratch database with the migrated column order and
    added stages 9–11 (decision 13's amendment; the numbers are in the plan's Evidence base).
-   **Next is stage 9**, which waits on nothing: stage 1's tie-breaker cost the gallery's
-   score sorts their index, so each page of a score sort now sorts the whole dataset
-   (PM-036, LIVE). The order after it is **9 → 10 → 6a → 4 → 11 → 6b → 7**. See M9 below.
+   Stage 9 is implemented on `fix/m9-stage9-sort-index` (PM-036, now MITIGATED) and waits
+   for its merge. **Next is stage 10**, which waits on nothing: an automated run's paid-call
+   cap counts no caption calls. The order after it is **10 → 6a → 4 → 11 → 6b → 7**. See M9
+   below.
 1. **M10, job throughput, follows M9**
    ([decision 14](decisions/14-job-throughput-is-its-own-milestone.md)). After it comes M7:
    the CLIP QuickGELU plan or Stage 3, neither of which waits on anything (see M7 below).
@@ -114,10 +115,10 @@ Comes before every other open milestone
 ([decision 13](decisions/13-scale-work-first.md)). Gate: stages 1–5 and 9–11 merged with
 their tests and docs, and stage 6's numbers recorded; stage 7 is then built or ruled out by
 a decision. Plan: [scale-plan/README.md](scale-plan/README.md). Does not wait for M4, which
-lands second and resolves the overlap. Order of what is left: 9, 10, 6a, 4, 11, 6b, 7.
+lands second and resolves the overlap. Order of what is left: 10, 6a, 4, 11, 6b, 7.
 
 - [x] Stage 1: a unique tie-breaker (`Image.id`) for every gallery sort. Merged 2026-11-08
-  as PR #124. It cost the score sorts their index (PM-036); stage 9 is the fix.
+  as PR #124. It cost the score sorts their index (PM-036); stage 9 fixed that.
 - [x] Stage 2: the startup orphan sweep moves folders into `.orphaned/` instead of deleting
   them. Merged 2026-11-08 as PR #125: only a tree with no file is deleted (the user's call),
   and dot-named folders are skipped. Detail: `docs/dev/database.md` § The sweep moves data
@@ -144,8 +145,11 @@ lands second and resolves the overlap. Order of what is left: 9, 10, 6a, 4, 11, 
   (a retry resumes; failed and cancelled jobs; none for a run's child, by the user's calls),
   hand-checked through the API and the page. Detail:
   `docs/dev/backend-infrastructure.md` § Retrying a stopped job.
-- [ ] Stage 9: give the gallery's score sorts their index back (PM-036), with `count(*)` for
-  the gallery count and a guard test that reads the query plan. Waits on nothing; next.
+- [x] Stage 9: give the gallery's score sorts their index back (PM-036), with `count(*)` for
+  the gallery count and a guard test that reads the query plan. Implemented 2026-11-09 on
+  `fix/m9-stage9-sort-index`, not yet merged: every sort breaks ties on `rowid` in its own
+  direction, and `GET /images/` picks a page's ids before it loads the rows. Detail:
+  `docs/dev/gallery/filters.md`.
 - [ ] Stage 10: make an automated run's paid-call cap count caption calls. `run_service._spent`
   sums `done_items` over the run's `caption` children, and no caption job writes
   `done_items`, so the caption half of the cap counts nothing and never stops a run. Only a

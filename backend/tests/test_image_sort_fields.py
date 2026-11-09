@@ -131,7 +131,7 @@ def test_shot_order_sorts_ascending_with_non_frames_last(tmp_path):
     run(scenario())
 
 
-def test_equal_timestamps_break_ties_by_created_at(tmp_path):
+def test_equal_timestamps_break_ties_by_insertion_order(tmp_path):
     """Two frames cut from the same held shot share a timestamp. Without the
     tiebreak their relative order is SQLite's scan order, so the gallery reshuffles
     between two identical requests."""
@@ -152,7 +152,7 @@ def test_equal_timestamps_break_ties_by_created_at(tmp_path):
                 assert r.status_code == 200, r.text
                 seen.add(tuple(_names(r.json())))
             assert len(seen) == 1, f"unstable ordering across identical requests: {seen}"
-            # Upload order is created_at order, which is the declared tiebreak.
+            # Upload order is rowid order, which is the declared tiebreak.
             assert seen.pop() == ("first.png", "second.png", "third.png")
 
     run(scenario())

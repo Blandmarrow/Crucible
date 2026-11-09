@@ -8,7 +8,7 @@ from typing import Annotated, Any
 from uuid import uuid4
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
-from sqlalchemy import and_, case, delete, func, or_, select, update as sa_update
+from sqlalchemy import and_, case, delete, func, literal_column, or_, select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import undefer
 
@@ -144,9 +144,19 @@ _ALLOWED_SORT_FIELDS = _ALLOWED_SCORE_FIELDS | {
 
 # Lineage sorts need nulls-last, or an ASC sort would float every non-frame
 # image to the top. Every gallery sort (this branch included) ends with
-# `created_at ASC, id ASC`, so OFFSET paging is deterministic: ties are never
-# left to SQLite's scan order.
+# `_ROWID` in the sort's own direction, so OFFSET paging is deterministic: ties
+# are never left to SQLite's scan order.
 _NULLS_LAST_SORT_FIELDS = frozenset({"source_timestamp_ms", "source_shot_index"})
+
+# The tie-breaker every gallery sort ends with. `Image.id` is a string key, so
+# `images` keeps SQLite's hidden integer `rowid`, and every index entry already
+# ends with it: `ORDER BY aesthetic_score DESC, rowid DESC` is exactly
+# `ix_images_dataset_aesthetic` read backwards, with no sort step. Any other
+# tie-breaker (`created_at`, `id`) is in no index after a score, and with one
+# the planner drops the score's index and sorts the whole dataset for each page
+# (PM-036). SQLAlchemy has no attribute for `rowid`, hence the literal — which
+# names the table, so it works on a plain `Image` select and not on an alias.
+_ROWID = literal_column("images.rowid")
 
 def _apply_bulk_filters(query, image_ids, subfolder, quality_flags, include_flagged: bool = False):
     if image_ids is not None:
@@ -194,8 +204,9 @@ def _apply_image_filters(q, f: ImageFilterParams):
     Shared verbatim by the three endpoints that must describe the same view —
     `GET /images/`, `GET /images/count` and `GET /images/ids` — so a filter
     reaches all three or none. Takes any select shape: the license block's
-    `join(Dataset, …)` carries a `select(func.count(Image.id))` as happily as a
-    `select(Image)`, and no clause here depends on the columns selected.
+    `join(Dataset, …)` carries `_count_query`'s `select(func.count())` as
+    happily as a `select(Image)`, and no clause here depends on the columns
+    selected.
 
     The two 400s live here rather than in the routes so bad input is rejected
     identically by all three; a count that silently ignored an invalid
@@ -333,7 +344,7 @@ def _apply_image_filters(q, f: ImageFilterParams):
 
     # Labels — the second facet alongside the subfolder tree. Correlated EXISTS
     # only (built by `label_service.label_filter_clause`), never a join: `/count`
-    # runs this same builder over `select(func.count(Image.id))`, so a join to
+    # runs this same builder over `select(func.count())`, so a join to
     # `image_labels` would count a two-label image twice and duplicate its row in
     # `/images/`. The license block below stays the only one that mutates the
     # FROM clause, and stays last.
@@ -426,9 +437,19 @@ def _apply_image_ordering(q, sort: str, order: str):
     apply after every filter even though this block used to sit between two of
     them: `where` clauses accumulate order-independently.
 
-    Every ordering ends `created_at ASC, id ASC` (`id` is unique), so ties such
-    as NULL scores or equal timestamps cannot make OFFSET paging repeat or skip
-    an image. The `created_at` key is omitted when it is the sort column itself.
+    Every ordering ends with `_ROWID` **in the sort's own direction**, so ties
+    such as NULL scores or equal timestamps cannot make OFFSET paging repeat or
+    skip an image, and a sort on an indexed column still reads straight off its
+    index (PM-036; `backend/tests/test_image_sort_plan.py` reads the plan of
+    every sort and fails on a lost index).
+
+    What `rowid` promises: it is unique at any moment, which is all paging needs
+    between two requests. It is not permanent — a `VACUUM` or a table rebuild
+    in a migration may renumber it — but both copy the table in `rowid` order,
+    so the *order* of ties survives. Ties therefore fall in insertion order,
+    reversed under a descending sort.
+
+    `q` must select from the plain `Image` table: `_ROWID` names `images`.
     """
     # Coerce rather than 400: an unknown name already fell back today, and a
     # stale persisted `sortIdx` must degrade to a working gallery.
@@ -441,20 +462,42 @@ def _apply_image_ordering(q, sort: str, order: str):
         # something the drag-and-drop grid can mean. This branch matches first,
         # which is why `sort_order` is absent from `_NULLS_LAST_SORT_FIELDS`
         # below: an entry there could never be reached.
-        return q.order_by(
-            Image.sort_order.asc().nulls_last(), Image.created_at.asc(), Image.id.asc(),
-        )
+        return q.order_by(Image.sort_order.asc().nulls_last(), _ROWID.asc())
+    descending = order == "desc"
+    direction = sort_col.desc() if descending else sort_col.asc()
+    tie_breaker = _ROWID.desc() if descending else _ROWID.asc()
     if sort in _NULLS_LAST_SORT_FIELDS:
         # NULL here means "not a video frame", which belongs at the end whichever
-        # direction the frames run in, with `created_at` breaking the ties that
-        # two frames at the same timestamp or in the same shot would otherwise
-        # leave to SQLite's scan order.
-        direction = sort_col.desc() if order == "desc" else sort_col.asc()
-        return q.order_by(direction.nulls_last(), Image.created_at.asc(), Image.id.asc())
-    direction = sort_col.desc() if order == "desc" else sort_col.asc()
-    if sort == "created_at":
-        return q.order_by(direction, Image.id.asc())
-    return q.order_by(direction, Image.created_at.asc(), Image.id.asc())
+        # direction the frames run in. The tie-breaker settles the order of two
+        # frames at the same timestamp or in the same shot, which would otherwise
+        # be SQLite's scan order.
+        return q.order_by(direction.nulls_last(), tie_breaker)
+    # `filename` is unique within a dataset and needs no tie-breaker. It takes
+    # one anyway: the plan is the same, and one rule has no special case to
+    # forget when a route stops filtering by dataset.
+    return q.order_by(direction, tie_breaker)
+
+
+def _ordered_ids_query(f: ImageIdsParams):
+    """Every id `f` matches, in the gallery's order. `GET /images/ids` caps it
+    and `_page_ids_query` pages it, so the two cannot order differently."""
+    return _apply_image_ordering(_apply_image_filters(select(Image.id), f), f.sort, f.order)
+
+
+def _page_ids_query(f: ImageListParams):
+    """The ids of one gallery page, in order — the only statement that sorts.
+
+    `list_images` picks the page's ids here and loads those rows afterwards. On
+    an indexed sort this walks the index and costs what the one-statement form
+    did. On a sort with no index SQLite must sort the dataset, and what it sorts
+    is then an id per row and not the row: a deep page of a width sort took
+    2.9 s with whole rows in the sorter and 155 ms with ids (100,000 rows).
+    Two statements rather than one with an `IN (subquery)`: that form has to
+    re-sort the page's whole rows to return them in order, which cost 6 to 10 ms
+    more a page on ComfyUI-sized rows. A separate function so the plan guard
+    explains this exact statement.
+    """
+    return _ordered_ids_query(f).offset((f.page - 1) * f.limit).limit(f.limit)
 
 
 @router.get("/", response_model=list[ImageListItem])
@@ -462,10 +505,19 @@ async def list_images(
     f: Annotated[ImageListParams, Query()],
     db: AsyncSession = Depends(get_db),
 ):
-    q = _apply_image_ordering(_apply_image_filters(select(Image), f), f.sort, f.order)
-    q = q.offset((f.page - 1) * f.limit).limit(f.limit)
-    result = await db.execute(q)
-    images = result.scalars().all()
+    page_ids = (await db.execute(_page_ids_query(f))).scalars().all()
+    images: list[Image] = []
+    if page_ids:
+        # `ImageListParams.limit` is capped at 500, so this `IN` never needs
+        # chunking. Put back in page order here; a row deleted between the two
+        # statements simply drops out.
+        by_id = {
+            img.id: img
+            for img in (await db.execute(
+                select(Image).where(Image.id.in_(page_ids))
+            )).scalars()
+        }
+        images = [by_id[i] for i in page_ids if i in by_id]
 
     # Stamp the effective license onto each row for the gallery badge. One
     # extra lookup for the whole page, not per image.
@@ -487,6 +539,19 @@ async def list_images(
     return out
 
 
+def _count_query(f: ImageFilterParams):
+    """How many images `f` matches.
+
+    `count(*)`, never `count(Image.id)`: `id` is in no index the planner picks,
+    so counting it visits the table once per row, while `count(*)` is answered
+    from an index alone (292 ms against 3.4 ms for a dataset of 100,000 rows).
+    The two agree because `id` is never NULL and no filter multiplies rows:
+    labels and detections are EXISTS clauses, and the license block's join to
+    `Dataset` is many-to-one.
+    """
+    return _apply_image_filters(select(func.count()).select_from(Image), f)
+
+
 # Both of these must stay **above** `GET /{image_id}`, or FastAPI matches
 # `count`/`ids` as an image id and answers 404.
 @router.get("/count")
@@ -496,8 +561,7 @@ async def count_images(
 ):
     """How many images the current filters match — the number behind the
     pagination row and the select-all offer. No ordering, no paging."""
-    q = _apply_image_filters(select(func.count(Image.id)), f)
-    return {"count": (await db.execute(q)).scalar_one()}
+    return {"count": (await db.execute(_count_query(f))).scalar_one()}
 
 
 @router.get("/ids")
@@ -512,12 +576,11 @@ async def list_image_ids(
     cap, `count` is the true total (a second query) rather than the trimmed
     length, so the UI can say "the first 20,000 of 84,113".
     """
-    q = _apply_image_ordering(_apply_image_filters(select(Image.id), f), f.sort, f.order)
-    rows = (await db.execute(q.limit(SELECT_ALL_ID_CAP + 1))).scalars().all()
+    rows = (await db.execute(
+        _ordered_ids_query(f).limit(SELECT_ALL_ID_CAP + 1)
+    )).scalars().all()
     if len(rows) > SELECT_ALL_ID_CAP:
-        total = (await db.execute(
-            _apply_image_filters(select(func.count(Image.id)), f)
-        )).scalar_one()
+        total = (await db.execute(_count_query(f))).scalar_one()
         return {"ids": list(rows[:SELECT_ALL_ID_CAP]), "count": total, "truncated": True}
     return {"ids": list(rows), "count": len(rows), "truncated": False}
 
@@ -875,10 +938,16 @@ async def bulk_rename(body: BulkRenameRequest, db: AsyncSession = Depends(get_db
     if not stem:
         raise HTTPException(400, "new_stem produces empty slug")
 
+    # The tie-breaker is the gallery's (`_apply_image_ordering`), not a private
+    # one. Renumber is offered from the custom-order grid and must number the
+    # files in the order that grid shows them, and only the page a user dragged
+    # has a `sort_order`: every later image ties on NULL. `created_at` cannot
+    # break those ties the way the grid does — one import stamps many rows with
+    # the same value where the clock is coarse (Windows).
     order_clause = (
-        (Image.sort_order.asc().nulls_last(), Image.created_at.asc(), Image.id)
+        (Image.sort_order.asc().nulls_last(), _ROWID.asc())
         if body.sort_by_sort_order
-        else (Image.created_at, Image.id)
+        else (Image.created_at.asc(), _ROWID.asc())
     )
     query = _apply_bulk_filters(
         select(Image.id, Image.file_path, Image.filename).where(Image.dataset_id == body.dataset_id),

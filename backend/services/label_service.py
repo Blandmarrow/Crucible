@@ -25,9 +25,9 @@ def label_filter_clause(
     """Build the WHERE clauses for a label filter.
 
     **Correlated EXISTS only, never a join.** `GET /images/count` runs the shared
-    filter builder over `select(func.count(Image.id))` and `GET /images/` selects
-    whole rows, so a join to `image_labels` would count a two-label image twice
-    and duplicate its row in the grid. Each EXISTS is index-backed on
+    filter builder over `select(func.count())` and `GET /images/` pages by the
+    ids it returns, so a join to `image_labels` would count a two-label image
+    twice and take two places on a page for it. Each EXISTS is index-backed on
     `ix_image_labels_image_id`.
 
     `match` is checked rather than falling through to "any", so a direct service

@@ -69,7 +69,7 @@ can offer "select all 1,240 matching filters" instead of one page at a time
 
 | Route | Returns |
 |---|---|
-| `GET /images/count` | `{"count": n}` — `select(func.count(Image.id))` plus the filters. No ordering, no paging |
+| `GET /images/count` | `{"count": n}` — `_count_query`: `select(func.count())` plus the filters. `count(*)` and not `count(Image.id)`, which visits the table for every row where `count(*)` reads an index alone. No ordering, no paging |
 | `GET /images/ids` | `{"ids": [...], "count": n, "truncated": bool}` — the ids in the grid's own order, capped at `SELECT_ALL_ID_CAP` (20,000, a module constant in `routers/images.py`) |
 
 `/ids` takes `sort`/`order` as well as the filters, so a truncated response is *the first
@@ -86,7 +86,7 @@ that. Each route takes exactly one `Annotated[…, Query()]` model, and `routers
 applies them through two helpers: `_apply_image_filters(q, f)` (the whole `where` chain, plus
 the `score_field` and `quality_flag` 400s, so bad input is rejected identically everywhere)
 and `_apply_image_ordering(q, sort, order)`. The filter helper takes any select shape — the
-license block's `join(Dataset, …)` carries a `select(func.count(Image.id))` as happily as a
+license block's `join(Dataset, …)` carries a `select(func.count())` as happily as a
 `select(Image)` — and the ordering split is safe because `where` clauses accumulate
 order-independently, even though the ordering block used to sit *between* two filter blocks.
 

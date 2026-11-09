@@ -6,11 +6,13 @@ sidecars from clobbering one another. No request-level test covered them: a
 regression that silently overwrote one image's thumbnail with another's, or lost a
 sidecar on rename, would have shipped green. These pin the placement.
 
-Everything keys on the DB `file_path` and unique upload bytes, never on which id
-received `image.png` vs `image_001.png` — uploads into an empty dataset get
-`sort_order=None` and tie on `created_at`, so position is not deterministic.
+The placement tests key on the DB `file_path` and unique upload bytes, never on
+which id received `image.png` vs `image_001.png`: they were written when uploads
+into an empty dataset (`sort_order=None`, often one `created_at`) were numbered
+in uuid order. The order is now the gallery's, and the last test pins it.
 Assertions open a fresh `env.Session()` after the request.
 """
+from datetime import datetime
 from pathlib import Path
 
 from sqlalchemy import select
@@ -396,3 +398,57 @@ async def _row_bytes(env, image_id: str) -> bytes:
     async with env.Session() as db:
         row = await db.get(Image, image_id)
         return Path(row.file_path).read_bytes()
+
+
+def test_renumber_follows_the_custom_order_grid_through_created_at_ties(tmp_path):
+    """Renumber is offered from the custom-order grid, so `_001`, `_002`, … must
+    land in the order that grid shows.
+
+    Only the images a user dragged have a `sort_order`; the rest tie on NULL, and
+    the grid breaks that tie on `rowid` (`_apply_image_ordering`). `bulk_rename`
+    once broke it on `created_at, id` instead. One import stamps many rows with
+    the same `created_at` where the clock is coarse, and `id` is a random uuid,
+    so the files were numbered in an order nobody was looking at.
+    """
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            uploaded = [
+                await upload_image(env, ds["id"], f"u{i}.png", png_bytes((30 * i + 5, 40, 90)))
+                for i in range(7)
+            ]
+            async with env.Session() as db:
+                for row in (await db.execute(
+                    select(Image).where(Image.dataset_id == ds["id"])
+                )).scalars():
+                    row.created_at = datetime(2026, 1, 1, 12, 0, 0)
+                await db.commit()
+
+            # Two dragged into place, out of upload order; five left unpositioned.
+            r = await env.client.patch(
+                f"{API}/images/batch/reorder",
+                json={"dataset_id": ds["id"], "updates": [
+                    {"id": uploaded[4]["id"], "sort_order": 0},
+                    {"id": uploaded[1]["id"], "sort_order": 1},
+                ]},
+            )
+            assert r.status_code == 200, r.text
+
+            r = await env.client.get(
+                f"{API}/images/", params={"dataset_id": ds["id"], "sort": "sort_order"})
+            assert r.status_code == 200, r.text
+            grid = [i["id"] for i in r.json()]
+            assert grid[:2] == [uploaded[4]["id"], uploaded[1]["id"]]
+
+            r = await env.client.post(
+                f"{API}/images/bulk-rename",
+                json={"dataset_id": ds["id"], "new_stem": "pic", "sort_by_sort_order": True},
+            )
+            assert r.status_code == 200, r.text
+            assert r.json()["affected"] == 7
+
+            name = {row.id: row.filename for row in await _rows(env, ds["id"])}
+            in_grid_order = [name[i] for i in grid]
+            assert in_grid_order == sorted(in_grid_order), in_grid_order
+
+    run(scenario())

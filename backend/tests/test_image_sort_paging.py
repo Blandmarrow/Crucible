@@ -2,14 +2,19 @@
 
 Every row below shares one `created_at`, and the score, `sort_order` and lineage
 columns are drawn from a tiny pool (with NULLs), so nearly every sort is mostly
-ties. `_apply_image_ordering` ends each ordering with `created_at ASC, id ASC`
-so the order is total; without the `id` key SQLite returns tied rows in scan
-order and a paged walk can show one image twice and another never.
+ties. `_apply_image_ordering` ends each ordering with `rowid` in the sort's own
+direction so the order is total; without a unique last key SQLite returns tied
+rows in scan order and a paged walk can show one image twice and another never.
+
+`rowid` rather than `created_at, id` because every index entry already ends
+with it, so the tie-breaker costs an indexed sort nothing (PM-036; the plan
+itself is guarded in `test_image_sort_plan.py`).
 """
 from datetime import datetime
 from itertools import groupby
 
 import pytest
+from sqlalchemy import text
 
 from backend.models import Image
 from backend.routers.images import _ALLOWED_SCORE_FIELDS, _ALLOWED_SORT_FIELDS
@@ -44,7 +49,7 @@ def _seed_rows(dataset_id: str, score_cols: list[str]) -> list[Image]:
 
 
 @pytest.mark.parametrize("order", ["asc", "desc"])
-def test_paging_is_disjoint_complete_and_tie_ordered_by_id(tmp_path, order):
+def test_paging_is_disjoint_complete_and_tie_ordered_by_rowid(tmp_path, order):
     score_cols = sorted(_ALLOWED_SCORE_FIELDS | {"nsfw_score"})
 
     async def scenario():
@@ -55,6 +60,9 @@ def test_paging_is_disjoint_complete_and_tie_ordered_by_id(tmp_path, order):
                 db.add_all(rows)
                 await db.commit()
                 seeded = {r.id: r for r in rows}
+                # Read back, not assumed from the seeding order: a unit of work
+                # is free to insert a batch in any order it likes.
+                rowid = {i: n for i, n in await db.execute(text("SELECT id, rowid FROM images"))}
 
             for sort in sorted(_ALLOWED_SORT_FIELDS) + ["no_such_field"]:
                 params = {"dataset_id": ds["id"], "sort": sort, "order": order}
@@ -79,12 +87,16 @@ def test_paging_is_disjoint_complete_and_tie_ordered_by_id(tmp_path, order):
                 ids = body["ids"] if isinstance(body, dict) else body
                 assert ids == paged, f"{label}: /ids differs from the paged order"
 
-                # created_at is tied everywhere, so within a run of equal sort
-                # values the ids must ascend. An unknown name is coerced to
+                # Within a run of equal sort values the rowids must run in the
+                # sort's own direction — the direction is what keeps a
+                # descending sort on its index. Custom order ignores `order`
+                # and is always ascending. An unknown name is coerced to
                 # created_at, where the whole list is one run.
                 col = sort if sort in _ALLOWED_SORT_FIELDS else "created_at"
+                descending = order == "desc" and col != "sort_order"
                 for _, grp in groupby(paged, key=lambda i: getattr(seeded[i], col)):
-                    grp = list(grp)
-                    assert grp == sorted(grp), f"{label}: tied rows not in id order"
+                    tied = [rowid[i] for i in grp]
+                    assert tied == sorted(tied, reverse=descending), (
+                        f"{label}: tied rows not in rowid order")
 
     run(scenario())

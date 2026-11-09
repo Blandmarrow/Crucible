@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 import type { APIRequestContext, Page } from '@playwright/test'
 import { PERSIST_DEBOUNCE_MS } from '../src/constants/storage'
-import { addMenu, createDatasetViaApi } from './helpers'
+import { addMenu, createDatasetViaApi, resetPromptGenPresetsViaApi } from './helpers'
 
 const INSTRUCTIONS_PLACEHOLDER = /danbooru-style tag prompts/
 
@@ -184,6 +184,48 @@ test.describe('saved Generate prompts settings', () => {
 
     const after = await (await request.get(`/api/v1/comfy/plans/${plan.id}`)).json()
     expect(after.updated_at).toBe(plan.updated_at)
+  })
+
+  test('an instruction preset saved in one plan loads into another plan in another browser', async ({ page, browser, request }) => {
+    await resetPromptGenPresetsViaApi(request)
+    const dsA = await createDatasetViaApi(request, `e2e-gen-preset-a-${Date.now()}`)
+    await createPlanViaApi(request, dsA.id, 'preset source plan')
+    const dsB = await createDatasetViaApi(request, `e2e-gen-preset-b-${Date.now()}`)
+    const planB = await createPlanViaApi(request, dsB.id, 'preset target plan')
+
+    try {
+      await openGenerateModal(page, dsA.id)
+      await page.getByPlaceholder(INSTRUCTIONS_PLACEHOLDER).fill('photographic prompts, one subject each')
+      await page.getByRole('button', { name: '+ Save as preset' }).click()
+      const nameField = page.getByLabel('Preset name')
+      // Escape closes the name row, not the modal around it.
+      await nameField.press('Escape')
+      await expect(nameField).toHaveCount(0)
+      await expect(page.getByRole('heading', { name: 'Generate prompts' })).toBeVisible()
+      // Focus comes back inside the modal, so a second Escape isn't left to <body>.
+      await expect(page.getByRole('button', { name: '+ Save as preset' })).toBeFocused()
+
+      await page.getByRole('button', { name: '+ Save as preset' }).click()
+      await page.getByLabel('Preset name').fill('photo style')
+      await page.getByLabel('Preset name').press('Enter')
+      await expect(page.getByRole('button', { name: /^photo style/ })).toBeVisible()
+
+      const context = await browser.newContext()
+      const other = await context.newPage()
+      await openGenerateModal(other, dsB.id)
+      await other.getByRole('button', { name: /^Presets/ }).click()
+      await other.getByRole('button', { name: /^photo style/ }).click()
+      await expect(other.getByPlaceholder(INSTRUCTIONS_PLACEHOLDER)).toHaveValue('photographic prompts, one subject each')
+      // Loading is an ordinary edit, so it saves to the plan like typing does.
+      await expect.poll(async () => (await savedGenSettings(request, planB.id))?.instructions)
+        .toBe('photographic prompts, one subject each')
+
+      await other.getByRole('button', { name: 'Delete preset photo style' }).click()
+      await expect(other.getByText('No presets saved yet.')).toBeVisible()
+      await context.close()
+    } finally {
+      await resetPromptGenPresetsViaApi(request)
+    }
   })
 })
 

@@ -12,6 +12,16 @@ export interface PromptPreset {
 
 export type PromptPresetCreate = Omit<PromptPreset, "id">;
 
+/** A saved "Instructions" text for the ComfyUI Generate prompts window. A list of its
+ *  own: caption presets carry a caption model and style that mean nothing there. */
+export interface PromptGenPreset {
+  id: string;
+  name: string;
+  instructions: string;
+}
+
+export type PromptGenPresetCreate = Omit<PromptGenPreset, "id">;
+
 export interface LegacyImportBody {
   presets?: unknown[];
   comfy_gen_settings?: Record<string, ComfyGenSettings>;
@@ -50,6 +60,16 @@ export const appDataApi = {
     client.post<PromptPreset>("/app-data/presets", body).then((r) => r.data),
   deletePreset: (id: string) =>
     client.delete(`/app-data/presets/${id}`).then((r) => r.data),
+  listPromptGenPresets: () =>
+    client.get<PromptGenPreset[]>("/app-data/prompt-gen-presets").then((r) => {
+      // A server older than the frontend answers with the SPA's 200 HTML.
+      if (!Array.isArray(r.data)) throw new Error("Unexpected prompt presets response");
+      return r.data;
+    }),
+  createPromptGenPreset: (body: PromptGenPresetCreate) =>
+    client.post<PromptGenPreset>("/app-data/prompt-gen-presets", body).then((r) => r.data),
+  deletePromptGenPreset: (id: string) =>
+    client.delete(`/app-data/prompt-gen-presets/${id}`).then((r) => r.data),
   listCategories: () =>
     client.get<string[]>("/app-data/categories").then((r) => {
       // A server older than the frontend answers with the SPA's 200 HTML.

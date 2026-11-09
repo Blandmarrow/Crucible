@@ -9,8 +9,8 @@ from backend.models.versioning import DatasetBranch, DatasetVersion, VersionImag
 from backend.models.openai_provider import OpenAIProvider
 from backend.models.comfy import ComfyBlueprint, ComfyLeaf, ComfyLibraryPrompt, ComfyPlan, ComfyRow
 from backend.models.style_run import StyleSimilarityRun
-from backend.models.app_data import CaptionPromptPreset, DeclaredCategory
+from backend.models.app_data import CaptionPromptPreset, DeclaredCategory, PromptGenPreset
 from backend.models.run import Run
 from backend.models.run_recipe import SavedRunRecipe
 
-__all__ = ["Dataset", "Image", "Video", "BackgroundJob", "Detection", "Label", "ImageLabel", "ThresholdSettings", "DatasetBranch", "DatasetVersion", "VersionImageState", "OpenAIProvider", "ComfyPlan", "ComfyRow", "ComfyLibraryPrompt", "ComfyBlueprint", "ComfyLeaf", "StyleSimilarityRun", "CaptionPromptPreset", "DeclaredCategory", "Run", "SavedRunRecipe"]
+__all__ = ["Dataset", "Image", "Video", "BackgroundJob", "Detection", "Label", "ImageLabel", "ThresholdSettings", "DatasetBranch", "DatasetVersion", "VersionImageState", "OpenAIProvider", "ComfyPlan", "ComfyRow", "ComfyLibraryPrompt", "ComfyBlueprint", "ComfyLeaf", "StyleSimilarityRun", "CaptionPromptPreset", "DeclaredCategory", "PromptGenPreset", "Run", "SavedRunRecipe"]

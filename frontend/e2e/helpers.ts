@@ -100,6 +100,16 @@ export async function resetPresetsViaApi(request: APIRequestContext): Promise<vo
   }
 }
 
+/** Delete every saved Generate prompts instruction preset, for the same reason as
+ *  `resetPresetsViaApi`: a separate list on the same shared server. */
+export async function resetPromptGenPresetsViaApi(request: APIRequestContext): Promise<void> {
+  const presets: { id: string }[] = await (await request.get('/api/v1/app-data/prompt-gen-presets')).json()
+  for (const preset of presets) {
+    const r = await request.delete(`/api/v1/app-data/prompt-gen-presets/${preset.id}`)
+    expect(r.status(), await r.text()).toBe(200)
+  }
+}
+
 /** Back to "never saved", for the same reason as `resetPresetsViaApi`. */
 export async function resetCaptioningWorkflowViaApi(request: APIRequestContext): Promise<void> {
   const r = await request.delete('/api/v1/app-data/captioning-workflow')

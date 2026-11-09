@@ -12,6 +12,11 @@ class PresetCreate(BaseModel):
     prompt: str = Field(default="", max_length=100_000)
 
 
+class PromptGenPresetCreate(BaseModel):
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
+    instructions: str = Field(default="", max_length=20000)
+
+
 class CategoryCreate(BaseModel):
     name: CategoryName
 

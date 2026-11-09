@@ -46,6 +46,12 @@ restates its stages.
    The Workflow & Pins and Blueprint tabs each copy from another plan in any dataset,
    through one dialog and the existing GET/PATCH/PUT routes ([comfyui/page.md](comfyui/page.md)
    § Frontend, `CopyFromPlanModal`). Nothing open.
+
+   **Instruction presets for Generate prompts (2026-11-09):** on `feat/prompt-gen-presets`,
+   not yet merged. Named saves of the modal's *Instructions* text, in their own table
+   (`prompt_gen_presets`, migration `c3e7a9d1f5b2`), apart from the caption presets
+   ([comfyui/prompts.md](comfyui/prompts.md) § Frontend). Merging moves the head, so any
+   branch holding a migration re-parents onto it.
 1. **M6's loose ends are all closed** (item 5 below). On 2026-11-08 the Ctrl+C hand check
    passed, the folder-segment whitespace fix merged as PR #121 (decision 12, migration
    `b8d2f4a6c1e3`), and the M6 plan folder was retired by PR #122, a docs-only PR. **After

@@ -24,6 +24,20 @@ class CaptionPromptPreset(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class PromptGenPreset(Base):
+    """A saved instruction text for the ComfyUI Generate prompts modal.
+
+    Kept apart from the caption presets: the two lists feed different prompts.
+    """
+
+    __tablename__ = "prompt_gen_presets"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    instructions: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class DeclaredCategory(Base):
     """A category name the user created before any dataset uses it.
 

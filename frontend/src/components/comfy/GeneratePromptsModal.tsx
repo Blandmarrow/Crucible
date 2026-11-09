@@ -7,6 +7,8 @@ import { jobsApi } from "../../api/jobs";
 import { providersApi } from "../../api/providers";
 import { useJobStore } from "../../store/jobStore";
 import { useDebouncedPersist } from "../../hooks/useDebouncedPersist";
+import { usePromptGenPresets } from "../../hooks/usePromptPresets";
+import type { PromptGenPreset } from "../../api/appData";
 import { useModalBehavior } from "../../hooks/useModalBehavior";
 import ModelPicker from "../providers/ModelPicker";
 import JobProgressBar from "../common/JobProgressBar";
@@ -66,6 +68,132 @@ export default function GeneratePromptsModal(props: Props) {
     >
       {(saved) => <GeneratePromptsForm {...props} saved={saved ?? COMFY_GEN_DEFAULTS} />}
     </ServerStateGate>
+  );
+}
+
+/** Saved Instructions texts, shared across plans and browsers. A list of its own, not
+    the caption presets: those carry a caption model and style that mean nothing here.
+    Loading only fills the textarea; the form's own persist then saves it to the plan. */
+function InstructionPresets({ instructions, onLoad }: {
+  instructions: string;
+  onLoad: (preset: PromptGenPreset) => void;
+}) {
+  const { presets, emptyMessage, save, remove } = usePromptGenPresets();
+  const [open, setOpen] = useState(false);
+  const [naming, setNaming] = useState(false);
+  const [name, setName] = useState("");
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  const saveAsRef = useRef<HTMLButtonElement>(null);
+  const refocusRef = useRef(false);
+
+  // Closing the name row unmounts the focused input. Left there, focus falls to <body>,
+  // where the modal's Tab trap no longer sees keys and the next Escape closes the modal.
+  function closeNaming() {
+    refocusRef.current = true;
+    setNaming(false);
+  }
+  useEffect(() => {
+    if (naming || !refocusRef.current) return;
+    refocusRef.current = false;
+    const target = saveAsRef.current && !saveAsRef.current.disabled ? saveAsRef.current : toggleRef.current;
+    target?.focus();
+  }, [naming]);
+
+  async function handleSave() {
+    if (!name.trim() || !instructions.trim()) return;
+    if (!(await save({ name: name.trim(), instructions }))) return;
+    setName("");
+    setOpen(true);
+    closeNaming();
+    toast.success("Preset saved");
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <button
+          ref={toggleRef}
+          type="button" className="btn ghost sm"
+          aria-expanded={open}
+          onClick={() => setOpen((v) => !v)}
+          title="Saved Instructions you can load into any plan"
+        >
+          Presets{presets.length > 0 ? ` (${presets.length})` : ""} {open ? "▴" : "▾"}
+        </button>
+        {naming ? (
+          <>
+            <input
+              className="input" style={{ flex: 1, minWidth: 140, fontSize: 12 }}
+              placeholder="Preset name…"
+              aria-label="Preset name"
+              value={name}
+              maxLength={255}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleSave();
+                // Stopped so Escape closes this row and not the modal around it.
+                if (e.key === "Escape") { e.stopPropagation(); closeNaming(); }
+              }}
+              autoFocus
+            />
+            <button
+              type="button" className="btn sm primary"
+              disabled={!name.trim() || !instructions.trim()}
+              onClick={handleSave}
+              title={instructions.trim() ? undefined : "The Instructions box is empty"}
+            >
+              Save
+            </button>
+            <button type="button" className="btn sm ghost" onClick={closeNaming}>Cancel</button>
+          </>
+        ) : (
+          <button
+            ref={saveAsRef}
+            type="button" className="btn ghost sm"
+            disabled={!instructions.trim()}
+            onClick={() => { setName(""); setNaming(true); }}
+            title={instructions.trim() ? "Save these Instructions as a preset" : "Write some Instructions first"}
+          >
+            + Save as preset
+          </button>
+        )}
+      </div>
+      {open && (
+        presets.length === 0 ? (
+          <p style={{ fontSize: 12, color: "var(--fg-dim)", margin: 0 }}>{emptyMessage}</p>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 140, overflowY: "auto" }}>
+            {presets.map((p) => (
+              <div key={p.id} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <button
+                  type="button" className="btn ghost sm"
+                  style={{ flex: 1, minWidth: 0, justifyContent: "flex-start", textAlign: "left", overflow: "hidden" }}
+                  onClick={() => onLoad(p)}
+                  title={p.instructions}
+                >
+                  <span style={{ fontWeight: 500, flexShrink: 0 }}>{p.name}</span>
+                  <span style={{
+                    color: "var(--fg-dim)", fontSize: 10.5, marginLeft: 6,
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                  }}>
+                    {p.instructions}
+                  </span>
+                </button>
+                <button
+                  type="button" className="btn ghost sm"
+                  style={{ color: "var(--bad)", flexShrink: 0 }}
+                  onClick={() => remove(p.id)}
+                  title="Delete preset"
+                  aria-label={`Delete preset ${p.name}`}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )
+      )}
+    </div>
   );
 }
 
@@ -349,6 +477,10 @@ function GeneratePromptsForm({
                   value={instructions}
                   maxLength={20000}
                   onChange={(e) => setInstructions(e.target.value)}
+                />
+                <InstructionPresets
+                  instructions={instructions}
+                  onLoad={(p) => { setInstructions(p.instructions); toast.success(`Loaded "${p.name}"`); }}
                 />
               </div>
 

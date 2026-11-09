@@ -54,6 +54,49 @@ def test_presets_crud(tmp_path):
     run(scenario())
 
 
+def test_prompt_gen_presets_crud(tmp_path):
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            url = f"{BASE}/prompt-gen-presets"
+            r = await env.client.post(url, json={"name": "a", "instructions": "be brief"})
+            assert r.status_code == 200, r.text
+            preset_id = r.json()["id"]
+            assert r.json()["instructions"] == "be brief"
+
+            r = await env.client.post(url, json={"name": "b", "instructions": ""})
+            assert r.status_code == 200, r.text
+
+            names = [p["name"] for p in (await env.client.get(url)).json()]
+            assert names == ["a", "b"]
+
+            assert (await env.client.delete(f"{url}/{preset_id}")).status_code == 200
+            assert (await env.client.delete(f"{url}/{preset_id}")).status_code == 404
+
+            r = await env.client.post(url, json={"name": "   ", "instructions": "x"})
+            assert r.status_code == 422
+            r = await env.client.post(url, json={"name": "big", "instructions": "x" * 20001})
+            assert r.status_code == 422
+
+    run(scenario())
+
+
+def test_prompt_gen_and_caption_presets_are_separate_lists(tmp_path):
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            gen_url = f"{BASE}/prompt-gen-presets"
+            r = await env.client.post(f"{BASE}/presets", json={**PRESET, "name": "cap"})
+            assert r.status_code == 200, r.text
+            assert (await env.client.get(gen_url)).json() == []
+
+            r = await env.client.post(gen_url, json={"name": "gen", "instructions": "i"})
+            assert r.status_code == 200, r.text
+            caption_names = [p["name"] for p in (await env.client.get(f"{BASE}/presets")).json()]
+            assert caption_names == ["cap"]
+            assert [p["name"] for p in (await env.client.get(gen_url)).json()] == ["gen"]
+
+    run(scenario())
+
+
 # --- categories -----------------------------------------------------------
 
 

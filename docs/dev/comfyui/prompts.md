@@ -116,7 +116,11 @@ without that.
 *Instructions* (HOW prompts are written → `system_instructions`, saved on the plan as
 `ComfyPlan.gen_settings` with provider/model/batch/temperature/target, see
 `docs/dev/app-stored-data.md`) and the per-call *Request* (WHAT to
-generate). Two paths, deliberately different in kind: *Generate N
+generate). Under *Instructions*, `InstructionPresets` saves and loads named copies of that
+text through `usePromptGenPresets` (`/app-data/prompt-gen-presets`), shared by every plan. It
+is its own list, not the caption presets — those carry a caption model and style that mean
+nothing here — and it holds the Instructions alone. Loading only calls `setInstructions`;
+the form's `useDebouncedPersist` then saves it to the plan like typing would. Two paths, deliberately different in kind: *Generate N
 more* = one sync call appending to the review textarea → *Add N rows* → `rows/bulk` (sends
 queue prompts + textarea lines as diverge-from context); *Generate until N* = the
 `comfy_prompts` job, which writes rows itself.

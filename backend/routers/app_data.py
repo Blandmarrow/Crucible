@@ -1,5 +1,5 @@
 """User-written data shared by every browser that opens this install: caption prompt
-presets, declared empty categories and the captioning workflow, plus the one-time
+presets, prompt-generation presets, declared empty categories and the captioning workflow, plus the one-time
 import of what each browser held before this data moved here.
 
 See docs/dev/app-stored-data.md.
@@ -16,7 +16,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
-from backend.models.app_data import CaptionPromptPreset, DeclaredCategory
+from backend.models.app_data import CaptionPromptPreset, DeclaredCategory, PromptGenPreset
 from backend.models.comfy import ComfyPlan
 from backend.models.threshold_settings import ThresholdSettings
 from backend.schemas.app_data import (
@@ -26,6 +26,7 @@ from backend.schemas.app_data import (
     ComfyGenSettings,
     LegacyImportRequest,
     PresetCreate,
+    PromptGenPresetCreate,
 )
 from backend.services.threshold_service import DEFAULTS
 
@@ -44,6 +45,10 @@ def _preset_out(preset: CaptionPromptPreset) -> dict:
         "style": preset.style,
         "prompt": preset.prompt,
     }
+
+
+def _prompt_gen_preset_out(preset: PromptGenPreset) -> dict:
+    return {"id": preset.id, "name": preset.name, "instructions": preset.instructions}
 
 
 def _workflow_fits(value: dict) -> bool:
@@ -78,6 +83,34 @@ async def create_preset(body: PresetCreate, db: AsyncSession = Depends(get_db)):
 @router.delete("/presets/{preset_id}")
 async def delete_preset(preset_id: str, db: AsyncSession = Depends(get_db)):
     preset = await db.get(CaptionPromptPreset, preset_id)
+    if not preset:
+        raise HTTPException(404, "Preset not found")
+    await db.delete(preset)
+    await db.commit()
+    return {"deleted": 1}
+
+
+# ── Prompt-generation presets ─────────────────────────────────────────────────
+
+@router.get("/prompt-gen-presets")
+async def list_prompt_gen_presets(db: AsyncSession = Depends(get_db)):
+    presets = (
+        await db.execute(select(PromptGenPreset).order_by(PromptGenPreset.created_at))
+    ).scalars().all()
+    return [_prompt_gen_preset_out(p) for p in presets]
+
+
+@router.post("/prompt-gen-presets")
+async def create_prompt_gen_preset(body: PromptGenPresetCreate, db: AsyncSession = Depends(get_db)):
+    preset = PromptGenPreset(**body.model_dump())
+    db.add(preset)
+    await db.commit()
+    return _prompt_gen_preset_out(preset)
+
+
+@router.delete("/prompt-gen-presets/{preset_id}")
+async def delete_prompt_gen_preset(preset_id: str, db: AsyncSession = Depends(get_db)):
+    preset = await db.get(PromptGenPreset, preset_id)
     if not preset:
         raise HTTPException(404, "Preset not found")
     await db.delete(preset)

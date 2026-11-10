@@ -64,7 +64,7 @@ writer before trusting the reader.**
 
 ### Fix
 
-M9 stage 10 (`docs/dev/scale-plan/README.md` § Stage 10):
+M9 stage 10 (`docs/dev/scale-plan/README.md` § Stage 10), PR #135:
 
 - **The caption job writes `done_items` after every call**, whatever the call returned,
   before the caption is saved, committed per image (`routers/captioning.py`,

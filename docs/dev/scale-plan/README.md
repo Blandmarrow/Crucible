@@ -496,7 +496,7 @@ sorts) and lands second, so it resolves this too.
 
 Added 2026-11-09; found during stage 8 and until now recorded only in the roadmap's prose.
 
-**Done 2026-11-10** on `fix/m9-stage10-paid-call-cap`, as below except where this note
+**Done 2026-11-10** (PR #135), as below except where this note
 says otherwise. Detail: `docs/dev/comfyui/run-budgets.md` § Who writes the paid-call
 counts; the incident is PM-037.
 

@@ -823,9 +823,14 @@ export default function GalleryPage() {
     if (page > totalPages) setPage(totalPages);
   }, [countIsStale, totalPages, page]);
 
+  // `handleSelect` reads the page through `imagesRef` so that it keeps one
+  // identity across refetches: it is a prop of every memoized `ImageCard`, and a
+  // new one would re-render the whole grid each time a live job refetches the
+  // page, when TanStack's structural sharing has kept every unchanged row's
+  // object as it was (M9 stage 11).
   const handleSelect = useCallback((id: string, shiftKey: boolean, isCheckbox: boolean) => {
     if (shiftKey && isCheckbox && lastSelectedId.current !== null) {
-      const ids = images.map(i => i.id);
+      const ids = imagesRef.current.map(i => i.id);
       const a = ids.indexOf(lastSelectedId.current);
       const b = ids.indexOf(id);
       if (a !== -1 && b !== -1) {
@@ -851,7 +856,7 @@ export default function GalleryPage() {
       lastSelectedId.current = id;
       lastRangeEndId.current = null;
     }
-  }, [images, datasetId, toggle, replaceRange]);
+  }, [datasetId, toggle, replaceRange]);
 
   // Keyed on the `images` array *identity*, not its length: with `keepPreviousData`
   // `isLoading` stays false across a filter change, so a new result set that happens

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import { Cpu } from "lucide-react";
 import toast from "react-hot-toast";
 import { useQueryClient } from "@tanstack/react-query";
@@ -38,12 +38,17 @@ interface Props {
   sortable?: boolean;
 }
 
-export default function ImageCard({ image, onShowGenMeta, onSelect, isDraggable, isActiveDrag }: Props) {
+// Memoized, with a selector per card: a page holds 100 to 200 of these, and
+// subscribing to the whole selection store re-rendered every one of them on
+// each selection change (M9 stage 11). The boolean selector re-renders only the
+// card whose own state flipped. Keep the props stable for the memo to hold:
+// `GalleryPage`'s `handleSelect` reads `images` through a ref for that reason.
+function ImageCardInner({ image, onShowGenMeta, onSelect, isDraggable, isActiveDrag }: Props) {
   const datasetId = usePaneDatasetId();
   const qc = useQueryClient();
   const { go } = usePaneNavigate();
-  const { toggle, isSelected } = useSelectionStore();
-  const selected = isSelected(image.id);
+  const selected = useSelectionStore((s) => s.selectedIds.has(image.id));
+  const toggle = useSelectionStore((s) => s.toggle);
   const cbSize = useUiPrefsStore((s) => s.galleryCheckboxSize);
   const [captionDragOver, setCaptionDragOver] = useState(false);
 
@@ -326,7 +331,10 @@ export default function ImageCard({ image, onShowGenMeta, onSelect, isDraggable,
   );
 }
 
-export function SortableImageCard({ image, onShowGenMeta, onSelect, sortable = true }: Props) {
+const ImageCard = memo(ImageCardInner);
+export default ImageCard;
+
+export const SortableImageCard = memo(function SortableImageCard({ image, onShowGenMeta, onSelect, sortable = true }: Props) {
   // Outside custom-order mode the card must still be draggable (to drop onto a subfolder
   // row) but must not be a drop target itself, so `over.id` can only ever be a subfolder.
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -348,4 +356,4 @@ export function SortableImageCard({ image, onShowGenMeta, onSelect, sortable = t
       <ImageCard image={image} onShowGenMeta={onShowGenMeta} onSelect={onSelect} isDraggable isActiveDrag={isDragging} />
     </div>
   );
-}
+});

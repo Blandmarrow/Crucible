@@ -1301,12 +1301,20 @@ async def bulk_thumbnails(body: BulkThumbnailRequest, db: AsyncSession = Depends
     return {"job_id": job.id, "total": total}
 
 
+# The two serving routes read only the path they serve, never the whole row:
+# `db.get(Image, …)` loads every non-deferred column, `generation_metadata`
+# included, once per tile per page. Both paths sit before the embedding blobs in
+# a migrated row, so SQLite never walks the overflow chain (M9 stage 11).
+
+
 @router.get("/{image_id}/file")
 async def serve_file(image_id: str, db: AsyncSession = Depends(get_db)):
-    img = await db.get(Image, image_id)
-    if not img:
+    file_path = (await db.execute(
+        select(Image.file_path).where(Image.id == image_id)
+    )).scalar_one_or_none()
+    if file_path is None:
         raise HTTPException(404, "Image not found")
-    p = safe_dataset_path(img.file_path, settings.datasets_dir)
+    p = safe_dataset_path(file_path, settings.datasets_dir)
     if not p.exists():
         raise HTTPException(404, "File not found on disk")
     return FileResponse(str(p))
@@ -1314,16 +1322,22 @@ async def serve_file(image_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.get("/{image_id}/thumbnail")
 async def serve_thumbnail(image_id: str, db: AsyncSession = Depends(get_db)):
+    row = (await db.execute(
+        select(Image.thumbnail_path).where(Image.id == image_id)
+    )).one_or_none()
+    if row is None:
+        raise HTTPException(404, "Image not found")
+    if row.thumbnail_path:
+        # Guarded like the file route above, and like the video poster twin: a
+        # thumbnail_path is as much a stored path as file_path is.
+        t = safe_dataset_path(row.thumbnail_path, settings.datasets_dir)
+        if t.exists():
+            return FileResponse(str(t))
+    # Fallback: generate on demand. This branch writes the row, so it loads the
+    # entity; it runs once per image, not once per page.
     img = await db.get(Image, image_id)
     if not img:
         raise HTTPException(404, "Image not found")
-    if img.thumbnail_path:
-        # Guarded like the file route above, and like the video poster twin: a
-        # thumbnail_path is as much a stored path as file_path is.
-        t = safe_dataset_path(img.thumbnail_path, settings.datasets_dir)
-        if t.exists():
-            return FileResponse(str(t))
-    # Fallback: generate on demand
     p = safe_dataset_path(img.file_path, settings.datasets_dir)
     thumb = thumbnail_path_for(p)
     await asyncio.get_running_loop().run_in_executor(None, generate_thumbnail, str(p), thumb)

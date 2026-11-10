@@ -76,18 +76,25 @@ Ollama and the local captioners are never billed.
 not. `_stage_images` drops every image whose `Image.captioned_by` is already the stage's
 model (`_not_captioned_by`) before it applies the trim above. The caption job stamps its
 model id there when it saves, and a ComfyUI prompt caption stamps `"comfyui"`, so on a
-first start nothing is dropped. On a resume after a failed, cancelled or interrupted job,
+first start this rule drops nothing. On a resume after a failed, cancelled or interrupted job,
 what that job saved is skipped; an image whose call failed, or whose reply was stripped to
 nothing, was never saved and is sent again. Without the skip the trim would spend the calls
 left on the first images in order, which are the ones already captioned, and the rest
 would go without. Nothing left skips the stage with a note, never `[]`.
 
-The mark is `captioned_by`, not the caption, so two things move it. A caption edited by
-hand between attempts is stamped `"manual"` (`routers/captions.py`), so the resume sends
-that image again and overwrites the edit, as every resume did before the skip.
-`docs/runs.md` tells the user so. And a snapshot restore puts `caption_text` back but
-not `captioned_by`, which is not mirrored (`NOT_MIRRORED`), so restoring a snapshot taken
-before the caption job, mid-run, leaves images that read as captioned and are skipped.
+**A caption written by hand is never replaced.** The caption editor stamps `"manual"`
+(`routers/captions.py`, `run_service.HAND_CAPTIONED`), and `_not_captioned_by` drops
+those images too, on a first start as on a resume. The run made these images, so a
+hand-written caption on one was written during this run, most often to fix what the model
+said before pressing Resume; without the rule the resume sent that image again and
+overwrote the edit. A bulk edit (find and replace, tag consolidation) leaves the stamp
+alone, so a model caption edited that way is already skipped. An image captioned by hand
+costs no call and is not in the trim's count.
+
+The mark is `captioned_by`, not the caption, and a snapshot restore puts `caption_text`
+back but not `captioned_by`, which is not mirrored (`NOT_MIRRORED`). So restoring a
+snapshot taken before the caption job, mid-run, leaves images that read as captioned and
+are skipped.
 
 A check alone cannot stop a generate stage partway, which is why the image budget is also
 **the clamp** in `prompts` (`docs/dev/comfyui/run-loop.md` § What each body stage does in a
@@ -146,7 +153,8 @@ a job whose every call failed, a job cancelled part-way and a job that failed af
 call. `_spent` over hand-built rows in every end state, an interrupted one included. One
 run with a billed captioner and a cap of five, across a failed job, a job cancelled from
 outside and two resumes, making exactly five calls. And a resumed stage skipping what is
-captioned, or being skipped when nothing is left. **A test of a count must run its
+captioned, being skipped when nothing is left, and leaving alone a caption written by
+hand, whether it fixed the model's or came before it. **A test of a count must run its
 writer** (PM-037): this file is the only place the caption job's own write is run under
 a cap. The reserve test's rows are built by hand, and its formula cancels the caption
 count out while that count is at most `max_images`, so it proves the reserve's

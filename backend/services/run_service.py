@@ -1296,17 +1296,28 @@ async def in_dataset(db: AsyncSession, image_ids: list[str], dataset_id: str, *,
     return [i for i in image_ids if i in keep]
 
 
+# What the caption editor stamps on `Image.captioned_by` (`set_caption`'s default,
+# through `PUT /captions/image/{id}`).
+HAND_CAPTIONED = "manual"
+
+
 async def _not_captioned_by(db: AsyncSession, image_ids: list[str], model: str) -> list[str]:
-    """`image_ids`, in order, less those `model` has already captioned.
+    """`image_ids`, in order, less those `model` has already captioned and those
+    captioned by hand.
 
     The caption job stamps its model id on `Image.captioned_by` when it saves, so an
     image carrying it was captioned by an earlier attempt of this stage. One whose call
     failed, or whose reply was stripped to nothing, was never saved and stays in.
+
+    A caption saved from the editor is stamped `HAND_CAPTIONED`, and the stage never
+    replaces it: the run made these images, so the user wrote it during this run, most
+    often to fix what the model said before pressing Resume. A bulk edit leaves the
+    stamp alone, so a model caption edited that way is skipped by the first rule.
     """
     keep: set[str] = set()
     for chunk in chunked(image_ids):
         keep.update((await db.execute(
-            select(Image.id).where(Image.id.in_(chunk), Image.captioned_by != model)
+            select(Image.id).where(Image.id.in_(chunk), Image.captioned_by.notin_((model, HAND_CAPTIONED)))
         )).scalars())
     return [i for i in image_ids if i in keep]
 
@@ -1346,10 +1357,14 @@ async def _stage_images(db: AsyncSession, run: Run, recipe: RunRecipe, key: str,
         # after a failed, cancelled or interrupted job skips what that job captioned.
         # `overwrite` is on, so it would otherwise send, and bill, those again, and the
         # trim below would spend the cap on them while later images went without.
+        # A caption written by hand is skipped too, on a first start as on a resume.
         assert recipe.caption is not None
         ids = await _not_captioned_by(db, ids, recipe.caption.model)
         if not ids:
-            return _Outcome("skip", note="Nothing left to caption: every image already has this model's caption")
+            return _Outcome(
+                "skip",
+                note="Nothing left to caption: every image has this model's caption or one written by hand",
+            )
     trimmed = None
     if key == "caption" and recipe.loop is not None and recipe.loop.max_paid_calls is not None \
             and await _caption_billed(db, recipe):

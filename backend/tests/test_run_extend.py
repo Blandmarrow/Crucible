@@ -107,12 +107,17 @@ def test_only_a_run_stopped_by_a_cap_with_a_folder_short_can_carry_on():
 
 def test_the_rewrite_reserve_counts_captions_already_made(tmp_path, monkeypatch):
     """With a billed captioner the rewrite holds back a call for every image the loop
-    may still caption. After a tail has captioned some, only the rest is held back."""
+    may still caption. After a tail has captioned some, only the rest is held back.
+
+    What was spent comes through the real `_spent`, from child rows built by hand, so
+    this pins the reserve's arithmetic only. That the caption job writes the count
+    these rows carry is `test_run_paid_calls.py` (PM-037)."""
     from backend.routers import comfy as comfy_router
 
     async def go():
         async with api_env(tmp_path) as env:
             _fake, ds, plan_id = await _loop_plan(env, monkeypatch, _spec(GOOD, rewrite=True))
+            # A remote base URL is a billed provider; it rewrites and captions here.
             r = await env.client.post(f"{API}/providers/", json={
                 "name": "paid", "base_url": "https://llm.example.com/v1", "default_model": "m",
             })
@@ -124,20 +129,7 @@ def test_the_rewrite_reserve_counts_captions_already_made(tmp_path, monkeypatch)
                 seen.update(kw)
                 return {"job_id": None}
 
-            async def _yes(db, recipe):
-                return True
-
-            async def _spent(db, run_, recipe):
-                return run_service._Spent(minutes=0, images=0, rewrite_calls=3, caption_calls=40)
-
-            async def _no_stop(db, run_, recipe):
-                return None
-
             monkeypatch.setattr(comfy_router, "start_rewrite_job", _start_rewrite)
-            monkeypatch.setattr(run_service, "_rewrite_billed", _yes)
-            monkeypatch.setattr(run_service, "_caption_billed", _yes)
-            monkeypatch.setattr(run_service, "_spent", _spent)
-            monkeypatch.setattr(run_service, "_budget_stop", _no_stop)
             recipe = RunRecipe.model_validate({
                 "stages": ["prompts", "rewrite", "generate", "caption"],
                 "caption": {"model": f"openai_compat:{pid}:m"},
@@ -150,6 +142,14 @@ def test_the_rewrite_reserve_counts_captions_already_made(tmp_path, monkeypatch)
                           stages=[run_service._entry("rewrite", 1)], context={"passes": [["r1"]], "row_ids": ["r1"]},
                           status="running")
                 db.add(row)
+                await db.commit()
+                # What the run has spent: 40 caption calls over two tails, one of them
+                # cancelled part-way, and 3 rewrite calls.
+                for status, done in (("completed", 25), ("cancelled", 15)):
+                    db.add(BackgroundJob(job_type="caption", status=status, total_items=25, done_items=done,
+                                         config={"run_id": row.id}))
+                db.add(BackgroundJob(job_type="comfy_rewrite", status="completed", result_data={"calls": 3},
+                                     config={"run_id": row.id}))
                 await db.commit()
                 await run_service._stage_rewrite(db, row, plan, recipe, 0, "0:rewrite")
             # 100 cap − 43 spent − (50 − 40) still reserved = 47. Reserving all 50 left 7.

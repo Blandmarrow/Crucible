@@ -571,6 +571,17 @@ async def start_caption_job(
                     if len(failed_details) < _MAX_FAILED_DETAILS:
                         failed_details.append({"file": Path(file_path).name, "error": str(exc) or type(exc).__name__})
 
+                # The durable count of calls made, written as soon as this one is over
+                # and whatever it returned: an automated run's paid-call cap sums it
+                # (`run_service._spent`), and a failed call was still billed. Before the
+                # save, so a save that fails the job keeps the call; committed here, so a
+                # cancel, a failure or a restart keeps every call before it. It equals
+                # the `done` the progress event below carries (PM-008: one unit).
+                await session.execute(
+                    sa_update(BackgroundJob).where(BackgroundJob.id == job_id).values(done_items=i + 1)
+                )
+                await session.commit()
+
                 # Reason A — nothing came back at all, without an exception to explain it.
                 if not caption and not errored:
                     _record_empty(img_id, file_path, _empty_reason)
@@ -743,6 +754,7 @@ async def start_caption_job(
             # propagates out), so it writes no result_data and emits no summary —
             # already true of the SSE event. Surviving cancellation needs a
             # try/finally around the whole loop, a larger change than this warrants.
+            # What does survive it is `done_items`, written per image in the loop.
             if failed_image_ids:
                 job_row = await session.get(BackgroundJob, job_id)
                 if job_row:

@@ -83,6 +83,12 @@ requests that arrive together; a hosted one just answers in parallel.
   shows on the job (`docs/dev/captioning.md`).
 - **The paid-call cap** of an automated run counts these calls (M9 stage 10). Concurrency
   must not let a run overshoot its cap by more than the requests in flight; say by how many.
+  What stage 10 counts is `BackgroundJob.done_items`, written `i + 1` after each call in
+  the caption loop and equal to the SSE `done` (`docs/dev/comfyui/run-budgets.md` § Who
+  writes the paid-call counts). With requests in flight together, keep it one step per
+  finished call, failed ones included, and keep the row and the event the same number.
+  It is one commit per image for every caption model, which T2 may batch for the local
+  ones, whose count nothing reads.
 - **The Strata handoff** ([decision 10](../decisions/10-unload-strata-while-comfyui-generates.md))
   is untouched: it happens between stages, not between requests.
 

@@ -370,7 +370,7 @@ images once the retry ended, and afterwards only the original row kept its butto
 now shows `N/N` for a completed job and `N items` for any other row without a count
 (`itemCount` in `LogsPage.tsx`); nothing stored changed. The same gap leaves the run's
 paid-caption cap counting nothing (`_spent` sums `done_items` over `caption` children), which
-is left for its own change.
+is left for its own change. That change is stage 10: the caption job now writes the column.
 
 Once stage 3 makes scoring resumable, "recovery" is mostly re-running a job. Add a Retry
 action on failed and interrupted jobs that resubmits the stored `BackgroundJob.config`
@@ -495,6 +495,37 @@ sorts) and lands second, so it resolves this too.
 ## Stage 10 — The paid-call cap counts caption calls
 
 Added 2026-11-09; found during stage 8 and until now recorded only in the roadmap's prose.
+
+**Done 2026-11-10** on `fix/m9-stage10-paid-call-cap`, as below except where this note
+says otherwise. Detail: `docs/dev/comfyui/run-budgets.md` § Who writes the paid-call
+counts; the incident is PM-037.
+
+- **`done_items`, not a `result_data` count.** It is the column `_spent` already reads, so
+  `_spent` did not change. The caption job writes it after every call, whatever the call
+  returned, before the caption is saved, and commits it per image. It equals the job's SSE
+  `done`, which keeps PM-008's one-unit rule. The Logs page shows a stopped caption job's
+  `k/N` with no frontend change (`itemCount` already had the branch).
+- **Written after the call, not before it** (the user's ruling, 2026-11-10). A call in
+  flight when the process dies, or still running when shutdown's grace runs out, is not
+  counted: at most one per stop, as for the rewrite job. Writing ahead would have put the
+  row one ahead of the live count and counted calls that never left the machine.
+- **A caption stage captions only what is left** (the user's ruling, 2026-11-10). This was
+  not in the plan below. Counting alone caps the spend and then wastes it: the stage trims
+  its list to the calls left *in order*, and after a stopped job the first images in order
+  are the ones already captioned. `_stage_images` now skips images whose `captioned_by` is
+  the stage's model, for billed and free models alike.
+- **What a stopped caption job leaves behind**: `done_items` for every call made, and
+  nothing else new. A cancelled job still writes no `result_data` (PM-023's known gap).
+- **`/pipeline` is not touched.** A run never starts it, and its counter is image × step.
+- **The acceptance test** is `backend/tests/test_run_paid_calls.py`: four images, a cap of
+  five, a job that fails after one call, a job cancelled from outside after three more
+  (one a failed call), and a last resume with one call for two images. Five calls reach
+  the fake provider. The stubbed test in `test_run_extend.py` now goes through the real
+  `_spent`, over rows built by hand: it checks the reserve, not the writer.
+- **Left open**, in `docs/dev/comfyui/run-budgets.md` § Not yet: the rewrite's reserve
+  reads failed caption calls as captions made, and a caption edited by hand between
+  attempts is stamped `"manual"`, so a resume captions that image again. Both were found
+  by the review of this change.
 
 **Problem.** An automated run's paid-call cap reads what it has spent from its child jobs
 (`run_service._spent`). The rewrite half reads `result_data["calls"]`, which the rewrite

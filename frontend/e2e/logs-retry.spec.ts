@@ -8,7 +8,7 @@ import { test, expect } from '@playwright/test'
 // checked is the wiring: the button follows `retryable`, it posts for the right job,
 // and both of the server's answers reach the user.
 
-function fakeJob(id: string, label: string, retryable: boolean) {
+function fakeJob(id: string, label: string, retryable: boolean, over: Record<string, unknown> = {}) {
   return {
     id,
     job_type: 'quality_score',
@@ -16,7 +16,8 @@ function fakeJob(id: string, label: string, retryable: boolean) {
     status: retryable ? 'failed' : 'completed',
     dataset_id: null,
     total_items: 10,
-    // What every job but an automated run's step stores: nothing written.
+    // What a scoring job stores: nothing written. Only a caption job and an automated
+    // run's own steps write the count.
     done_items: 0,
     error_msg: retryable ? 'Interrupted by server shutdown or restart' : null,
     result_data: {},
@@ -25,12 +26,19 @@ function fakeJob(id: string, label: string, retryable: boolean) {
     started_at: null,
     finished_at: null,
     retryable,
+    ...over,
   }
 }
 
 test('Retry shows on retryable jobs only and reports the server answer', async ({ page }) => {
   const stopped = fakeJob('e2e-retry-stopped', 'E2E stopped scoring', true)
   const finished = fakeJob('e2e-retry-finished', 'E2E finished scoring', false)
+  // A caption job writes how far it got (M9 stage 10), so its stopped row can say so.
+  const captioning = fakeJob('e2e-stopped-caption', 'E2E stopped captioning', false, {
+    job_type: 'caption',
+    status: 'cancelled',
+    done_items: 4,
+  })
 
   // Only the History tab's own request: TopBar's reconcile asks with `status`/`ids`,
   // and must keep reaching the real backend.
@@ -39,7 +47,7 @@ test('Retry shows on retryable jobs only and reports the server answer', async (
       url.pathname === '/api/v1/jobs/' &&
       !url.searchParams.has('status') &&
       !url.searchParams.has('ids'),
-    (route) => route.fulfill({ json: [stopped, finished] }),
+    (route) => route.fulfill({ json: [stopped, finished, captioning] }),
   )
 
   const posted: string[] = []
@@ -61,9 +69,12 @@ test('Retry shows on retryable jobs only and reports the server answer', async (
   // The POST below proves the button belongs to the stopped job's row.
   await expect(retry).toHaveCount(1)
   // The item count never claims `0/10` for work the row does not record: a completed
-  // job did all of its items, and a stopped one shows only how many it was given.
+  // job did all of its items, a stopped one shows only how many it was given, and a
+  // stopped caption job shows the count it stored.
+  await expect(page.getByText('E2E stopped captioning')).toBeVisible()
   await expect(page.getByText('10/10', { exact: true })).toHaveCount(1)
   await expect(page.getByText('10 items', { exact: true })).toHaveCount(1)
+  await expect(page.getByText('4/10', { exact: true })).toHaveCount(1)
   await expect(page.getByText('0/10', { exact: true })).toHaveCount(0)
 
   await retry.click()

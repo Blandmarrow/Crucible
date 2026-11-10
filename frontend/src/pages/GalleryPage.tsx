@@ -306,6 +306,15 @@ export default function GalleryPage() {
   const [isDragOver, setIsDragOver] = useState(false);
   const dragDepth = useRef(0);
   const [genMetaImage, setGenMetaImage] = useState<ImageListItem | null>(null);
+  // The list says only *whether* an image has generation metadata; the JSON is
+  // about 55 KB a row on ComfyUI output, so it is fetched when the modal opens
+  // (M9 stage 11). Same key and fetcher as `ImageDetailPage`, so the two share
+  // one cache entry and its invalidations.
+  const genMetaQuery = useQuery({
+    queryKey: ["image", genMetaImage?.id],
+    queryFn: () => imagesApi.get(genMetaImage!.id),
+    enabled: !!genMetaImage,
+  });
   const [activeSubfolder, setActiveSubfolder] = useState<string | undefined>(
     saved?.activeSubfolder == null ? undefined : saved.activeSubfolder
   );
@@ -2329,7 +2338,7 @@ export default function GalleryPage() {
                     key={img.id}
                     image={img}
                     sortable={isCustomOrder}
-                    onShowGenMeta={img.generation_metadata ? setGenMetaImage : undefined}
+                    onShowGenMeta={img.has_generation_metadata ? setGenMetaImage : undefined}
                     onSelect={handleSelect}
                   />
                 ))}
@@ -2437,7 +2446,7 @@ export default function GalleryPage() {
       </DndContext>
 
       {/* Generation metadata modal */}
-      {genMetaImage?.generation_metadata && (
+      {genMetaImage && (
         <div
           style={{
             position: "fixed", inset: 0, zIndex: 50,
@@ -2466,7 +2475,17 @@ export default function GalleryPage() {
                 ×
               </button>
             </div>
-            <GenerationMetadata metadata={genMetaImage.generation_metadata} />
+            {genMetaQuery.isPending ? (
+              <div style={{ fontSize: 12, color: "var(--fg-mute)" }}>Loading…</div>
+            ) : genMetaQuery.isError ? (
+              <div style={{ fontSize: 12, color: "var(--bad)" }}>
+                {apiErrorDetail(genMetaQuery.error, "Could not load the generation info")}
+              </div>
+            ) : genMetaQuery.data?.generation_metadata ? (
+              <GenerationMetadata metadata={genMetaQuery.data.generation_metadata} />
+            ) : (
+              <div style={{ fontSize: 12, color: "var(--fg-mute)" }}>No generation info recorded.</div>
+            )}
           </div>
         </div>
       )}

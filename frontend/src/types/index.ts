@@ -147,7 +147,10 @@ export interface ImageListItem {
   scores_stale: boolean;
   dino_layer_scores: Record<string, number> | null;
   quality_flags: Record<string, unknown>;
-  generation_metadata?: GenerationMetadata | null;
+  /** List endpoint only: whether `GET /images/{id}` has generation metadata to
+   *  show. The list never carries the JSON itself — about 55 KB a row on ComfyUI
+   *  output (M9 stage 11). `ImageDetail` omits this and has the JSON. */
+  has_generation_metadata: boolean;
   caption_text: string;
   captioned_by: string;
   is_auto_named: boolean;
@@ -196,7 +199,7 @@ export interface Detection {
   detected_at: string;
 }
 
-export interface ImageDetail extends ImageListItem {
+export interface ImageDetail extends Omit<ImageListItem, "has_generation_metadata"> {
   original_filename: string;
   phash: string | null;
   noise_score: number | null;

@@ -8,9 +8,11 @@ from typing import Annotated, Any
 from uuid import uuid4
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
-from sqlalchemy import and_, case, delete, func, literal_column, or_, select, update as sa_update
+from sqlalchemy import (
+    String, and_, case, delete, func, literal_column, or_, select, type_coerce, update as sa_update,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import undefer
+from sqlalchemy.orm import defer, undefer
 
 from backend.config import settings
 from backend.job_outcome import failure_summary, note_failure
@@ -500,6 +502,17 @@ def _page_ids_query(f: ImageListParams):
     return _ordered_ids_query(f).offset((f.page - 1) * f.limit).limit(f.limit)
 
 
+# Whether a row has generation metadata worth a modal, computed in SQL so the
+# list never ships the JSON itself (about 55 KB a row on ComfyUI output; M9
+# stage 11). `IS NOT NULL` alone is wrong: a constructor that passes
+# `generation_metadata=None` stores the JSON text 'null', not SQL NULL. An empty
+# object counts as none, since its modal would be empty.
+_HAS_GENERATION_METADATA = and_(
+    Image.generation_metadata.isnot(None),
+    type_coerce(Image.generation_metadata, String).notin_(["null", "{}"]),
+)
+
+
 @router.get("/", response_model=list[ImageListItem])
 async def list_images(
     f: Annotated[ImageListParams, Query()],
@@ -507,16 +520,25 @@ async def list_images(
 ):
     page_ids = (await db.execute(_page_ids_query(f))).scalars().all()
     images: list[Image] = []
+    has_meta: dict[str, bool] = {}
     if page_ids:
         # `ImageListParams.limit` is capped at 500, so this `IN` never needs
         # chunking. Put back in page order here; a row deleted between the two
         # statements simply drops out.
-        by_id = {
-            img.id: img
-            for img in (await db.execute(
-                select(Image).where(Image.id.in_(page_ids))
-            )).scalars()
-        }
+        #
+        # `generation_metadata` is deferred for this query only, never on the
+        # model: a model-level defer is the `source_meta` trap, where every
+        # entity reader must remember to undefer. `raiseload` makes a read here
+        # fail loudly rather than lazy-load on the async session. The card asks
+        # only whether it exists; the modal fetches `GET /images/{id}`.
+        by_id: dict[str, Image] = {}
+        for img, flag in (await db.execute(
+            select(Image, _HAS_GENERATION_METADATA)
+            .options(defer(Image.generation_metadata, raiseload=True))
+            .where(Image.id.in_(page_ids))
+        )).tuples():
+            by_id[img.id] = img
+            has_meta[img.id] = bool(flag)
         images = [by_id[i] for i in page_ids if i in by_id]
 
     # Stamp the effective license onto each row for the gallery badge. One
@@ -535,6 +557,7 @@ async def list_images(
         item = ImageListItem.model_validate(img)
         item.license = img.license or ds_license
         item.label_ids = labels_by_id.get(img.id, [])
+        item.has_generation_metadata = has_meta.get(img.id, False)
         out.append(item)
     return out
 

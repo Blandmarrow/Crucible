@@ -300,7 +300,7 @@ export default function ImageCard({ image, onShowGenMeta, onSelect, isDraggable,
               ))}
             </span>
           )}
-          {image.generation_metadata && onShowGenMeta && (
+          {image.has_generation_metadata && onShowGenMeta && (
             <button
               className="icon-btn"
               title="View generation info"

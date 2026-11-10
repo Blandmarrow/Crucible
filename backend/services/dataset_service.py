@@ -90,19 +90,23 @@ def _stats_cache_put(key: tuple[str, str | None, str], validator: tuple, payload
         _stats_cache.pop(next(iter(_stats_cache)))  # drop oldest insertion
 
 
-async def _image_validator(db: AsyncSession, dataset_id: str, subfolder: str | None) -> tuple:
-    """(row count, newest updated_at) for one dataset/subfolder scope.
+def _image_validator_stmt(dataset_id: str, subfolder: str | None):
+    """The statement behind `_image_validator`, apart so a test can read its plan.
 
-    `count(*)`, not `count(Image.id)`, so the count needs no table row. It buys
-    nothing yet, because `max(updated_at)` still reads every row; an index on
-    `(dataset_id, updated_at)` (M9 stage 11) is what lets both come off an index.
+    `count(*)`, not `count(Image.id)`, so the count needs no table row, and
+    `ix_images_dataset_updated_at` carries `max(updated_at)`: the dataset-wide
+    check reads that index alone (M9 stage 11; `test_image_sort_plan.py`). A
+    subfolder scope adds a column the index lacks, so it reads rows again.
     """
     where = [Image.dataset_id == dataset_id]
     if subfolder is not None:
         where.append(Image.subfolder == subfolder)
-    row = (await db.execute(
-        select(func.count(), func.max(Image.updated_at)).select_from(Image).where(*where)
-    )).one()
+    return select(func.count(), func.max(Image.updated_at)).select_from(Image).where(*where)
+
+
+async def _image_validator(db: AsyncSession, dataset_id: str, subfolder: str | None) -> tuple:
+    """(row count, newest updated_at) for one dataset/subfolder scope."""
+    row = (await db.execute(_image_validator_stmt(dataset_id, subfolder))).one()
     return (row[0], row[1])
 
 

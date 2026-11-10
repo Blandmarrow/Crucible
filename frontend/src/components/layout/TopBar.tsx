@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { Link, useMatch } from "react-router";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, type QueryKey } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { datasetsApi } from "../../api/datasets";
 import { jobsApi } from "../../api/jobs";
@@ -15,6 +15,7 @@ import { TERMINAL_JOB_STATUSES } from "../../constants/jobs";
 import { invalidateDetectionQueries } from "../../utils/detectionQueries";
 import { showImportSummaryToast } from "../../utils/importToast";
 import { invalidateDatasetContentScope } from "../../constants/queryKeys";
+import { createThrottledInvalidator } from "../../utils/throttledInvalidate";
 import { Columns2, RefreshCw } from "lucide-react";
 
 // Jobs that import/produce images incrementally — refresh the gallery each time
@@ -147,6 +148,9 @@ export default function TopBar() {
   const outlineTerminalRef = useRef<Set<string>>(new Set());
   const rewriteTerminalRef = useRef<Set<string>>(new Set());
   const rewriteDoneRef = useRef<Map<string, number>>(new Map());
+  // The live branch's per-dataset refetches, at most one per 2 s (M9 stage 11).
+  const liveRefetch = useMemo(() => createThrottledInvalidator(qc), [qc]);
+  useEffect(() => () => liveRefetch.cancelAll(), [liveRefetch]);
   useEffect(() => {
     jobs.forEach((progress, jobId) => {
       // Prompt-generation jobs (ComfyUI "generate until N"): rows land per batch,
@@ -326,6 +330,12 @@ export default function TopBar() {
           qc.invalidateQueries({ queryKey: ["image"] });
         }
         if (progress.dataset_id && IMAGE_MODIFYING_JOB_TYPES.has(progress.job_type)) {
+          // A live job's throttled refetch may still be waiting. The two keys
+          // below cover its `images` and `dataset`; anything else it held (a
+          // run's new subfolder) goes out now rather than after the final refetch.
+          for (const key of liveRefetch.takePending(progress.dataset_id)) {
+            if (key[0] !== "images" && key[0] !== "dataset") qc.invalidateQueries({ queryKey: key });
+          }
           qc.invalidateQueries({ queryKey: ["images", progress.dataset_id] });
           // Dataset summary counts (image_count / captioned_count) live on the
           // singular ["dataset", id] query; refresh it whenever images change so
@@ -445,31 +455,37 @@ export default function TopBar() {
         const currentDone = progress.done ?? 0;
         if (currentDone > prevDone) {
           captionDoneRef.current.set(jobId, currentDone);
-          qc.invalidateQueries({ queryKey: ["images", progress.dataset_id] });
+          // Throttled per dataset: one refetch now, then at most one per 2 s.
+          // Every advance used to refetch the open page, so a caption job over N
+          // images refetched it up to N times (M9 stage 11). The terminal branch
+          // above takes whatever is still pending.
+          const keys: QueryKey[] = [["images", progress.dataset_id]];
           // Frames land in a subfolder that may not exist yet, so the sidebar
           // needs it as the run fills. Deliberately NOT ["dataset", id]: that
           // live invalidation is scoped to workers refreshing Dataset.image_count
           // per row, and video_extract's refresh_stats is terminal-only — it
           // would be one refetch per shot returning an unchanged number.
           if (progress.job_type === "video_extract") {
-            qc.invalidateQueries({ queryKey: ["subfolders", progress.dataset_id] });
+            keys.push(["subfolders", progress.dataset_id]);
           }
           if (progress.job_type === "comfy_generate") {
-            qc.invalidateQueries({ queryKey: ["subfolders", progress.dataset_id] });
+            keys.push(["subfolders", progress.dataset_id]);
             // Sidebar/gallery image counters, so they climb with the run instead of
             // jumping at the end. Scoped to comfy_generate: its worker refreshes the
             // stored Dataset.image_count per row, so there is something new to read.
             // Caption jobs are in LIVE_IMAGE_JOB_TYPES too but refresh only at the
             // end, so this would be one refetch per image returning the same number.
-            qc.invalidateQueries({ queryKey: ["dataset", progress.dataset_id] });
+            keys.push(["dataset", progress.dataset_id]);
           }
+          liveRefetch.invalidate(progress.dataset_id, keys);
+          // Not throttled: one image's caption, a cheap and specific key.
           if (progress.image_id) {
             qc.invalidateQueries({ queryKey: ["caption", progress.image_id] });
           }
         }
       }
     });
-  }, [jobs, qc]);
+  }, [jobs, qc, liveRefetch]);
 
   async function handleShutdown() {
     setShowConfirm(false);

@@ -17,17 +17,17 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-10, stage 11 built)
+## Next session (updated 2026-11-10, stage 11 merged)
 
 0. **M9 comes first** ([decision 13](decisions/13-scale-work-first.md)), planned in
-   [scale-plan/README.md](scale-plan/README.md). Stages 1–3, 5 and 8–10 are merged. A review on
+   [scale-plan/README.md](scale-plan/README.md). Stages 1–3, 5 and 8–11 are merged. A review on
    2026-11-09 timed the hot queries on a scratch database with the migrated column order and
    added stages 9–11 (decision 13's amendment; the numbers are in the plan's Evidence base).
    Stage 9 merged as PR #134 (PM-036, now MITIGATED). Stage 10 merged as PR #135
    (PM-037, MITIGATED). Stage 6a, the benchmark harness, merged as PR #137, with its "before"
-   baseline recorded. Stage 11 is built on `feat/m9-stage11-hot-paths` (five items, one
-   commit each, every gate green) and waits for its PR; its cache-header item is parked, with
-   the reason in `scale-plan/README.md` § Stage 11 as built. **Next is stage 4**, shrunk on
+   baseline recorded. Stage 11 merged as PR #138 (five items; its cache-header item is
+   parked, with the reason in `scale-plan/README.md` § Stage 11 as built). Its index and
+   gallery changes were not checked by hand in a browser, and the numbers are 6b's job. **Next is stage 4**, shrunk on
    2026-11-10 (decision 13's amendment) to fetching the raw Stats values on demand, because
    its full design only pays at 100k images or so. The small-subfolder score sort that 6a's
    baseline found is parked until a dataset nears 20k images with small subfolders
@@ -170,8 +170,7 @@ lands second and resolves the overlap. Order of what is left: 4, 6b, 7 (changed
   every call, and a resumed caption stage captions only what its model has not captioned
   yet. A call in flight when the process dies is not counted (both the user's calls).
   Detail: `docs/dev/comfyui/run-budgets.md` § Who writes the paid-call counts.
-- [x] Stage 11: hot-path quick wins. Built 2026-11-10 on `feat/m9-stage11-hot-paths`, PR
-  pending: an index for the Stats cache check (migration `d5f1a8c3e7b2`), a
+- [x] Stage 11: hot-path quick wins. Merged 2026-11-10 as PR #138: an index for the Stats cache check (migration `d5f1a8c3e7b2`), a
   `has_generation_metadata` flag in place of the JSON in the gallery list, narrow reads in
   the thumbnail and file routes, the live gallery refetch throttled to one per 2 s, and
   `ImageCard` memoized with a per-card selector. The cache header is **parked** (the user's

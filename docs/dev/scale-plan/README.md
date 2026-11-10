@@ -654,7 +654,7 @@ URL gets no `immutable` header went with the parked item.)
 
 ### Stage 11 as built (2026-11-10)
 
-Five items shipped on `feat/m9-stage11-hot-paths`, one commit each; the cache header is
+Five items merged as PR #138, one commit each; the cache header is
 parked.
 
 - **The index** is `ix_images_dataset_updated_at`, migration `d5f1a8c3e7b2`. The statement

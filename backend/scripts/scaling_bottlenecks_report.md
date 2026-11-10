@@ -99,13 +99,37 @@ adds a service dependency that contradicts the single-user local-app model.
 
 ## Re-running
 
+The harness was rebuilt for M9 stage 6a (2026-11-10). It now builds the schema with
+`alembic upgrade head`, seeds the realistic shape of the 2026-11-09 addendum below, and
+times the app's own endpoints through `httpx.ASGITransport`. Each statement a case issues
+is replayed on raw `sqlite3` for its time and its query plan. The module docstring says
+what each step does and why.
+
 ```
-python -m backend.scripts.bench_scaling --sweep 100000,250000,500000,1000000
-python -m backend.scripts.bench_scaling --sweep 500000,1000000 --only stats   # target one path
+python -m backend.scripts.bench_scaling --profile photo --sweep 100000,250000
+python -m backend.scripts.bench_scaling --profile comfy --sweep 20000 --optimize
+python -m backend.scripts.bench_scaling --profile photo --sweep 100000 --only stats   # one group
+python -m backend.scripts.bench_scaling --profile photo --sweep 100000 --reuse-db \
+    --json .claude/local/bench/after.json --compare .claude/local/bench/before.json
 ```
-Flags: `--only`, `--embed-cap`, `--embed-dim`, `--thumb-cap`, `--dup-prob`, `--keep-db`,
-`--db-path`. Use it to prove each fix flattens its curve (e.g. re-run `--only dedup` after
-the BK-tree change).
+
+| Flag | What it does |
+|---|---|
+| `--profile photo\|comfy` | `generation_metadata` at ~400 B or ~55 KB a row |
+| `--schema alembic\|create_all` | the migrated layout (default) or the model's declaration order |
+| `--neighbour-rows N` | a second dataset, so the dataset filter really filters |
+| `--only` | groups: `gallery`, `counts`, `stats`, `lookups` (the default set), and the legacy `dedup`, `similarity`, `thumb` |
+| `--optimize` | measure again after `PRAGMA optimize=0x10002`, then drop the statistics |
+| `--cold` | evict the DB from the OS cache before every request and every replayed statement (Windows, or Linux as root); a failed eviction is counted in the report |
+| `--reuse-db` | keep the seeded file and reuse it; it is upgraded to `head` first |
+| `--json`, `--compare` | write every number; print the change against an earlier file |
+| `--reps`, `--lookups`, `--thumbs`, `--no-mem` | repeats, sample sizes, and skipping the `tracemalloc` pass |
+
+The old `--embed-cap`, `--embed-dim` and `--db-path` are gone: every scored row carries all
+three blobs at their real sizes, and the files live in `--work-dir`. Keep result files out
+of the repo (`.claude/local/` is gitignored), since the JSON records the machine.
+`backend/tests/test_bench_scaling_smoke.py` runs the harness at a few hundred rows in CI, so
+a route that moves breaks a test instead of the next measurement.
 
 ## Addendum 2026-07-16 — Finding 1 (dedup) FIXED
 
@@ -260,3 +284,119 @@ query selects every non-deferred column, `LIMIT 100`.
 
 Cold-cache times, 250k and 1M rows, several datasets of mixed size, filters beyond one
 subfolder, the ORM and HTTP layers, and peak memory. Those are stage 6a and 6b.
+
+## Addendum 2026-11-10 — stage 6a baseline, before stages 4 and 11
+
+M9 stage 6a's harness, run as § Re-running describes. These are the "before" numbers that
+stage 6b compares against once stages 4 and 11 land (`docs/dev/scale-plan/README.md`
+§ Stage 6). `main` was at `e2131aa`, migration head `c3e7a9d1f5b2`.
+
+**Method.**
+
+- Three runs: `--profile photo --sweep 100000,250000 --optimize`,
+  `--profile comfy --sweep 20000 --optimize`, and `--profile photo --sweep 100000 --cold`.
+  All with `--reuse-db`; the seeded files and the JSON are kept outside the repo for 6b.
+- The schema comes from `alembic upgrade head`: the blobs are columns 27–29 of 48, and 19
+  columns follow them, as in the 2026-11-09 run. One dataset, no neighbour rows.
+- Seeded as that run's method says: 70% scored with all three blobs, 80% captioned at ~270
+  characters, `generation_metadata` ~400 B (photo, 1.71 GB at 100k, 4.29 GB at 250k) or
+  ~55 KB (ComfyUI, 1.36 GB at 20k). `sort_order` is NULL on every row.
+- Every time is the best of three after a first call, through the app's own endpoints
+  (`httpx.ASGITransport`, no network). "SQL" is the statement replayed on raw `sqlite3`.
+  "Analyzed" is after `PRAGMA optimize=0x10002`; the statistics were dropped afterwards.
+  "Cold" evicts the file from the OS cache before every request (11,393 evictions, none
+  failed).
+- The owner's Windows dev box, Python 3.12, SQLite 3.49.1. Compare rows with each other and
+  with the 2026-11-09 addendum, not with the July tables.
+
+### Gallery (`GET /images/`, limit 100), in ms
+
+A deep page is 60% in: page 601 at 100k, 1,501 at 250k, 121 for ComfyUI.
+
+| Sort | Photo 100k | Photo 250k | ComfyUI 20k | 100k analyzed | 250k analyzed | 100k cold |
+|---|---|---|---|---|---|---|
+| aesthetic desc, page 1 | 6.9 | 7.0 | 37.8 | 6.9 | 7.0 | 139.0 |
+| aesthetic desc, deep | 10.8 | 16.7 | 41.9 | 10.7 | 16.6 | 259.3 |
+| created desc, page 1 | 6.0 | 6.3 | 40.8 | 6.3 | 6.5 | 42.0 |
+| created desc, deep | 11.3 | 18.5 | 42.3 | 10.8 | 19.1 | 222.5 |
+| filename asc, deep | 10.5 | 14.6 | 45.1 | 9.9 | 15.1 | 192.3 |
+| sort_order asc, page 1 | 6.1 | 6.2 | 40.8 | **238.2** | **600.2** | 41.5 |
+| color desc, page 1 (no index) | 142.2 | 350.1 | 86.9 | 242.6 | 616.9 | 8,106.2 |
+| color desc, deep | 281.8 | 1,065.0 | 98.4 | 385.9 | 1,361.8 | 8,582.1 |
+| width desc, deep | 191.8 | 485.5 | 86.7 | 309.1 | 828.8 | 8,357.1 |
+| updated_at desc, deep | 335.9 | 1,162.9 | 94.4 | 452.9 | 1,598.8 | 8,754.5 |
+| luminance desc, page 1 (after the blobs) | 662.8 | 1,699.2 | 481.3 | 815.1 | 2,004.9 | 4,787.8 |
+| luminance desc, deep | 821.0 | 2,504.0 | 492.6 | 943.4 | 2,865.2 | 4,830.4 |
+| nsfw desc, deep (after the blobs) | 856.6 | 2,500.0 | 515.2 | 943.8 | 2,773.1 | 4,879.5 |
+| aesthetic desc, page 1, 20-row subfolder | **687.3** | **1,793.6** | 409.1 | 684.7 | 1,865.8 | **10,910.8** |
+
+- **The indexed sorts hold.** Every one read its index with no sort step, at both sizes:
+  about 6 ms for page 1 and 10–19 ms for a deep page. The id statement of the aesthetic
+  deep page took 4.1 ms of SQL at 100k, against 4.5 ms for the 2026-11-09 `ROWID` row. That
+  is the reproduction check, and it agrees.
+- **An unindexed sort costs about 140 ms at 100k and 340 ms at 250k for page 1**, nearly all
+  of it SQL. If the column sits after the blobs (`luminance_score`, `nsfw_score`), it costs
+  five times that: 0.66 s and 1.7 s.
+- **A score sort inside a small subfolder is the worst gallery case: 0.69 s at 100k, 1.8 s at
+  250k, 10.9 s cold.** SQLite walks the score's index and reads each row's `subfolder` to
+  filter it. On a migrated file that column is after the blobs. With 20 matching rows a
+  page of 100 never fills, so the walk covers the whole dataset. The cost falls with the
+  subfolder's share: page 1 took 668 ms for 20 rows, 8.5 ms for a subfolder of 9,916 rows
+  and 1.8 ms for 29,671 (raw SQL, 100k). The 2026-11-09 row (27 ms, "one subfolder of 20")
+  fits a subfolder of about a twentieth of the dataset, so it measured the middle of this
+  range rather than its end. The equality form `subfolder = ?` takes the same plan and the
+  same time, so the app's subtree filter is not the cause.
+- **`ANALYZE` makes the gallery worse.** After it, the planner reads every unindexed sort,
+  and `sort_order` too, through `ix_images_dataset_caption_tokens` and then sorts. `sort_order`
+  loses its index (6 ms becomes 238 ms at 100k), and each unindexed sort gets about 100 ms
+  slower at 100k and 250 ms slower at 250k. The app never runs it, and these numbers are a
+  reason to keep it that way. `sort_order` being NULL on every seeded row may matter here.
+- **A ComfyUI page costs 38–45 ms on any indexed sort, against 6 ms for photos**, and is
+  5.3 MB against 131 KB. That is `generation_metadata` in the list response, stage 11's
+  item.
+- **Cold, the indexed pages cost 40–260 ms and the unindexed ones 5–9 s.**
+
+### Counts, Stats and lookups, in ms
+
+| Case | Photo 100k | Photo 250k | ComfyUI 20k | 100k analyzed | 100k cold |
+|---|---|---|---|---|---|
+| `GET /images/count` | 5.6 | 12.7 | 1.9 | 5.8 | 189.4 |
+| The same, one subfolder (30%) | 9.1 | 21.5 | 2.8 | 9.2 | 202.2 |
+| Stats, cold cache entry | 4,200.3 | 10,584.4 | 1,600.0 | 3,451.7 | 20,816.2 |
+| Stats, cached poll | 229.7 | 591.6 | 55.6 | 129.3 | 10,209.9 |
+| Score values, cold cache entry | 2,142.7 | 5,543.4 | 743.3 | 1,930.0 | 18,778.4 |
+| Score values, cached poll | 653.5 | 1,692.3 | 136.2 | 552.1 | 10,697.0 |
+| `GET /images/{id}`, per request (2,000) | 2.69 | 2.80 | 3.14 | 2.70 | 6.71 |
+| Thumbnail, per request (500) | 2.07 | 2.19 | 2.24 | 2.07 | 5.80 |
+
+| Stats statement (100k, SQL ms) | 2026-11-09 | 2026-11-10 |
+|---|---|---|
+| Validator `count(*), max(updated_at)` | 294.0 | 226.0 |
+| 15-column row fetch | 1,231.6 | 996.5 |
+| Coverage counts | 295.2 | 229.2 |
+| `aesthetic_model` group | 1,034.3 | 804.2 |
+| Eight flag sums | 333.8 | 279.0 |
+| Embedding count | 298.9 | 230.9 |
+| License group | 320.6 | 310.8 |
+
+- **The Stats statements reproduce the 2026-11-09 shape** at about 20% less time each: the
+  statements that read a column after the blobs cost 3.5 to 4.4 times the ones that do not. The endpoint adds
+  about 1.1 s of Python at 100k on top of 3.1 s of SQL.
+- **A cached poll is not cheap.** Stats spends its 230 ms (590 ms at 250k) on the validator
+  alone, which is stage 11's index. Score values spends 654 ms (1.7 s), because the cached
+  payload is still 7.6 MB of JSON (19.1 MB at 250k), serialized again on every poll. That is
+  stage 4's.
+- **Memory:** a cold Stats call peaked at 83 MB of Python allocation at 100k and 209 MB at
+  250k (`tracemalloc`), and score values at 82 MB and 204 MB. That is about 0.83 KB per
+  image, or roughly 0.8 GB at 1M, the figure stage 4 removes.
+- **Cold, the validator alone takes about 10 s at 100k**, so opening the Stats page on a cold
+  cache costs 21 s.
+- **A lookup by id costs 2.7 ms, of which under 0.1 ms is SQL.** The rest is the ORM, the
+  response model and the transport. A ComfyUI lookup returns 53 KB.
+
+### What this run does not cover
+
+1M rows (6b), several datasets of mixed size (`--neighbour-rows` was 0), a dataset with a
+real manual order, and the legacy `dedup`, `similarity` and `thumb` groups, which 6b runs.
+Cold numbers swing with how SQLite walks the file. Read them as an order of magnitude, not a
+precise figure.

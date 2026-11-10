@@ -28,12 +28,13 @@ The index `ix_images_dataset_created_at` already existed during that run (migrat
 and aesthetic sorts using their indexes. The app never runs `ANALYZE` or `PRAGMA optimize`,
 so the planner has no table statistics.
 
-Two gaps make the July numbers optimistic:
+Two gaps make the July numbers optimistic (stage 6a closed both in the harness on
+2026-11-10; the July numbers stand as measured):
 
-- **No layer blobs.** The bench seeds `clip_embedding` and `dino_embedding` but never
+- **No layer blobs.** The July bench seeded `clip_embedding` and `dino_embedding` but never
   `dino_layer_embeddings`, the 18,432-byte one.
-- **The wrong column order.** It builds its DB with `Base.metadata.create_all`
-  (`bench_scaling.py:93`), which follows the model's declaration order. A real database is
+- **The wrong column order.** It built its DB with `Base.metadata.create_all`, which
+  follows the model's declaration order. A real database is
   built by migrations, and SQLite's `ADD COLUMN` appends. In the dev DB the three embedding
   blobs are columns 27–29 of 48 (counting from 1; about 21 KB per row on 4 KB pages), and 19 columns come after
   them: `subfolder`, `sort_order`, `caption_token_count`, `license`, `luminance_score`,
@@ -310,13 +311,33 @@ has two halves, so that stages 4 and 11 are measured before and after.
   gallery sort at page 1 and at a deep offset, the count, the Stats validator, each Stats
   pass, and a lookup by id.
 
+**6a as built (2026-11-10).** The harness times the app's endpoints, not hand-written SQL,
+so stages 4 and 11 are measured in their new form without editing it. Every statement an
+endpoint issues is captured and replayed on raw `sqlite3` for its time and plan; a Stats
+pass is then a statement in the Stats endpoint's breakdown. `--cold` works on Windows (an
+unbuffered open purges the file's cached pages, no admin needed) and on Linux as root.
+`backend/tests/test_bench_scaling_smoke.py` keeps it running in CI. Flags and commands:
+`scaling_bottlenecks_report.md` § Re-running. The "before" baseline is that file's
+2026-11-10 addendum.
+
+That baseline found one cost no stage covers yet: a score sort inside a subfolder too small
+to fill a page walks the score's whole index, reading `subfolder` past the blobs for every
+row (0.69 s at 100k, 1.8 s at 250k, 10.9 s cold). Whether stage 11 takes it on is open.
+
 **6b, the numbers, after stages 4 and 11:**
 
-- Re-run stats, pagination and similarity at 100k, 250k and 1M.
+- Re-run stats, pagination and similarity at 100k, 250k and 1M. At 100k and 250k, run
+  6a's baseline commands again with `--compare` against 6a's JSON. `--reuse-db` saves the
+  reseed and upgrades the kept files to the new head (stage 11's index); a reseed would
+  give the same rows anyway, since the seed is fixed. 1M has no "before": 6a stopped at
+  250k (the user's call), so 6b's 1M run stands alone. Similarity is a legacy group
+  (`--only similarity`), also new in 6b.
 - Record the numbers as a dated addendum to `scaling_bottlenecks_report.md`, with hardware
   and settings. Keep owner-specific hardware out of the tracked file.
 
-M4 also edits `bench_scaling.py` (three lines). Whichever lands second resolves it.
+M4 also edits `bench_scaling.py` (three lines, which seed `aesthetic_model` beside the
+score). 6a rewrote the file and already writes `aesthetic_model` on every scored row, so M4,
+landing second, drops its hunk.
 
 ## Stage 7 — Move the embeddings into their own table (only if stage 6 says so)
 

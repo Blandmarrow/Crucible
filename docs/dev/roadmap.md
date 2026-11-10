@@ -17,15 +17,18 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-10, stage 10 merged)
+## Next session (updated 2026-11-10, stage 6a built)
 
 0. **M9 comes first** ([decision 13](decisions/13-scale-work-first.md)), planned in
    [scale-plan/README.md](scale-plan/README.md). Stages 1–3, 5 and 8–10 are merged. A review on
    2026-11-09 timed the hot queries on a scratch database with the migrated column order and
    added stages 9–11 (decision 13's amendment; the numbers are in the plan's Evidence base).
    Stage 9 merged as PR #134 (PM-036, now MITIGATED). Stage 10 merged as PR #135
-   (PM-037, MITIGATED). **Next is stage 6a**, the benchmark harness, which waits on
-   nothing. The order after it is **6a → 4 → 11 → 6b → 7**. See M9 below.
+   (PM-037, MITIGATED). Stage 6a, the benchmark harness, is built on
+   `feat/m9-stage6a-bench-harness` with its "before" baseline recorded. **Next is stage 4**,
+   once 6a merges. The order after it is **4 → 11 → 6b → 7**. 6b re-runs 6a's baseline
+   commands with `--reuse-db` and `--compare`, so keep the seeded files and the baseline JSON
+   in `.claude/local/bench/`. See M9 below.
 1. **M10, job throughput, follows M9**
    ([decision 14](decisions/14-job-throughput-is-its-own-milestone.md)). After it comes M7:
    the CLIP QuickGELU plan or Stage 3, neither of which waits on anything (see M7 below).
@@ -114,7 +117,7 @@ Comes before every other open milestone
 ([decision 13](decisions/13-scale-work-first.md)). Gate: stages 1–5 and 9–11 merged with
 their tests and docs, and stage 6's numbers recorded; stage 7 is then built or ruled out by
 a decision. Plan: [scale-plan/README.md](scale-plan/README.md). Does not wait for M4, which
-lands second and resolves the overlap. Order of what is left: 6a, 4, 11, 6b, 7.
+lands second and resolves the overlap. Order of what is left: 4, 11, 6b, 7.
 
 - [x] Stage 1: a unique tie-breaker (`Image.id`) for every gallery sort. Merged 2026-11-08
   as PR #124. It cost the score sorts their index (PM-036); stage 9 fixed that.
@@ -136,8 +139,13 @@ lands second and resolves the overlap. Order of what is left: 6a, 4, 11, 6b, 7.
 - [ ] Stage 6: extend `bench_scaling.py` and re-measure, in two halves. **6a** builds the
   harness (the migrated column order, layer blobs, `generation_metadata`, query plans) and
   comes before stage 4. **6b** re-measures after stages 4 and 11 and records the numbers. A
-  partial run by hand on 2026-11-09 is the last addendum of
+  partial run by hand on 2026-11-09 is an addendum of
   `backend/scripts/scaling_bottlenecks_report.md`.
+  - [x] 6a, built 2026-11-10 on `feat/m9-stage6a-bench-harness`: the harness times the
+    app's endpoints and replays each statement for its plan, with a smoke test in CI. Its
+    "before" baseline (100k and 250k photo, 20k ComfyUI) is the report's 2026-11-10
+    addendum. Detail: `docs/dev/scale-plan/README.md` § Stage 6.
+  - [ ] 6b, after stages 4 and 11.
 - [ ] Stage 7: decide on, then maybe build, a table of their own for the embeddings and for
   `generation_metadata`, which is the larger of the two on ComfyUI images. Needs stage 6b.
 - [x] Stage 8: Retry for interrupted jobs. Merged 2026-11-08 as PR #127, for `quality_score`

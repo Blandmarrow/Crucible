@@ -35,7 +35,7 @@ Every repeating run has hard limits, so it cannot run forever:
 | **Most passes** | How many times the run goes round. |
 | **Most images** | How many images the run may make in all, rejects included. A pass that would go over makes fewer rows, shared out across the folders. A workflow that saves several images per prompt can go over on the first pass. |
 | **Most minutes of work** | Time spent working. Time paused, or Crucible being shut down, does not count. It is checked before each costly stage, so a long generate stage can run a little over. |
-| **Most paid LLM calls** | Shown only when a **billed** provider rewrites or captions. It counts rewrite requests and captioned images. When captioning is billed, it must be at least **Most images**, so there are always calls left to caption every image. |
+| **Most paid LLM calls** | Shown only when a **billed** provider rewrites or captions. It counts every rewrite request and every caption request the run has sent, failed ones included, since the provider was still asked. Calls made by a stage that failed or was cancelled still count after you resume. When captioning is billed, it must be at least **Most images**, so there are always calls left to caption every image. |
 
 A provider is **billed** when you tick that box for it in Settings → LLM Providers. Left
 alone, a provider on another machine counts as billed and one on this machine does not.
@@ -44,6 +44,8 @@ Ollama and Crucible's own captioners are never billed.
 When a cap runs out, the run stops making new images, still frees ComfyUI's VRAM, runs
 captioning and the export, and says which cap stopped it. If the paid-call cap cannot
 cover every image, the run captions as many as it can and says how many it left out.
+One call may go uncounted if Crucible is killed, or shut down, while that call is still
+waiting for its answer.
 
 To carry on, press **Raise caps and continue** on the run under *Past runs* (see
 [Following a run](runs.md#following-a-run)). Raise the cap

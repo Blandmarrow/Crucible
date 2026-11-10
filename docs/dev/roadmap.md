@@ -17,15 +17,15 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-09, stage 9 merged)
+## Next session (updated 2026-11-10, stage 10 merged)
 
 0. **M9 comes first** ([decision 13](decisions/13-scale-work-first.md)), planned in
-   [scale-plan/README.md](scale-plan/README.md). Stages 1–3, 5, 8 and 9 are merged. A review on
+   [scale-plan/README.md](scale-plan/README.md). Stages 1–3, 5 and 8–10 are merged. A review on
    2026-11-09 timed the hot queries on a scratch database with the migrated column order and
    added stages 9–11 (decision 13's amendment; the numbers are in the plan's Evidence base).
-   Stage 9 merged as PR #134 (PM-036, now MITIGATED). **Next is stage 10**, which waits on
-   nothing: an automated run's paid-call cap counts no caption calls. The order after it is
-   **10 → 6a → 4 → 11 → 6b → 7**. See M9 below.
+   Stage 9 merged as PR #134 (PM-036, now MITIGATED). Stage 10 merged as PR #135
+   (PM-037, MITIGATED). **Next is stage 6a**, the benchmark harness, which waits on
+   nothing. The order after it is **6a → 4 → 11 → 6b → 7**. See M9 below.
 1. **M10, job throughput, follows M9**
    ([decision 14](decisions/14-job-throughput-is-its-own-milestone.md)). After it comes M7:
    the CLIP QuickGELU plan or Stage 3, neither of which waits on anything (see M7 below).
@@ -114,7 +114,7 @@ Comes before every other open milestone
 ([decision 13](decisions/13-scale-work-first.md)). Gate: stages 1–5 and 9–11 merged with
 their tests and docs, and stage 6's numbers recorded; stage 7 is then built or ruled out by
 a decision. Plan: [scale-plan/README.md](scale-plan/README.md). Does not wait for M4, which
-lands second and resolves the overlap. Order of what is left: 10, 6a, 4, 11, 6b, 7.
+lands second and resolves the overlap. Order of what is left: 6a, 4, 11, 6b, 7.
 
 - [x] Stage 1: a unique tie-breaker (`Image.id`) for every gallery sort. Merged 2026-11-08
   as PR #124. It cost the score sorts their index (PM-036); stage 9 fixed that.
@@ -149,11 +149,11 @@ lands second and resolves the overlap. Order of what is left: 10, 6a, 4, 11, 6b,
   PR #134: every sort breaks ties on `rowid` in its own direction, `GET /images/` picks a
   page's ids before it loads the rows, and Renumber follows the same order. Detail:
   `docs/dev/gallery/filters.md`.
-- [ ] Stage 10: make an automated run's paid-call cap count caption calls. `run_service._spent`
-  sums `done_items` over the run's `caption` children, and no caption job writes
-  `done_items`, so the caption half of the cap counts nothing and never stops a run. Only a
-  stubbed `_Spent` is tested (`test_run_extend.py`). Its own change, with a test over real
-  job rows. Waits on nothing.
+- [x] Stage 10: make an automated run's paid-call cap count caption calls (PM-037). Merged
+  2026-11-10 as PR #135: the caption job writes `done_items` after
+  every call, and a resumed caption stage captions only what its model has not captioned
+  yet. A call in flight when the process dies is not counted (both the user's calls).
+  Detail: `docs/dev/comfyui/run-budgets.md` § Who writes the paid-call counts.
 - [ ] Stage 11: hot-path quick wins: an index for the Stats cache check,
   `generation_metadata` out of the gallery list, the thumbnail route's narrow read and
   cache header, the live gallery refetch, and `ImageCard`'s re-renders. Adds a migration.

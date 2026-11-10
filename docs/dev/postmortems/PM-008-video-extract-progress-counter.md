@@ -92,7 +92,9 @@ without saying what `done` had to mean for that to work.
 
 MITIGATED — the invariant is now stated, tested for `video_extract` and gated in the pill,
 but nothing structurally stops the *next* multi-phase worker from overloading its own
-counter; only review catches that. `BackgroundJob.done_items` remains unwritten by every job
-in the repo (so `LogsPage` shows `0/N` for everything), which is a separate, pre-existing
-gap. Found in code review of the `experimental-video-support` branch, not in production.
-Last reviewed for staleness: 2026-07-28.
+counter; only review catches that. `BackgroundJob.done_items` was unwritten by every job
+in the repo when this was filed (so `LogsPage` showed `0/N` for everything), a separate gap.
+M9 stage 8 stopped the Logs page claiming `0/N`, and stage 10 made the caption job write
+the column, with the same value as its SSE `done` (PM-037); the other jobs still do not.
+Found in code review of the `experimental-video-support` branch, not in production.
+Last reviewed for staleness: 2026-11-10.

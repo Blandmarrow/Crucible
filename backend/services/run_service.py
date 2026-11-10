@@ -1296,6 +1296,21 @@ async def in_dataset(db: AsyncSession, image_ids: list[str], dataset_id: str, *,
     return [i for i in image_ids if i in keep]
 
 
+async def _not_captioned_by(db: AsyncSession, image_ids: list[str], model: str) -> list[str]:
+    """`image_ids`, in order, less those `model` has already captioned.
+
+    The caption job stamps its model id on `Image.captioned_by` when it saves, so an
+    image carrying it was captioned by an earlier attempt of this stage. One whose call
+    failed, or whose reply was stripped to nothing, was never saved and stays in.
+    """
+    keep: set[str] = set()
+    for chunk in chunked(image_ids):
+        keep.update((await db.execute(
+            select(Image.id).where(Image.id.in_(chunk), Image.captioned_by != model)
+        )).scalars())
+    return [i for i in image_ids if i in keep]
+
+
 def _tail_rows(run: Run, idx: int) -> list[str]:
     """The rows the tail whose caption entry is at `idx` covers.
 
@@ -1326,12 +1341,22 @@ async def _stage_images(db: AsyncSession, run: Run, recipe: RunRecipe, key: str,
     # Never `[]`: score and caption read an empty list as the whole dataset.
     if not ids:
         return _Outcome("skip", note="This run produced no images to " + ("score" if key == "score" else "caption"))
+    if key == "caption":
+        # Only what is left (the user's ruling, 2026-11-10): a stage starting again
+        # after a failed, cancelled or interrupted job skips what that job captioned.
+        # `overwrite` is on, so it would otherwise send, and bill, those again, and the
+        # trim below would spend the cap on them while later images went without.
+        assert recipe.caption is not None
+        ids = await _not_captioned_by(db, ids, recipe.caption.model)
+        if not ids:
+            return _Outcome("skip", note="Nothing left to caption: every image already has this model's caption")
     trimmed = None
     if key == "caption" and recipe.loop is not None and recipe.loop.max_paid_calls is not None \
             and await _caption_billed(db, recipe):
         # Multi-image rows can make more images than the clamp planned for, and a
-        # resumed caption stage has already spent calls. Caption what the cap allows,
-        # and say so, rather than failing a loop whose GPU work is done.
+        # resumed caption stage has already spent calls (`_spent` counts them from the
+        # stopped job's row). Caption what the cap allows, and say so, rather than
+        # failing a loop whose GPU work is done.
         left = recipe.loop.max_paid_calls - (await _spent(db, run, recipe)).paid_calls
         if left <= 0:
             return _Outcome("skip", note="The paid-call cap is spent; nothing was captioned")
@@ -1565,7 +1590,13 @@ async def _caption_billed(db: AsyncSession, recipe: RunRecipe) -> bool:
 async def _spent(db: AsyncSession, run: Run, recipe: RunRecipe) -> _Spent:
     """What the run has used, read from its child jobs every time. Stage entries are not
     the record: a resume and the restart reconcile wipe a failed stage's numbers, and a
-    failed rewrite's calls were still made."""
+    failed rewrite's calls were still made.
+
+    Each half of the paid calls is a number its job writes as it goes, so a job that
+    failed, was cancelled or was interrupted still counts: the rewrite job writes
+    `result_data["calls"]` after every batch, and the caption job writes `done_items`
+    after every call (M9 stage 10; before it nothing wrote that column, PM-037). A call
+    in flight when the process dies is in neither."""
     jobs = (await db.execute(
         select(BackgroundJob).where(BackgroundJob.config["run_id"].as_string() == run.id)
     )).scalars().all()
@@ -1708,7 +1739,8 @@ async def advance_run(run_id: str, job_id: str) -> None:
                 if every_failed:
                     # The user's ruling, 2026-11-04: a job that failed every item did
                     # nothing, so the run fails here. Resume retries the failed rows
-                    # (`_stage_generate` resets them) or captions again.
+                    # (`_stage_generate` resets them) or captions what has no caption
+                    # from this model yet (`_not_captioned_by`), which is all of them.
                     await _end_stage(db, run, idx, "failed", note=every_failed, run_status="failed",
                                      error=f"{label}: {every_failed}")
                     return

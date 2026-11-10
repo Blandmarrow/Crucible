@@ -85,7 +85,8 @@ job, and the Runs page polls.
    total_items` ends with "every image failed (N of N)". Partial failures still complete.
    A stage that made nothing would otherwise read green and hand an empty set to the next
    one. **Resume** retries it: `_stage_generate` resets failed rows to pending, and a
-   caption stage runs again.
+   caption stage captions what its model has not captioned yet, which is every image
+   here (`docs/dev/comfyui/run-budgets.md` § When they are checked).
 3. If a pause was asked for, the run becomes `paused`. Otherwise it calls `_start_next`.
 
 `_start_next` walks the stages from the first `pending` one (what each stage does is

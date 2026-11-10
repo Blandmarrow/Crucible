@@ -83,7 +83,11 @@ name in front of its label.
 
 - **Pause** lets the current stage finish, then stops before the next one.
 - **Resume** goes on from the first stage that is not done. Nothing already done runs
-  again, and a generated row is never generated twice.
+  again, and a generated row is never generated twice. A Caption stage that stopped
+  part-way captions only the images it had not reached, plus any whose caption failed;
+  an image that still carries its caption from that model is not sent again. A caption
+  you edited by hand in between counts as yours, not the model's, so the resume
+  captions that image again and replaces your edit. Edit captions after the run ends.
 - **Cancel** stops the current stage's job, and no later stage starts. Images already made
   stay in the dataset. A snapshot cannot stop partway, so a cancel during one waits for it
   to finish, and the run reads *cancelling after the snapshot* until then. Cancel stays

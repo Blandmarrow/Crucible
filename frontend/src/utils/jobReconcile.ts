@@ -39,7 +39,8 @@ function definedNumber(v: unknown): number | undefined {
  * Optional keys are spread **only when the row defines them**: `updateJob` merges,
  * so an explicit `undefined` would erase a value a live event already delivered.
  * `done` follows the worker's own terminal event — `total_items` on completion —
- * because no worker writes `done_items`; `comfy_prompts` reports its created count
+ * because most workers never write `done_items` (a caption job does, after each image,
+ * and it equals that job's SSE `done`); `comfy_prompts` reports its created count
  * in `result_data.created`, which its toasts read as `done`.
  */
 export function jobRowToProgress(row: Job): JobProgress {
@@ -96,9 +97,11 @@ export function applyDurable(row: Job, { seed }: { seed: boolean }): void {
     store.updateJob(row.id, progress);
     return;
   }
-  // A failed/cancelled row's done_items is never written, so unless the row carries
-  // a real count (comfy_prompts' `created`), the live count the store already holds
-  // is the better number — keep it.
+  // Most failed/cancelled rows never had done_items written, so unless the row carries
+  // a count this trusts (comfy_prompts' `created`), the live count the store already
+  // holds is the better number — keep it. A caption row's done_items is real since M9
+  // stage 10, and after an SSE gap it is newer than the store's; this does not use it
+  // yet, so a caption job stopped during a gap keeps the last count the tab saw.
   const hasCreated = row.job_type === "comfy_prompts" && definedNumber(row.result_data?.created) !== undefined;
   if (existing && row.status !== "completed" && !hasCreated) {
     delete progress.done;

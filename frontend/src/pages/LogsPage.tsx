@@ -38,12 +38,13 @@ function partialFailure(job: Job): string | null {
   return typeof summary === "string" && summary ? summary : `${failed} item${failed !== 1 ? "s" : ""} failed`;
 }
 
-/** The row's item count. Only an automated run's own steps write `done_items`, so a
- *  bare `done/total` read `0/N` on every other job, however much it finished. A
- *  completed job did all of its items, as its own terminal event says (`done = total`,
- *  the rule `jobRowToProgress` follows); a row with a real count shows it; anything
- *  else shows only how many items the job was given, since a stopped job's progress
- *  is not stored (and for a scoring job it restarts at each check, PM-008). */
+/** The row's item count. Only a caption job and an automated run's own steps write
+ *  `done_items`, so a bare `done/total` read `0/N` on every other job, however much it
+ *  finished. A completed job did all of its items, as its own terminal event says
+ *  (`done = total`, the rule `jobRowToProgress` follows); a row with a real count shows
+ *  it, which is how far a stopped caption job got; anything else shows only how many
+ *  items the job was given, since its progress is not stored (and for a scoring job it
+ *  restarts at each check, PM-008). */
 function itemCount(job: Job): string | null {
   const total = job.total_items;
   if (total <= 0) return null;

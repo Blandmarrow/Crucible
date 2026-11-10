@@ -12,7 +12,7 @@ filter sends is `docs/dev/image-filters.md`.
 
 | File | Covers |
 |---|---|
-| [selection.md](gallery/selection.md) | `ImageCard`'s `onSelect`, `GalleryCheckbox` and the overlay z-order, the shift-click range model, select-all-matching-filters, the count key and pagination |
+| [selection.md](gallery/selection.md) | `ImageCard`'s `onSelect`, its memo and per-card selection selector, `GalleryCheckbox` and the overlay z-order, the shift-click range model, select-all-matching-filters, the count key and pagination |
 | [subfolders.md](gallery/subfolders.md) | The subfolder sidebar: the `(root)` row, create/delete/move/copy, the upload target, expand/collapse and its persistence, the row context menu |
 | [subfolder-rename.md](gallery/subfolder-rename.md) | `PATCH /datasets/{id}/subfolders`, `repath_subfolder`, `repathSubfolderMutation`'s path-keyed bookkeeping, the inline rename, `MoveSubfolderModal` |
 | [filters.md](gallery/filters.md) | The toolbar's two flex groups, every filter control and what it persists, `SORT_OPTIONS` and the server's sort allowlist |
@@ -40,7 +40,7 @@ not a see-also, and says which part of the code it owns.
 | Editing… | Read |
 |---|---|
 | `frontend/src/pages/GalleryPage.tsx` | `docs/dev/gallery/selection.md` for `handleSelect`, select-all and the pagination row; + `docs/dev/gallery/subfolders.md` for the sidebar, `expandedPaths` and the row menu; + `docs/dev/gallery/subfolder-rename.md` for `repathSubfolderMutation` and the inline rename; + `docs/dev/gallery/filters.md` for the toolbar, the filter state and the sort dropdown; + `docs/dev/gallery/drag-drop.md` for the `DndContext` and every drop; + `docs/dev/gallery/state.md` for the persisted blob and **Reset filters**; + `docs/dev/gallery/nav.md` § The stored context for the `writeNavContext` effect, whose memo a new filter must join |
-| `frontend/src/components/gallery/ImageCard.tsx` | `docs/dev/gallery/selection.md` for `onSelect`, the checkbox click target and the overlay z-order; + `docs/dev/quality/style-match.md` for the style meter |
+| `frontend/src/components/gallery/ImageCard.tsx` | `docs/dev/gallery/selection.md` for `onSelect`, the memo and selectors, the checkbox click target and the overlay z-order; + `docs/dev/quality/style-match.md` for the style meter; + `docs/dev/image-detail.md` § Gallery generation metadata for the `<Cpu>` button |
 | `frontend/src/components/gallery/GalleryCheckbox.tsx` | `docs/dev/gallery/selection.md` |
 | `frontend/src/components/gallery/MoveSubfolderModal.tsx` | `docs/dev/gallery/subfolder-rename.md` |
 | `frontend/src/components/gallery/SubfolderRowDnd.tsx`, `frontend/src/components/gallery/DropZone.tsx` | `docs/dev/gallery/drag-drop.md` |

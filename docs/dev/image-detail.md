@@ -34,7 +34,7 @@ The **AI Generate** collapsible (`showAi` state, gated `enabled: showAi`) uses t
 
 ## Gallery generation metadata
 
-`generation_metadata` is included in both `ImageOut` and `ImageListItem` backend schemas, so it comes back with the gallery list response. `ImageCard` shows a small accent `<Cpu>` icon button in the filename row when `image.generation_metadata` is set; clicking it (without navigating) opens a page-level modal in `GalleryPage` that renders `<GenerationMetadata>`. The same component appears in the right panel of `ImageDetailPage`, expanded by default.
+The gallery list never carries the JSON: `ImageListItem` has a `has_generation_metadata` boolean instead, computed in SQL by `list_images` (`_HAS_GENERATION_METADATA` in `routers/images.py`), because the JSON averages about 55 KB a row on ComfyUI output and a page of 100 shipped 5.6 MB the card never read (M9 stage 11). The flag is false for SQL NULL, for the JSON text `'null'` (what assigning `None` through the JSON type stores, so `IS NOT NULL` alone is wrong) and for `{}`. The list query defers the column with `raiseload=True` as a **query option**; it is not deferred on the model, which would be the `source_meta` trap. `ImageCard` shows a small accent `<Cpu>` icon button in the filename row when the flag is set; clicking it (without navigating) opens a page-level modal in `GalleryPage` that fetches `GET /images/{id}` under the detail page's own `["image", id]` key and renders `<GenerationMetadata>`. The same component appears in the right panel of `ImageDetailPage`, expanded by default. Covered by `backend/tests/test_gallery_list_meta_http.py` and the "gallery card opens generation info" journey in `frontend/e2e/comfy-run.spec.ts`.
 
 ## Source & license provenance
 
@@ -62,7 +62,7 @@ What matters at this page's level:
 
 ## AI generation metadata
 
-Extracted at import time and on direct upload via `extract_generation_metadata(path)` in `backend/services/image_service.py`. Stored in `Image.generation_metadata` (JSON column, nullable). Included in both `ImageOut` and `ImageListItem` schemas.
+Extracted at import time and on direct upload via `extract_generation_metadata(path)` in `backend/services/image_service.py`. Stored in `Image.generation_metadata` (JSON column, nullable). Returned by `ImageOut`; `ImageListItem` carries only `has_generation_metadata` (§ Gallery generation metadata above).
 
 Supported formats:
 

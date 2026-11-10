@@ -24,9 +24,10 @@ restates its stages.
    2026-11-09 timed the hot queries on a scratch database with the migrated column order and
    added stages 9–11 (decision 13's amendment; the numbers are in the plan's Evidence base).
    Stage 9 merged as PR #134 (PM-036, now MITIGATED). Stage 10 merged as PR #135
-   (PM-037, MITIGATED). Stage 6a, the benchmark harness, is built on
-   `feat/m9-stage6a-bench-harness` with its "before" baseline recorded. **Next is stage 4**,
-   once 6a merges. The order after it is **4 → 11 → 6b → 7**. 6b re-runs 6a's baseline
+   (PM-037, MITIGATED). Stage 6a, the benchmark harness, is PR #137
+   (`feat/m9-stage6a-bench-harness`), with its "before" baseline recorded. **Next is stage 4**,
+   once 6a merges. Open from 6a's baseline: whether stage 11 takes on the small-subfolder
+   score sort (`scale-plan/README.md` § Stage 6). The order after it is **4 → 11 → 6b → 7**. 6b re-runs 6a's baseline
    commands with `--reuse-db` and `--compare`, so keep the seeded files and the baseline JSON
    in `.claude/local/bench/`. See M9 below.
 1. **M10, job throughput, follows M9**
@@ -141,7 +142,7 @@ lands second and resolves the overlap. Order of what is left: 4, 11, 6b, 7.
   comes before stage 4. **6b** re-measures after stages 4 and 11 and records the numbers. A
   partial run by hand on 2026-11-09 is an addendum of
   `backend/scripts/scaling_bottlenecks_report.md`.
-  - [x] 6a, built 2026-11-10 on `feat/m9-stage6a-bench-harness`: the harness times the
+  - [x] 6a, built 2026-11-10 as PR #137: the harness times the
     app's endpoints and replays each statement for its plan, with a smoke test in CI. Its
     "before" baseline (100k and 250k photo, 20k ComfyUI) is the report's 2026-11-10
     addendum. Detail: `docs/dev/scale-plan/README.md` § Stage 6.

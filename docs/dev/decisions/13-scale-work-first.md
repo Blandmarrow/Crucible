@@ -65,3 +65,17 @@
   - **2026-11-09, order.** Job throughput became M10, directly after M9
     ([decision 14](14-job-throughput-is-its-own-milestone.md)). It sits between M9 and M7;
     the other open milestones keep their own order.
+  - **2026-11-10, stage 4 shrinks and stage 11 goes first.** **Decided** (2026-11-10, by
+    the user). Stage 6a's baseline shows the Stats cost only at sizes nobody has yet: the
+    user's datasets run from hundreds to just under 2k images, and a 20k dataset loads Stats
+    in about 2 s cold. The real cost is a Stats tab left open during a job on a 100k+
+    dataset, which redoes about 6 s of work per 5 s poll at 100k. The full design (bins built
+    in SQL, the server owning the edges) would also make the custom-edge editor a server
+    round trip of seconds where it is instant today. So stage 4 becomes the small fix: fetch
+    the raw value lists only when something needs them, and return the means from `/stats`.
+    The full design is parked in the plan, to revisit if a dataset nears 50k to 100k images
+    or stage 6b's numbers call for it. Stage 11 goes next, since its gallery items help at
+    any dataset size. The order of what is left is 11, 4, 6b, 7. The rejected memory-aware
+    Stats cache stays rejected: the raw lists now reach the cache only when a user asks for
+    them. The score sort inside a small subfolder, which 6a's baseline found, stays out of
+    stage 11 and is parked until a dataset nears 20k images with small subfolders.

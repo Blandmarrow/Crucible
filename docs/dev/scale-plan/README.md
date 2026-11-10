@@ -188,13 +188,43 @@ all chunks and checks (`backend/workers/progress.py`), not restart for each chec
 
 **Known side effect.** Until stage 4 lands, each chunk commit moves `max(updated_at)`, so a
 Stats page left open recomputes from cold on every poll during a scoring job. That's about
-2.5 s per poll at 100k images. It's acceptable for now, and stage 4 removes most of the cost.
+2.5 s per poll at 100k images. It's acceptable for now. Stage 4 as amended on 2026-11-10
+removes the `score-values` half and its payload, unless a panel has custom edges; the
+`/stats` half stays.
 
 **Acceptance.** A test stops a job partway (a cancel, plus a simulated crash between chunks)
 and finds the finished chunks' scores in the DB. Peak memory stays flat as the dataset grows
 (check it with stage 6's harness). The "only unscored" re-run touches only the rows left.
 
 ## Stage 4 — Server-side histograms for the Stats page
+
+**Amended 2026-11-10: the small fix is the stage; the full design below is parked**
+([decision 13](../decisions/13-scale-work-first.md), the 2026-11-10 amendment). The default
+histograms already come from `/stats`, binned on the server. The raw `score-values` lists
+feed only three things: a panel with saved custom edges (`HistPanel`'s `rawValues`), the
+"Mean aesthetic" card, and the CSV export's MEAN SCORES section. Yet `StatsPage` fetches the
+lists on every load and re-polls them every 5 s during a job. The stage is now:
+
+- **Fetch `score-values` only when something needs it**: a panel on the page has saved
+  custom edges, the user opens a pencil editor, or the user exports the Stats CSV. Once
+  fetched, the editor rebuckets in the browser as it does today, so it stays instant. Poll
+  it during a job only while one of those holds.
+- **Return the means from `/stats`** (`AVG` per metric), so the Mean aesthetic card and the
+  CSV's MEAN SCORES read no raw list. Allow for the last digit of a mean differing from the
+  browser's sum, which adds in another order.
+
+Not in it: SQL bins, the server owning the edges, the one-pass merge, a migration. The
+"considered and rejected" sentence in `docs/dev/statistics.md` § Backend aggregation stays
+true and stays. **Acceptance:** a Stats load with no custom edges makes no `score-values`
+request (an e2e check); a saved custom edge, the pencil editor and the CSV export still
+work; `/stats`'s means match the old browser-computed ones on a fixture, within a tolerance;
+`backend/tests/test_stats_click_through_edges.py` and `frontend/e2e/stats.spec.ts` still
+pass. Stage 6b measures it.
+
+**Revisit the full design** if a dataset nears 50k to 100k images, or stage 6b's numbers
+call for it. It stands below as written on 2026-11-09, risks included: a wrong SQL bin is
+a silent wrong count, SQLite divides integers as integers (megapixels), and `str.split()`'s
+word count may not have an SQL equivalent.
 
 **Problem.** The review's diagnosis is partly wrong: stats already read plain columns, not
 ORM objects, and counts, flags and licenses are already aggregated in SQL
@@ -322,7 +352,14 @@ unbuffered open purges the file's cached pages, no admin needed) and on Linux as
 
 That baseline found one cost no stage covers yet: a score sort inside a subfolder too small
 to fill a page walks the score's whole index, reading `subfolder` past the blobs for every
-row (0.69 s at 100k, 1.8 s at 250k, 10.9 s cold). Whether stage 11 takes it on is open.
+row (0.69 s at 100k, 1.8 s at 250k, 10.9 s cold). **Parked, not in stage 11**
+(2026-11-10, decision 13's amendment of that date). At the user's dataset sizes, under 2k
+images, it costs tens of milliseconds. The cheap fix steers the planner (count the subfolder
+first, and when it is small write the sort so the score index cannot be used), which is the
+kind of change PM-036 came from; an index per score column costs every image write; and
+stage 7 would make each row check cheaper anyway. Revisit when a dataset nears 20k images
+with small subfolders, the shape ComfyUI's per-row folders produce, where a page in a small
+folder costs about 0.4 s.
 
 **6b, the numbers, after stages 4 and 11:**
 
@@ -571,7 +608,9 @@ caption job among them.
 ## Stage 11 — Hot-path quick wins
 
 Added 2026-11-09. Each item is small, independent and measured or read in the code that
-day. It sits after stage 4 only so that stage 6b measures both together.
+day. Since 2026-11-10 it comes before stage 4 (decision 13's amendment of that date): its
+gallery items help at any dataset size, where stage 4's only show at 100k images or so.
+Stage 6b still measures both.
 
 - **An index for the Stats cache check.** `_image_validator` runs
   `count(id), max(updated_at)` on every poll of the Stats page (every 5 s while a job runs,
@@ -622,10 +661,13 @@ URL gets no `immutable` header.
 - **M4** (held on `feat/m4-rating-port`) overlaps stages 1, 4 and 6: `_apply_image_ordering`,
   `get_dataset_stats` and `_aggregate_dataset_stats`, `StatsPage.tsx`, `GalleryPage.tsx`,
   `bench_scaling.py` and `models/image.py`, plus two guards M9 relies on:
-  `backend/tests/test_video_lineage_mirrors.py` (stage 4's possible `NOT_MIRRORED` entry) and
+  `backend/tests/test_video_lineage_mirrors.py` (the parked full stage 4's possible
+  `NOT_MIRRORED` entry) and
   `backend/tests/test_scores_stale.py` (stage 3). M4 does not touch `routers/quality.py`, so
   stages 3 and 5 have no conflict with it. M4 lands second and resolves the rest, as
-  decision 5 set for M7. If M9 adds migrations (stages 4 and 7 may), M4's first migration
+  decision 5 set for M7. Since stage 4 shrank (2026-11-10), its overlap is `StatsPage.tsx`
+  and the `/stats` response, not `_aggregate_dataset_stats`'s bins. If M9 adds migrations
+  (stage 11 does, and stage 7 may), M4's first migration
   `c3b8e1d7a52f` re-parents onto M9's last one. M4's `aesthetic_rating` is one more column
   that lands after the blobs, which stage 7 makes moot.
 - **M8**: the review's "split oversized routers" item is already M8 stage 8 (`images.py`).

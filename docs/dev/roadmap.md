@@ -17,17 +17,19 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-10, stage 6a built)
+## Next session (updated 2026-11-10, stage 6a merged)
 
 0. **M9 comes first** ([decision 13](decisions/13-scale-work-first.md)), planned in
    [scale-plan/README.md](scale-plan/README.md). Stages 1–3, 5 and 8–10 are merged. A review on
    2026-11-09 timed the hot queries on a scratch database with the migrated column order and
    added stages 9–11 (decision 13's amendment; the numbers are in the plan's Evidence base).
    Stage 9 merged as PR #134 (PM-036, now MITIGATED). Stage 10 merged as PR #135
-   (PM-037, MITIGATED). Stage 6a, the benchmark harness, is PR #137
-   (`feat/m9-stage6a-bench-harness`), with its "before" baseline recorded. **Next is stage 4**,
-   once 6a merges. Open from 6a's baseline: whether stage 11 takes on the small-subfolder
-   score sort (`scale-plan/README.md` § Stage 6). The order after it is **4 → 11 → 6b → 7**. 6b re-runs 6a's baseline
+   (PM-037, MITIGATED). Stage 6a, the benchmark harness, merged as PR #137, with its "before"
+   baseline recorded. **Next is stage 11**, ahead of stage 4 since 2026-11-10 (decision 13's
+   amendment of that date): stage 4 shrank to fetching the raw Stats values on demand, because
+   its full design only pays at 100k images or so. The small-subfolder score sort that 6a's
+   baseline found is not in stage 11: it is parked until a dataset nears 20k images with
+   small subfolders (`scale-plan/README.md` § Stage 6). The order is **11 → 4 → 6b → 7**. 6b re-runs 6a's baseline
    commands with `--reuse-db` and `--compare`, so keep the seeded files and the baseline JSON
    in `.claude/local/bench/`. See M9 below.
 1. **M10, job throughput, follows M9**
@@ -49,7 +51,7 @@ restates its stages.
    M6 merged first (2026-11-07), so `c3b8e1d7a52f` re-parents onto M6's last migration,
    `a3c7e9b1d5f2`, instead. Since then decision 12's `b8d2f4a6c1e3` and PR #132's
    `c3e7a9d1f5b2` follow it (the head on 2026-11-09; stage 9 added none), and M9 may add
-   more (its stages 4, 7 and 11), so re-parent onto whatever `main`'s head is at the time.
+   more (its stages 7 and 11), so re-parent onto whatever `main`'s head is at the time.
    **Until it is rebased past M9 stage 2, do not start the M4 branch on a real datasets
    folder**: its startup sweep has no dot-skip and deletes `.orphaned` with everything
    parked there (`docs/dev/database.md` § Two known costs).
@@ -118,7 +120,8 @@ Comes before every other open milestone
 ([decision 13](decisions/13-scale-work-first.md)). Gate: stages 1–5 and 9–11 merged with
 their tests and docs, and stage 6's numbers recorded; stage 7 is then built or ruled out by
 a decision. Plan: [scale-plan/README.md](scale-plan/README.md). Does not wait for M4, which
-lands second and resolves the overlap. Order of what is left: 4, 11, 6b, 7.
+lands second and resolves the overlap. Order of what is left: 11, 4, 6b, 7 (changed
+2026-11-10 by decision 13's amendment).
 
 - [x] Stage 1: a unique tie-breaker (`Image.id`) for every gallery sort. Merged 2026-11-08
   as PR #124. It cost the score sorts their index (PM-036); stage 9 fixed that.
@@ -130,10 +133,11 @@ lands second and resolves the overlap. Order of what is left: 4, 11, 6b, 7.
   resume option. Merged 2026-11-08 as PR #126: the option takes missing-or-stale rows and
   is a *Score what's missing* button (the user's calls). Detail:
   `docs/dev/quality/scoring.md` § The chunked job loop.
-- [ ] Stage 4: Stats histograms built on the server instead of raw value lists. Comes before
-  M8 stage 7, and after stage 6a so it is measured before and after. Its design was amended
-  on 2026-11-09: the server owns the bin edges, takes the user's custom edges, and reads
-  everything in one pass.
+- [ ] Stage 4: fetch the Stats page's raw value lists only when something needs them (saved
+  custom edges, the pencil editor, the CSV export), and return the means from `/stats`.
+  Shrunk on 2026-11-10 by decision 13's amendment, after stage 11, and before M8 stage 7. No
+  migration. The full design (bins built in SQL, the server owning the edges) is parked in
+  the plan until a dataset nears 50k to 100k images.
 - [x] Stage 5: page the style similarity branches. Merged 2026-11-08 as PR #128: every
   branch pages, not just the one the plan named, and the one-score branches write after the
   scan so the write lock stays short. Detail: `docs/dev/quality/style-similarity.md` § Paged and all-layers scoring.
@@ -142,7 +146,7 @@ lands second and resolves the overlap. Order of what is left: 4, 11, 6b, 7.
   comes before stage 4. **6b** re-measures after stages 4 and 11 and records the numbers. A
   partial run by hand on 2026-11-09 is an addendum of
   `backend/scripts/scaling_bottlenecks_report.md`.
-  - [x] 6a, built 2026-11-10 as PR #137: the harness times the
+  - [x] 6a, merged 2026-11-10 as PR #137: the harness times the
     app's endpoints and replays each statement for its plan, with a smoke test in CI. Its
     "before" baseline (100k and 250k photo, 20k ComfyUI) is the report's 2026-11-10
     addendum. Detail: `docs/dev/scale-plan/README.md` § Stage 6.
@@ -166,7 +170,8 @@ lands second and resolves the overlap. Order of what is left: 4, 11, 6b, 7.
 - [ ] Stage 11: hot-path quick wins: an index for the Stats cache check,
   `generation_metadata` out of the gallery list, the thumbnail route's narrow read and
   cache header, the live gallery refetch, and `ImageCard`'s re-renders. Adds a migration.
-  Waits on nothing; it sits after stage 4 so that 6b measures both.
+  Waits on nothing. **Next**, ahead of stage 4 since 2026-11-10, because its gallery items
+  help at any dataset size; 6b still measures both.
 
 ### M10 — Job throughput
 

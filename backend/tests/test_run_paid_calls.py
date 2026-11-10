@@ -9,7 +9,8 @@ What is pinned (docs/dev/comfyui/run-budgets.md § Budgets, docs/dev/captioning.
 - a run with a cap of N makes N caption calls and no more, across a failed job, a job
   cancelled from outside and the resumes after them;
 - a resumed caption stage captions only what is left: an image its model has already
-  captioned is not sent again, and a stage with nothing left is skipped.
+  captioned is not sent again, and a stage with nothing left is skipped;
+- a caption written by hand is never replaced, whether it fixed the model's or came first.
 
 Torch-free and cv2-free: the provider call is faked, and nothing scores or gates.
 """
@@ -387,6 +388,55 @@ def test_a_resumed_caption_stage_with_nothing_left_is_skipped(tmp_path, monkeypa
             assert out["status"] == "completed", out
             stage = _caption_stage(out)
             assert stage["status"] == "skipped", stage
-            assert stage["note"] == "Nothing left to caption: every image already has this model's caption"
+            assert stage["note"] == "Nothing left to caption: every image has this model's caption or one written by hand"
             assert len(await _caption_jobs(env)) == 1 and len(calls) == 4
+    run(go())
+
+
+def test_a_caption_stage_never_replaces_a_caption_written_by_hand(tmp_path, monkeypatch):
+    """Between a stopped caption job and the resume, the user fixes one caption the model
+    wrote and writes one for an image it had not reached. Both are stamped `manual`, and
+    the resume sends neither: only the image nobody captioned goes to the model."""
+    async def go():
+        async with api_env(tmp_path) as env:
+            _fake, ds, plan_id = await _loop_plan(env, monkeypatch, _spec(GOOD, GOLD, count=2))
+            model = await _provider(env, billed=False)
+            in_flight, release = asyncio.Event(), asyncio.Event()
+
+            async def behave(n):
+                if n == 2:
+                    in_flight.set()
+                    await release.wait()
+                return CAPTION
+
+            calls = _fake_captioner(monkeypatch, behave)
+            code, body = await _start(env, ds["id"], plan_id, RUN_STAGES,
+                                      caption={"model": model}, loop=_loop(max_images=4))
+            assert code == 200, body
+            run_id = body["id"]
+            await asyncio.wait_for(in_flight.wait(), 30)
+            await _cancel_caption_job(env, run_id)
+            release.set()
+            out = await wait_for_run(env, run_id, timeout=60)
+            assert out["status"] == "failed", out
+
+            done = await _captioned_by(env, ds["id"], model)
+            async with env.Session() as db:
+                everything = set((await db.execute(select(Image.id).where(Image.dataset_id == ds["id"]))).scalars())
+            fixed, written = sorted(done)[0], sorted(everything - done)[0]
+            for image_id, text in ((fixed, "fixed by hand"), (written, "written by hand")):
+                r = await env.client.put(f"{API}/captions/image/{image_id}", json={"caption_text": text})
+                assert r.status_code == 200, r.text
+
+            out = await _resume(env, run_id)
+            assert out["status"] == "completed", out
+            first, second = await _caption_jobs(env)
+            assert (first.total_items, second.total_items) == (4, 1)
+            assert set(second.config["image_ids"]) == everything - done - {written}
+            async with env.Session() as db:
+                text = dict((await db.execute(
+                    select(Image.id, Image.caption_text).where(Image.id.in_([fixed, written]))
+                )).all())
+            assert text == {fixed: "fixed by hand", written: "written by hand"}
+            assert len(calls) == 3
     run(go())

@@ -88,7 +88,8 @@ now stands, with the two accepted inexactnesses.
 MITIGATED — fixed 2026-11-10 by M9 stage 10. A call in flight when the process dies is
 still not counted (at most one per stop), by the user's ruling that day. Other readers of
 `done_items` would meet the same empty column: only the caption job and a run's own steps
-write it. Two edges are left open in `docs/dev/comfyui/run-budgets.md` § Not yet: the
-rewrite's reserve reads failed caption calls as captions made, and a caption edited by
-hand between attempts is captioned again on resume.
+write it. One edge is left open in `docs/dev/comfyui/run-budgets.md` § Not yet: the
+rewrite's reserve reads failed caption calls as captions made. A second, a caption
+edited by hand between attempts being captioned again on resume, was closed the same day
+by a follow-up: the stage now skips a caption stamped `manual`.
 Last reviewed for staleness: 2026-11-10.

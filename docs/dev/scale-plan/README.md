@@ -523,9 +523,10 @@ counts; the incident is PM-037.
   the fake provider. The stubbed test in `test_run_extend.py` now goes through the real
   `_spent`, over rows built by hand: it checks the reserve, not the writer.
 - **Left open**, in `docs/dev/comfyui/run-budgets.md` § Not yet: the rewrite's reserve
-  reads failed caption calls as captions made, and a caption edited by hand between
-  attempts is stamped `"manual"`, so a resume captions that image again. Both were found
-  by the review of this change.
+  reads failed caption calls as captions made. Found by the review of this change.
+- **Closed by a follow-up the same day** (the user's call): a caption edited by hand
+  between attempts is stamped `"manual"`, and a resume captioned that image again. The
+  stage now skips hand-written captions as well as its own model's.
 
 **Problem.** An automated run's paid-call cap reads what it has spent from its child jobs
 (`run_service._spent`). The rewrite half reads `result_data["calls"]`, which the rewrite

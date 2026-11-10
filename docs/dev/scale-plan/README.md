@@ -629,7 +629,8 @@ Stage 6b still measures both.
   call `db.get(Image, image_id)`, which loads every non-deferred column to read one path:
   once per tile, per page. Select `thumbnail_path` and `file_path`. Keep the entity load for
   `serve_thumbnail`'s generate-on-demand branch, which writes the row.
-- **A cache header on versioned thumbnails.** The routes return a bare `FileResponse`.
+- **A cache header on versioned thumbnails. Parked, not built** (2026-11-10; see § Stage 11
+  as built). The routes return a bare `FileResponse`.
   Starlette 1.10.0 sets `ETag` and `Last-Modified` on it but no `Cache-Control`, and its
   `FileResponse` never answers 304, so a revalidation resends the file. The card's URL
   already carries `?v=` from `updated_at` (`thumbnailUrlVersioned`). Send
@@ -648,13 +649,54 @@ Stage 6b still measures both.
   until this is measured, since the page size tops out at 200.
 
 **Acceptance.** Stage 6b's numbers for the validator and a ComfyUI gallery page; an e2e
-check that the generation-metadata modal still opens; a test that an unversioned thumbnail
-URL gets no `immutable` header.
+check that the generation-metadata modal still opens. (A test that an unversioned thumbnail
+URL gets no `immutable` header went with the parked item.)
+
+### Stage 11 as built (2026-11-10)
+
+Five items shipped on `feat/m9-stage11-hot-paths`, one commit each; the cache header is
+parked.
+
+- **The index** is `ix_images_dataset_updated_at`, migration `d5f1a8c3e7b2`. The statement
+  moved into `dataset_service._image_validator_stmt`, so
+  `backend/tests/test_image_sort_plan.py` can assert the dataset-wide check reads it as a
+  covering index. The gallery's `updated_at` sort moved from `UNINDEXED` to `INDEXED` there.
+  A subfolder-scoped check still reads rows: the index lacks `subfolder`.
+- **The list flag** is `ImageListItem.has_generation_metadata`, computed in SQL. The
+  deferral is a query option with `raiseload=True`, not a model-level defer.
+  `docs/dev/image-detail.md` § Gallery generation metadata has the three ways a row stores
+  "nothing", and why `IS NOT NULL` alone is wrong. The list still reads columns that sit
+  after `generation_metadata` in the row, so the overflow I/O stays until stage 7; the saving
+  is the payload, the JSON decode and Pydantic.
+- **The serve routes** select the one path they serve. The thumbnail route's on-demand
+  branch still loads the entity.
+- **The live refetch** is throttled per dataset to one per 2 s, with the terminal branch
+  taking what is pending: `docs/dev/job-invalidation.md`.
+- **`ImageCard`** is memoized with a per-card selector, and `handleSelect` reads the page
+  through a ref: `docs/dev/gallery/selection.md`.
+
+**Why the cache header is parked.** Every in-place edit commits the row first, which moves
+`updated_at` and so `v`, and redraws the thumbnail afterwards, in the post-commit epilogue
+PM-013 requires. That covers single and batch resize and crop, `crop_upscale`, detection
+crop, inpaint, the upscale and LUT job (`image_edit_job.py`) and video re-extraction. A
+gallery refetch in that gap reads the new `v` while the old thumbnail is still on disk.
+`immutable` would then pin the old tile under the new `v` for a year, and a failed redraw
+(a `thumbnails_stale` tile) would pin it for good. The fix is a shared helper that redraws
+and then bumps `updated_at` again, called in each site's epilogue `try/except`, so a failed
+redraw stays a stale tile that the thumbnail repair heals. That is about ten sites next to
+PM-013's ordering rules, which is not a quick win; the gain is fewer re-downloads of small
+files from a local server. **The gap already exists in a mild form.** With no
+`Cache-Control`, a browser may cache by heuristic from `Last-Modified` (a tenth of the
+file's age), so a refetch in that window can show an old tile until the next edit moves
+`v`. Build the helper first if that is ever seen; the header can follow it. The two
+unversioned callers (`ComfyRowsTable.tsx`, `StyleMatchPanel.tsx`) would still need to stay
+uncached.
 
 ## Interaction with the other milestones
 
 - **Stages 9 and 11 overlap M4 again**: `_apply_image_ordering`, `GalleryPage.tsx`,
-  `schemas/image.py` and one more migration (stage 11's index) for M4 to re-parent onto.
+  `ImageCard.tsx`, `schemas/image.py` and one more migration (stage 11's index,
+  `d5f1a8c3e7b2`) for M4 to re-parent onto.
 - **M10** (job throughput, `docs/dev/throughput-plan/README.md`) shares no file with this
   plan. It comes after M9 by order, not by dependency
   ([decision 14](../decisions/14-job-throughput-is-its-own-milestone.md)).

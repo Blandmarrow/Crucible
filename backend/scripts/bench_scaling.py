@@ -126,6 +126,8 @@ SMALL_SUBFOLDER_ROWS = 20
 INDEXED_SORTS = frozenset({
     "aesthetic_score", "blur_score", "style_similarity_score", "created_at",
     "caption_token_count", "sort_order", "filename",
+    # `ix_images_dataset_updated_at`, added for the Stats cache check (M9 stage 11).
+    "updated_at",
 })
 
 ENDPOINT_GROUPS = ("gallery", "counts", "stats", "lookups")

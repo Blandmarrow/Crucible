@@ -3,7 +3,7 @@
 This file covers which caches a finished background job must invalidate, and how a frontend
 page or `TopBar` finds out the job is over: the single-job and id-list watcher patterns,
 `TopBar`'s global watcher and its `processedJobsRef` dedup, `IMAGE_MODIFYING_JOB_TYPES` and
-`LIVE_IMAGE_JOB_TYPES` with each job type's extra keys, the folder import and rescan
+`LIVE_IMAGE_JOB_TYPES` with each job type's extra keys and the live refetch's throttle, the folder import and rescan
 branches, and the detection and per-image caption invalidations. It is the part to read
 when adding a job-triggering UI. The SSE hooks, reconciling from the durable rows, job
 labels, the partial-failure line and the stale-thumbnail warning are in
@@ -37,6 +37,19 @@ the `queryKeys.ts` helpers are in `docs/dev/frontend-constants.md`.
 
   A separate live branch runs on each `done` increment of a `LIVE_IMAGE_JOB_TYPES` job (`caption`, `caption_pipeline`, `comfy_generate`, `video_extract`, `video_reextract`) so the gallery fills in mid-run; `comfy_generate` additionally invalidates `["subfolders", id]` and `["dataset", id]` there, and `video_extract` invalidates `["subfolders", id]` only — frames land in a subfolder that may not exist yet, but its `refresh_stats` is terminal-only, so `["dataset", id]` would be one refetch per shot returning an unchanged number. `video_reextract` adds no dataset-scoped key of its own at all: it rewrites frames in folders that already exist, so it has no subfolder to announce. Neither "only" is quite the whole story, though — the live branch **ends** with an invalidation that is not gated on job type at all: `if (progress.image_id) qc.invalidateQueries({ queryKey: ["caption", progress.image_id] })`. Both video workers emit `image_id` on their per-commit events — the `extracting` phase's emit and the `rewriting` one, cited by phase rather than by line because the phase names are stable and the numbers are not — so each done-increment of either job also refreshes that image's caption cache. Harmless and arguably right — the row did change — but it means the per-job lists above are the *job-type-specific* additions, not the complete set. That last one is deliberately not extended to the caption jobs: `Dataset.image_count`/`captioned_count` are stored columns, and only the ComfyUI worker rewrites them per row (see `docs/dev/comfyui/run.md`), so for the others it would be one refetch per image returning an unchanged number.
 
+  **The live branch's dataset keys are throttled, the gate is not.** Every `done` advance used
+  to refetch the open gallery page, so a caption job over N images refetched it up to N times,
+  payload and all (M9 stage 11). The per-dataset keys (`["images", id]`, and the `subfolders`
+  and `dataset` additions above) now go through `createThrottledInvalidator` from
+  `frontend/src/utils/throttledInvalidate.ts`: one invalidation at once, then at most one
+  trailing one per `LIVE_REFETCH_INTERVAL_MS` (2 s). Keys are gathered **per dataset**, not
+  per call, so two jobs on one dataset never drop each other's. The terminal branch calls
+  `takePending(dataset_id)` before its own invalidations: that cancels the trailing call, so no
+  stale refetch follows the final one, and anything pending beyond `images` and `dataset` (a
+  run's new subfolder) still goes out. The `["caption", image_id]` key stays unthrottled — it
+  is one image's, and cheap. Only the invalidation is throttled; the high-water mark below
+  advances on every event as before.
+
   **The live gate is a per-job monotonic high-water mark on `done`** (`captionDoneRef`), which
   makes `done` a contract rather than a display value: a job whose `done` changes meaning
   between phases silently disables its own live invalidation, because the phase with the larger
@@ -51,4 +64,4 @@ the `queryKeys.ts` helpers are in `docs/dev/frontend-constants.md`.
 ## Detection and per-image invalidation
 
 - **Detection cache invalidation — one helper**: the dataset-scoped detection caches (`["detection-labels", id]`, `["detection-models", id]`, `["detection-stats", id]`) are always invalidated together via `invalidateDetectionQueries(qc, datasetId)` in `frontend/src/utils/detectionQueries.ts`. This is the single sanctioned way to refresh them (mirror of the backend "import the shared helper, never copy the logic" convention) — never hand-write the three `invalidateQueries` calls. The `detection-stats` key prefix-matches its live `[..., subfolder]` form. Call sites: `DetectionsPanel` (relabel/delete/merge), `DetectionBulkDeleteForm` (also invalidates `["detection-bulk-count", id]` + `["image"]`), `TopBar` on `detection` **and** `crop_to_detection` job completion (replace-mode crops now remap detection geometry), `DetectionRunForm` (on its own job completion — the id-list pattern named above), and `ImageDetailPage` detect/manual/refine completions + `createManualMutation.onSuccess`. Callers needing a per-image refresh add `["image", imageId]` alongside the helper.
-- **Per-image cache invalidation (captioning)**: the `["caption", image_id]` invalidation is named for captioning because that is what it was built for, but the gate is broader — it fires for **any** `LIVE_IMAGE_JOB_TYPES` job whose payload carries `image_id`, which now includes both video job types (above). Caption SSE events carry `image_id`. While a caption job is running, `TopBar` invalidates `["images", dataset_id]` and `["caption", image_id]` on every `done` increment — this keeps the gallery and `ImageDetailPage` caption panel updated in real-time even when the user has navigated away from `CaptioningPage`. `CaptioningPage` does the same when it is mounted (harmless duplicate). The four stats queries are not invalidated per-image during captioning; instead `StatsPage` polls them every 5 s while a relevant job is active (see `docs/dev/statistics.md`).
+- **Per-image cache invalidation (captioning)**: the `["caption", image_id]` invalidation is named for captioning because that is what it was built for, but the gate is broader — it fires for **any** `LIVE_IMAGE_JOB_TYPES` job whose payload carries `image_id`, which now includes both video job types (above). Caption SSE events carry `image_id`. While a caption job is running, `TopBar` invalidates `["caption", image_id]` on every `done` increment and `["images", dataset_id]` at most every 2 s (the throttle above) — this keeps the gallery and `ImageDetailPage` caption panel updated in real-time even when the user has navigated away from `CaptioningPage`. `CaptioningPage` does the same when it is mounted (harmless duplicate). The four stats queries are not invalidated per-image during captioning; instead `StatsPage` polls them every 5 s while a relevant job is active (see `docs/dev/statistics.md`).

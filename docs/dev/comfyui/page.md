@@ -177,8 +177,8 @@ hand check: the fake has no pause.
   invalidations and toast even if a different plan is selected when it finishes.
   - **Live gallery refresh during a run is driven by TopBar**, not this page:
   `comfy_generate` is in TopBar's `LIVE_IMAGE_JOB_TYPES`, so TopBar re-invalidates
-  `["images", datasetId]` (+ `["subfolders"]`) each time the job's `done` count advances — the
-  gallery updates per-row as images import, regardless of which pane is showing it.
+  `["images", datasetId]` (+ `["subfolders"]`) as the job's `done` count advances, at most every
+  2 s — the gallery fills in as images import, regardless of which pane is showing it.
 - **The prompt library** is a side panel since M6 §8c, toggled by the Rows toolbar's
   *Library* (`ComfyLibraryPanel`), with *Other plans* as its second tab: see
   `docs/dev/comfyui/library-dnd.md`. `PromptLibraryModal` is gone. Query key `["comfy","library"]`.

@@ -156,6 +156,10 @@ class Image(Base):
         Index("ix_images_dataset_caption_tokens", "dataset_id", "caption_token_count"),
         Index("ix_images_dataset_created_at", "dataset_id", "created_at"),
         Index("ix_images_dataset_caption", "dataset_id", "caption_text"),
+        # The Stats cache check, `dataset_service._image_validator`: count and
+        # newest `updated_at` both come off this index with no table row (M9
+        # stage 11). It also serves the gallery's `updated_at` sort.
+        Index("ix_images_dataset_updated_at", "dataset_id", "updated_at"),
         # Frame lineage in video order. Covers the filter-then-order shape
         # ("frames from video X", sorted by timeline — the dominant use). It
         # does not cover the unfiltered whole-dataset lineage sort, which an

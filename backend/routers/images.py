@@ -8,9 +8,11 @@ from typing import Annotated, Any
 from uuid import uuid4
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
-from sqlalchemy import and_, case, delete, func, literal_column, or_, select, update as sa_update
+from sqlalchemy import (
+    String, and_, case, delete, func, literal_column, or_, select, type_coerce, update as sa_update,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import undefer
+from sqlalchemy.orm import defer, undefer
 
 from backend.config import settings
 from backend.job_outcome import failure_summary, note_failure
@@ -500,6 +502,17 @@ def _page_ids_query(f: ImageListParams):
     return _ordered_ids_query(f).offset((f.page - 1) * f.limit).limit(f.limit)
 
 
+# Whether a row has generation metadata worth a modal, computed in SQL so the
+# list never ships the JSON itself (about 55 KB a row on ComfyUI output; M9
+# stage 11). `IS NOT NULL` alone is wrong: a constructor that passes
+# `generation_metadata=None` stores the JSON text 'null', not SQL NULL. An empty
+# object counts as none, since its modal would be empty.
+_HAS_GENERATION_METADATA = and_(
+    Image.generation_metadata.isnot(None),
+    type_coerce(Image.generation_metadata, String).notin_(["null", "{}"]),
+)
+
+
 @router.get("/", response_model=list[ImageListItem])
 async def list_images(
     f: Annotated[ImageListParams, Query()],
@@ -507,16 +520,25 @@ async def list_images(
 ):
     page_ids = (await db.execute(_page_ids_query(f))).scalars().all()
     images: list[Image] = []
+    has_meta: dict[str, bool] = {}
     if page_ids:
         # `ImageListParams.limit` is capped at 500, so this `IN` never needs
         # chunking. Put back in page order here; a row deleted between the two
         # statements simply drops out.
-        by_id = {
-            img.id: img
-            for img in (await db.execute(
-                select(Image).where(Image.id.in_(page_ids))
-            )).scalars()
-        }
+        #
+        # `generation_metadata` is deferred for this query only, never on the
+        # model: a model-level defer is the `source_meta` trap, where every
+        # entity reader must remember to undefer. `raiseload` makes a read here
+        # fail loudly rather than lazy-load on the async session. The card asks
+        # only whether it exists; the modal fetches `GET /images/{id}`.
+        by_id: dict[str, Image] = {}
+        for img, flag in (await db.execute(
+            select(Image, _HAS_GENERATION_METADATA)
+            .options(defer(Image.generation_metadata, raiseload=True))
+            .where(Image.id.in_(page_ids))
+        )):
+            by_id[img.id] = img
+            has_meta[img.id] = bool(flag)
         images = [by_id[i] for i in page_ids if i in by_id]
 
     # Stamp the effective license onto each row for the gallery badge. One
@@ -535,6 +557,7 @@ async def list_images(
         item = ImageListItem.model_validate(img)
         item.license = img.license or ds_license
         item.label_ids = labels_by_id.get(img.id, [])
+        item.has_generation_metadata = has_meta.get(img.id, False)
         out.append(item)
     return out
 
@@ -1278,12 +1301,20 @@ async def bulk_thumbnails(body: BulkThumbnailRequest, db: AsyncSession = Depends
     return {"job_id": job.id, "total": total}
 
 
+# The two serving routes read only the path they serve, never the whole row:
+# `db.get(Image, …)` loads every non-deferred column, `generation_metadata`
+# included, once per tile per page. Both paths sit before the embedding blobs in
+# a migrated row, so SQLite never walks the overflow chain (M9 stage 11).
+
+
 @router.get("/{image_id}/file")
 async def serve_file(image_id: str, db: AsyncSession = Depends(get_db)):
-    img = await db.get(Image, image_id)
-    if not img:
+    file_path = (await db.execute(
+        select(Image.file_path).where(Image.id == image_id)
+    )).scalar_one_or_none()
+    if file_path is None:
         raise HTTPException(404, "Image not found")
-    p = safe_dataset_path(img.file_path, settings.datasets_dir)
+    p = safe_dataset_path(file_path, settings.datasets_dir)
     if not p.exists():
         raise HTTPException(404, "File not found on disk")
     return FileResponse(str(p))
@@ -1291,16 +1322,22 @@ async def serve_file(image_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.get("/{image_id}/thumbnail")
 async def serve_thumbnail(image_id: str, db: AsyncSession = Depends(get_db)):
+    row = (await db.execute(
+        select(Image.thumbnail_path).where(Image.id == image_id)
+    )).one_or_none()
+    if row is None:
+        raise HTTPException(404, "Image not found")
+    if row.thumbnail_path:
+        # Guarded like the file route above, and like the video poster twin: a
+        # thumbnail_path is as much a stored path as file_path is.
+        t = safe_dataset_path(row.thumbnail_path, settings.datasets_dir)
+        if t.exists():
+            return FileResponse(str(t))
+    # Fallback: generate on demand. This branch writes the row, so it loads the
+    # entity; it runs once per image, not once per page.
     img = await db.get(Image, image_id)
     if not img:
         raise HTTPException(404, "Image not found")
-    if img.thumbnail_path:
-        # Guarded like the file route above, and like the video poster twin: a
-        # thumbnail_path is as much a stored path as file_path is.
-        t = safe_dataset_path(img.thumbnail_path, settings.datasets_dir)
-        if t.exists():
-            return FileResponse(str(t))
-    # Fallback: generate on demand
     p = safe_dataset_path(img.file_path, settings.datasets_dir)
     thumb = thumbnail_path_for(p)
     await asyncio.get_running_loop().run_in_executor(None, generate_thumbnail, str(p), thumb)

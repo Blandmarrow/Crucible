@@ -95,7 +95,10 @@ class ImageListItem(BaseModel):
     scores_stale: bool = False
     dino_layer_scores: dict | None = None
     quality_flags: dict[str, Any]
-    generation_metadata: dict | None = None
+    # Not the JSON: about 55 KB a row on ComfyUI output, and the card only asks
+    # whether there is any. Filled by the router from SQL; the gallery's modal
+    # fetches the JSON from `GET /images/{id}` (M9 stage 11).
+    has_generation_metadata: bool = False
     caption_text: str
     captioned_by: str
     is_auto_named: bool = False

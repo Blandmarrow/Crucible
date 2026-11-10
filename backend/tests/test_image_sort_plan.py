@@ -45,6 +45,7 @@ from backend.routers.images import (
     _page_ids_query,
 )
 from backend.schemas.image import ImageIdsParams, ImageListParams
+from backend.services.dataset_service import _image_validator_stmt
 
 # Sort field -> the index its ordering must read from. `filename` rides the
 # automatic index of `uq_dataset_filename`, whose name SQLite generates, so
@@ -58,6 +59,8 @@ INDEXED: dict[str, str | None] = {
     # `ASC NULLS LAST` over an ascending index: SQLite reads the non-NULL
     # entries first and the NULLs after them, with no sort.
     "sort_order": "ix_images_dataset_sort_order",
+    # Added for the Stats cache check (M9 stage 11); the sort rides along.
+    "updated_at": "ix_images_dataset_updated_at",
     "filename": None,
 }
 
@@ -66,7 +69,7 @@ INDEXED: dict[str, str | None] = {
 # sorts ids and not rows. `ix_images_source_video_timeline` does not help the
 # two lineage sorts here: it leads with `source_video_id`, not `dataset_id`.
 UNINDEXED = frozenset({
-    "updated_at", "file_size_bytes", "width", "height", "nsfw_score",
+    "file_size_bytes", "width", "height", "nsfw_score",
     "noise_score", "uniformity_score", "watermark_score", "color_score",
     "saturation_score", "luminance_score",
     "source_timestamp_ms", "source_shot_index",
@@ -165,6 +168,15 @@ def test_a_subfolder_filter_does_not_bring_the_sort_step_back(conn, order):
     plan = _plan(conn, _page_ids_query(_page("aesthetic_score", order, subfolder="plan/row_7")))
     assert not any(SORT_STEP in step for step in plan), plan
     assert any("ix_images_dataset_aesthetic" in step for step in plan), plan
+
+
+def test_the_stats_cache_check_reads_only_its_index(conn):
+    """The Stats page runs this on every poll, twice. Without
+    `ix_images_dataset_updated_at` it read every row of the dataset for
+    `max(updated_at)`: 294 ms at 100,000 rows, against 7.1 ms off the index
+    (M9 stage 11). A covering index means no table row is touched."""
+    plan = _plan(conn, _image_validator_stmt("d", None))
+    assert any("COVERING INDEX ix_images_dataset_updated_at" in step for step in plan), plan
 
 
 def _seed_tied_rows_with_gaps(engine) -> None:

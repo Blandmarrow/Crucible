@@ -85,6 +85,29 @@ test('a run files each row under its folder and imports the image', async ({ pag
   await expect(page.locator('p', { hasText: /^a knight, close up$/ })).toBeVisible()
 })
 
+test('the gallery card opens generation info the list no longer carries', async ({ page, request }) => {
+  // The gallery list says only whether an image has generation metadata; the
+  // modal fetches the JSON from the image's own endpoint (M9 stage 11).
+  const ds = await createDatasetViaApi(request, `e2e-comfy-genmeta-${Date.now()}`)
+  await createPlanViaApi(request, ds.id, 'genmeta plan')
+
+  await page.goto(`/datasets/${ds.id}/comfy`)
+  await pastePrompts(page, ['a lighthouse at dusk'])
+  await page.getByRole('button', { name: 'Run pending (1)' }).click()
+  await expect(page.getByTestId('comfy-rows-table').getByText('completed', { exact: true }))
+    .toHaveCount(1, { timeout: 30_000 })
+
+  const [item] = await (await request.get('/api/v1/images/', { params: { dataset_id: ds.id } })).json()
+  expect(item.has_generation_metadata).toBe(true)
+  expect(item).not.toHaveProperty('generation_metadata')
+
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await page.getByTestId('gallery-tile').first().getByTitle('View generation info').click()
+  // The metadata panel's prompt paragraph: the card's caption line is a div.
+  await expect(page.locator('p', { hasText: /^a lighthouse at dusk$/ })).toBeVisible()
+  await expect(page.locator('.badge-info', { hasText: /^ComfyUI$/ })).toBeVisible()
+})
+
 test('a failed row shows ComfyUI\'s error and can be reset', async ({ page, request }) => {
   const ds = await createDatasetViaApi(request, `e2e-comfy-fail-${Date.now()}`)
   const plan = await createPlanViaApi(request, ds.id, 'fail plan')

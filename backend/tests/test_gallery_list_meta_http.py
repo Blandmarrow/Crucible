@@ -67,7 +67,7 @@ def test_the_flag_storage_forms_are_what_this_file_assumes(tmp_path):
             async with env.Session() as s:
                 raw = dict((await s.execute(
                     select(Image.id, type_coerce(Image.generation_metadata, String))
-                )).tuples().all())
+                )).all())
             assert raw[a] == "null"
             assert raw[b] is None
 

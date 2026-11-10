@@ -3,7 +3,7 @@ import { ArrowRightFromLine, Copy, Edit2, Folder, FolderInput, Plus, Trash2 } fr
 import { usePaneDatasetId, usePaneGallerySourceVideo, usePaneGallerySubfolder } from "../hooks/usePaneDatasetId";
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import toast from "react-hot-toast";
-import { apiErrorDetail } from "../utils/apiError";
+import { apiErrorDetail, isNotFound } from "../utils/apiError";
 import { createPortal } from "react-dom";
 import {
   DndContext, DragOverlay, closestCenter, pointerWithin, PointerSensor, useSensor, useSensors,
@@ -314,6 +314,9 @@ export default function GalleryPage() {
     queryKey: ["image", genMetaImage?.id],
     queryFn: () => imagesApi.get(genMetaImage!.id),
     enabled: !!genMetaImage,
+    // The detail page's rule: a 404 (deleted while the modal was open) is
+    // terminal, anything else keeps the app-wide single retry.
+    retry: (failureCount, err) => (isNotFound(err) ? false : failureCount < 1),
   });
   const [activeSubfolder, setActiveSubfolder] = useState<string | undefined>(
     saved?.activeSubfolder == null ? undefined : saved.activeSubfolder

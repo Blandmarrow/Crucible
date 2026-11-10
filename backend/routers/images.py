@@ -536,7 +536,7 @@ async def list_images(
             select(Image, _HAS_GENERATION_METADATA)
             .options(defer(Image.generation_metadata, raiseload=True))
             .where(Image.id.in_(page_ids))
-        )).tuples():
+        )):
             by_id[img.id] = img
             has_meta[img.id] = bool(flag)
         images = [by_id[i] for i in page_ids if i in by_id]

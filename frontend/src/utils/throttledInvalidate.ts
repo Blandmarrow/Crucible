@@ -51,6 +51,9 @@ export function createThrottledInvalidator(qc: QueryClient, intervalMs = LIVE_RE
       const g = groups.get(group);
       if (!g) return [];
       if (g.timer) clearTimeout(g.timer);
+      // Deleting the group also resets its window. Deliberate: the terminal
+      // branch has just refetched, so another job still running on this
+      // dataset starts fresh, at the cost of at most one early refetch.
       groups.delete(group);
       return [...g.pending.values()];
     },

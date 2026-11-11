@@ -124,3 +124,12 @@ before M7; **Leaning** on how it is built: CPU-only work first, the GPU scorers'
 change only after a timing, and no batched forward passes. PM-035's one-GPU-thread rule is
 not reopened. Full record:
 [decisions/14-job-throughput-is-its-own-milestone.md](decisions/14-job-throughput-is-its-own-milestone.md).
+
+## 15. The big columns stay in the row; the Stats scans pin their index
+
+**Decided** (2026-11-11, by the user): M9 stage 7 builds no side table for the embeddings
+or `generation_metadata`, since the win shows only at sizes nobody has; reopen it when a
+dataset nears 50,000 photo-shaped or 20,000 ComfyUI-shaped images. The dataset-wide Stats
+scans are pinned to `ix_images_dataset_id`, documented at the pin, at the index and in the
+docs, with a plan guard test. Full record:
+[decisions/15-big-columns-stay-in-the-row.md](decisions/15-big-columns-stay-in-the-row.md).

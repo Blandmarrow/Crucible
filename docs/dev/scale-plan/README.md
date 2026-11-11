@@ -480,8 +480,30 @@ they say:
   for every page of 2,000 (a `TEMP B-TREE` behind `ix_images_dataset_updated_at`), about a
   second a page at 1M. No test reads that plan.
 
-The decision is next, and is the user's: the layout (none, big columns last, the
-embeddings, or both), one file or two, the index pin, and what a copy carries.
+**Decided 2026-11-11** ([decision 15](../decisions/15-big-columns-stay-in-the-row.md), by
+the user): **no side table now.** The win shows only at sizes nobody has, and the half that
+helps ComfyUI-shaped rows is the wide, risky one. Reopen it when a dataset nears 50,000
+photo-shaped or 20,000 ComfyUI-shaped images, starting with the script again. **The
+dataset-wide Stats scans are pinned to `ix_images_dataset_id`**, with a plan guard test.
+What is left to build:
+
+- **The plan guard.** Lift the statements `get_dataset_stats` and `get_score_values` build
+  inline (`backend/services/dataset_service.py`) into module-level builders, as
+  `_image_validator_stmt` already is, and read each one's plan the way
+  `backend/tests/test_image_sort_plan.py` does.
+- **The pin**, on the seven dataset-wide scans and not on the validator. SQLAlchemy's
+  `with_hint` looked, from its source, to be dropped without a word on SQLite; confirm that
+  with a compile test first, and if so emit the hint with a small compiler hook. The guard
+  then asserts the pinned index in each plan, which also proves the hint reached the SQL.
+- **Time a subfolder-scoped Stats call** under the forced index before pinning that form,
+  on a kept bench file. Pin it only if it wins there too.
+- **Document the pin** where a later editor would look: at the pin (why this index, when to
+  re-time it), at the index's declaration in `backend/models/image.py` (do not drop it as
+  redundant), in `docs/dev/database.md` and `docs/dev/statistics.md`, and in the guard
+  test's docstring.
+
+The rest of this section is the design as it stood before the measurement. It is kept for
+whoever reopens the split.
 
 **The Stats scans' index is decided here** (the user's call, 2026-11-11). Since stage 11,
 SQLite picks `ix_images_dataset_updated_at` for every Stats scan, which reads the table in

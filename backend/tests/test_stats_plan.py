@@ -26,8 +26,10 @@ What is deliberately *not* pinned is asserted too, so nobody "finishes the job":
 cache validator, which reads `ix_images_dataset_updated_at` as a covering index, and a
 subfolder-scoped scan, which `ix_images_dataset_subfolder` serves in table order already.
 """
+from datetime import datetime, timedelta
+
 import pytest
-from sqlalchemy import create_engine, event, select
+from sqlalchemy import create_engine, event, select, text
 
 import backend.models  # noqa: F401 — register every model on Base
 from backend.database import Base, indexed_by
@@ -44,7 +46,7 @@ from backend.services.dataset_service import (
     _stats_license_stmt,
     _stats_rows_stmt,
 )
-from backend.tests.conftest import API, api_env, run
+from backend.tests.conftest import API, api_env, png_bytes, run, upload_image
 from backend.tests.test_image_sort_plan import _plan, _sql
 
 PIN = f"FROM images INDEXED BY {STATS_SCAN_INDEX}"
@@ -137,6 +139,63 @@ def test_the_pin_changes_the_order_of_the_scan_and_not_its_rows(conn):
         with_pin = sorted(map(tuple, conn.exec_driver_sql(pinned)), key=repr)
         assert with_pin == sorted(map(tuple, conn.exec_driver_sql(unpinned)), key=repr), name
         assert with_pin, name
+
+
+def test_a_pinned_scan_reads_the_rows_in_table_order(conn):
+    """The order the pin is for. `updated_at` runs backwards here, so a scan through
+    `ix_images_dataset_updated_at` would hand the rows back reversed."""
+    conn.execute(Image.__table__.insert(), [
+        {"id": f"img-{i:03d}", "dataset_id": "d", "filename": f"{i:03d}.png",
+         "original_filename": f"{i:03d}.png", "file_path": f"/tmp/{i:03d}.png",
+         "width": i, "updated_at": datetime(2026, 1, 1) - timedelta(days=i)}
+        for i in range(30)
+    ])
+    assert [row.width for row in conn.execute(_stats_rows_stmt("d", None))] == list(range(30))
+    # And it does: the same statement through the index a migrated database's planner
+    # picks when left alone. (This schema comes from `create_all`, whose planner makes
+    # another choice, which is why the comparison is forced and not left to SQLite.)
+    other = _sql(_stats_rows_stmt("d", None)).replace(STATS_SCAN_INDEX, "ix_images_dataset_updated_at")
+    assert [row[0] for row in conn.exec_driver_sql(other)] == list(reversed(range(30)))
+
+
+def test_a_score_mean_does_not_move_when_an_unrelated_edit_touches_a_row(tmp_path):
+    """`score_means` is a float sum in row order, so its last digits follow the order
+    of the scan. Through `ix_images_dataset_updated_at` that order changed whenever
+    any row was written: editing one caption moved that row to the end, and a mean
+    could shift in its 14th digit with no score changed. Table order only changes
+    when rows come and go. 0.1, 0.2 and 0.3 are the classic three: summed in that
+    order they give 0.6000000000000001, and with 0.1 last, 0.6."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            ids = [(await upload_image(env, ds["id"], f"{i}.png", png_bytes((i, i, i))))["id"]
+                   for i in range(1, 4)]
+            async with env.Session() as db:
+                for image_id, score in zip(ids, (0.1, 0.2, 0.3)):
+                    (await db.get(Image, image_id)).aesthetic_score = score
+                await db.commit()
+
+            async def mean() -> float:
+                r = await env.client.get(f"{API}/datasets/{ds['id']}/stats")
+                assert r.status_code == 200, r.text
+                return r.json()["score_means"]["aesthetic_score"]
+
+            before = await mean()
+            async with env.Session() as db:  # any write bumps `updated_at` to now
+                (await db.get(Image, ids[0])).source_name = "an unrelated edit"
+                await db.commit()
+            after = await mean()
+            async with env.Session() as db:  # what the scan saw before the pin, after that edit
+                by_updated_at = (await db.execute(text(
+                    "SELECT aesthetic_score FROM images INDEXED BY ix_images_dataset_updated_at "
+                    "WHERE dataset_id = :d"), {"d": ds["id"]})).scalars().all()
+            return before, after, by_updated_at
+
+    before, after, by_updated_at = run(scenario())
+    assert before == (0.0 + 0.1 + 0.2 + 0.3) / 3
+    assert after == before
+    assert by_updated_at == [0.2, 0.3, 0.1]
+    assert sum(by_updated_at, 0.0) / 3 != before, "these three no longer show the order mattering"
 
 
 def _images_statements(engine, sink: list[str]):

@@ -98,3 +98,14 @@
     `get_from_hint_text` and `indexed_by` wraps `Select.with_hint` for it. The guard test
     reads the compiled SQL, the plan, and every statement the two Stats endpoints really
     send.
+  - **2026-11-11, the pin moves `score_means` in its last digits.** Found while checking
+    the built pin against the unpinned payloads on the 100,000-row bench file. The rows
+    are the same; their order is not, and each score mean is a float sum in row order, so
+    each differed at about the 14th significant digit (mean aesthetic 5.003639352915172
+    against 5.003639352915125). Nothing visible moves: the page prints a mean with
+    `toFixed`, and nothing stores it. Every other field, and every subfolder-scoped
+    payload, compared equal. The pinned order is also the steadier one: the unpinned scan
+    ran in `updated_at` order, which any write to any row reshuffles, where table order
+    changes only when rows come and go. Recorded because the owner rejects a speedup that
+    changes output ([decision 14](14-job-throughput-is-its-own-milestone.md)), and this is
+    the one place the pin touches a value at all.

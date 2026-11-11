@@ -142,6 +142,11 @@ async def _image_validator(db: AsyncSession, dataset_id: str, subfolder: str | N
 #   that subfolder's rows in table order already; the pin would read the whole
 #   dataset to answer for one folder.
 #
+# The pin also settles the *order* of the row scan, which `score_means` (a float
+# sum in row order) can see in its last digits: the same rows, summed in table
+# order. Through `ix_images_dataset_updated_at` that order changed whenever any
+# row was written.
+#
 # The pin costs SQLite its freedom to pick something better, so **time it again**
 # (`python -m backend.scripts.bench_split_layout --db <kept bench file> --layouts
 # row --cold`, which compares SQLite's own choice with this index) when an index

@@ -105,3 +105,156 @@ test('a histogram bar lists exactly the images it counts', async ({ page, reques
   const sizeNext = await openBar(page, '0.1–0.5 MB: 4', 'File size')
   await expect(sizeNext).toHaveText(/^4 images( ·|$)/)
 })
+
+// ── M9 stage 4: the raw `score-values` lists are fetched on demand ────────────
+// The default histograms, the means and the CSV all come from `/stats`. The raw
+// lists (one entry per image) load only for a panel with custom edges, or one
+// whose edge editor is open.
+
+/** Five images: saturation NULL/0.2/0.4/0.6/1.0, and two aesthetic scores. */
+async function stageScores(request: Parameters<typeof createDatasetViaApi>[0], name: string) {
+  const ds = await createDatasetViaApi(request, `${name}-${Date.now()}`)
+  const names = ['n.png', 'a02.png', 'a04.png', 'a06.png', 'a10.png']
+  for (const n of names) await uploadViaApi(request, ds.id, n)
+  const list = await (await request.get('/api/v1/images/', { params: { dataset_id: ds.id, limit: '10' } })).json()
+  const id: Record<string, string> = Object.fromEntries(list.map((i: { filename: string; id: string }) => [i.filename, i.id]))
+  setColumns(e2eDbPath(ds.folder_path), {
+    [id['n.png']]:   { saturation_score: null, aesthetic_score: null },
+    [id['a02.png']]: { saturation_score: 0.2,  aesthetic_score: 5 },
+    [id['a04.png']]: { saturation_score: 0.4,  aesthetic_score: 6 },
+    [id['a06.png']]: { saturation_score: 0.6,  aesthetic_score: null },
+    [id['a10.png']]: { saturation_score: 1.0,  aesthetic_score: null },
+  })
+  return ds
+}
+
+/** Every `score-values` request the page makes from here on. */
+function watchRawRequests(page: Page): string[] {
+  const seen: string[] = []
+  page.on('request', (r) => { if (r.url().includes('/score-values')) seen.push(r.url()) })
+  return seen
+}
+
+const saturationPanel = (page: Page) => page.locator('.panel', { hasText: 'Saturation' })
+const meanAestheticCard = (page: Page) => page.locator('.stat-card', { hasText: 'Mean aesthetic' }).locator('.sv')
+
+test('a plain stats load and its CSV export ask for no raw score lists', async ({ page, request }) => {
+  const ds = await stageScores(request, 'e2e-stats-plain')
+  const raw = watchRawRequests(page)
+
+  await page.goto(`/datasets/${ds.id}/stats`)
+
+  // The mean is the server's, over the two scored images.
+  await expect(meanAestheticCard(page)).toHaveText('5.50')
+  await expect(page.getByTitle('0.2–0.4: 1', { exact: true })).toBeVisible()
+  // The pencil does not wait on the lists it would fetch.
+  await expect(saturationPanel(page).getByTitle('Edit bucket edges')).toBeVisible()
+
+  const downloading = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Export Stats CSV' }).click()
+  const csv = fs.readFileSync(await (await downloading).path(), 'utf8')
+  expect(csv).toContain('mean_aesthetic_score,5.5000\n')
+  expect(csv).toContain('mean_saturation_score,0.5500\n')
+  // Nothing scored blur: an empty cell, not a zero.
+  expect(csv).toContain('mean_blur_score,\n')
+
+  // A request the page was going to make on load has had every chance by now:
+  // the panels are up and a download has gone through since.
+  await page.waitForTimeout(300)
+  expect(raw).toEqual([])
+})
+
+test('editing a histogram fetches the raw lists, and a saved edge fetches them on load', async ({ page, request }) => {
+  const ds = await stageScores(request, 'e2e-stats-custom')
+  await page.goto(`/datasets/${ds.id}/stats`)
+  const sat = saturationPanel(page)
+  await expect(page.getByTitle('0.2–0.4: 1', { exact: true })).toBeVisible()
+
+  // Opening the editor is what asks for the lists.
+  const asked = page.waitForRequest((r) => r.url().includes('/score-values'))
+  await sat.getByTitle('Edit bucket edges').click()
+  await asked
+
+  await sat.getByPlaceholder('e.g. 4, 6, 8').fill('0.5')
+  await sat.getByRole('button', { name: 'Apply' }).click()
+  await expect(sat.getByText('custom', { exact: true })).toBeVisible()
+  await expect(sat.getByTitle('< 0.5: 2', { exact: true })).toBeVisible()
+  await expect(sat.getByTitle('0.5+: 2', { exact: true })).toBeVisible()
+  await expect(sat.getByTitle('0.2–0.4: 1', { exact: true })).toHaveCount(0)
+
+  // A custom bar still lists exactly what it counts.
+  const low = await openBar(page, '< 0.5: 2', 'Saturation')
+  await expect(low).toHaveText(/^2 images( ·|$)/)
+  await page.keyboard.press('Escape')
+
+  // The edge is saved, so the next load asks for the lists straight away.
+  const askedOnLoad = page.waitForRequest((r) => r.url().includes('/score-values'))
+  await page.reload()
+  await askedOnLoad
+  await expect(sat.getByText('custom', { exact: true })).toBeVisible()
+  await expect(sat.getByTitle('< 0.5: 2', { exact: true })).toBeVisible()
+
+  // Reset goes back to the server's buckets, and stops asking.
+  await sat.getByTitle('Edit bucket edges').click()
+  await sat.getByRole('button', { name: 'Reset' }).click()
+  await expect(sat.getByText('custom', { exact: true })).toHaveCount(0)
+  await expect(sat.getByTitle('0.2–0.4: 1', { exact: true })).toBeVisible()
+
+  const raw = watchRawRequests(page)
+  await page.reload()
+  await expect(sat.getByTitle('0.2–0.4: 1', { exact: true })).toBeVisible()
+  await page.waitForTimeout(300)
+  expect(raw).toEqual([])
+})
+
+// A panel with saved edges and no raw list must say so. Drawing the server's
+// default buckets under a "custom" badge would be a wrong chart with no sign of it.
+test('a custom histogram reports a failed raw-list load instead of default bars', async ({ page, request }) => {
+  const ds = await stageScores(request, 'e2e-stats-rawfail')
+  await page.addInitScript(([k, v]) => localStorage.setItem(k, v), [`stats-hist-edges-saturation-${ds.id}`, '0.5'])
+  await page.route(/\/score-values/, (route) => route.fulfill({ status: 500, contentType: 'application/json', body: '{"detail":"boom"}' }))
+
+  await page.goto(`/datasets/${ds.id}/stats`)
+  const sat = saturationPanel(page)
+
+  await expect(sat.getByText('Custom buckets unavailable — failed to load score values.')).toBeVisible({ timeout: 15_000 })
+  await expect(sat.getByText('custom', { exact: true })).toBeVisible()
+  await expect(sat.getByTitle('0.2–0.4: 1', { exact: true })).toHaveCount(0)
+  // The rest of the page does not depend on the lists.
+  await expect(meanAestheticCard(page)).toHaveText('5.50')
+})
+
+// One mounted panel used to be carried across a dataset switch, and wrote the
+// old dataset's edges under the new dataset's key before re-reading them. It
+// needs the destination's stats already cached, or the page unmounts while they
+// load and hides the fault. Navigation is client-side: a full load remounts.
+test("a dataset's custom edges do not leak to the next dataset viewed", async ({ page, request }) => {
+  const plain = await stageScores(request, 'e2e-stats-leak-plain')
+  const custom = await stageScores(request, 'e2e-stats-leak-custom')
+  const visit = async (id: string) => {
+    await page.evaluate((url) => {
+      window.history.pushState({}, '', url)
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    }, `/datasets/${id}/stats`)
+  }
+  const sat = saturationPanel(page)
+
+  await page.goto(`/datasets/${plain.id}/stats`)
+  await expect(sat.getByTitle('0.2–0.4: 1', { exact: true })).toBeVisible()
+  await page.evaluate(([k, v]) => localStorage.setItem(k, v), [`stats-hist-edges-saturation-${custom.id}`, '0.5'])
+
+  await visit(custom.id)
+  await expect(sat.getByText('custom', { exact: true })).toBeVisible()
+  await expect(sat.getByTitle('< 0.5: 2', { exact: true })).toBeVisible()
+
+  // Back to the first dataset, whose stats are still cached.
+  const raw = watchRawRequests(page)
+  await visit(plain.id)
+  await expect(sat.getByTitle('0.2–0.4: 1', { exact: true })).toBeVisible()
+  await expect(sat.getByText('custom', { exact: true })).toHaveCount(0)
+  // Nor does the dataset left behind make this one fetch its raw lists.
+  await page.waitForTimeout(300)
+  expect(raw).toEqual([])
+  expect(await page.evaluate((k) => localStorage.getItem(k), `stats-hist-edges-saturation-${plain.id}`)).toBeNull()
+  expect(await page.evaluate((k) => localStorage.getItem(k), `stats-hist-edges-saturation-${custom.id}`)).toBe('0.5')
+})

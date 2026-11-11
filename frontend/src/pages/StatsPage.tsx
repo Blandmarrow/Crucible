@@ -891,9 +891,10 @@ function formatSize(mb: number) {
   return mb > 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb.toFixed(1)} MB`;
 }
 
-function meanAesthetic(values: number[] | undefined): string {
-  if (!values || values.length === 0) return "—";
-  return (values.reduce((a, b) => a + b, 0) / values.length).toFixed(2);
+// A mean off `/stats`'s `score_means`. A column nothing has scored is absent
+// there, so `empty` is what an unscored dataset shows.
+function fmtMean(mean: number | undefined, digits: number, empty: string): string {
+  return typeof mean === "number" && isFinite(mean) ? mean.toFixed(digits) : empty;
 }
 
 function escapeCsv(v: string): string {
@@ -901,14 +902,13 @@ function escapeCsv(v: string): string {
   return v;
 }
 
-function meanOf(values: number[] | undefined): string {
-  if (!values || values.length === 0) return "";
-  return (values.reduce((a, b) => a + b, 0) / values.length).toFixed(4);
-}
-
+// The means come from `/stats`, so the export reads no raw `score-values` list
+// and never waits on one (M9 stage 4).
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function downloadCsv(stats: any, sv: ScoreValues | undefined, det: DetectionStats | undefined, datasetId: string, datasetName: string) {
+function downloadCsv(stats: any, det: DetectionStats | undefined, datasetId: string, datasetName: string) {
   type Row = [string, string | number];
+  const means: Record<string, number> = stats.score_means ?? {};
+  const meanOf = (field: string) => fmtMean(means[field], 4, "");
   const section = (label: string): Row[] => [["", ""], [`## ${label}`, ""]];
   const dist = (prefix: string, d: Record<string, number>): Row[] =>
     Object.entries(d).map(([k, v]) => [`${prefix}_${k.replace(/[^a-z0-9]/gi, "_").replace(/^_+|_+$/g, "").toLowerCase()}`, v]);
@@ -937,15 +937,15 @@ function downloadCsv(stats: any, sv: ScoreValues | undefined, det: DetectionStat
     ...Object.entries(stats.score_coverage as Record<string, number>).map(([k, v]): Row => [`coverage_${k}`, v]),
 
     ...section("MEAN SCORES"),
-    ["mean_aesthetic_score",       meanOf(sv?.aesthetic_score)],
-    ["mean_blur_score",            meanOf(sv?.blur_score)],
-    ["mean_noise_score",           meanOf(sv?.noise_score)],
-    ["mean_uniformity_score",      meanOf(sv?.uniformity_score)],
-    ["mean_watermark_score",       meanOf(sv?.watermark_score)],
-    ["mean_color_score",           meanOf(sv?.color_score)],
-    ["mean_saturation_score",      meanOf(sv?.saturation_score)],
-    ["mean_luminance_score",       meanOf(sv?.luminance_score)],
-    ["mean_style_similarity_score",meanOf(sv?.style_similarity_score)],
+    ["mean_aesthetic_score",       meanOf("aesthetic_score")],
+    ["mean_blur_score",            meanOf("blur_score")],
+    ["mean_noise_score",           meanOf("noise_score")],
+    ["mean_uniformity_score",      meanOf("uniformity_score")],
+    ["mean_watermark_score",       meanOf("watermark_score")],
+    ["mean_color_score",           meanOf("color_score")],
+    ["mean_saturation_score",      meanOf("saturation_score")],
+    ["mean_luminance_score",       meanOf("luminance_score")],
+    ["mean_style_similarity_score",meanOf("style_similarity_score")],
 
     ...section("AESTHETIC SCORE DISTRIBUTION"),
     ...dist("aesthetic", stats.score_distribution),
@@ -1041,10 +1041,23 @@ interface HistPanelProps {
   fb?: FB;
   footer?: React.ReactNode;
   storageKey?: string;
+  /** Tells the page whether this panel needs the raw `score-values` lists. */
+  onNeedRaw?: (key: string, needs: boolean) => void;
+  /** The `score-values` request failed, so custom buckets cannot be drawn. */
+  rawError?: boolean;
 }
 
-function HistPanel({ title, subtitle, entries, onBarClick, rawValues, defaultEdgeStr, fb, footer, storageKey }: HistPanelProps) {
-  const canEdit = rawValues !== undefined && defaultEdgeStr !== undefined && fb !== undefined;
+// Keyed by its storage key, so a dataset switch that keeps the page mounted
+// gives the panel a fresh instance. One instance carried across the switch wrote
+// the old dataset's edges under the new dataset's key before it re-read them.
+function HistPanel(props: HistPanelProps) {
+  return <HistPanelBody key={props.storageKey ?? ""} {...props} />;
+}
+
+function HistPanelBody({ title, subtitle, entries, onBarClick, rawValues, defaultEdgeStr, fb, footer, storageKey, onNeedRaw, rawError }: HistPanelProps) {
+  // Editable by configuration, not by what has loaded: the raw lists are fetched
+  // only once a panel asks for them, so the pencil cannot wait on them.
+  const canEdit = defaultEdgeStr !== undefined && fb !== undefined;
   const [isEditing, setIsEditing] = useState(false);
   const [activeEdgeStr, setActiveEdgeStr] = useState<string | null>(() => {
     if (!storageKey) return null;
@@ -1060,31 +1073,30 @@ function HistPanel({ title, subtitle, entries, onBarClick, rawValues, defaultEdg
     } catch {}
   }, [storageKey, activeEdgeStr]);
 
-  // Re-read from storage when the key changes (dataset switch without remount).
-  useEffect(() => {
-    if (!storageKey) {
-      setActiveEdgeStr(null);
-      setDraft(defaultEdgeStr ?? "");
-      return;
-    }
-    try {
-      const stored = localStorage.getItem(storageKey) || null;
-      setActiveEdgeStr(stored);
-      setDraft(stored ?? defaultEdgeStr ?? "");
-    } catch {
-      setActiveEdgeStr(null);
-      setDraft(defaultEdgeStr ?? "");
-    }
-  }, [storageKey]); // eslint-disable-line react-hooks/exhaustive-deps
-
   const isCustom = activeEdgeStr !== null;
 
-  const displayEntries = (() => {
-    if (!canEdit || activeEdgeStr === null) return entries;
-    const edges = activeEdgeStr.split(",").map(s => parseFloat(s.trim())).filter(n => isFinite(n));
-    if (!edges.length) return entries;
-    return rebucketValues(rawValues!, edges, fb!);
-  })();
+  const customEdges = canEdit && activeEdgeStr !== null
+    ? activeEdgeStr.split(",").map(s => parseFloat(s.trim())).filter(n => isFinite(n))
+    : [];
+  const usingCustom = customEdges.length > 0;
+
+  // The raw lists are needed to draw custom buckets, and fetched as the editor
+  // opens so that Apply has them. A hidden or collapsed panel is unmounted and
+  // so asks for nothing.
+  const needsRaw = usingCustom || (canEdit && isEditing);
+  useEffect(() => {
+    if (onNeedRaw && storageKey) onNeedRaw(storageKey, needsRaw);
+  }, [onNeedRaw, storageKey, needsRaw]);
+  useEffect(() => () => {
+    if (onNeedRaw && storageKey) onNeedRaw(storageKey, false);
+  }, [onNeedRaw, storageKey]);
+
+  // Custom buckets with no raw list yet: say so. Falling back to `entries` would
+  // draw the default buckets under a "custom" badge.
+  const rawPending = usingCustom && rawValues === undefined;
+  const displayEntries = usingCustom && rawValues !== undefined
+    ? rebucketValues(rawValues, customEdges, fb!)
+    : entries;
 
   const handleApply = () => {
     const edges = draft.split(",").map(s => parseFloat(s.trim())).filter(n => isFinite(n));
@@ -1145,7 +1157,13 @@ function HistPanel({ title, subtitle, entries, onBarClick, rawValues, defaultEdg
         </div>
       )}
 
-      <CssHist entries={displayEntries} onBarClick={onBarClick} />
+      {rawPending ? (
+        <div style={{ color: rawError ? "var(--bad)" : "var(--fg-dim)", fontSize: 12, padding: "24px 0", textAlign: "center" }}>
+          {rawError ? "Custom buckets unavailable — failed to load score values." : "Loading custom buckets…"}
+        </div>
+      ) : (
+        <CssHist entries={displayEntries} onBarClick={onBarClick} />
+      )}
       {footer}
     </div>
   );
@@ -1217,12 +1235,34 @@ export default function StatsPage() {
     refetchInterval: statsRefetchInterval,
   });
 
-  const { data: sv, isLoading: svLoading, isError: svError } = useQuery<ScoreValues>({
+  // The raw value lists (one entry per image, thirteen lists) are fetched only
+  // while a panel on the page needs them: one with saved custom edges, or one
+  // whose edge editor is open. The default histograms, the means and the CSV all
+  // come from `/stats`. Each `HistPanel` reports its own need under its storage
+  // key, and a disabled query neither loads nor polls (M9 stage 4).
+  const [rawNeeders, setRawNeeders] = useState<ReadonlySet<string>>(() => new Set());
+  const reportNeedRaw = useCallback((key: string, needs: boolean) => {
+    setRawNeeders(prev => {
+      if (prev.has(key) === needs) return prev;
+      const next = new Set(prev);
+      if (needs) next.add(key); else next.delete(key);
+      return next;
+    });
+  }, []);
+  // Only this dataset's panels count. A storage key ends in its dataset id, and
+  // on a dataset switch the old panels' keys are still in the set for the one
+  // render before their unmount clears them; counting them would fetch the new
+  // dataset's lists for nothing.
+  const needRaw = !!datasetId && [...rawNeeders].some(k => k.endsWith(`-${datasetId}`));
+
+  const { data: sv, isError: svError } = useQuery<ScoreValues>({
     queryKey: ["score-values", datasetId, activeSubfolder],
     queryFn: () => datasetsApi.scoreValues(datasetId!, activeSubfolder),
-    enabled: !!datasetId,
+    enabled: !!datasetId && needRaw,
     refetchInterval: statsRefetchInterval,
   });
+  // What every editable histogram takes besides its own list.
+  const raw = { onNeedRaw: reportNeedRaw, rawError: svError };
 
   const { data: detStats, isError: detStatsError } = useQuery<DetectionStats>({
     queryKey: ["detection-stats", datasetId, activeSubfolder],
@@ -1311,7 +1351,9 @@ export default function StatsPage() {
   const hasFlags          = Object.values(stats.quality_flag_counts).some((v) => v > 0);
   const hasCoverage       = Object.values(stats.score_coverage).some((v) => v > 0);
   const hasCooccurrence   = (cooccurrence?.tags.length ?? 0) > 0;
-  const hasStyleSimData   = ssimData.length > 0 || (sv?.style_similarity_score.length ?? 0) > 0;
+  // The server gives every non-NULL style score a bin, so this is non-empty
+  // exactly when the raw list would be.
+  const hasStyleSimData   = ssimData.length > 0;
   const fs = stats.file_size_summary;
   const totalFlagged = Object.values(stats.quality_flag_counts).reduce((a, b) => a + b, 0);
 
@@ -1362,7 +1404,7 @@ export default function StatsPage() {
               ))}
             </select>
           )}
-          <button className="btn" disabled={svLoading || svError} onClick={() => downloadCsv(stats, sv, detStats, datasetId!, stats?.name ?? "")}>
+          <button className="btn" onClick={() => downloadCsv(stats, detStats, datasetId!, stats?.name ?? "")}>
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
               <path d="M8 2v8M5 7l3 3 3-3M2.5 13.5h11"/>
             </svg>
@@ -1387,7 +1429,7 @@ export default function StatsPage() {
         {[
           { k: "Total images",    v: stats.image_count.toLocaleString() },
           { k: "Captioned",       v: `${stats.caption_coverage_pct}%` },
-          { k: "Mean aesthetic",  v: meanAesthetic(sv?.aesthetic_score) },
+          { k: "Mean aesthetic",  v: fmtMean(stats.score_means?.aesthetic_score, 2, "—") },
           { k: "Disk usage",      v: formatSize(stats.total_size_mb) },
         ].map(({ k, v }) => (
           <div key={k} className="stat-card">
@@ -1396,12 +1438,6 @@ export default function StatsPage() {
           </div>
         ))}
       </div>
-
-      {svError && (
-        <p style={{ color: "var(--bad)", fontSize: 12, marginBottom: 14 }}>
-          Score distributions unavailable — failed to load score values.
-        </p>
-      )}
 
       {/* ── Summary ─────────────────────────────────────────────────────────── */}
       <CategorySection
@@ -1594,7 +1630,7 @@ export default function StatsPage() {
                 subtitle="Click a bar to view images in that range"
                 entries={aestheticData}
                 onBarClick={open("Aesthetic")}
-                rawValues={sv?.aesthetic_score}
+                {...raw} rawValues={sv?.aesthetic_score}
                 defaultEdgeStr={DEFAULT_EDGES.aesthetic}
                 fb={mkScore("aesthetic_score", "desc")}
                 storageKey={datasetId ? `stats-hist-edges-aesthetic-${datasetId}` : undefined}
@@ -1606,7 +1642,7 @@ export default function StatsPage() {
                 subtitle="Cosine similarity to reference images · higher = more consistent style · click to browse"
                 entries={ssimData}
                 onBarClick={open("Style similarity")}
-                rawValues={sv?.style_similarity_score}
+                {...raw} rawValues={sv?.style_similarity_score}
                 defaultEdgeStr={DEFAULT_EDGES.style_sim}
                 fb={mkScore("style_similarity_score", "desc")}
                 storageKey={datasetId ? `stats-hist-edges-style_sim-${datasetId}` : undefined}
@@ -1617,10 +1653,10 @@ export default function StatsPage() {
         {(show("aesthetic", "color_richness") || show("aesthetic", "saturation")) && (
           <div style={{ display: "grid", gridTemplateColumns: show("aesthetic", "color_richness") && show("aesthetic", "saturation") ? "1fr 1fr" : "1fr", gap: 10, marginBottom: 14 }}>
             {show("aesthetic", "color_richness") && (
-              <HistPanel title="Color richness" entries={colorData} onBarClick={open("Color richness")} rawValues={sv?.color_score} defaultEdgeStr={DEFAULT_EDGES.color} fb={mkScore("color_score", "asc")} storageKey={datasetId ? `stats-hist-edges-color-${datasetId}` : undefined} footer={rescoreHint(colorData)} />
+              <HistPanel title="Color richness" entries={colorData} onBarClick={open("Color richness")} {...raw} rawValues={sv?.color_score} defaultEdgeStr={DEFAULT_EDGES.color} fb={mkScore("color_score", "asc")} storageKey={datasetId ? `stats-hist-edges-color-${datasetId}` : undefined} footer={rescoreHint(colorData)} />
             )}
             {show("aesthetic", "saturation") && (
-              <HistPanel title="Saturation" entries={satData} onBarClick={open("Saturation")} rawValues={sv?.saturation_score} defaultEdgeStr={DEFAULT_EDGES.saturation} fb={mkScore("saturation_score", "asc")} storageKey={datasetId ? `stats-hist-edges-saturation-${datasetId}` : undefined} footer={rescoreHint(satData)} />
+              <HistPanel title="Saturation" entries={satData} onBarClick={open("Saturation")} {...raw} rawValues={sv?.saturation_score} defaultEdgeStr={DEFAULT_EDGES.saturation} fb={mkScore("saturation_score", "asc")} storageKey={datasetId ? `stats-hist-edges-saturation-${datasetId}` : undefined} footer={rescoreHint(satData)} />
             )}
           </div>
         )}
@@ -1635,11 +1671,11 @@ export default function StatsPage() {
       >
         {hasQualityScores && (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 10, marginBottom: 14 }}>
-            {show("technical", "blur")       && <HistPanel title="Blur score"       subtitle="higher = sharper" entries={blurData}      onBarClick={open("Blur score")}      rawValues={sv?.blur_score}       defaultEdgeStr={DEFAULT_EDGES.blur}       fb={mkScore("blur_score", "asc")}       storageKey={datasetId ? `stats-hist-edges-blur-${datasetId}` : undefined}       footer={rescoreHint(blurData)} />}
-            {show("technical", "noise")      && <HistPanel title="Noise score"      subtitle="lower = cleaner"  entries={noiseData}     onBarClick={open("Noise score")}     rawValues={sv?.noise_score}      defaultEdgeStr={DEFAULT_EDGES.noise}      fb={mkScore("noise_score", "desc")}     storageKey={datasetId ? `stats-hist-edges-noise-${datasetId}` : undefined}      footer={rescoreHint(noiseData)} />}
-            {show("technical", "uniformity") && <HistPanel title="Uniformity score" subtitle="higher = detail"  entries={uniData}       onBarClick={open("Uniformity score")}rawValues={sv?.uniformity_score} defaultEdgeStr={DEFAULT_EDGES.uniformity} fb={mkScore("uniformity_score", "asc")} storageKey={datasetId ? `stats-hist-edges-uniformity-${datasetId}` : undefined} footer={rescoreHint(uniData)} />}
-            {show("technical", "watermark")  && <HistPanel title="Watermark score"  subtitle="lower = cleaner"  entries={watermarkData} onBarClick={open("Watermark score")} rawValues={sv?.watermark_score}  defaultEdgeStr={DEFAULT_EDGES.watermark}  fb={mkScore("watermark_score", "asc")}  storageKey={datasetId ? `stats-hist-edges-watermark-${datasetId}` : undefined} />}
-            {show("technical", "luminance")  && <HistPanel title="Brightness"       subtitle="higher = brighter" entries={lumData}      onBarClick={open("Brightness")}      rawValues={sv?.luminance_score}  defaultEdgeStr={DEFAULT_EDGES.luminance}  fb={mkScore("luminance_score", "asc")}  storageKey={datasetId ? `stats-hist-edges-luminance-${datasetId}` : undefined}  footer={rescoreHint(lumData)} />}
+            {show("technical", "blur")       && <HistPanel title="Blur score"       subtitle="higher = sharper" entries={blurData}      onBarClick={open("Blur score")}      {...raw} rawValues={sv?.blur_score}       defaultEdgeStr={DEFAULT_EDGES.blur}       fb={mkScore("blur_score", "asc")}       storageKey={datasetId ? `stats-hist-edges-blur-${datasetId}` : undefined}       footer={rescoreHint(blurData)} />}
+            {show("technical", "noise")      && <HistPanel title="Noise score"      subtitle="lower = cleaner"  entries={noiseData}     onBarClick={open("Noise score")}     {...raw} rawValues={sv?.noise_score}      defaultEdgeStr={DEFAULT_EDGES.noise}      fb={mkScore("noise_score", "desc")}     storageKey={datasetId ? `stats-hist-edges-noise-${datasetId}` : undefined}      footer={rescoreHint(noiseData)} />}
+            {show("technical", "uniformity") && <HistPanel title="Uniformity score" subtitle="higher = detail"  entries={uniData}       onBarClick={open("Uniformity score")}{...raw} rawValues={sv?.uniformity_score} defaultEdgeStr={DEFAULT_EDGES.uniformity} fb={mkScore("uniformity_score", "asc")} storageKey={datasetId ? `stats-hist-edges-uniformity-${datasetId}` : undefined} footer={rescoreHint(uniData)} />}
+            {show("technical", "watermark")  && <HistPanel title="Watermark score"  subtitle="lower = cleaner"  entries={watermarkData} onBarClick={open("Watermark score")} {...raw} rawValues={sv?.watermark_score}  defaultEdgeStr={DEFAULT_EDGES.watermark}  fb={mkScore("watermark_score", "asc")}  storageKey={datasetId ? `stats-hist-edges-watermark-${datasetId}` : undefined} />}
+            {show("technical", "luminance")  && <HistPanel title="Brightness"       subtitle="higher = brighter" entries={lumData}      onBarClick={open("Brightness")}      {...raw} rawValues={sv?.luminance_score}  defaultEdgeStr={DEFAULT_EDGES.luminance}  fb={mkScore("luminance_score", "asc")}  storageKey={datasetId ? `stats-hist-edges-luminance-${datasetId}` : undefined}  footer={rescoreHint(lumData)} />}
           </div>
         )}
       </CategorySection>
@@ -1654,13 +1690,13 @@ export default function StatsPage() {
         {(show("properties", "aspect_ratio") || show("properties", "megapixels") || show("properties", "file_size") || show("properties", "file_formats")) && (
           <div style={{ display: "grid", gridTemplateColumns: `repeat(${[show("properties", "aspect_ratio"), show("properties", "megapixels"), show("properties", "file_size"), show("properties", "file_formats")].filter(Boolean).length}, 1fr)`, gap: 10, marginBottom: 14 }}>
             {show("properties", "aspect_ratio") && <HistPanel title="Aspect ratio" entries={arData} onBarClick={open("Aspect ratio")} />}
-            {show("properties", "megapixels")   && <HistPanel title="Megapixels" entries={megapixelData} onBarClick={open("Megapixels")} rawValues={sv?.megapixels} defaultEdgeStr={DEFAULT_EDGES.megapixels} fb={mkMp} storageKey={datasetId ? `stats-hist-edges-megapixels-${datasetId}` : undefined} />}
+            {show("properties", "megapixels")   && <HistPanel title="Megapixels" entries={megapixelData} onBarClick={open("Megapixels")} {...raw} rawValues={sv?.megapixels} defaultEdgeStr={DEFAULT_EDGES.megapixels} fb={mkMp} storageKey={datasetId ? `stats-hist-edges-megapixels-${datasetId}` : undefined} />}
             {show("properties", "file_size")    && (
               <HistPanel
                 title="File size"
                 entries={fileSizeData}
                 onBarClick={open("File size")}
-                rawValues={sv?.file_size_mb}
+                {...raw} rawValues={sv?.file_size_mb}
                 defaultEdgeStr={DEFAULT_EDGES.file_size}
                 fb={mkFs}
                 storageKey={datasetId ? `stats-hist-edges-file_size-${datasetId}` : undefined}
@@ -1696,10 +1732,10 @@ export default function StatsPage() {
         {(show("captions", "caption_wc") || show("captions", "caption_tc")) && (
           <div style={{ display: "grid", gridTemplateColumns: show("captions", "caption_wc") && show("captions", "caption_tc") ? "1fr 1fr" : "1fr", gap: 10, marginBottom: 14 }}>
             {show("captions", "caption_wc") && capLenData.length > 0 && (
-              <HistPanel title="Caption word count" entries={capLenData} onBarClick={open("Caption word count")} rawValues={sv?.caption_words} defaultEdgeStr={DEFAULT_EDGES.caption_wc} fb={mkCapWC} storageKey={datasetId ? `stats-hist-edges-caption_wc-${datasetId}` : undefined} />
+              <HistPanel title="Caption word count" entries={capLenData} onBarClick={open("Caption word count")} {...raw} rawValues={sv?.caption_words} defaultEdgeStr={DEFAULT_EDGES.caption_wc} fb={mkCapWC} storageKey={datasetId ? `stats-hist-edges-caption_wc-${datasetId}` : undefined} />
             )}
             {show("captions", "caption_tc") && capTokenData.length > 0 && (
-              <HistPanel title="Caption token count" subtitle="77+ tokens will be truncated by CLIP" entries={capTokenData} onBarClick={open("Caption token count")} rawValues={sv?.caption_tokens} defaultEdgeStr={DEFAULT_EDGES.caption_tc} fb={mkCapTC} storageKey={datasetId ? `stats-hist-edges-caption_tc-${datasetId}` : undefined} />
+              <HistPanel title="Caption token count" subtitle="77+ tokens will be truncated by CLIP" entries={capTokenData} onBarClick={open("Caption token count")} {...raw} rawValues={sv?.caption_tokens} defaultEdgeStr={DEFAULT_EDGES.caption_tc} fb={mkCapTC} storageKey={datasetId ? `stats-hist-edges-caption_tc-${datasetId}` : undefined} />
             )}
           </div>
         )}

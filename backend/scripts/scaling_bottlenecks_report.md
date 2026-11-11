@@ -131,6 +131,14 @@ of the repo (`.claude/local/` is gitignored), since the JSON records the machine
 `backend/tests/test_bench_scaling_smoke.py` runs the harness at a few hundred rows in CI, so
 a route that moves breaks a test instead of the next measurement.
 
+`backend/scripts/bench_split_layout.py` (M9 stage 7) is a second tool that starts where
+this one stops. It takes a file `--reuse-db` kept, rebuilds it with the big columns
+somewhere else (compacted only, big columns last, embeddings in a side table,
+`generation_metadata` moved too), and replays the app's captured Stats statements on each
+copy, warm and with `--cold`, under SQLite's own index choice and a forced one. Its module
+docstring has the method, and `backend/tests/test_bench_split_layout_smoke.py` keeps it
+running. Its numbers are the 2026-11-11 stage 7 addendum.
+
 ## Addendum 2026-07-16 — Finding 1 (dedup) FIXED
 
 `find_duplicates_sync` now dispatches to an exact **pigeonhole multi-index chunk
@@ -586,3 +594,234 @@ group does not evict.
 `--optimize` and the cold gallery at 1M, several datasets of mixed size, a real manual
 order, the legacy `dedup` and `thumb` groups, and a fragmented `ix_images_dataset_updated_at`
 at 100k–250k (only the 1M file has one).
+
+## Addendum 2026-11-11 — stage 7, the row-layout experiment
+
+M9 stage 7's measurement (`docs/dev/scale-plan/README.md` § Stage 7): what the Stats
+statements would cost with the big columns somewhere else. Run with
+`backend/scripts/bench_split_layout.py`, new for this stage, on `main` at `0bb7544`,
+migration head `d5f1a8c3e7b2`.
+
+```
+python -m backend.scripts.bench_split_layout --db <work dir>/bench-photo-100000-nb0-alembic.db \
+    --cold --cold-reps 3 --json <out>.json
+```
+
+**Method.**
+
+- The script takes a seeded file that `bench_scaling.py --reuse-db` kept, and builds five
+  copies of it beside the original (`row`):
+  - `row_vacuum`: the same rows after a `VACUUM`. **The control.** Every other copy is
+    vacuumed, which also rebuilds each index compact, so a layout is compared with this.
+  - `blobs_last`: no side table; `images` rebuilt with the four big columns at the end.
+  - `split3`: the three embedding blobs in a table of their own, `image_embeddings`,
+    filled in the images table's rowid order (the file straight after a migration).
+  - `split3_shuffled`: the same, filled in id order, random against rowid (a file whose
+    embeddings were all written by later scoring runs).
+  - `split4`: `generation_metadata` moved out too, to a second side table.
+- The statements are the app's own, captured once with their parameters: everything the
+  two Stats endpoints issue, the id statement of a few gallery pages, and one page's row
+  load. Style scoring's keyset pages are compiled from the construct `_score_paginated`
+  builds. Each is replayed on raw `sqlite3`, fetching every row.
+- The Stats statements run under three index choices: SQLite's own ("own" below),
+  `INDEXED BY ix_images_dataset_id` ("forced"), and `NOT INDEXED`. The last came out within
+  a few percent of "forced" everywhere, because these files hold one dataset; it is not in
+  the tables, and it is no option for an install with several datasets.
+- A statement that names a moved column joins the side table (the embedding count, the
+  similarity pages, the page row load on `split4`). Nothing was skipped.
+- Every copy is built before any is measured, with a 300 s wait in between. Warm is the
+  best of three after a first call. Cold evicts the file before every statement: best of
+  three at 20k and 100k, one run at 1M.
+- Before a statement is timed its rows are counted and checksummed, and each layout's big
+  columns are checksummed whole through the joins. Every layout and index choice returned
+  the same rows in all eight runs (two on the Windows machine; three warm-only and three
+  cold on the Linux one). 2,730 evictions, none failed.
+- Two machines. The Windows dev box of the earlier addenda (a SATA SSD, SQLite 3.49.1) ran
+  the ComfyUI 20k and photo 100k files. A Linux machine (an NVMe SSD, SQLite 3.53.1, about
+  three times faster warm) ran both again and the photo 1M file. **Every 1M figure is the
+  Linux machine's.** Its files were seeded there with the same fixed seed. Both machines
+  chose the same plans. Compare a layout with another on the same machine, never a time
+  across the two.
+- A copy is built with the journal off, so the build times below are a floor for a real
+  migration, not an estimate of one.
+
+### What each layout looks like
+
+`dbstat` on the Linux machine (its SQLite has the table; the Windows one does not):
+
+| Layout | Photo 1M: GB | Rows per leaf page | Overflow pages | ComfyUI 20k: rows per leaf page | Build at 1M, s |
+|---|---|---|---|---|---|
+| `row` | 17.19 | 1.38 | 3,502,320 | 1.31 | - |
+| `row_vacuum` | 17.10 | 1.38 | 3,502,320 | 1.31 | copy 2, vacuum 14 |
+| `blobs_last` | 17.10 | 1.38 | 3,502,320 | 1.31 | copy 21, rebuild 108, vacuum 64 |
+| `split3` | 16.62 | 2.81 | 0 | 1.00 | copy 23, split 142, vacuum 44 |
+| `split3_shuffled` | 16.62 | 2.81 | 0 | 1.00 | copy 22, split 254, vacuum 31 |
+| `split4` | 16.61 | 4.29 | 0 | 4.39 | copy 35, split 80, vacuum 15 |
+
+- **Stage 6b's "a row fills a leaf page of its own" was close: it is 1.38 rows a page**,
+  with five overflow pages behind each scored row.
+- **Even with both moved out, about four rows share a page.** The caption and the two file
+  paths leave a row near 1 KB.
+- **On ComfyUI rows, moving the embeddings alone leaves one row a page**: the 55 KB of
+  `generation_metadata` still overflows.
+
+### Stats statements, photo 1M, warm, ms
+
+| Statement | Index | row | row_vacuum | blobs_last | split3 | split3_shuffled | split4 |
+|---|---|---|---|---|---|---|---|
+| validator | own | 59 | 55 | 55 | 55 | 55 | 57 |
+| row fetch (stats) | own | 3,333 | 3,244 | 2,055 | 1,913 | 1,913 | 1,857 |
+| coverage counts | own | 839 | 810 | 811 | 649 | 653 | 597 |
+| `aesthetic_model` group | own | 2,171 | 2,061 | 887 | 728 | 733 | 676 |
+| flag sums | own | 1,156 | 1,128 | 1,119 | 963 | 980 | 914 |
+| embedding count | own | 828 | 796 | 802 | 2,039 | 2,118 | 1,980 |
+| license group | own | 1,109 | 1,069 | 940 | 783 | 786 | 731 |
+| row fetch (score-values) | own | 3,220 | 3,140 | 1,945 | 1,804 | 1,797 | 1,734 |
+| validator | forced | 338 | 332 | 333 | 157 | 158 | 119 |
+| row fetch (stats) | forced | 2,614 | 2,595 | 1,633 | 1,462 | 1,458 | 1,414 |
+| coverage counts | forced | 351 | 346 | 348 | 175 | 174 | 137 |
+| `aesthetic_model` group | forced | 1,419 | 1,402 | 421 | 248 | 249 | 206 |
+| flag sums | forced | 667 | 674 | 662 | 485 | 492 | 441 |
+| embedding count | forced | 339 | 333 | 343 | 882 | 1,514 | 836 |
+| license group | forced | 592 | 590 | 474 | 302 | 304 | 262 |
+| row fetch (score-values) | forced | 2,495 | 2,487 | 1,525 | 1,349 | 1,343 | 1,292 |
+
+### Stats statements, photo 1M, cold, ms
+
+| Statement | Index | row | row_vacuum | blobs_last | split3 | split3_shuffled | split4 |
+|---|---|---|---|---|---|---|---|
+| validator | own | 1,608 | 63 | 53 | 64 | 62 | 52 |
+| row fetch (stats) | own | 144,219 | 94,578 | 51,669 | 3,785 | 2,989 | 2,728 |
+| coverage counts | own | 60,040 | 44,565 | 50,832 | 2,888 | 1,921 | 1,731 |
+| `aesthetic_model` group | own | 143,516 | 93,610 | 50,966 | 2,987 | 1,999 | 1,840 |
+| flag sums | own | 60,154 | 44,665 | 50,986 | 3,006 | 2,160 | 1,950 |
+| embedding count | own | 60,009 | 44,566 | 50,867 | 22,522 | 19,320 | 21,551 |
+| license group | own | 76,093 | 54,260 | 51,007 | 3,036 | 2,050 | 1,895 |
+| row fetch (score-values) | own | 144,254 | 94,450 | 51,633 | 3,688 | 2,907 | 2,622 |
+| validator | forced | 59,697 | 16,502 | 15,161 | 1,825 | 1,080 | 1,306 |
+| row fetch (stats) | forced | 23,414 | 14,114 | 15,570 | 2,635 | 1,975 | 2,138 |
+| coverage counts | forced | 59,708 | 16,595 | 15,208 | 1,830 | 1,058 | 1,319 |
+| `aesthetic_model` group | forced | 22,516 | 12,737 | 15,764 | 1,938 | 1,146 | 1,412 |
+| flag sums | forced | 59,708 | 16,807 | 15,189 | 1,957 | 1,268 | 1,452 |
+| embedding count | forced | 59,675 | 16,596 | 15,178 | 19,118 | 17,947 | 18,833 |
+| license group | forced | 57,906 | 15,050 | 15,356 | 1,996 | 1,183 | 1,456 |
+| row fetch (score-values) | forced | 23,309 | 13,959 | 15,541 | 2,523 | 1,891 | 2,048 |
+
+- **The run reproduces 6b.** The row fetch on `row` under SQLite's own index took 144 s
+  cold, against 139–144 s for 6b on the other machine and another disk.
+- **The control matters at 1M and not below.** `VACUUM` alone took the cold row fetch
+  from 144 s to 95 s, and the validator from 1.6 s to 63 ms: the `row` file's
+  `ix_images_dataset_updated_at` was built row by row and is scattered on disk. At 20k and
+  100k `row` and `row_vacuum` are within a few percent.
+- **Moving the embeddings out is worth 15–31× cold and 1.2–2.8× warm on the scans**,
+  against the control: 95 s → 3.8 s and 3.2 s → 1.9 s for the row fetch, 2.1 s → 0.73 s for
+  the `aesthetic_model` group. `split4` adds a few percent on photo rows, whose metadata is
+  400 bytes.
+- **`blobs_last` fixes the warm cost of reading past the blobs and little else.** The two
+  statements that read a non-NULL column after them gain warm (the `aesthetic_model` group
+  2.1 s → 0.9 s, the row fetch 3.2 s → 2.1 s); cold, every scan still costs 51 s, because
+  the rows are as large as before. And the seed flatters it (see what this run does not
+  cover).
+- **Forcing `ix_images_dataset_id` wins on every Stats scan in every layout**, the
+  validator apart (it reads `ix_images_dataset_updated_at` as a covering index and must not
+  be forced). On the control: 95 s → 14 s cold, 3.2 s → 2.6 s warm for the row fetch. After
+  the split the gap is still there but small in absolute terms: 3.8 s → 2.6 s cold,
+  1.9 s → 1.5 s warm, and 728 ms → 248 ms warm for the `aesthetic_model` group.
+- **The split's cost is the join.** The embedding count is 2.6× slower warm (0.80 s →
+  2.0 s; forced, 0.33 s → 0.88 s) and is the one statement the split leaves slow cold
+  (19–23 s). Filling the side table in id order makes it 1.7× slower again warm under the
+  forced index (0.88 s → 1.5 s) and changes nothing else.
+- **Cold, on the untouched file, a scan that skips the blobs is slower than one that reads
+  them**: forced, the coverage counts took 60 s and the row fetch 23 s. The Windows machine
+  shows the same at 100k (8.0 s against 4.8 s). A guess at why, not checked: reading the
+  overflow chains turns the scan into a sequential read of the file, and the leaf pages
+  alone are one page in six.
+
+### The slower disk: photo 100k on the Windows machine, cold, ms
+
+| Statement | Index | row | row_vacuum | blobs_last | split3 | split3_shuffled | split4 |
+|---|---|---|---|---|---|---|---|
+| row fetch (stats) | own | 13,886 | 13,745 | 9,033 | 1,284 | 1,275 | 951 |
+| coverage counts | own | 10,094 | 10,407 | 8,604 | 1,083 | 1,124 | 748 |
+| `aesthetic_model` group | own | 13,502 | 13,351 | 8,583 | 1,106 | 1,105 | 771 |
+| embedding count | own | 10,181 | 10,432 | 8,509 | 7,498 | 7,772 | 6,168 |
+| row fetch (stats) | forced | 4,759 | 4,440 | 5,815 | 666 | 633 | 550 |
+| coverage counts | forced | 8,000 | 6,437 | 5,437 | 473 | 474 | 345 |
+| `aesthetic_model` group | forced | 4,795 | 4,385 | 5,468 | 483 | 503 | 355 |
+| embedding count | forced | 8,011 | 6,462 | 5,232 | 4,844 | 6,135 | 4,280 |
+
+- It reproduces 6b's forced-index table: 13.9 s and 4.8 s for the row fetch, against 14.1 s
+  and 4.6 s.
+- Warm, the row fetch goes 1,152 ms → 421 ms with the embeddings out (the control against
+  `split3`), and the embedding count 296 ms → 673 ms.
+- The Linux machine gives the same order on the same file: 13.8 s → 0.34 s cold for the row
+  fetch, 320 ms → 171 ms warm.
+
+### ComfyUI 20k on the Windows machine, SQLite's own index, ms
+
+| Statement | Pass | row | row_vacuum | blobs_last | split3 | split3_shuffled | split4 |
+|---|---|---|---|---|---|---|---|
+| row fetch (stats) | warm | 578 | 590 | 98 | 482 | 485 | 74 |
+| `aesthetic_model` group | warm | 455 | 468 | 64 | 345 | 340 | 40 |
+| embedding count | warm | 50 | 51 | 52 | 103 | 99 | 90 |
+| page rows (100 by id) | warm | 4.0 | 3.9 | 2.6 | 3.2 | 3.4 | 2.0 |
+| row fetch (stats) | cold | 6,577 | 6,347 | 3,125 | 4,704 | 4,705 | 161 |
+| `aesthetic_model` group | cold | 7,010 | 6,765 | 2,964 | 5,963 | 6,050 | 121 |
+| embedding count | cold | 2,131 | 2,115 | 2,115 | 3,442 | 3,446 | 871 |
+| page rows (100 by id) | cold | 121 | 117 | 130 | 116 | 120 | 141 |
+
+- **On ComfyUI rows the embeddings are the smaller blob, and moving them alone does
+  little**: 6.3 s → 4.7 s cold for the row fetch. Moving `generation_metadata` as well takes
+  it to 0.16 s, and 590 ms → 74 ms warm.
+- The page row load, the one statement here that reads `generation_metadata`, does not
+  care where it lives. The Linux machine agrees on all of it (5.6 s → 5.2 s → 60 ms cold
+  for the row fetch).
+
+### Gallery and style similarity, photo 1M, ms
+
+| Statement | Pass | row | row_vacuum | blobs_last | split3 | split3_shuffled | split4 |
+|---|---|---|---|---|---|---|---|
+| `aesthetic_score` desc, deep (indexed) | warm | 14 | 13 | 16 | 16 | 16 | 16 |
+| `color_score` desc, deep | warm | 1,310 | 1,304 | 1,299 | 1,108 | 1,111 | 1,058 |
+| `luminance_score` desc, page 1 | warm | 1,326 | 1,198 | 298 | 170 | 171 | 135 |
+| `aesthetic_score` desc, page 1, 20-row subfolder | warm | 1,689 | 1,628 | 878 | 767 | 766 | 713 |
+| keyset page of 2,000, clip + dino, first | warm | 998 | 973 | 974 | 2,249 | 2,331 | 2,194 |
+| keyset page of 2,000, layers, first | warm | 1,386 | 1,348 | 1,356 | 2,642 | 2,734 | 2,609 |
+| `color_score` desc, deep | cold | 59,944 | 16,898 | 15,842 | 2,325 | 1,680 | 1,846 |
+| `luminance_score` desc, page 1 | cold | 22,392 | 12,613 | 15,212 | 1,836 | 1,097 | 1,314 |
+| `aesthetic_score` desc, page 1, 20-row subfolder | cold | 121,185 | 81,237 | 50,460 | 20,235 | 14,848 | 13,933 |
+| keyset page of 2,000, clip + dino, first | cold | 61,173 | 45,491 | 51,919 | 24,744 | 20,985 | 23,590 |
+| keyset page of 2,000, layers, first | cold | 63,406 | 46,740 | 53,489 | 27,365 | 22,403 | 25,786 |
+
+- **An unindexed gallery sort gains what a Stats scan gains**: the `luminance_score` page
+  goes 1.2 s → 0.17 s warm and 12.6 s → 1.8 s cold with the embeddings out. An indexed sort
+  does not move.
+- **A style similarity page is 2.3× slower warm behind the join** (0.97 s → 2.2 s) and
+  about twice as fast cold.
+- **That page is slow in every layout, for a reason of its own.** Its plan is
+  `SEARCH images USING INDEX ix_images_dataset_updated_at (dataset_id=?)` then
+  `USE TEMP B-TREE FOR ORDER BY`: every page of 2,000 reads and sorts the whole dataset,
+  so a scoring pass over 1M rows pays about a second 350 times over. Whether stage 11's
+  index brought that plan in was not checked. It is a finding for the plan guard, not for
+  the layout.
+- One figure from the first, warm-only 1M run did not repeat and is left out: the legacy
+  one-statement similarity load took 15.6 s on `split4`, and 2.8 s in the second run, the
+  same as `split3`.
+
+### What this run does not cover
+
+- **Rows of real, varied size.** The seed's rows are nearly all one size, so `blobs_last`
+  keeps every small column on the leaf page. Real rows vary, and some would push those
+  columns onto the first overflow page. Its numbers are a best case.
+- **A real migration's cost.** The builds ran with the journal off and were followed by a
+  `VACUUM`, which a migration cannot run inside its transaction.
+- **The app's endpoints on a split file.** The models still have the columns, so only raw
+  statements were replayed: no ORM, no Pydantic.
+- **Other shapes for the side table**: a count that only asks whether a side row exists,
+  which SQLite could answer from the primary key's index alone, and the two final-layer
+  vectors apart from the 18 KB layer blob.
+- **A subfolder-scoped Stats call under the forced index.** Only dataset-wide statements
+  were captured. With a subfolder filter SQLite may do better with
+  `ix_images_dataset_subfolder`, which a forced `ix_images_dataset_id` would rule out.
+- 1M on the slower disk, 250k, several datasets in one file, and a ComfyUI-shaped file
+  larger than 20k.

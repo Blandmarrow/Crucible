@@ -449,10 +449,39 @@ take 3.6–4.1 s. Cold, every scan pays: the ones that read nothing past the blo
 107–109 s, against 142–144 s for the others, because a photo row is about 18 KB and fills
 a leaf page of its own. (The addendum's § For stage 7 has the license group, which sits
 between.) Opening Stats
-costs 50 s warm and about 3 minutes cold. The side-table version has not been timed at 1M
-or cold; the kept 1M bench file is there for it. The order the scans walk the table
-matters too (6b's addendum, "A new cost"), and probably interacts with this decision: with
-many rows to a page, walk order should matter less. Time both together.
+costs 50 s warm and about 3 minutes cold. 6b left the side-table version untimed at 1M
+and cold; stage 7 timed it (the next paragraph). The order the scans walk the table
+matters too (6b's addendum, "A new cost"), and interacts with this decision: with more
+rows to a page, walk order matters less, though it still matters.
+
+**Stage 7's numbers (2026-11-11).** `backend/scripts/bench_split_layout.py` built the
+side-table file and three other layouts from the kept bench files and replayed the Stats
+statements on each, warm and cold, on two machines; the 1M file ran on the second one. The
+tables are the stage 7 addendum of `backend/scripts/scaling_bottlenecks_report.md`. What
+they say:
+
+- **Move whichever blob is big.** On photo rows that is the embeddings: with them in a
+  side table the Stats scans are 15–31× faster cold at 1M (the row fetch 95 s → 3.8 s,
+  against a vacuumed control) and 1.2–2.8× faster warm. On ComfyUI rows it is
+  `generation_metadata`: moving the embeddings alone took a cold row fetch from 6.3 s to
+  4.7 s at 20k, and moving both took it to 0.16 s.
+- **The split has a cost.** A statement that needs the blobs joins the side table: the
+  embedding count is 2.6× slower warm, and a style similarity page 2.3× slower warm.
+- **Putting the big columns last in the row, with no side table, fixes the warm cost only**:
+  cold, every scan still reads a page a row. Its numbers are a best case besides.
+- **Forcing `ix_images_dataset_id` wins on every Stats scan in every layout**, and needs
+  no schema change: 95 s → 14 s cold at 1M on today's layout. After a split it still wins,
+  by less (3.8 s → 2.6 s). The validator must stay as it is. A subfolder-scoped Stats call
+  was not timed under the forced index, and has to be before it is pinned there.
+- **A build is quick.** Moving the embeddings out of 1M rows took 142 s with the journal
+  off, so a real migration is minutes at that size and seconds at any size in use today.
+  That takes most of the force out of "run it while databases are small".
+- **A finding outside the layout:** style scoring's keyset page sorts the whole dataset
+  for every page of 2,000 (a `TEMP B-TREE` behind `ix_images_dataset_updated_at`), about a
+  second a page at 1M. No test reads that plan.
+
+The decision is next, and is the user's: the layout (none, big columns last, the
+embeddings, or both), one file or two, the index pin, and what a copy carries.
 
 **The Stats scans' index is decided here** (the user's call, 2026-11-11). Since stage 11,
 SQLite picks `ix_images_dataset_updated_at` for every Stats scan, which reads the table in

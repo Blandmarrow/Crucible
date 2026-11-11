@@ -17,7 +17,7 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-11, cursor paging settled)
+## Next session (updated 2026-11-11, stage 7 measured)
 
 0. **M9 comes first** ([decision 13](decisions/13-scale-work-first.md)), planned in
    [scale-plan/README.md](scale-plan/README.md). Stages 1–6 and 8–11 are done; 6b's numbers
@@ -25,13 +25,18 @@ restates its stages.
    11's index and gallery changes were not checked by hand in a browser, and stage 4's
    polling is tested against a simulated job only. The cursor-paging rejection holds at 1M
    (decision 13's 2026-11-11 amendment, the user's call), so that question is closed.
-   **Stage 7's decision is next**, weighing 6b's 1M and cold numbers
-   (`scale-plan/README.md` § Stage 7). Time the side table at 1M and cold on the kept
-   bench files in `.claude/local/bench/work/`. Stage 7 also settles 6b's walk-order finding
-   (stage 11's index made the Stats scans read the table in random order): pin
-   `ix_images_dataset_id` only if it still wins with the blobs moved out, and add a plan
-   guard for the Stats statements either way (the user's call, 2026-11-11). The
-   small-subfolder score sort stays parked (`scale-plan/README.md` § Stage 6). See M9 below.
+   **Stage 7 is measured and its decision is next** (`scale-plan/README.md` § Stage 7,
+   "Stage 7's numbers"; the tables are the report's stage 7 addendum). The side table was
+   timed at 1M, warm and cold, with `backend/scripts/bench_split_layout.py`. The user rules
+   on four things, and decision 15 records them: the layout, one file or two, the pin of
+   `ix_images_dataset_id` on the Stats scans (it still wins with the blobs moved out, by
+   less), and what a copy carries. Then build what the ruling asks for. A plan guard for
+   the Stats statements is built either way (the user's call, 2026-11-11), and a pin is
+   documented at the pin, at the index's declaration and in the docs (the same day). Two
+   findings came out of the measuring and wait for a place in the order: style scoring's
+   keyset page sorts the whole dataset per page, and a subfolder-scoped Stats call was not
+   timed under the forced index. The small-subfolder score sort stays parked
+   (`scale-plan/README.md` § Stage 6). See M9 below.
 1. **M10, job throughput, follows M9**
    ([decision 14](decisions/14-job-throughput-is-its-own-milestone.md)). After it comes M7:
    the CLIP QuickGELU plan or Stage 3, neither of which waits on anything (see M7 below).
@@ -158,9 +163,9 @@ lands second and resolves the overlap. What is left: stage 7.
     numbers are the report's 2026-11-11 addendum. Detail: `docs/dev/scale-plan/README.md`
     § Stage 6.
 - [ ] Stage 7: decide on, then maybe build, a table of their own for the embeddings and for
-  `generation_metadata`, which is the larger of the two on ComfyUI images. 6b's numbers are
-  in; the decision is next. It also decides the Stats scans' index and adds their plan
-  guard (`scale-plan/README.md` § Stage 7).
+  `generation_metadata`, which is the larger of the two on ComfyUI images. Measured on
+  2026-11-11 (the report's stage 7 addendum); the decision is next. It also decides the
+  Stats scans' index and adds their plan guard (`scale-plan/README.md` § Stage 7).
 - [x] Stage 8: Retry for interrupted jobs. Merged 2026-11-08 as PR #127, for `quality_score`
   (a retry resumes; failed and cancelled jobs; none for a run's child, by the user's calls),
   hand-checked through the API and the page. Detail:

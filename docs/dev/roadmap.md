@@ -25,19 +25,17 @@ restates its stages.
    11's index and gallery changes were not checked by hand in a browser, and stage 4's
    polling is tested against a simulated job only. The cursor-paging rejection holds at 1M
    (decision 13's 2026-11-11 amendment, the user's call), so that question is closed.
-   **Stage 7 is measured and decided**
+   **Stage 7 is measured, decided and built**
    ([decision 15](decisions/15-big-columns-stay-in-the-row.md), 2026-11-11): no side table
-   now, and the dataset-wide Stats scans pinned to `ix_images_dataset_id`. The side table
-   was timed at 1M, warm and cold, with `backend/scripts/bench_split_layout.py`; the tables
-   are the report's stage 7 addendum. **What is left of M9 is the build that decision asks
-   for** (`scale-plan/README.md` § Stage 7, "What is left to build"): the plan guard for the
-   Stats statements, the pin, a timing of a subfolder-scoped Stats call under the forced
-   index before that form is pinned, and the pin's documentation at the pin, at the
-   index's declaration and in the docs. One finding from the measuring waits for a place
-   in the order: style scoring's keyset page sorts the whole dataset for every page (a
-   `TEMP B-TREE` behind `ix_images_dataset_updated_at`), and no test reads that plan. The
-   small-subfolder score sort stays parked (`scale-plan/README.md` § Stage 6). See M9
-   below.
+   now, and the dataset-wide Stats scans pinned to `ix_images_dataset_id`, with a plan
+   guard (`backend/tests/test_stats_plan.py`). A subfolder-scoped call was timed and is
+   not pinned. Detail: `scale-plan/README.md` § Stage 7, "As built", and
+   `docs/dev/statistics.md` § The Stats scans and their index pin. **Once the pin's PR
+   merges, M9's gate is met**: archive M9 to `roadmap-archive/` and expand M10 into ordered
+   tasks. One finding from the measuring waits for a place in the order: style scoring's
+   keyset page sorts the whole dataset for every page (a `TEMP B-TREE` behind
+   `ix_images_dataset_updated_at`), and no test reads that plan. The small-subfolder score
+   sort stays parked (`scale-plan/README.md` § Stage 6). See M9 below.
 1. **M10, job throughput, follows M9**
    ([decision 14](decisions/14-job-throughput-is-its-own-milestone.md)). After it comes M7:
    the CLIP QuickGELU plan or Stage 3, neither of which waits on anything (see M7 below).
@@ -128,8 +126,8 @@ Comes before every other open milestone
 their tests and docs, and stage 6's numbers recorded; stage 7 is then built or ruled out by
 a decision. Plan: [scale-plan/README.md](scale-plan/README.md). Does not wait for M4, which
 lands second and resolves the overlap. Stage 7's split is ruled out for now by
-[decision 15](decisions/15-big-columns-stay-in-the-row.md). What is left: stage 7's plan
-guard and index pin.
+[decision 15](decisions/15-big-columns-stay-in-the-row.md). What is left: the merge of
+stage 7's plan guard and index pin.
 
 - [x] Stage 1: a unique tie-breaker (`Image.id`) for every gallery sort. Merged 2026-11-08
   as PR #124. It cost the score sorts their index (PM-036); stage 9 fixed that.
@@ -168,12 +166,16 @@ guard and index pin.
   `generation_metadata`, which is the larger of the two on ComfyUI images. It also decides
   the Stats scans' index and adds their plan guard (`scale-plan/README.md` § Stage 7).
   - [x] Measure: `backend/scripts/bench_split_layout.py`, at 20k, 100k and 1M, warm and
-    cold, on two machines (2026-11-11; the report's stage 7 addendum).
+    cold, on two machines (2026-11-11; the report's stage 7 addendum). Merged 2026-11-11
+    as PR #141.
   - [x] Decide ([decision 15](decisions/15-big-columns-stay-in-the-row.md), 2026-11-11):
     no side table now, reopened when a dataset nears 50,000 photo-shaped or 20,000
     ComfyUI-shaped images; the dataset-wide Stats scans pinned to `ix_images_dataset_id`.
-  - [ ] Build the plan guard for the Stats statements and the pin, with the pin's
-    documentation. Time a subfolder-scoped Stats call before pinning that form.
+    Merged with the measurement, as PR #141.
+  - [x] Build the plan guard for the Stats statements and the pin, with the pin's
+    documentation. Built 2026-11-11 on `feat/m9-stage7-stats-pin`: `_stats_scan` pins the
+    seven dataset-wide scans, the validator and a subfolder-scoped call stay unpinned (the
+    second after a timing), and `backend/tests/test_stats_plan.py` reads every plan.
 - [x] Stage 8: Retry for interrupted jobs. Merged 2026-11-08 as PR #127, for `quality_score`
   (a retry resumes; failed and cancelled jobs; none for a run's child, by the user's calls),
   hand-checked through the API and the page. Detail:

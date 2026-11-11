@@ -415,8 +415,9 @@ left to stage 7. The numbers are the report's 2026-11-11 addendum. What they say
   `ix_images_dataset_updated_at`, which visits rows in random table order: 5–10% more SQL
   warm on the photo files, and the cold row fetch went from 8.2 s to 14.6 s at 100k. Forcing
   `ix_images_dataset_id` beats both the new plan and 6a's (4.6 s cold at 100k, 45 s
-  against 139 s at 1M). Pointing the Stats
-  scans at it steers the planner, PM-036's failure class, so it waits for the user's call.
+  against 139 s at 1M). It goes to stage 7 rather than a fix now (the user's call,
+  2026-11-11): at the user's dataset sizes it costs milliseconds, and moving the blobs out
+  may make the walk order matter much less. See § Stage 7.
 - **1M.** Indexed gallery pages cost 6–8 ms and 41–57 ms deep, so numbered pages stand
   (decision 13's cursor-paging amendment). Unindexed sorts cost 1.4–6.3 s, after-blob ones
   up to 13.6 s, and the small-subfolder score sort 7.6 s. Opening Stats costs 50 s warm and
@@ -452,6 +453,17 @@ costs 50 s warm and about 3 minutes cold. The side-table version has not been ti
 or cold; the kept 1M bench file is there for it. The order the scans walk the table
 matters too (6b's addendum, "A new cost"), and probably interacts with this decision: with
 many rows to a page, walk order should matter less. Time both together.
+
+**The Stats scans' index is decided here** (the user's call, 2026-11-11). Since stage 11,
+SQLite picks `ix_images_dataset_updated_at` for every Stats scan, which reads the table in
+random order; forcing `ix_images_dataset_id` (rowid order) beat both that plan and 6a's.
+Time the scans under each index with and without the side table, and pin
+`ix_images_dataset_id` with `INDEXED BY` only if it still clearly wins. A pin trades one
+risk for another: SQLite can no longer pick a worse index by itself, but it can no longer
+pick a better one either, so leave a comment at the pin saying when to re-time it. Either
+way, **add a plan guard for the Stats statements**, as `backend/tests/test_image_sort_plan.py`
+does for the gallery sorts: stage 11's index changed these plans silently, and no test
+covers them (PM-036's lesson, reached by a query it did not guard).
 
 **`generation_metadata` belongs in the same decision.** It is the larger blob on ComfyUI
 images (54,895 bytes a row on average in the dev DB, against 21,504 for the embeddings),

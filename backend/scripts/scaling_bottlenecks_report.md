@@ -545,9 +545,8 @@ of two), in ms:
 | Row fetch at 1M, warm | 9,814 | 11,531 | 8,353 |
 
 `ix_images_dataset_id` holds the dataset's rows in rowid order, so it reads the table nearly
-in sequence and beats both. Pointing the Stats scans at it would be a small change, but it
-steers the planner, which is how PM-036 happened, so it is a decision rather than part of
-this stage.
+in sequence and beats both. Pinning it is left to stage 7, which times the scans again with
+the blobs moved out (`docs/dev/scale-plan/README.md` § Stage 7).
 
 ### Similarity (legacy group, direct numpy)
 

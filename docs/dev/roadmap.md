@@ -23,15 +23,15 @@ restates its stages.
    [scale-plan/README.md](scale-plan/README.md). Stages 1–6 and 8–11 are done; 6b's numbers
    are the 2026-11-11 addendum of `backend/scripts/scaling_bottlenecks_report.md`. Stage
    11's index and gallery changes were not checked by hand in a browser, and stage 4's
-   polling is tested against a simulated job only. **Two calls for the user come first,
-   both from 6b:** whether to point the Stats scans at `ix_images_dataset_id` (stage 11's
-   index made them walk the table in random order; forcing the plain index beat both plans,
-   but it steers the planner, PM-036's class), and whether decision 13 records that the
-   cursor-paging rejection holds at 1M (deep pages cost 41–57 ms). **Then stage 7's
-   decision**, weighing 6b's 1M and cold numbers (`scale-plan/README.md` § Stage 7). Time
-   the side table at 1M and cold on the kept bench files in `.claude/local/bench/work/`,
-   alongside the walk-order question. The small-subfolder score sort stays parked
-   (`scale-plan/README.md` § Stage 6). See M9 below.
+   polling is tested against a simulated job only. **One call for the user comes first:**
+   whether decision 13 records that the cursor-paging rejection holds at 1M (deep pages
+   cost 41–57 ms). **Then stage 7's decision**, weighing 6b's 1M and cold numbers
+   (`scale-plan/README.md` § Stage 7). Time the side table at 1M and cold on the kept
+   bench files in `.claude/local/bench/work/`. Stage 7 also settles 6b's walk-order finding
+   (stage 11's index made the Stats scans read the table in random order): pin
+   `ix_images_dataset_id` only if it still wins with the blobs moved out, and add a plan
+   guard for the Stats statements either way (the user's call, 2026-11-11). The
+   small-subfolder score sort stays parked (`scale-plan/README.md` § Stage 6). See M9 below.
 1. **M10, job throughput, follows M9**
    ([decision 14](decisions/14-job-throughput-is-its-own-milestone.md)). After it comes M7:
    the CLIP QuickGELU plan or Stage 3, neither of which waits on anything (see M7 below).
@@ -158,7 +158,8 @@ lands second and resolves the overlap. What is left: stage 7.
     § Stage 6.
 - [ ] Stage 7: decide on, then maybe build, a table of their own for the embeddings and for
   `generation_metadata`, which is the larger of the two on ComfyUI images. 6b's numbers are
-  in; the decision is next.
+  in; the decision is next. It also decides the Stats scans' index and adds their plan
+  guard (`scale-plan/README.md` § Stage 7).
 - [x] Stage 8: Retry for interrupted jobs. Merged 2026-11-08 as PR #127, for `quality_score`
   (a retry resumes; failed and cancelled jobs; none for a run's child, by the user's calls),
   hand-checked through the API and the page. Detail:

@@ -113,7 +113,8 @@ scaling review, goes ahead of every other open milestone; **Leaning** on what it
 cursor paging before a measurement, a job checkpoint system, keychain-stored keys, broad
 router splits, and new infrastructure. Amended 2026-11-09: M9 gained stages 9 to 11.
 Amended 2026-11-10: stage 4 shrinks to fetching the raw Stats values on demand, and stage 11
-goes first. Full record:
+goes first. Amended 2026-11-11: the cursor-paging rejection holds at 1M rows, **Decided** by
+the user. Full record:
 [decisions/13-scale-work-first.md](decisions/13-scale-work-first.md).
 
 ## 14. Job throughput is its own milestone

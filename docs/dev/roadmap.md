@@ -17,15 +17,15 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-11, stage 6b merged)
+## Next session (updated 2026-11-11, cursor paging settled)
 
 0. **M9 comes first** ([decision 13](decisions/13-scale-work-first.md)), planned in
    [scale-plan/README.md](scale-plan/README.md). Stages 1–6 and 8–11 are done; 6b's numbers
    are the 2026-11-11 addendum of `backend/scripts/scaling_bottlenecks_report.md`. Stage
    11's index and gallery changes were not checked by hand in a browser, and stage 4's
-   polling is tested against a simulated job only. **One call for the user comes first:**
-   whether decision 13 records that the cursor-paging rejection holds at 1M (deep pages
-   cost 41–57 ms). **Then stage 7's decision**, weighing 6b's 1M and cold numbers
+   polling is tested against a simulated job only. The cursor-paging rejection holds at 1M
+   (decision 13's 2026-11-11 amendment, the user's call), so that question is closed.
+   **Stage 7's decision is next**, weighing 6b's 1M and cold numbers
    (`scale-plan/README.md` § Stage 7). Time the side table at 1M and cold on the kept
    bench files in `.claude/local/bench/work/`. Stage 7 also settles 6b's walk-order finding
    (stage 11's index made the Stats scans read the table in random order): pin

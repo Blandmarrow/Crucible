@@ -21,7 +21,7 @@ restates its stages.
 
 0. **M9 comes first** ([decision 13](decisions/13-scale-work-first.md)), planned in
    [scale-plan/README.md](scale-plan/README.md). Stages 1–3, 5 and 8–11 are merged, and
-   stage 4 is done on `feat/m9-stage4-stats-on-demand`. A review on
+   stage 4 is PR #139 (`feat/m9-stage4-stats-on-demand`), open on 2026-11-11. A review on
    2026-11-09 timed the hot queries on a scratch database with the migrated column order and
    added stages 9–11 (decision 13's amendment; the numbers are in the plan's Evidence base).
    Stage 9 merged as PR #134 (PM-036, now MITIGATED). Stage 10 merged as PR #135
@@ -141,8 +141,8 @@ lands second and resolves the overlap. Order of what is left: 6b, 7 (changed
   `docs/dev/quality/scoring.md` § The chunked job loop.
 - [x] Stage 4: fetch the Stats page's raw value lists only when something needs them (saved
   custom edges or an open pencil editor), and return the means from `/stats`. Shrunk on
-  2026-11-10 by decision 13's amendment. Done 2026-11-11 on
-  `feat/m9-stage4-stats-on-demand`: the CSV export needs no list at all, and a dataset's
+  2026-11-10 by decision 13's amendment. Done 2026-11-11 as PR #139
+  (`feat/m9-stage4-stats-on-demand`): the CSV export needs no list at all, and a dataset's
   custom edges no longer leak to the next dataset viewed. No migration. The full design
   (bins built in SQL, the server owning the edges) is parked in the plan until a dataset
   nears 50k to 100k images. Detail: `docs/dev/scale-plan/README.md` § Stage 4 as built.

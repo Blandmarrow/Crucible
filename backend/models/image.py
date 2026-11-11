@@ -13,6 +13,12 @@ class Image(Base):
     __tablename__ = "images"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    # `index=True` is `ix_images_dataset_id`. **Do not drop or rename it as redundant.**
+    # Nine other indexes start with `dataset_id` and any of them can answer
+    # `WHERE dataset_id = ?`, but this is the only one that lists a dataset's rows in
+    # table (`rowid`) order, and the Stats scans are pinned to it by name for that order
+    # (`dataset_service._stats_scan`, decision 15). A pin to a missing index is an error,
+    # not a slowdown: the Stats page would fail. `backend/tests/test_stats_plan.py` guards it.
     dataset_id: Mapped[str] = mapped_column(String(36), ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False, index=True)
     filename: Mapped[str] = mapped_column(String(512), nullable=False)
     original_filename: Mapped[str] = mapped_column(String(512), default="")

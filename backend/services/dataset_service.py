@@ -14,6 +14,7 @@ from sqlalchemy import String, case, func, literal, select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.config import settings
+from backend.database import indexed_by
 from backend.licenses import PROVENANCE_FIELDS, copy_provenance, merge_provenance
 from backend.media_types import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
 from backend.models import Dataset, DatasetVersion, Image, ImageLabel, StyleSimilarityRun, Video, VersionImageState
@@ -118,6 +119,126 @@ async def _image_validator(db: AsyncSession, dataset_id: str, subfolder: str | N
     """(row count, newest updated_at) for one dataset/subfolder scope."""
     row = (await db.execute(_image_validator_stmt(dataset_id, subfolder))).one()
     return (row[0], row[1])
+
+
+# --- The Stats scans and their index -----------------------------------------
+# Past the validator, a Stats load reads every row of its scope seven times (the
+# builders below). **A dataset-wide scan is pinned to `ix_images_dataset_id`**
+# (decision 15, `docs/dev/decisions/15-big-columns-stay-in-the-row.md`).
+#
+# Why a pin, and why that index. Left to choose, SQLite reads these through
+# `ix_images_dataset_updated_at` (since M9 stage 11 added it), which hands back a
+# dataset's rows in `updated_at` order: scattered across the file, one random
+# read a row. `ix_images_dataset_id` is the only index whose entries for a
+# dataset run in table (`rowid`) order, so the scan reads the file nearly straight
+# through. Measured on the Stats row fetch: 13.7 s -> 4.4 s cold at 100,000 rows,
+# 95 s -> 14 s at 1M, and faster or equal warm on all seven
+# (`backend/scripts/scaling_bottlenecks_report.md`, the stage 7 addendum).
+#
+# What is not pinned, on purpose:
+# - `_image_validator_stmt`. It reads `ix_images_dataset_updated_at` as a covering
+#   index and touches no row; any other index is slower.
+# - A subfolder-scoped scan. `ix_images_dataset_subfolder` serves it, and lists
+#   that subfolder's rows in table order already; the pin would read the whole
+#   dataset to answer for one folder.
+#
+# The pin costs SQLite its freedom to pick something better, so **time it again**
+# (`python -m backend.scripts.bench_split_layout --db <kept bench file> --layouts
+# row --cold`, which compares SQLite's own choice with this index) when an index
+# on `images` is added or dropped, when one of these statements changes shape, or
+# when the row layout is reopened. `backend/tests/test_stats_plan.py` reads the
+# plan of every statement here and of everything the two endpoints really send.
+STATS_SCAN_INDEX = "ix_images_dataset_id"
+
+# Quality-flag JSON key -> its name in the Stats payload.
+_STATS_FLAGS: tuple[tuple[str, str], ...] = (
+    ("is_blurry", "blurry"), ("is_noisy", "noisy"), ("is_uniform", "uniform"),
+    ("has_watermark", "watermarked"), ("is_duplicate", "duplicate"), ("is_nsfw", "nsfw"),
+    ("has_ai_artifacts", "ai_artifacts"), ("gate_rejected", "gate_rejected"),
+)
+
+
+def _stats_scan(stmt, dataset_id: str, subfolder: str | None):
+    """Scope a Stats statement to a dataset, or to one subfolder of it, and pin the
+    index of a dataset-wide scan. The comment block above says why."""
+    stmt = stmt.where(Image.dataset_id == dataset_id)
+    if subfolder is not None:
+        return stmt.where(Image.subfolder == subfolder)
+    return indexed_by(stmt, Image, STATS_SCAN_INDEX)
+
+
+def _stats_rows_stmt(dataset_id: str, subfolder: str | None):
+    """The row scan `_aggregate_dataset_stats` buckets in Python."""
+    return _stats_scan(select(
+        Image.width, Image.height, Image.format,
+        Image.aesthetic_score, Image.caption_text, Image.caption_token_count,
+        Image.blur_score, Image.noise_score, Image.uniformity_score,
+        Image.watermark_score, Image.color_score, Image.saturation_score,
+        Image.luminance_score,
+        Image.file_size_bytes,
+        Image.style_similarity_score,
+    ), dataset_id, subfolder)
+
+
+def _stats_coverage_stmt(dataset_id: str, subfolder: str | None):
+    """Score coverage: how many rows have each score."""
+    return _stats_scan(select(
+        func.count(Image.aesthetic_score).label("aesthetic"),
+        func.count(Image.blur_score).label("technical"),
+        func.count(Image.watermark_score).label("watermark"),
+    ), dataset_id, subfolder)
+
+
+def _stats_aesthetic_models_stmt(dataset_id: str, subfolder: str | None):
+    """Aesthetic coverage per producer (`aesthetic_model`)."""
+    return _stats_scan(
+        select(Image.aesthetic_model, func.count(Image.id)), dataset_id, subfolder,
+    ).where(Image.aesthetic_model.isnot(None)).group_by(Image.aesthetic_model)
+
+
+def _stats_flag_sums_stmt(dataset_id: str, subfolder: str | None):
+    """Quality flag counts via SQL `json_extract`, so `quality_flags` never loads into Python."""
+    return _stats_scan(select(*(
+        func.coalesce(
+            func.sum(case((func.json_extract(Image.quality_flags, f"$.{json_key}") == 1, 1), else_=0)), 0
+        ).label(name)
+        for json_key, name in _STATS_FLAGS
+    )), dataset_id, subfolder)
+
+
+def _stats_embedding_count_stmt(dataset_id: str, subfolder: str | None):
+    """Embedding coverage: a count, so no blob is loaded."""
+    return _stats_scan(
+        select(func.count(Image.id)), dataset_id, subfolder,
+    ).where(Image.clip_embedding.isnot(None))
+
+
+def _stats_license_stmt(dataset_id: str, subfolder: str | None, dataset_license: str | None):
+    """Rows per *effective* license: the image's own, or the dataset's default."""
+    effective_license = func.coalesce(func.nullif(Image.license, ""), dataset_license or "", "")
+    return _stats_scan(
+        select(effective_license.label("lic"), func.count(Image.id).label("n")), dataset_id, subfolder,
+    ).group_by(effective_license).order_by(func.count(Image.id).desc())
+
+
+def _score_values_rows_stmt(dataset_id: str, subfolder: str | None):
+    """The row scan behind `get_score_values`' raw value lists."""
+    return _stats_scan(select(
+        Image.aesthetic_score,
+        Image.blur_score,
+        Image.noise_score,
+        Image.uniformity_score,
+        Image.watermark_score,
+        Image.color_score,
+        Image.saturation_score,
+        Image.luminance_score,
+        Image.style_similarity_score,
+        Image.width,
+        Image.height,
+        Image.file_size_bytes,
+        Image.caption_text,
+        Image.caption_token_count,
+    ), dataset_id, subfolder)
 
 
 def remove_dataset_dir(folder: Path) -> None:
@@ -1840,31 +1961,15 @@ async def get_dataset_stats(db: AsyncSession, dataset_id: str, subfolder: str | 
     if cached is not None:
         return cached
 
-    q = select(
-        Image.width, Image.height, Image.format,
-        Image.aesthetic_score, Image.caption_text, Image.caption_token_count,
-        Image.blur_score, Image.noise_score, Image.uniformity_score,
-        Image.watermark_score, Image.color_score, Image.saturation_score,
-        Image.luminance_score,
-        Image.file_size_bytes,
-        Image.style_similarity_score,
-    ).where(Image.dataset_id == dataset_id)
-    if subfolder is not None:
-        q = q.where(Image.subfolder == subfolder)
-    result = await db.execute(q)
+    # Every statement from here on is built by a `_stats_*_stmt` function near the
+    # top of this file, where a dataset-wide scan gets its index pin. Build a new
+    # one there too: `test_stats_plan.py` fails on an images statement sent from
+    # here that carries no pin.
+    result = await db.execute(_stats_rows_stmt(dataset_id, subfolder))
     rows = result.all()
 
     # Score coverage: count rows where each score column is non-null.
-    _base_where = [Image.dataset_id == dataset_id]
-    if subfolder is not None:
-        _base_where.append(Image.subfolder == subfolder)
-    cov_row = (await db.execute(
-        select(
-            func.count(Image.aesthetic_score).label("aesthetic"),
-            func.count(Image.blur_score).label("technical"),
-            func.count(Image.watermark_score).label("watermark"),
-        ).where(*_base_where)
-    )).one()
+    cov_row = (await db.execute(_stats_coverage_stmt(dataset_id, subfolder))).one()
     score_cov = {
         "aesthetic": cov_row.aesthetic,
         "technical": cov_row.technical,
@@ -1877,50 +1982,16 @@ async def get_dataset_stats(db: AsyncSession, dataset_id: str, subfolder: str | 
     # why the frontend renders it as a breakdown line rather than adding fixed
     # entries to its `coverageDefs` list. These sum to `score_cov["aesthetic"]`:
     # every non-NULL score carries a non-NULL marker (migration a5e1b7c3d9f0).
-    for marker, count in (await db.execute(
-        select(Image.aesthetic_model, func.count(Image.id))
-        .where(*_base_where, Image.aesthetic_model.isnot(None))
-        .group_by(Image.aesthetic_model)
-    )).all():
+    for marker, count in (await db.execute(_stats_aesthetic_models_stmt(dataset_id, subfolder))).all():
         score_cov[f"aesthetic_{marker}"] = count
 
     # Quality flag counts via SQL json_extract — avoids loading quality_flags into Python.
-    def _flag_sum(json_key: str):
-        return func.coalesce(
-            func.sum(case((func.json_extract(Image.quality_flags, f"$.{json_key}") == 1, 1), else_=0)), 0
-        )
-    flag_row = (await db.execute(
-        select(
-            _flag_sum("is_blurry").label("blurry"),
-            _flag_sum("is_noisy").label("noisy"),
-            _flag_sum("is_uniform").label("uniform"),
-            _flag_sum("has_watermark").label("watermarked"),
-            _flag_sum("is_duplicate").label("duplicate"),
-            _flag_sum("is_nsfw").label("nsfw"),
-            _flag_sum("has_ai_artifacts").label("ai_artifacts"),
-            _flag_sum("gate_rejected").label("gate_rejected"),
-        ).where(*_base_where)
-    )).one()
-    flag_counts = {
-        "blurry": flag_row.blurry,
-        "noisy": flag_row.noisy,
-        "uniform": flag_row.uniform,
-        "watermarked": flag_row.watermarked,
-        "duplicate": flag_row.duplicate,
-        "nsfw": flag_row.nsfw,
-        "ai_artifacts": flag_row.ai_artifacts,
-        "gate_rejected": flag_row.gate_rejected,
-    }
+    flag_row = (await db.execute(_stats_flag_sums_stmt(dataset_id, subfolder))).one()
+    flag_counts = {name: getattr(flag_row, name) for _, name in _STATS_FLAGS}
 
     # Embedding coverage — separate count query to avoid loading blobs (async, done before
     # the CPU-bound aggregation below so that aggregation can run entirely off the event loop).
-    embed_q = select(func.count(Image.id)).where(
-        Image.dataset_id == dataset_id,
-        Image.clip_embedding.isnot(None),
-    )
-    if subfolder is not None:
-        embed_q = embed_q.where(Image.subfolder == subfolder)
-    embed_count = await db.scalar(embed_q)
+    embed_count = await db.scalar(_stats_embedding_count_stmt(dataset_id, subfolder))
     score_cov["embeddings"] = embed_count or 0
 
     # License breakdown over the *effective* license (image value coalesced over
@@ -1932,13 +2003,7 @@ async def get_dataset_stats(db: AsyncSession, dataset_id: str, subfolder: str | 
     # of scraped images can produce one bucket per image — an unbounded response
     # body and an unbounded list in the Stats panel. Everything past the cap
     # collapses into one bucket so the counts still sum to the dataset total.
-    effective_license = func.coalesce(func.nullif(Image.license, ""), ds.license or "", "")
-    license_rows = (await db.execute(
-        select(effective_license.label("lic"), func.count(Image.id).label("n"))
-        .where(*_base_where)
-        .group_by(effective_license)
-        .order_by(func.count(Image.id).desc())
-    )).all()
+    license_rows = (await db.execute(_stats_license_stmt(dataset_id, subfolder, ds.license))).all()
     license_breakdown = {(r.lic or ""): r.n for r in license_rows[:LICENSE_BREAKDOWN_LIMIT]}
     rest = license_rows[LICENSE_BREAKDOWN_LIMIT:]
     if rest:
@@ -2005,25 +2070,7 @@ async def get_score_values(db: AsyncSession, dataset_id: str, subfolder: str | N
     if cached is not None:
         return cached
 
-    q = select(
-        Image.aesthetic_score,
-        Image.blur_score,
-        Image.noise_score,
-        Image.uniformity_score,
-        Image.watermark_score,
-        Image.color_score,
-        Image.saturation_score,
-        Image.luminance_score,
-        Image.style_similarity_score,
-        Image.width,
-        Image.height,
-        Image.file_size_bytes,
-        Image.caption_text,
-        Image.caption_token_count,
-    ).where(Image.dataset_id == dataset_id)
-    if subfolder is not None:
-        q = q.where(Image.subfolder == subfolder)
-    result = await db.execute(q)
+    result = await db.execute(_score_values_rows_stmt(dataset_id, subfolder))
     rows = result.all()
 
     # Pure-Python aggregation runs off the event loop; token counts come from the

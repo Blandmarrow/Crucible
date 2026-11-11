@@ -222,7 +222,7 @@ pass. Stage 6b measures it.
 
 ### Stage 4 as built
 
-**Done 2026-11-11.** The as-built rules are `docs/dev/statistics.md` § The raw lists load on
+**Done 2026-11-11** (PR #139). The as-built rules are `docs/dev/statistics.md` § The raw lists load on
 demand. It differs from the list above in two ways, and fixed two things on the way:
 
 - **The CSV export fetches nothing.** It read the raw lists only for its nine means, so with

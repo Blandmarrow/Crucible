@@ -839,6 +839,27 @@ index.
   subfolder case is timed at 100k only. The result does not rest on size: a forced index
   must read the dataset to answer for one folder.
 
+### The pin as built, through the app, photo 100k on the Windows machine, ms
+
+`bench_scaling.py --only stats --reuse-db` with the pin in the code, compared with stage
+6b's JSON (`--compare`): the endpoints themselves, ORM and Pydantic included. The cold
+run made 61 evictions, none failed.
+
+| Case | 6b, warm | Pinned, warm | 6b, cold | Pinned, cold |
+|---|---|---|---|---|
+| Stats, cold cache entry | 4,508.7 | 3,525.1 | 18,041.1 | 7,449.9 |
+| Stats, cached poll | 13.3 | 13.8 | 27.0 | 28.6 |
+| Score values, cold cache entry | 1,921.9 | 1,747.1 | 14,852.4 | 5,648.1 |
+| Score values, cached poll | 408.3 | 417.1 | 416.5 | 437.8 |
+
+- **A Stats load is 22% cheaper warm and 59% cheaper cold**, and a score-values load 9%
+  and 62%. Every scan's plan reads `SEARCH images USING INDEX ix_images_dataset_id`.
+- **A cached poll does not move**: it runs the validator alone, which is not pinned and
+  still reads `ix_images_dataset_updated_at` as a covering index.
+- The pinned scan returns the same rows in table order, so `score_means`, a float sum in
+  row order, differs from the unpinned value at about its 14th significant digit
+  (`docs/dev/statistics.md` § The Stats scans and their index pin).
+
 ### What this run does not cover
 
 - **Rows of real, varied size.** The seed's rows are nearly all one size, so `blobs_last`

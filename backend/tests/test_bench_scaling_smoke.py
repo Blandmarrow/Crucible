@@ -118,6 +118,23 @@ def test_migrated_schema_is_reused_without_reseeding(tmp_path):
     assert texts == 0
 
 
+def test_compare_handles_a_sweep_of_several_sizes(capsys):
+    # The loop variable once shadowed the run-matching key(), so the second run of a
+    # sweep crashed with "'str' object is not callable" (found by stage 6b's 100k,250k
+    # run). Every run of the sweep must be compared, and an unmatched one named.
+    def _run(n, best):
+        return {"profile": "photo", "n": n, "schema": "alembic", "cold": False,
+                "neighbour_rows": 0, "cases": {"count dataset": {"best_ms": best}}}
+
+    before = {"runs": [_run(100, 2.0), _run(200, 4.0)]}
+    after = {"runs": [_run(100, 1.0), _run(200, 1.0), _run(300, 1.0)]}
+    bench.print_compare(before, after)
+    out = capsys.readouterr().out
+    assert "| default | count dataset | 2.0 | 1.0 | x0.50 |" in out
+    assert "| default | count dataset | 4.0 | 1.0 | x0.25 |" in out
+    assert "N=300 (schema alembic, cold False): no matching run" in out
+
+
 def test_the_apps_own_database_is_refused():
     real = bench._real_db_path()
     assert real is not None

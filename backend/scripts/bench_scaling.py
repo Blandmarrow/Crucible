@@ -1167,9 +1167,11 @@ def print_compare(before: dict, after: dict) -> None:
         print(f"### {run['profile']}, N={run['n']:,}\n")
         print("| Pass | Case | Before ms | After ms | Change |")
         print("|---|---|---|---|---|")
-        for label, key in (("default", "cases"), ("analyzed", "optimized")):
-            for name, c in (run.get(key) or {}).items():
-                o = (old.get(key) or {}).get(name)
+        # `field`, not `key`: the loop variable must not shadow `key()` above, or the
+        # second run of a sweep calls a string.
+        for label, field in (("default", "cases"), ("analyzed", "optimized")):
+            for name, c in (run.get(field) or {}).items():
+                o = (old.get(field) or {}).get(name)
                 if not o or "best_ms" not in o or "best_ms" not in c:
                     continue
                 ratio = c["best_ms"] / o["best_ms"] if o["best_ms"] else float("nan")

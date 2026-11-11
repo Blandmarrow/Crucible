@@ -400,3 +400,189 @@ A deep page is 60% in: page 601 at 100k, 1,501 at 250k, 121 for ComfyUI.
 real manual order, and the legacy `dedup`, `similarity` and `thumb` groups, which 6b runs.
 Cold numbers swing with how SQLite walks the file. Read them as an order of magnitude, not a
 precise figure.
+
+## Addendum 2026-11-11 — stage 6b, after stages 4 and 11
+
+M9 stage 6b: 6a's runs again, after stage 4 (PR #139) and stage 11 (PR #138), plus the first
+1M run and the similarity group (`docs/dev/scale-plan/README.md` § Stage 6). `main` was at
+`fc23246`, migration head `d5f1a8c3e7b2` (stage 11's index).
+
+**Method.**
+
+- 6a's three runs with the same flags, each with `--compare` against 6a's JSON:
+  `--profile photo --sweep 100000,250000 --optimize`, `--profile comfy --sweep 20000
+  --optimize`, and `--profile photo --sweep 100000 --cold --no-mem`.
+- Three new runs: `--profile photo --sweep 1000000` (warm), the same with
+  `--cold --no-mem --only counts,stats --reps 1`, and `--only similarity` at 100k, 250k
+  and 1M.
+- All with `--reuse-db`. The 6a files were reused, not reseeded, and the upgrade to `head`
+  built `ix_images_dataset_updated_at` on the full table, so that index is compact on disk.
+  The 1M file was seeded fresh at `head` (215 s, 18.5 GB), its index built row by row like
+  the others.
+- Seeding, timing and machine as in 6a's addendum: best of three after a first call (one
+  for the 1M cold run), the owner's Windows dev box, Python 3.12, SQLite 3.49.1. The cold
+  runs made 11,393 and 32 evictions, none failed.
+- The second run of a multi-size `--compare` crashed (`'str' object is not callable`) after
+  its JSON was written. That was a harness bug, fixed with a test on the same branch; these
+  numbers come from the JSON, not the printed comparison.
+
+### Gallery (`GET /images/`, limit 100), before → after, in ms
+
+A deep page is 60% in, as in 6a: page 6,001 at 1M. The 1M column has no "before".
+
+| Sort | Photo 100k | Photo 250k | ComfyUI 20k | 100k cold | 1M (new) |
+|---|---|---|---|---|---|
+| aesthetic desc, page 1 | 6.9 → 6.8 | 7.0 → 6.5 | 37.8 → 9.4 | 139.0 → 132.0 | 7.9 |
+| aesthetic desc, deep | 10.8 → 10.3 | 16.7 → 16.3 | 41.9 → 9.7 | 259.3 → 261.2 | 45.4 |
+| created desc, page 1 | 6.0 → 5.9 | 6.3 → 6.1 | 40.8 → 8.8 | 42.0 → 42.2 | 6.1 |
+| created desc, deep | 11.3 → 11.1 | 18.5 → 18.9 | 42.3 → 9.8 | 222.5 → 216.7 | 57.1 |
+| filename asc, deep | 10.5 → 9.7 | 14.6 → 14.3 | 45.1 → 9.4 | 192.3 → 190.6 | 41.5 |
+| sort_order asc, page 1 | 6.1 → 5.8 | 6.2 → 6.2 | 40.8 → 9.3 | 41.5 → 43.5 | 6.4 |
+| **updated_at desc, page 1** (stage 11's index) | 141.6 → 6.5 | 342.3 → 6.7 | 86.0 → 9.6 | 7,819.2 → 122.3 | 6.7 |
+| **updated_at desc, deep** | 335.9 → 9.8 | 1,162.9 → 13.6 | 94.4 → 11.3 | 8,754.5 → 189.0 | 53.7 |
+| color desc, page 1 (no index) | 142.2 → 137.1 | 350.1 → 329.5 | 86.9 → 50.6 | 8,106.2 → 8,134.0 | 1,378.8 |
+| color desc, deep | 281.8 → 279.8 | 1,065.0 → 1,116.1 | 98.4 → 60.5 | 8,582.1 → 8,678.4 | 6,346.7 |
+| width desc, deep | 191.8 → 187.1 | 485.5 → 465.3 | 86.7 → 50.5 | 8,357.1 → 8,290.4 | 1,979.2 |
+| luminance desc, page 1 (after the blobs) | 662.8 → 656.9 | 1,699.2 → 1,606.3 | 481.3 → 426.3 | 4,787.8 → 4,776.8 | 6,670.2 |
+| luminance desc, deep | 821.0 → 815.4 | 2,504.0 → 2,430.5 | 492.6 → 434.4 | 4,830.4 → 4,830.5 | 13,432.4 |
+| nsfw desc, deep (after the blobs) | 856.6 → 800.4 | 2,500.0 → 2,435.8 | 515.2 → 458.8 | 4,879.5 → 4,891.0 | 13,599.7 |
+| aesthetic desc, page 1, 20-row subfolder | 687.3 → 656.4 | 1,793.6 → 1,751.2 | 409.1 → 389.8 | 10,910.8 → 11,132.9 | 7,609.9 |
+| Payload of a page, KB | 136 → 99 | 135 → 98 | 5,306 → 98 | 136 → 99 | 99 |
+
+- **The run reproduces 6a.** Every untouched sort in this table is within 9% of 6a warm
+  and 5% cold, at both photo sizes. Across all 81 gallery cases, untouched ones moved by
+  up to 7% at 250k and by −15% to +17% at 100k; every swing past 9% is on a time under
+  15 ms.
+  Six of 6a's cold cases came out at warm speed (`uniformity_score desc` page 1 took
+  156 ms, against 7.7 s for its `asc` twin; the `style_similarity` sorts took 8–14 ms), so
+  6a's eviction did not take for them and they do not compare. 6b's cold run has no such
+  case.
+- **Stage 11's index gave the `updated_at` sort its index**: a deep page went from 336 ms to
+  10 ms at 100k, from 1.2 s to 14 ms at 250k, and from 8.8 s to 0.19 s cold.
+- **A ComfyUI page went from about 40 ms (37–45) to about 10 ms on any indexed sort**, and
+  from 5,306 KB to 98 KB, now that the list sends `has_generation_metadata` instead of the
+  JSON. Its unindexed and after-blob sorts gained 34–58 ms each for the same reason, and
+  the small-subfolder page 19 ms. A photo page dropped from
+  136 KB to 99 KB. Stage 11's acceptance for the ComfyUI page is met.
+- **1M: the indexed sorts hold.** Page 1 costs 6–8 ms and a deep page 41–57 ms. That is the
+  figure decision 13's cursor-paging amendment asked for: numbered pages still cost tens of
+  milliseconds at 1M.
+- **1M: everything without an index is slow.** An unindexed sort costs 1.4 s for page 1 and
+  2–6 s deep. One on a column after the blobs costs 6.7 s and 13.4–13.6 s. The score sort
+  inside a 20-row subfolder costs 7.6 s.
+- **`ANALYZE` now also reaches for stage 11's index.** After `PRAGMA optimize`, the
+  unindexed sorts and `sort_order` filter by dataset through `ix_images_dataset_updated_at`
+  and then sort, and come out about 1.2–2.1× slower than in 6a's analyzed pass, the deep
+  pages worst (width deep: 309 → 450 ms at 100k, 829 → 1,579 ms at 250k). The after-blob
+  sorts, already slow, moved 1.06–1.15×. The app never runs `ANALYZE`; this is one
+  more reason to keep it that way.
+
+### Counts, Stats and lookups, before → after, in ms
+
+| Case | Photo 100k | Photo 250k | ComfyUI 20k | 100k cold | 1M (new) | 1M cold (new) |
+|---|---|---|---|---|---|---|
+| `GET /images/count` | 5.6 → 5.5 | 12.7 → 12.5 | 1.9 → 1.6 | 189.4 → 25.9 | 76.9 | 2,675.7 |
+| The same, one subfolder (30%) | 9.1 → 9.1 | 21.5 → 22.2 | 2.8 → 2.2 | 202.2 → 200.2 | 83.4 | 1,936.3 |
+| Stats, cold cache entry | 4,200.3 → 4,508.7 | 10,584.4 → 11,737.3 | 1,600.0 → 1,689.7 | 20,816.2 → 18,041.1 | 50,454.0 | 184,248.8 |
+| Stats, cached poll | 229.7 → 13.3 | 591.6 → 31.3 | 55.6 → 3.4 | 10,209.9 → 27.0 | 146.7 | 2,673.8 |
+| Score values, cold cache entry (on demand since stage 4) | 2,142.7 → 1,921.9 | 5,543.4 → 4,928.4 | 743.3 → 777.9 | 18,778.4 → 14,852.4 | 20,840.7 | 147,646.0 |
+| Score values, cached poll | 653.5 → 408.3 | 1,692.3 → 1,024.9 | 136.2 → 79.3 | 10,697.0 → 416.5 | 4,247.1 | 6,622.2 |
+| `GET /images/{id}`, per request (2,000) | 2.69 → 2.55 | 2.80 → 2.53 | 3.14 → 3.04 | 6.71 → 6.59 | 2.70 | - |
+| Thumbnail, per request (500) | 2.07 → 1.90 | 2.19 → 1.90 | 2.24 → 2.03 | 5.80 → 5.24 | 2.03 | - |
+
+- **The Stats cache check costs almost nothing now.** The validator reads
+  `ix_images_dataset_updated_at` as a covering index: 226 ms of SQL becomes 8 ms at 100k,
+  and a cached poll costs 13 ms (31 ms at 250k, 147 ms at 1M). Cold, a cached poll went
+  from 10.2 s to 27 ms at 100k. Stage 11's acceptance for the validator is met. The score
+  values' cached poll fell by the same validator time; its 7,649 KB payload did not
+  change.
+- **A Stats page load is now the `stats` line alone.** Stage 4 fetches the score values
+  only for a saved custom edge, an open pencil editor, or not at all, so their 2–5 s at
+  100k–250k (21 s at 1M) is no longer part of a plain load.
+- **`stats` itself costs 6–11% more warm**, from two causes. The time beyond SQL rose by
+  about 15% (1.12 s → 1.29 s at 100k, 2.78 s → 3.18 s at 250k), which is `score_means`
+  summing nine columns in the row loop. The SQL rose 5% at 100k and 10% at 250k, although
+  the validator inside it got 0.2–0.6 s cheaper: the scans now walk stage 11's index (next
+  section). In the analyzed pass the scans read the table straight through
+  (`SCAN images`), and there the SQL fell by 10%.
+- **At 1M, opening Stats costs 50 s warm and about 3 minutes cold.** It holds 836 MB of
+  Python allocation at its peak (score values: 816 MB and a 76,457 KB payload), about
+  0.84 KB per image, as 6a projected.
+- **The thumbnail route got 8–13% faster** per request after it began reading one column.
+  The lookup by id, which no stage changed and which still loads the whole row, got 2–10%
+  faster too, so only part of the thumbnail's gain can be put down to the narrow read. A
+  cold count got faster
+  (189 → 26 ms) because it now reads the new index, which the upgrade built compact; a
+  fragmented one would gain less.
+
+### A new cost: the Stats scans walk stage 11's index
+
+With no `ANALYZE`, SQLite now picks `ix_images_dataset_updated_at` for every Stats
+statement filtered by dataset, not just the validator. A scan that reads every row of the
+dataset visits them in `updated_at` order, which is random order in the table. The index
+it used before, `ix_images_dataset_caption_tokens`, has long runs of equal keys (every
+uncaptioned row, and clustered counts) that walk the table in rowid order. Warm, each Stats
+row scan on the photo files got 8–36% slower; on the ComfyUI file only the row fetch moved
+(+18%). Cold, the row fetch went from 8.2 s to 14.6 s and the
+`aesthetic_model` group from 8.0 s to 14.2 s at 100k. A cached poll, which runs only the
+validator, is far cheaper everywhere. A full Stats computation is cheaper cold at 100k
+(20.8 s → 18.0 s), because the validator's 10 s saving outweighs the slower scans, but
+warm it is 5–10% dearer in SQL, as above.
+
+Forcing each index with `INDEXED BY` on the 100k file (the last two rows on the 1M file,
+whose index was built row by row), the same statement, cold (evicted first) and warm (best
+of two), in ms:
+
+| Statement | `caption_tokens` (6a) | `updated_at` (now) | `ix_images_dataset_id` |
+|---|---|---|---|
+| Row fetch, cold | 7,909 | 14,073 | 4,625 |
+| Row fetch, warm | 978 | 1,082 | 829 |
+| Coverage counts, cold | 9,924 | 10,130 | 7,612 |
+| Coverage counts, warm | 235 | 293 | 133 |
+| `aesthetic_model` group, cold | 7,559 | 13,512 | 4,538 |
+| `aesthetic_model` group, warm | 775 | 897 | 641 |
+| Row fetch at 1M, cold | 78,174 | 138,667 | 45,204 |
+| Row fetch at 1M, warm | 9,814 | 11,531 | 8,353 |
+
+`ix_images_dataset_id` holds the dataset's rows in rowid order, so it reads the table nearly
+in sequence and beats both. Pinning it is left to stage 7, which times the scans again with
+the blobs moved out (`docs/dev/scale-plan/README.md` § Stage 7).
+
+### Similarity (legacy group, direct numpy)
+
+`bench_similarity` loads every final DINO vector with raw `sqlite3` and scores two
+references against them. It does not control the cache, so the load is reported warm: a
+second run in a row at 100k and 1M, and at 250k a file that run A had read and nothing had
+evicted since (one run only):
+
+| | 100k | 250k | 1M |
+|---|---|---|---|
+| Vectors | 70,099 | 175,395 | 700,464 |
+| Load, warm | 0.5 s | 1.3 s | 5.8 s |
+| Score | 0.23 s | 0.57 s | 2.36 s |
+
+Both grow linearly. A load straight after a cold run, with the file mostly out of the
+cache, took 19.6 s at 100k and 198 s at 1M; read that as an order of magnitude, since the
+group does not evict.
+
+### For stage 7
+
+- **Warm, the overflow cost holds at 1M.** The row fetch and the `aesthetic_model` group,
+  which read a non-NULL column after the blobs on every scored row, take 11.8 s and 9.7 s.
+  The coverage counts, the embedding count and the flag sums, which read nothing past the
+  blobs, take 3.6–4.1 s. The license group sits between (4.5 s warm, 132 s cold):
+  `license` is after the blobs but set on only 10% of seeded rows, and SQLite reads a NULL
+  from the row's header without walking its overflow chain.
+- **Cold, every scan pays it.** At 1M the coverage counts and the embedding count took
+  107 s each and the flag sums 109 s, against 142–144 s for the row fetch and the model
+  group. A photo row is about 18 KB, so each row fills a leaf page of its own, and
+  any scan of the dataset touches one page per row. Moving the blobs out of the row is what
+  would put many rows on a page; that is the question stage 7 decides.
+- The side-table experiment itself (the 2026-11-09 by-hand run, at 1M and cold) is left to
+  stage 7. The kept 1M file is in the bench work folder for it.
+
+### What this run does not cover
+
+`--optimize` and the cold gallery at 1M, several datasets of mixed size, a real manual
+order, the legacy `dedup` and `thumb` groups, and a fragmented `ix_images_dataset_updated_at`
+at 100k–250k (only the 1M file has one).

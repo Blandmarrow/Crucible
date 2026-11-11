@@ -401,6 +401,34 @@ folder costs about 0.4 s.
 - Record the numbers as a dated addendum to `scaling_bottlenecks_report.md`, with hardware
   and settings. Keep owner-specific hardware out of the tracked file.
 
+**6b as built (2026-11-11).** Six runs, as planned with the user that day: 6a's three again
+with `--compare`; 1M warm on all four groups; 1M cold on counts and Stats only, one rep; and
+similarity at 100k, 250k and 1M. No `--optimize` at 1M, and the side-table experiment is
+left to stage 7. The numbers are the report's 2026-11-11 addendum. What they say:
+
+- **Stages 4 and 11 did what they said.** The `updated_at` sort is indexed (336 → 10 ms
+  deep at 100k), a Stats cached poll costs 13 ms instead of 230 ms (cold: 27 ms instead of
+  10 s), and a ComfyUI gallery page costs about 10 ms and 98 KB instead of about 40 ms and
+  5,306 KB. A
+  Stats load is the `stats` call alone, which `score_means` made about 15% dearer in Python.
+- **Stage 11's index has a side effect.** Without `ANALYZE`, every Stats scan now walks
+  `ix_images_dataset_updated_at`, which visits rows in random table order: 5–10% more SQL
+  warm on the photo files, and the cold row fetch went from 8.2 s to 14.6 s at 100k. Forcing
+  `ix_images_dataset_id` beats both the new plan and 6a's (4.6 s cold at 100k, 45 s
+  against 139 s at 1M). It goes to stage 7 rather than a fix now (the user's call,
+  2026-11-11): at the user's dataset sizes it costs milliseconds, and moving the blobs out
+  may make the walk order matter much less. See § Stage 7.
+- **1M.** Indexed gallery pages cost 6–8 ms and 41–57 ms deep, so numbered pages stand
+  (decision 13's cursor-paging amendment). Unindexed sorts cost 1.4–6.3 s, after-blob ones
+  up to 13.6 s, and the small-subfolder score sort 7.6 s. Opening Stats costs 50 s warm and
+  about 3 minutes cold, with 836 MB of Python allocation at its peak.
+- **The harness's `--compare` crashed on the second run of a sweep** (a loop variable
+  shadowed the run-matching function). Fixed with a test in the same branch.
+
+Neither parked item's trigger moved: both are set by dataset size, and the user's datasets
+are still under 2k images. Stage 4's full design waits for a dataset near 50k to 100k
+images, the small-subfolder sort for one near 20k images with small subfolders.
+
 M4 also edits `bench_scaling.py` (three lines, which seed `aesthetic_model` beside the
 score). 6a rewrote the file and already writes `aesthetic_model` on every scored row, so M4,
 landing second, drops its hunk.
@@ -413,7 +441,29 @@ pain". The column-order finding is new evidence for that question, not an answer
 
 **Evidence so far (2026-11-09, 100k rows, warm cache).** With the three blobs in a table of
 their own, the one-pass Stats aggregate went from 1,377 ms to 528 ms, and to 325 ms in
-table order. Stage 6b still owes the cold-cache and 1M numbers.
+table order.
+
+**Stage 6b's numbers (2026-11-11, 1M rows).** Warm, the Stats statements that read a
+non-NULL column after the blobs take 9.7–11.8 s, and the ones that read nothing past them
+take 3.6–4.1 s. Cold, every scan pays: the ones that read nothing past the blobs still took
+107–109 s, against 142–144 s for the others, because a photo row is about 18 KB and fills
+a leaf page of its own. (The addendum's § For stage 7 has the license group, which sits
+between.) Opening Stats
+costs 50 s warm and about 3 minutes cold. The side-table version has not been timed at 1M
+or cold; the kept 1M bench file is there for it. The order the scans walk the table
+matters too (6b's addendum, "A new cost"), and probably interacts with this decision: with
+many rows to a page, walk order should matter less. Time both together.
+
+**The Stats scans' index is decided here** (the user's call, 2026-11-11). Since stage 11,
+SQLite picks `ix_images_dataset_updated_at` for every Stats scan, which reads the table in
+random order; forcing `ix_images_dataset_id` (rowid order) beat both that plan and 6a's.
+Time the scans under each index with and without the side table, and pin
+`ix_images_dataset_id` with `INDEXED BY` only if it still clearly wins. A pin trades one
+risk for another: SQLite can no longer pick a worse index by itself, but it can no longer
+pick a better one either, so leave a comment at the pin saying when to re-time it. Either
+way, **add a plan guard for the Stats statements**, as `backend/tests/test_image_sort_plan.py`
+does for the gallery sorts: stage 11's index changed these plans silently, and no test
+covers them (PM-036's lesson, reached by a query it did not guard).
 
 **`generation_metadata` belongs in the same decision.** It is the larger blob on ComfyUI
 images (54,895 bytes a row on average in the dev DB, against 21,504 for the embeddings),
@@ -678,7 +728,9 @@ Stage 6b still measures both.
   until this is measured, since the page size tops out at 200.
 
 **Acceptance.** Stage 6b's numbers for the validator and a ComfyUI gallery page; an e2e
-check that the generation-metadata modal still opens. (A test that an unversioned thumbnail
+check that the generation-metadata modal still opens. (Met by 6b on 2026-11-11: the
+validator costs 13 ms instead of 230 ms at 100k, a ComfyUI page about 10 ms and 98 KB
+instead of about 40 ms and 5,306 KB.) (A test that an unversioned thumbnail
 URL gets no `immutable` header went with the parked item.)
 
 ### Stage 11 as built (2026-11-10)

@@ -159,6 +159,8 @@ class DatasetStats(BaseModel):
     style_similarity_distribution: dict[str, int] = {}
     quality_flag_counts: dict[str, int] = {}
     score_coverage: dict[str, int] = {}
+    # Score column -> mean of its non-NULL values; a column with none is absent.
+    score_means: dict[str, float] = {}
     # Effective license (image value coalesced over the dataset default) → count.
     # "" is the bucket for images with no license recorded anywhere.
     license_breakdown: dict[str, int] = {}

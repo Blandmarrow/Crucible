@@ -78,6 +78,16 @@ LICENSES_IN_USE_LIMIT = 100
 _STATS_CACHE_MAX = 64
 _stats_cache: dict[tuple[str, str | None, str], tuple[tuple, dict]] = {}
 
+# The nine score columns the Stats page reports on. One list for both readers:
+# `get_score_values` returns each column's raw values, and `get_dataset_stats`
+# returns each column's mean as `score_means` (M9 stage 4), so the page needs
+# the raw lists only for a histogram with custom edges.
+_STATS_SCORE_FIELDS: tuple[str, ...] = (
+    "aesthetic_score", "blur_score", "noise_score", "uniformity_score",
+    "watermark_score", "color_score", "saturation_score", "luminance_score",
+    "style_similarity_score",
+)
+
 
 def _stats_cache_get(key: tuple[str, str | None, str], validator: tuple) -> dict | None:
     entry = _stats_cache.get(key)
@@ -1663,9 +1673,21 @@ def _aggregate_dataset_stats(rows, ds, subfolder, score_cov, flag_counts) -> dic
 
     ssim_dist: dict[str, int] = {}
 
+    # Running sum and count per score column, for `score_means`. Added in row
+    # order from 0.0, which is how the page summed the raw lists before it
+    # stopped loading them, so a mean reads the same as it did.
+    score_sums: dict[str, float] = dict.fromkeys(_STATS_SCORE_FIELDS, 0.0)
+    score_counts: dict[str, int] = dict.fromkeys(_STATS_SCORE_FIELDS, 0)
+
     captioned = 0
 
     for r in rows:
+        for field in _STATS_SCORE_FIELDS:
+            val = getattr(r, field)
+            if val is not None:
+                score_sums[field] += float(val)
+                score_counts[field] += 1
+
         # Formats
         fmt = (r.format or "unknown").upper()
         formats[fmt] = formats.get(fmt, 0) + 1
@@ -1799,6 +1821,11 @@ def _aggregate_dataset_stats(rows, ds, subfolder, score_cov, flag_counts) -> dic
         "style_similarity_distribution": dict(sorted(ssim_dist.items())),
         "quality_flag_counts": flag_counts,
         "score_coverage": score_cov,
+        # A column nothing has scored is absent, not 0.0: the page shows a dash
+        # and the CSV an empty cell.
+        "score_means": {
+            f: score_sums[f] / score_counts[f] for f in _STATS_SCORE_FIELDS if score_counts[f]
+        },
     }
 
 
@@ -2002,11 +2029,7 @@ async def get_score_values(db: AsyncSession, dataset_id: str, subfolder: str | N
     # Pure-Python aggregation runs off the event loop; token counts come from the
     # persisted column (no tokenization).
     def _collect() -> dict:
-        score_fields = [
-            "aesthetic_score", "blur_score", "noise_score", "uniformity_score",
-            "watermark_score", "color_score", "saturation_score", "luminance_score",
-            "style_similarity_score",
-        ]
+        score_fields = _STATS_SCORE_FIELDS
         out: dict[str, list[float]] = {f: [] for f in score_fields}
         out["megapixels"] = []
         out["file_size_mb"] = []

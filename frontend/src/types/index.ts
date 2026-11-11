@@ -99,6 +99,8 @@ export interface DatasetStats {
   style_similarity_distribution: Record<string, number>;
   quality_flag_counts: Record<string, number>;
   score_coverage: Record<string, number>;
+  /** Score column -> mean of its scored images; a column nothing scored is absent. */
+  score_means?: Record<string, number>;
   /** Effective license id -> count; "" = no license recorded at either level. */
   license_breakdown: Record<string, number>;
 }

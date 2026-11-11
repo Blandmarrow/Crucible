@@ -186,11 +186,10 @@ runs; the aesthetic-marker invariant (score non-NULL ⇔ marker non-NULL); the
 `backend/tests/test_scores_stale.py`. Progress must count against the job's total across
 all chunks and checks (`backend/workers/progress.py`), not restart for each check.
 
-**Known side effect.** Until stage 4 lands, each chunk commit moves `max(updated_at)`, so a
-Stats page left open recomputes from cold on every poll during a scoring job. That's about
-2.5 s per poll at 100k images. It's acceptable for now. Stage 4 as amended on 2026-11-10
-removes the `score-values` half and its payload, unless a panel has custom edges; the
-`/stats` half stays.
+**Known side effect.** Each chunk commit moves `max(updated_at)`, so a Stats page left open
+recomputes from cold on every poll during a scoring job. That's about 2.5 s per poll at
+100k images, and it is accepted. Stage 4 (2026-11-11) removed the `score-values` half and
+its payload, unless a panel has custom edges; the `/stats` half stays.
 
 **Acceptance.** A test stops a job partway (a cancel, plus a simulated crash between chunks)
 and finds the finished chunks' scores in the DB. Peak memory stays flat as the dataset grows
@@ -220,6 +219,36 @@ request (an e2e check); a saved custom edge, the pencil editor and the CSV expor
 work; `/stats`'s means match the old browser-computed ones on a fixture, within a tolerance;
 `backend/tests/test_stats_click_through_edges.py` and `frontend/e2e/stats.spec.ts` still
 pass. Stage 6b measures it.
+
+### Stage 4 as built
+
+**Done 2026-11-11.** The as-built rules are `docs/dev/statistics.md` § The raw lists load on
+demand. It differs from the list above in two ways, and fixed two things on the way:
+
+- **The CSV export fetches nothing.** It read the raw lists only for its nine means, so with
+  the means on `/stats` it needs no list, and its button no longer waits on one.
+- **The means come from the row loop, not a SQL `AVG`.** `/stats` already loads all nine
+  score columns for every row. Summing there adds no scan, and it adds in the browser's old
+  order, so a mean did not move in its last digit. The response field is `score_means`.
+- **A fourth reader, not three.** `hasStyleSimData` read the style list's length to decide
+  whether the style panel shows. It now reads the `/stats` histogram, which is non-empty in
+  exactly the same cases.
+- **Fixed: a dataset's custom edges leaked to the next dataset.** A panel carried across a
+  dataset switch wrote the old dataset's edges under the new dataset's key. It showed only
+  when the destination's stats were already cached. `HistPanel` is now keyed by its storage
+  key. Found because the same carried-over panel made the new dataset fetch its lists.
+
+A panel with custom edges still loads and polls the lists as before, so a page with one
+saved edge gains nothing. The page-level "failed to load score values" banner went with the
+page-level fetch; each panel that needs the lists reports a failed load itself, including a
+failed refetch that leaves old bars on screen (the review's one finding).
+
+Polling is covered by e2e with a **simulated** running job: `frontend/e2e/stats.spec.ts`
+answers the "what is running now" job list itself, which turns on the page's 5 s poll, and
+checks that `/stats` polls while the lists are fetched only for an open editor and stop when
+it closes. A real scoring job reached no gate, since on a few small images it ends before
+one poll. Stage 6b times the endpoints, and the page's cost on a plain load is now the
+`stats` line alone.
 
 **Revisit the full design** if a dataset nears 50k to 100k images, or stage 6b's numbers
 call for it. It stands below as written on 2026-11-09, risks included: a wrong SQL bin is

@@ -252,3 +252,19 @@ utilities → `docs/dev/shared-utilities.md`.
   and never deletes it", a bold lead-in today, not a heading. § The datasets root's one
   spelling names "the orphan sweep's refusal in § SQLite engine and schema conventions" and
   ends on the sweep's case fold; both pointers become cross-file. `multiple-installs.md` and CLAUDE.md's Map row for database.md name the sweep.
+
+## docs/dev/statistics.md
+
+- **Moves:** § The raw lists load on demand, § CSV export and § Bucket drill-down (which
+  holds the **Editable histograms (HistPanel)** paragraph)
+- **New file:** docs/dev/statistics-histograms.md (what a histogram panel does in the
+  browser: custom edges, the raw lists, bar click-through, the CSV)
+- **Why here:** M9 stage 4 took the file to ~3,300 of 3,500 words (2026-11-11), not yet over.
+  Those three sections are `HistPanel` and the page's own exports; what stays is the page's
+  queries, the server aggregation with the `DatasetStats` table, and the category panels.
+  The 1,000-word `DatasetStats` table is why the stay-behind half is the larger one.
+- **Watch for:** `scale-plan/README.md` § Stage 4 as built cites "§ The raw lists load on
+  demand" by name, and three places inside the file point at it (the query table, § Frontend
+  page's error-states paragraph, the Editable histograms paragraph); the first two become
+  cross-file. § Backend aggregation's `score_means` row and its closing paragraph on
+  `DEFAULT_EDGES` both describe what the moved sections consume.

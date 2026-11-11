@@ -87,6 +87,12 @@ def test_every_layout_holds_the_same_rows(seeded, capsys):
         "legacy: whole set in one statement (bench_similarity)"}
     # Only the Stats statements take an index hint: a hinted sort would be another query.
     assert {label for (label, index) in row if index != "default"} == stats | scoped
+    # The app pins its dataset-wide scans (decision 15). That hint is taken off at
+    # capture and reported, so "default" here is still SQLite's own choice.
+    assert set(report["app_hints"]) == stats - {"validator"}
+    assert set(report["app_hints"].values()) == {"INDEXED BY ix_images_dataset_id"}
+    assert "INDEXED BY" not in row[("row fetch (stats)", "default")]["sql"]
+    assert row[("row fetch (stats)", "dataset_id")]["sql"].count("INDEXED BY") == 1
     small = f"row fetch (stats) [{bench.SMALL_SUBFOLDER}]"
     assert row[(small, "default")]["rows"] == bench.SMALL_SUBFOLDER_ROWS
     assert 0 < row[("row fetch (stats) [set_a]", "default")]["rows"] < ROWS

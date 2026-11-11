@@ -79,7 +79,7 @@ The deeper fix followed on `fix/root-spelling` (PR #113). At startup the root's 
 worked out (`utils.on_disk_spelling`, which follows no link), and
 `services/root_spelling.py` rewrites every stored row whose root is a case variant of it
 and the same folder on disk (`os.path.samefile`), after an integrity-checked backup. The
-setting adopts the new spelling only when that repair went ahead (`docs/dev/database.md`
+setting adopts the new spelling only when that repair went ahead (`docs/dev/dataset-folders.md`
 § The datasets root's one spelling). The file browser's exact matches (`/delete`'s and
 `/rename`'s file arms, `/move`'s, guards C and D) now take `utils.sql_path_equals`, so a
 case drift *below* the root cannot strand rows either. For a single file the case-blind

@@ -79,6 +79,17 @@ staleness sweep while still recording the seam.
   until they are repointed. Do **not** take `### VRAM after a run` as the seam: it is six
   lines and belongs exactly where it is, under § Running a scoring run.
 
+`docs/dev/database.md` → `docs/dev/dataset-folders.md` was executed on 2026-11-11 on
+`docs/split-database-statistics`, and was **re-cut on execution**. The recorded seam (the five
+dataset-folder paragraphs) measured 880 words of 3,297, which would have left ~2,420 behind,
+69% of budget. § The datasets root's one spelling (~560 words) went with it: it is the same
+folder-on-disk subsystem, the sweep's case fold and refusal point into it, and it was already
+half cross-referencing the moved paragraphs. That left ~2,050 (database) and ~1,440
+(dataset-folders). The entry's Watch-for was right; it missed `docs/dev/shared-utilities.md`
+(the `on_disk_spelling` entry), `docs/dev/postmortems/PM-034-sqlite-like-is-case-blind.md`,
+`docs/dev/roadmap-archive/m6-comfy-automation.md` and the roadmap's pending-splits count, all
+of which named the root-spelling section.
+
 A batch of thirteen splits was executed on 2026-11-04 on `feat/m6-comfy-automation`, after
 an audit found ten files at 90%+ of budget with no entry here. Four had recorded seams
 (`docs/dev/comfyui/automation.md`, `docs/runs.md`, `docs/dev/quality/style-similarity.md`,
@@ -237,21 +248,6 @@ utilities → `docs/dev/shared-utilities.md`.
   the folder tree and the grouped table; `styling.md` points at `page.md` for the rail and
   tree's `ContextMenu`. The `planBusy` bullet sits inside the run-bar bullet but belongs with
   the Rows tab's controls.
-
-## docs/dev/database.md
-
-- **Moves:** the five dataset-folder paragraphs in § SQLite engine and schema conventions,
-  from **Dataset-folder deletion & the startup orphan sweep** through **The sweep touches
-  nothing when the DB and the tree visibly disagree**, given `##` headings on the way
-- **New file:** docs/dev/dataset-folders.md (the delete endpoint's folder removal and the
-  startup orphan sweep)
-- **Why here:** M9 stage 2 took the file to ~3,300 of 3,500 words (2026-11-08), not yet over.
-  Those paragraphs are about files on disk, not the schema; the rest of the section is
-  pragmas, FKs and column conventions. Moving them leaves both near 60%.
-- **Watch for:** `roadmap.md` and `scale-plan/README.md` cite "§ The sweep moves data aside
-  and never deletes it", a bold lead-in today, not a heading. § The datasets root's one
-  spelling names "the orphan sweep's refusal in § SQLite engine and schema conventions" and
-  ends on the sweep's case fold; both pointers become cross-file. `multiple-installs.md` and CLAUDE.md's Map row for database.md name the sweep.
 
 ## docs/dev/statistics.md
 

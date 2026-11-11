@@ -23,7 +23,7 @@ It makes seven queries:
 
 **Live polling during active jobs**: `StatsPage` reads `useJobStore` to detect whether a `caption`, `caption_pipeline`, `quality_score`, or `detection` job is currently running for the active dataset. When one is, five of the queries above (`dataset-stats`, `tag-stats`, `tag-cooccurrence`, `score-values`, `detection-stats` — not `subfolders` or `settings`/`thresholds`) receive `refetchInterval: 5_000` so they poll every 5 seconds and distributions update in real-time. `score-values` polls only while it is enabled, since a disabled query ignores its interval. The interval stops automatically when the job completes (Zustand selector returns `false`); `TopBar`'s completion handler fires a final invalidation as a safety net. Polling only runs while the browser tab is focused (`refetchIntervalInBackground` defaults to `false`). The `LIVE_STATS_JOB_TYPES` module-level constant in `StatsPage.tsx` lists the watched job types.
 
-**Query error states**: each query surfaces its own failure rather than rendering silently — the main `dataset-stats` query shows a full-page error block with a `refetch()` Retry button (before the `!stats → "No data"` branch), while `tag-stats`, `tag-cooccurrence`, `score-values`, and `detection-stats` each render a one-line `var(--bad)` notice inside their consuming panel. For `score-values` that panel is each `HistPanel` drawing custom buckets (its `rawError` prop); nothing else on the page reads the lists, so a failure there no longer touches the page header or **Export Stats CSV**.
+**Query error states**: each query surfaces its own failure rather than rendering silently — the main `dataset-stats` query shows a full-page error block with a `refetch()` Retry button (before the `!stats → "No data"` branch), while `tag-stats`, `tag-cooccurrence`, `score-values`, and `detection-stats` each render a one-line `var(--bad)` notice inside their consuming panel. For `score-values` that panel is each `HistPanel` that needs the lists (its `rawError` prop; the three forms are in § The raw lists load on demand); nothing else on the page reads the lists, so a failure there no longer touches the page header or **Export Stats CSV**.
 
 ## The raw lists load on demand
 
@@ -41,12 +41,19 @@ the set for one render, and counting them fetched the new dataset's lists for no
 
 Three rules follow, each pinned by `frontend/e2e/stats.spec.ts`:
 
-- **`canEdit` is configuration, not loaded data** (`defaultEdgeStr` and `fb` both passed).
-  It used to require `rawValues !== undefined`, which would now hide every pencil, and with
-  it the only thing that asks for the lists.
+- **`canEdit` is configuration, not loaded data** (`defaultEdgeStr`, `fb` and `onNeedRaw`
+  all passed). It used to require `rawValues !== undefined`, which would now hide every
+  pencil, and with it the only thing that asks for the lists. `onNeedRaw` is in the test
+  because an editable panel without that wire would wait on a list nobody fetches.
 - **A custom panel with no list says so.** It shows "Loading custom buckets…" or, on
   `rawError`, a `var(--bad)` line. It never falls back to `entries`, which would draw the
-  server's default buckets under the "custom" badge.
+  server's default buckets under the "custom" badge. The badge follows `usingCustom` (saved
+  edges that parse), so it is on exactly when the bars are custom or pending.
+- **A failed load is reported in every state, not only the empty one** (`rawNotice`). A
+  failed refetch keeps the previous list, so a custom panel goes on drawing bars that have
+  stopped following the dataset; it gets a "may be out of date" line under them. An open
+  editor with no list gets a line saying custom buckets cannot be drawn yet. The page-level
+  banner that used to cover both is gone, since the lists are no longer the page's.
 - **`HistPanel` is keyed by its `storageKey`** (the wrapper around `HistPanelBody`). One
   instance carried across a dataset switch wrote the old dataset's edges under the new
   dataset's key before re-reading them. It needed the destination's stats already cached,
@@ -59,7 +66,7 @@ All five subfolder-aware stat endpoints accept `subfolder: str | None = Query(No
 
 ## Backend aggregation
 
-**Server-side stats aggregation** (`dataset_service.get_dataset_stats` / `get_score_values`): the async handler does only DB work (row fetch + coverage/flag/embedding count queries), then hands the pure-Python bucketing/aggregation to a thread executor (`run_in_executor`) via the module-level `_aggregate_dataset_stats` helper and a local `_collect` closure respectively, so a large dataset's per-row loop never blocks the event loop while Stats loads. Caption **token** counts come straight from the persisted `Image.caption_token_count` column (`caption_token_distribution`, `score-values.caption_tokens`) — no `tiktoken` call in the request path; **word** counts are still computed from `caption_text` (cheap `split()`). Response keys are unchanged (`StatsPage.tsx` depends on them).
+**Server-side stats aggregation** (`dataset_service.get_dataset_stats` / `get_score_values`): the async handler does only DB work (row fetch + coverage/flag/embedding count queries), then hands the pure-Python bucketing/aggregation to a thread executor (`run_in_executor`) via the module-level `_aggregate_dataset_stats` helper and a local `_collect` closure respectively, so a large dataset's per-row loop never blocks the event loop while Stats loads. Caption **token** counts come straight from the persisted `Image.caption_token_count` column (`caption_token_distribution`, `score-values.caption_tokens`) — no `tiktoken` call in the request path; **word** counts are still computed from `caption_text` (cheap `split()`). That move changed no response key (`StatsPage.tsx` depends on them).
 
 **Validator-keyed stats cache** (`dataset_service.py`, `_stats_cache` + `_stats_cache_get`/`_stats_cache_put`/`_image_validator`): both functions above pull *every* image row in scope into Python, and StatsPage live-polls them, so an idle Stats tab re-read the whole table every few seconds. Each call now first runs a cheap validator query — `SELECT count(*), MAX(updated_at)` under the same dataset/subfolder filter (`_image_validator_stmt`; the dataset-wide form reads only the covering index `ix_images_dataset_updated_at`, 294 ms → 7.1 ms at 100k rows, M9 stage 11, guarded in `backend/tests/test_image_sort_plan.py`), plus `Dataset.updated_at` for `get_dataset_stats` (whose `license_breakdown` coalesces over the dataset default) — and serves the previous payload when the validator is unchanged. Keys are `(dataset_id, subfolder, "stats" | "scores" | "style")`; the cache is a module-level dict capped at `_STATS_CACHE_MAX` (64) entries, dropping oldest-inserted. Staleness is bounded to writes that leave `(count, max updated_at)` identical, which no ORM or Core write can do — `Image.updated_at` carries an `onupdate`. Two consequences for callers: the returned dict **is** the cached object, so never mutate a stats/score-values payload in place; and a new column that affects the payload but lives on `Dataset` (not `Image`) needs `Dataset.updated_at` to be bumped when it changes, or the cache will not notice. Covered by `backend/tests/test_stats_cache_http.py`. SQL-side bucketing was considered and rejected — it would duplicate the thirteen metrics' bucket-edge definitions that already exist as `DEFAULT_EDGES` in `StatsPage.tsx`, and would not help `get_score_values` at all.
 
@@ -103,7 +110,7 @@ percentile in a filtered pane as in an unfiltered one.
 
 See `docs/dev/quality/style-similarity.md` for the style-similarity scoring flow and embedding types that populate `style_similarity_distribution`.
 
-Default bucket edges are defined as `DEFAULT_EDGES` in `StatsPage.tsx`. Edges on the backend (`dataset_service.py`) are used only for pre-computing the initial distributions returned by `/stats`; when the user customises edges, `rebucketValues()` runs entirely client-side against the raw `score-values` arrays — no backend call needed.
+Default bucket edges are defined as `DEFAULT_EDGES` in `StatsPage.tsx`. Edges on the backend (`dataset_service.py`) are used only for pre-computing the initial distributions returned by `/stats`; when the user customises edges, `rebucketValues()` runs entirely client-side against the raw `score-values` arrays — no rebucketing call to the backend, only the one fetch of the arrays themselves (§ The raw lists load on demand).
 
 ## CSV export
 

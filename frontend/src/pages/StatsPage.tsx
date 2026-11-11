@@ -1056,8 +1056,10 @@ function HistPanel(props: HistPanelProps) {
 
 function HistPanelBody({ title, subtitle, entries, onBarClick, rawValues, defaultEdgeStr, fb, footer, storageKey, onNeedRaw, rawError }: HistPanelProps) {
   // Editable by configuration, not by what has loaded: the raw lists are fetched
-  // only once a panel asks for them, so the pencil cannot wait on them.
-  const canEdit = defaultEdgeStr !== undefined && fb !== undefined;
+  // only once a panel asks for them, so the pencil cannot wait on them. It does
+  // need the wire that asks: a panel passed edges but no `onNeedRaw` would sit on
+  // "Loading custom buckets" for good, so it gets no pencil instead.
+  const canEdit = defaultEdgeStr !== undefined && fb !== undefined && onNeedRaw !== undefined;
   const [isEditing, setIsEditing] = useState(false);
   const [activeEdgeStr, setActiveEdgeStr] = useState<string | null>(() => {
     if (!storageKey) return null;
@@ -1097,6 +1099,13 @@ function HistPanelBody({ title, subtitle, entries, onBarClick, rawValues, defaul
   const displayEntries = usingCustom && rawValues !== undefined
     ? rebucketValues(rawValues, customEdges, fb!)
     : entries;
+  // A failed refetch keeps the last list, so the bars above are still drawn and
+  // only this line says they have stopped following the dataset. With the editor
+  // open and no list at all, it says why Apply will have nothing to draw.
+  const rawNotice = !rawError || rawPending ? null
+    : usingCustom ? "Failed to refresh score values — these buckets may be out of date."
+    : isEditing ? "Failed to load score values — custom buckets cannot be drawn yet."
+    : null;
 
   const handleApply = () => {
     const edges = draft.split(",").map(s => parseFloat(s.trim())).filter(n => isFinite(n));
@@ -1116,7 +1125,7 @@ function HistPanelBody({ title, subtitle, entries, onBarClick, rawValues, defaul
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 12, fontWeight: 500, color: "var(--fg-mute)", display: "flex", alignItems: "center", gap: 5 }}>
             {title}
-            {isCustom && (
+            {usingCustom && (
               <span style={{ fontSize: 9.5, padding: "1px 5px", borderRadius: "var(--r)", background: "var(--accent)", color: "#fff", fontWeight: 600, letterSpacing: ".02em" }}>
                 custom
               </span>
@@ -1164,6 +1173,7 @@ function HistPanelBody({ title, subtitle, entries, onBarClick, rawValues, defaul
       ) : (
         <CssHist entries={displayEntries} onBarClick={onBarClick} />
       )}
+      {rawNotice && <div style={{ color: "var(--bad)", fontSize: 11, marginTop: 6 }}>{rawNotice}</div>}
       {footer}
     </div>
   );

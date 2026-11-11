@@ -239,7 +239,9 @@ demand. It differs from the list above in two ways, and fixed two things on the 
   key. Found because the same carried-over panel made the new dataset fetch its lists.
 
 A panel with custom edges still loads and polls the lists as before, so a page with one
-saved edge gains nothing. Polling during a real job reached no gate; stage 6b times the
+saved edge gains nothing. The page-level "failed to load score values" banner went with the
+page-level fetch; each panel that needs the lists reports a failed load itself, including a
+failed refetch that leaves old bars on screen (the review's one finding). Polling during a real job reached no gate; stage 6b times the
 endpoints, and the page's cost on a plain load is now the `stats` line alone.
 
 **Revisit the full design** if a dataset nears 50k to 100k images, or stage 6b's numbers

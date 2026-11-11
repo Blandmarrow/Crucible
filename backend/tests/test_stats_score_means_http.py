@@ -19,6 +19,22 @@ from backend.services.dataset_service import _STATS_SCORE_FIELDS
 from backend.tests.conftest import API, api_env, png_bytes, run, upload_image
 
 
+# Spelled out, not read off `_STATS_SCORE_FIELDS` alone: `/stats` and
+# `/score-values` both read that tuple, so a column dropped from it would vanish
+# from both and every comparison below would still pass. These are the nine keys
+# the page's CSV export asks `score_means` for by name.
+EXPECTED_SCORE_FIELDS = {
+    "aesthetic_score", "blur_score", "noise_score", "uniformity_score",
+    "watermark_score", "color_score", "saturation_score", "luminance_score",
+    "style_similarity_score",
+}
+
+
+def test_the_score_field_list_is_the_nine_the_page_reads():
+    assert set(_STATS_SCORE_FIELDS) == EXPECTED_SCORE_FIELDS
+    assert len(_STATS_SCORE_FIELDS) == len(EXPECTED_SCORE_FIELDS)
+
+
 async def _set(env, image_id: str, **cols) -> None:
     from backend.models import Image
     async with env.Session() as db:
@@ -52,7 +68,7 @@ def test_every_score_mean_matches_its_raw_list(tmp_path):
             means = (await _get(env, ds["id"], "stats"))["score_means"]
             lists = await _get(env, ds["id"], "score-values")
 
-            assert set(means) == set(_STATS_SCORE_FIELDS)
+            assert set(means) == EXPECTED_SCORE_FIELDS
             for field in _STATS_SCORE_FIELDS:
                 values = lists[field]
                 assert len(values) == 3, field

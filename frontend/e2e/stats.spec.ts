@@ -222,6 +222,11 @@ test('a custom histogram reports a failed raw-list load instead of default bars'
   await expect(sat.getByTitle('0.2–0.4: 1', { exact: true })).toHaveCount(0)
   // The rest of the page does not depend on the lists.
   await expect(meanAestheticCard(page)).toHaveText('5.50')
+
+  // An open editor with no list says so before Apply, not after.
+  const color = page.locator('.panel', { hasText: 'Color richness' })
+  await color.getByTitle('Edit bucket edges').click()
+  await expect(color.getByText('Failed to load score values — custom buckets cannot be drawn yet.')).toBeVisible({ timeout: 15_000 })
 })
 
 // One mounted panel used to be carried across a dataset switch, and wrote the

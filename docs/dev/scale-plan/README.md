@@ -222,7 +222,7 @@ pass. Stage 6b measures it.
 
 ### Stage 4 as built
 
-**Done 2026-11-11** (PR #139). The as-built rules are `docs/dev/statistics.md` § The raw lists load on
+**Done 2026-11-11** (PR #139). The as-built rules are `docs/dev/statistics-panels.md` § The raw lists load on
 demand. It differs from the list above in two ways, and fixed two things on the way:
 
 - **The CSV export fetches nothing.** It read the raw lists only for its nine means, so with
@@ -271,7 +271,7 @@ histogram drawn on the wrong scale). The first version of this approach said
    other eleven metrics use hand-picked edges (blur is `20, 40, 80, 150, 300`), which
    `floor()` cannot express. Use one count per edge pair instead:
    `sum(x >= lo AND x < hi)`, half-open like `_bucket` and `rebucketValues`, with the top
-   bin open. `docs/dev/statistics.md` § Bucket drill-down states the half-open rule that
+   bin open. `docs/dev/statistics-panels.md` § Bucket drill-down states the half-open rule that
    every bar's click-through filter depends on.
 2. **The pencil editor needs the raw lists today.** Every score histogram can be rebucketed
    with the user's own edges, kept per dataset in `stats-hist-edges-{metric}-{datasetId}`,

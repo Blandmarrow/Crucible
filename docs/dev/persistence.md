@@ -62,7 +62,7 @@ because a hand-off needs two ends:
   histogram, thirteen of them, passed to `HistPanel` as a `storageKey` and read/written there
   with raw `localStorage` calls. Keyed by metric *and* dataset, so custom bucketing on one
   metric never leaks to another. Not part of the `STATS_FILTERS_PREFIX` blob, which some prose
-  used to imply. See `docs/dev/statistics.md` § Editable histograms.
+  used to imply. See `docs/dev/statistics-panels.md` § Bucket drill-down (Editable histograms).
 - `` `gallery-state-${datasetId}` `` (`localStorage`) and `` `gallery-nav-${datasetId}` ``
   (`sessionStorage`) — the gallery↔detail hand-off pair, and the reason this list is not four
   entries long. `GalleryPage` owns both, but `ImageDetailPage` is the other end: it rewrites

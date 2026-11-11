@@ -65,10 +65,9 @@ restates its stages.
    M4 also resolves M9's overlap, listed in
    [scale-plan/README.md § Interaction with the other milestones](scale-plan/README.md#interaction-with-the-other-milestones).
    M4's decision, number 4 on its branch, is unaffected; `main`'s next new decision is 16.
-4. Five docs seams are queued in [pending-splits.md](pending-splits.md) (counted
+4. Four docs seams are queued in [pending-splits.md](pending-splits.md) (counted
    2026-11-11): `docs/dev/comfyui/page.md` and `docs/dev/comfyui/queue.md`, both over budget
-   (3,936 and 3,538 words of 3,500), `docs/dev/statistics.md`
-   (stage 4 took it to about 3,300), `docs/scoring.md`'s residual
+   (3,936 and 3,538 words of 3,500), `docs/scoring.md`'s residual
    seam, and `README.md`'s § Features deletion (deferred when its budget went to 4,000). Each
    is picked up by the next session that appends to its file. Re-measure first and check both
    halves land under 60% of budget — five of M3's seven recorded seams had to be re-cut on

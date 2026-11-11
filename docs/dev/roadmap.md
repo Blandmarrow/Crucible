@@ -17,7 +17,7 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-11, stage 6b done)
+## Next session (updated 2026-11-11, stage 6b merged)
 
 0. **M9 comes first** ([decision 13](decisions/13-scale-work-first.md)), planned in
    [scale-plan/README.md](scale-plan/README.md). Stages 1–6 and 8–11 are done; 6b's numbers
@@ -152,7 +152,8 @@ lands second and resolves the overlap. What is left: stage 7.
     app's endpoints and replays each statement for its plan, with a smoke test in CI. Its
     "before" baseline (100k and 250k photo, 20k ComfyUI) is the report's 2026-11-10
     addendum. Detail: `docs/dev/scale-plan/README.md` § Stage 6.
-  - [x] 6b, done 2026-11-11: 6a's runs again, plus 1M warm, 1M cold Stats and similarity.
+  - [x] 6b, merged 2026-11-11 as PR #140: 6a's runs again, plus 1M warm, 1M cold Stats and
+    similarity.
     It found stage 11's index slowing the Stats scans, and fixed a `--compare` crash. The
     numbers are the report's 2026-11-11 addendum. Detail: `docs/dev/scale-plan/README.md`
     § Stage 6.

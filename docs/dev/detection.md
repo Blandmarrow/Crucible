@@ -19,7 +19,7 @@ Detection runs as a background job, same pattern as quality scoring. Four model 
 | `GET /detection/image/{image_id}` | — | `list[DetectionOut]` |
 | `GET /detection/labels/{dataset_id}` | — | `[{label, image_count}]` — distinct labels in the dataset; feeds the ExportPage loss-mask label chips (see `docs/dev/export.md`) and the bulk-delete label chips |
 | `GET /detection/models/{dataset_id}` | — | `[{model, image_count}]` — distinct models in the dataset; feeds the bulk-delete model chips |
-| `GET /detection/stats/{dataset_id}?subfolder=` | — | Aggregate stats for the Stats "Detections & Masks" section (totals, label/model distributions, score & coverage histograms, detections-per-image); see `docs/dev/statistics.md` |
+| `GET /detection/stats/{dataset_id}?subfolder=` | — | Aggregate stats for the Stats "Detections & Masks" section (totals, label/model distributions, score & coverage histograms, detections-per-image); see `docs/dev/statistics-panels.md` § Category panels |
 | `PATCH /detection/{detection_id}` | `DetectionUpdate {label}` | `DetectionOut` — relabel one detection |
 | `DELETE /detection/{detection_id}` | — | 204 — delete one detection (no dialog; regenerable) |
 | `POST /detection/bulk-delete` | `DetectionBulkDeleteRequest` | `{deleted, dry_run}` — scoped delete; `dry_run` returns the match count only |

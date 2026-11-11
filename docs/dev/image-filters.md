@@ -7,7 +7,7 @@ shared contract with seven consumers, which is why they live in their own file: 
 filter bar (`docs/dev/gallery/filters.md` § Gallery filters) and the detail view's boundary prefetch,
 which replays that same memo out of the stored nav context
 (`docs/dev/gallery/nav.md`), the Statistics page's bar click-through
-into `BucketPanel` (`docs/dev/statistics.md`), the video frame-lineage deep link
+into `BucketPanel` (`docs/dev/statistics-panels.md`), the video frame-lineage deep link
 (`docs/dev/video/ui.md`), the license filters shared with export
 (`docs/dev/provenance-api.md`, `docs/dev/export-licensing.md`), and the two endpoints in
 § The same filters over the whole result set below.

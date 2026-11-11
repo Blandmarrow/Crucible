@@ -79,6 +79,28 @@ staleness sweep while still recording the seam.
   until they are repointed. Do **not** take `### VRAM after a run` as the seam: it is six
   lines and belongs exactly where it is, under § Running a scoring run.
 
+`docs/dev/statistics.md` → `docs/dev/statistics-panels.md` was executed on 2026-11-11 on
+`docs/split-database-statistics`, and was **re-cut on execution**. The recorded seam (§ The raw lists load on
+demand, § CSV export, § Bucket drill-down) measured 484 + 294 + 368 = 1,146 words of 3,458, which
+would have left ~2,310 behind, 66% of budget. § Category panels (429 words) went too: it is the same
+browser-side surface (the Detections & Masks and Licenses panels click through into `BucketPanel`, and
+`downloadCsv` emits their sections), so the new file took the name `statistics-panels.md` rather than the
+recorded `statistics-histograms.md`. That left ~1,960 (statistics) and ~1,630 (statistics-panels). The
+entry's Watch-for was right; it missed that a paragraph about `activeSubfolder` persistence sat under
+§ The raw lists load on demand without belonging to it, so it was left in § Frontend page, and
+the `detection.md`, `image-filters.md` and `persistence.md` pointers at the moved sections.
+
+`docs/dev/database.md` → `docs/dev/dataset-folders.md` was executed on 2026-11-11 on
+`docs/split-database-statistics`, and was **re-cut on execution**. The recorded seam (the five
+dataset-folder paragraphs) measured 880 words of 3,297, which would have left ~2,420 behind,
+69% of budget. § The datasets root's one spelling (~560 words) went with it: it is the same
+folder-on-disk subsystem, the sweep's case fold and refusal point into it, and it was already
+half cross-referencing the moved paragraphs. That left ~2,050 (database) and ~1,440
+(dataset-folders). The entry's Watch-for was right; it missed `docs/dev/shared-utilities.md`
+(the `on_disk_spelling` entry), `docs/dev/postmortems/PM-034-sqlite-like-is-case-blind.md`,
+`docs/dev/roadmap-archive/m6-comfy-automation.md` and the roadmap's pending-splits count, all
+of which named the root-spelling section.
+
 A batch of thirteen splits was executed on 2026-11-04 on `feat/m6-comfy-automation`, after
 an audit found ten files at 90%+ of budget with no entry here. Four had recorded seams
 (`docs/dev/comfyui/automation.md`, `docs/runs.md`, `docs/dev/quality/style-similarity.md`,
@@ -237,34 +259,3 @@ utilities → `docs/dev/shared-utilities.md`.
   the folder tree and the grouped table; `styling.md` points at `page.md` for the rail and
   tree's `ContextMenu`. The `planBusy` bullet sits inside the run-bar bullet but belongs with
   the Rows tab's controls.
-
-## docs/dev/database.md
-
-- **Moves:** the five dataset-folder paragraphs in § SQLite engine and schema conventions,
-  from **Dataset-folder deletion & the startup orphan sweep** through **The sweep touches
-  nothing when the DB and the tree visibly disagree**, given `##` headings on the way
-- **New file:** docs/dev/dataset-folders.md (the delete endpoint's folder removal and the
-  startup orphan sweep)
-- **Why here:** M9 stage 2 took the file to ~3,300 of 3,500 words (2026-11-08), not yet over.
-  Those paragraphs are about files on disk, not the schema; the rest of the section is
-  pragmas, FKs and column conventions. Moving them leaves both near 60%.
-- **Watch for:** `roadmap.md` and `scale-plan/README.md` cite "§ The sweep moves data aside
-  and never deletes it", a bold lead-in today, not a heading. § The datasets root's one
-  spelling names "the orphan sweep's refusal in § SQLite engine and schema conventions" and
-  ends on the sweep's case fold; both pointers become cross-file. `multiple-installs.md` and CLAUDE.md's Map row for database.md name the sweep.
-
-## docs/dev/statistics.md
-
-- **Moves:** § The raw lists load on demand, § CSV export and § Bucket drill-down (which
-  holds the **Editable histograms (HistPanel)** paragraph)
-- **New file:** docs/dev/statistics-histograms.md (what a histogram panel does in the
-  browser: custom edges, the raw lists, bar click-through, the CSV)
-- **Why here:** M9 stage 4 took the file to ~3,300 of 3,500 words (2026-11-11), not yet over.
-  Those three sections are `HistPanel` and the page's own exports; what stays is the page's
-  queries, the server aggregation with the `DatasetStats` table, and the category panels.
-  The 1,000-word `DatasetStats` table is why the stay-behind half is the larger one.
-- **Watch for:** `scale-plan/README.md` § Stage 4 as built cites "§ The raw lists load on
-  demand" by name, and three places inside the file point at it (the query table, § Frontend
-  page's error-states paragraph, the Editable histograms paragraph); the first two become
-  cross-file. § Backend aggregation's `score_means` row and its closing paragraph on
-  `DEFAULT_EDGES` both describe what the moved sections consume.

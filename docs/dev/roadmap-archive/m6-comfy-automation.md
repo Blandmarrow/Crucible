@@ -119,7 +119,7 @@ and paths repointed to this folder. All were closed by 2026-11-08.
 - [x] **One stored spelling for the datasets root**, found in PM-034's review: merged as
   PR #113 (2026-11-07). The root is respelled to its on-disk case at startup,
   stored rows are rewritten after a backup, and the file browser's exact matches take
-  `utils.sql_path_equals`. Detail: `docs/dev/database.md` § The datasets root's one
+  `utils.sql_path_equals`. Detail: `docs/dev/dataset-folders.md` § The datasets root's one
   spelling.
 - [x] **Whitespace inside a folder segment**, found in the §8 review: ruled by the user on
   2026-11-08 ([decision 12](../decisions/12-strip-folder-segment-whitespace.md)). Each

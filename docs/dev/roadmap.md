@@ -61,14 +61,13 @@ restates its stages.
    `main`'s head is at the time.
    **Until it is rebased past M9 stage 2, do not start the M4 branch on a real datasets
    folder**: its startup sweep has no dot-skip and deletes `.orphaned` with everything
-   parked there (`docs/dev/database.md` § Two known costs).
+   parked there (`docs/dev/dataset-folders.md` § Two known costs).
    M4 also resolves M9's overlap, listed in
    [scale-plan/README.md § Interaction with the other milestones](scale-plan/README.md#interaction-with-the-other-milestones).
    M4's decision, number 4 on its branch, is unaffected; `main`'s next new decision is 16.
-4. Six docs seams are queued in [pending-splits.md](pending-splits.md) (counted
+4. Four docs seams are queued in [pending-splits.md](pending-splits.md) (counted
    2026-11-11): `docs/dev/comfyui/page.md` and `docs/dev/comfyui/queue.md`, both over budget
-   (3,936 and 3,538 words of 3,500), `docs/dev/database.md`, `docs/dev/statistics.md`
-   (stage 4 took it to about 3,300), `docs/scoring.md`'s residual
+   (3,936 and 3,538 words of 3,500), `docs/scoring.md`'s residual
    seam, and `README.md`'s § Features deletion (deferred when its budget went to 4,000). Each
    is picked up by the next session that appends to its file. Re-measure first and check both
    halves land under 60% of budget — five of M3's seven recorded seams had to be re-cut on
@@ -136,7 +135,7 @@ guard and index pin.
   as PR #124. It cost the score sorts their index (PM-036); stage 9 fixed that.
 - [x] Stage 2: the startup orphan sweep moves folders into `.orphaned/` instead of deleting
   them. Merged 2026-11-08 as PR #125: only a tree with no file is deleted (the user's call),
-  and dot-named folders are skipped. Detail: `docs/dev/database.md` § The sweep moves data
+  and dot-named folders are skipped. Detail: `docs/dev/dataset-folders.md` § The sweep moves data
   aside and never deletes it.
 - [x] Stage 3: quality scoring commits per chunk within each check, with an "only unscored"
   resume option. Merged 2026-11-08 as PR #126: the option takes missing-or-stale rows and

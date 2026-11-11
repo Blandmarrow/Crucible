@@ -19,7 +19,7 @@ their browser storage too.
 
 **Never point two installs at one datasets folder**, nor at a folder that holds anything
 else. At every start, an install moves each folder in its datasets folder that its own
-database does not list into `.orphaned/` there (the orphan sweep, `docs/dev/database.md`).
+database does not list into `.orphaned/` there (the orphan sweep, `docs/dev/dataset-folders.md`).
 The sweep refuses to run in the cases it can recognise (a row outside the folder, rows whose
 folders are all missing, an empty database beside dataset folders), but a second install
 that has datasets of its own looks like none of those, and would move the first one's aside

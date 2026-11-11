@@ -103,7 +103,7 @@ to the nulls-last sorts. That's a trivial conflict, which M4 resolves.
 **Done 2026-11-08** (PR #125), as below, plus two rulings: a folder
 whose tree holds no file is still deleted, by the user's choice, and every dot-named child is
 skipped. The user doc went into `docs/datasets.md`, which already described the sweep, not
-`docs/server.md`. The as-built rules: `docs/dev/database.md` § The sweep moves data aside and
+`docs/server.md`. The as-built rules: `docs/dev/dataset-folders.md` § The sweep moves data aside and
 never deletes it.
 
 **Problem.** `sweep_orphan_dataset_folders` (`backend/services/dataset_service.py:176-337`)
@@ -122,7 +122,7 @@ skip `.orphaned` itself. Grep every other site that lists `datasets_dir`'s child
 browser, the import directory picker) for the same skip. A recovery UI and a retention
 policy can come later, once someone needs them.
 
-**Docs.** The sweep is described in `docs/dev/database.md`, whose paragraph on dataset-folder
+**Docs.** The sweep is described in `docs/dev/dataset-folders.md`, whose paragraph on dataset-folder
 deletion and the startup orphan sweep says it auto-deletes without confirmation and removes
 every unknown child directory. Rewrite that paragraph in the same change. The change is user-visible
 (folders appear in `.orphaned`, and the user deletes them by hand), so a user doc gains a
@@ -222,7 +222,7 @@ pass. Stage 6b measures it.
 
 ### Stage 4 as built
 
-**Done 2026-11-11** (PR #139). The as-built rules are `docs/dev/statistics.md` § The raw lists load on
+**Done 2026-11-11** (PR #139). The as-built rules are `docs/dev/statistics-panels.md` § The raw lists load on
 demand. It differs from the list above in two ways, and fixed two things on the way:
 
 - **The CSV export fetches nothing.** It read the raw lists only for its nine means, so with
@@ -271,7 +271,7 @@ histogram drawn on the wrong scale). The first version of this approach said
    other eleven metrics use hand-picked edges (blur is `20, 40, 80, 150, 300`), which
    `floor()` cannot express. Use one count per edge pair instead:
    `sum(x >= lo AND x < hi)`, half-open like `_bucket` and `rebucketValues`, with the top
-   bin open. `docs/dev/statistics.md` § Bucket drill-down states the half-open rule that
+   bin open. `docs/dev/statistics-panels.md` § Bucket drill-down states the half-open rule that
    every bar's click-through filter depends on.
 2. **The pencil editor needs the raw lists today.** Every score histogram can be rebucketed
    with the user's own edges, kept per dataset in `stats-hist-edges-{metric}-{datasetId}`,

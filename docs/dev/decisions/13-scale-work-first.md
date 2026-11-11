@@ -79,3 +79,12 @@
     Stats cache stays rejected: the raw lists now reach the cache only when a user asks for
     them. The score sort inside a small subfolder, which 6a's baseline found, stays out of
     stage 11 and is parked until a dataset nears 20k images with small subfolders.
+  - **2026-11-11, cursor paging at 1M.** **Decided** (2026-11-11, by the user). Stage 6b
+    gives the figure the 2026-11-09 amendment still owed (the 2026-11-11 addendum of
+    `backend/scripts/scaling_bottlenecks_report.md`): on an indexed sort at 1M rows, page 1
+    costs 6–8 ms and a page 600,000 rows deep costs 41–57 ms, warm. Numbered pages stay,
+    and cursor paging stays rejected. A cursor would not help the pages that are slow at
+    1M either: those are the sorts with no index (1.4–6.3 s), and a cursor needs an index
+    as much as an offset does. Reopen it only if a measured deep page on an indexed sort
+    passes about 200 ms at a size a user really has. 6b ran no cold gallery pass at 1M, so
+    the first deep page after a restart is not covered by these figures.

@@ -113,7 +113,8 @@ scaling review, goes ahead of every other open milestone; **Leaning** on what it
 cursor paging before a measurement, a job checkpoint system, keychain-stored keys, broad
 router splits, and new infrastructure. Amended 2026-11-09: M9 gained stages 9 to 11.
 Amended 2026-11-10: stage 4 shrinks to fetching the raw Stats values on demand, and stage 11
-goes first. Full record:
+goes first. Amended 2026-11-11: the cursor-paging rejection holds at 1M rows, **Decided** by
+the user. Full record:
 [decisions/13-scale-work-first.md](decisions/13-scale-work-first.md).
 
 ## 14. Job throughput is its own milestone
@@ -123,3 +124,12 @@ before M7; **Leaning** on how it is built: CPU-only work first, the GPU scorers'
 change only after a timing, and no batched forward passes. PM-035's one-GPU-thread rule is
 not reopened. Full record:
 [decisions/14-job-throughput-is-its-own-milestone.md](decisions/14-job-throughput-is-its-own-milestone.md).
+
+## 15. The big columns stay in the row; the Stats scans pin their index
+
+**Decided** (2026-11-11, by the user): M9 stage 7 builds no side table for the embeddings
+or `generation_metadata`, since the win shows only at sizes nobody has; reopen it when a
+dataset nears 50,000 photo-shaped or 20,000 ComfyUI-shaped images. The dataset-wide Stats
+scans are pinned to `ix_images_dataset_id`, documented at the pin, at the index and in the
+docs, with a plan guard test. Full record:
+[decisions/15-big-columns-stay-in-the-row.md](decisions/15-big-columns-stay-in-the-row.md).

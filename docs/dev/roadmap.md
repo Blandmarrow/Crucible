@@ -17,21 +17,27 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-11, stage 6b merged)
+## Next session (updated 2026-11-11, stage 7 measured)
 
 0. **M9 comes first** ([decision 13](decisions/13-scale-work-first.md)), planned in
    [scale-plan/README.md](scale-plan/README.md). Stages 1–6 and 8–11 are done; 6b's numbers
    are the 2026-11-11 addendum of `backend/scripts/scaling_bottlenecks_report.md`. Stage
    11's index and gallery changes were not checked by hand in a browser, and stage 4's
-   polling is tested against a simulated job only. **One call for the user comes first:**
-   whether decision 13 records that the cursor-paging rejection holds at 1M (deep pages
-   cost 41–57 ms). **Then stage 7's decision**, weighing 6b's 1M and cold numbers
-   (`scale-plan/README.md` § Stage 7). Time the side table at 1M and cold on the kept
-   bench files in `.claude/local/bench/work/`. Stage 7 also settles 6b's walk-order finding
-   (stage 11's index made the Stats scans read the table in random order): pin
-   `ix_images_dataset_id` only if it still wins with the blobs moved out, and add a plan
-   guard for the Stats statements either way (the user's call, 2026-11-11). The
-   small-subfolder score sort stays parked (`scale-plan/README.md` § Stage 6). See M9 below.
+   polling is tested against a simulated job only. The cursor-paging rejection holds at 1M
+   (decision 13's 2026-11-11 amendment, the user's call), so that question is closed.
+   **Stage 7 is measured and decided**
+   ([decision 15](decisions/15-big-columns-stay-in-the-row.md), 2026-11-11): no side table
+   now, and the dataset-wide Stats scans pinned to `ix_images_dataset_id`. The side table
+   was timed at 1M, warm and cold, with `backend/scripts/bench_split_layout.py`; the tables
+   are the report's stage 7 addendum. **What is left of M9 is the build that decision asks
+   for** (`scale-plan/README.md` § Stage 7, "What is left to build"): the plan guard for the
+   Stats statements, the pin, a timing of a subfolder-scoped Stats call under the forced
+   index before that form is pinned, and the pin's documentation at the pin, at the
+   index's declaration and in the docs. One finding from the measuring waits for a place
+   in the order: style scoring's keyset page sorts the whole dataset for every page (a
+   `TEMP B-TREE` behind `ix_images_dataset_updated_at`), and no test reads that plan. The
+   small-subfolder score sort stays parked (`scale-plan/README.md` § Stage 6). See M9
+   below.
 1. **M10, job throughput, follows M9**
    ([decision 14](decisions/14-job-throughput-is-its-own-milestone.md)). After it comes M7:
    the CLIP QuickGELU plan or Stage 3, neither of which waits on anything (see M7 below).
@@ -58,7 +64,7 @@ restates its stages.
    parked there (`docs/dev/database.md` § Two known costs).
    M4 also resolves M9's overlap, listed in
    [scale-plan/README.md § Interaction with the other milestones](scale-plan/README.md#interaction-with-the-other-milestones).
-   M4's decision, number 4 on its branch, is unaffected; `main`'s next new decision is 15.
+   M4's decision, number 4 on its branch, is unaffected; `main`'s next new decision is 16.
 4. Six docs seams are queued in [pending-splits.md](pending-splits.md) (counted
    2026-11-11): `docs/dev/comfyui/page.md` and `docs/dev/comfyui/queue.md`, both over budget
    (3,936 and 3,538 words of 3,500), `docs/dev/database.md`, `docs/dev/statistics.md`
@@ -122,7 +128,9 @@ Comes before every other open milestone
 ([decision 13](decisions/13-scale-work-first.md)). Gate: stages 1–5 and 9–11 merged with
 their tests and docs, and stage 6's numbers recorded; stage 7 is then built or ruled out by
 a decision. Plan: [scale-plan/README.md](scale-plan/README.md). Does not wait for M4, which
-lands second and resolves the overlap. What is left: stage 7.
+lands second and resolves the overlap. Stage 7's split is ruled out for now by
+[decision 15](decisions/15-big-columns-stay-in-the-row.md). What is left: stage 7's plan
+guard and index pin.
 
 - [x] Stage 1: a unique tie-breaker (`Image.id`) for every gallery sort. Merged 2026-11-08
   as PR #124. It cost the score sorts their index (PM-036); stage 9 fixed that.
@@ -158,9 +166,15 @@ lands second and resolves the overlap. What is left: stage 7.
     numbers are the report's 2026-11-11 addendum. Detail: `docs/dev/scale-plan/README.md`
     § Stage 6.
 - [ ] Stage 7: decide on, then maybe build, a table of their own for the embeddings and for
-  `generation_metadata`, which is the larger of the two on ComfyUI images. 6b's numbers are
-  in; the decision is next. It also decides the Stats scans' index and adds their plan
-  guard (`scale-plan/README.md` § Stage 7).
+  `generation_metadata`, which is the larger of the two on ComfyUI images. It also decides
+  the Stats scans' index and adds their plan guard (`scale-plan/README.md` § Stage 7).
+  - [x] Measure: `backend/scripts/bench_split_layout.py`, at 20k, 100k and 1M, warm and
+    cold, on two machines (2026-11-11; the report's stage 7 addendum).
+  - [x] Decide ([decision 15](decisions/15-big-columns-stay-in-the-row.md), 2026-11-11):
+    no side table now, reopened when a dataset nears 50,000 photo-shaped or 20,000
+    ComfyUI-shaped images; the dataset-wide Stats scans pinned to `ix_images_dataset_id`.
+  - [ ] Build the plan guard for the Stats statements and the pin, with the pin's
+    documentation. Time a subfolder-scoped Stats call before pinning that form.
 - [x] Stage 8: Retry for interrupted jobs. Merged 2026-11-08 as PR #127, for `quality_score`
   (a retry resumes; failed and cancelled jobs; none for a run's child, by the user's calls),
   hand-checked through the API and the page. Detail:

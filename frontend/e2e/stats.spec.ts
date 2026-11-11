@@ -263,3 +263,81 @@ test("a dataset's custom edges do not leak to the next dataset viewed", async ({
   expect(await page.evaluate((k) => localStorage.getItem(k), `stats-hist-edges-saturation-${plain.id}`)).toBeNull()
   expect(await page.evaluate((k) => localStorage.getItem(k), `stats-hist-edges-saturation-${custom.id}`)).toBe('0.5')
 })
+
+/**
+ * Make the app believe a quality job is running on `datasetId`, which is what
+ * turns on the Stats page's 5 s polling. Only the "what is running now" list the
+ * job store seeds itself from is answered here; the page's own requests all go
+ * to the real server. A real scoring job needs cv2 and is over in milliseconds
+ * on five tiny images, so it could never span a poll.
+ */
+async function fakeRunningJob(page: Page, datasetId: string) {
+  const now = new Date().toISOString()
+  await page.route(/\/api\/v1\/jobs\/\?[^#]*status=pending/, (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify([{
+      id: 'stub-stats-poll', job_type: 'quality_score', label: 'stub scoring job', status: 'running',
+      dataset_id: datasetId, total_items: 10, done_items: 1, error_msg: null, result_data: {},
+      config: {}, created_at: now, started_at: now, finished_at: null, retryable: false,
+    }]),
+  }))
+}
+
+test('during a job the page polls /stats, and the raw lists only while a panel needs them', async ({ page, request }) => {
+  test.setTimeout(90_000)
+  const ds = await stageScores(request, 'e2e-stats-poll')
+  await fakeRunningJob(page, ds.id)
+  const raw = watchRawRequests(page)
+  const isStats = (r: { url(): string }) => new URL(r.url()).pathname.endsWith(`/datasets/${ds.id}/stats`)
+  const twoStatsPolls = async () => {
+    await page.waitForRequest(isStats, { timeout: 20_000 })
+    await page.waitForRequest(isStats, { timeout: 20_000 })
+  }
+
+  await page.goto(`/datasets/${ds.id}/stats`)
+  const sat = saturationPanel(page)
+  await expect(sat.getByTitle('0.2–0.4: 1', { exact: true })).toBeVisible()
+
+  // The job is on: /stats is polled, the raw lists are not asked for at all.
+  await twoStatsPolls()
+  expect(raw).toEqual([])
+
+  // An open editor needs them, so they load and then join the poll.
+  await sat.getByTitle('Edit bucket edges').click()
+  await expect.poll(() => raw.length, { timeout: 25_000 }).toBeGreaterThanOrEqual(2)
+
+  // Closed without applying: nothing needs them, and their polling stops.
+  await sat.getByPlaceholder('e.g. 4, 6, 8').press('Escape')
+  await expect(sat.getByPlaceholder('e.g. 4, 6, 8')).toHaveCount(0)
+  const settled = raw.length
+  await twoStatsPolls()
+  expect(raw.length).toBe(settled)
+})
+
+// A failed refetch keeps the previous list, so the bars stay on screen. Without
+// a line saying so they look current while the panels beside them keep moving.
+test('a custom histogram says when a refresh of the raw lists fails, and recovers', async ({ page, request }) => {
+  test.setTimeout(90_000)
+  const ds = await stageScores(request, 'e2e-stats-refetch-fail')
+  await page.addInitScript(([k, v]) => localStorage.setItem(k, v), [`stats-hist-edges-saturation-${ds.id}`, '0.5'])
+  await fakeRunningJob(page, ds.id)
+  let failing = false
+  await page.route(/\/score-values/, (route) => failing
+    ? route.fulfill({ status: 500, contentType: 'application/json', body: '{"detail":"boom"}' })
+    : route.continue())
+
+  await page.goto(`/datasets/${ds.id}/stats`)
+  const sat = saturationPanel(page)
+  const notice = sat.getByText('Failed to refresh score values — these buckets may be out of date.')
+  await expect(sat.getByTitle('< 0.5: 2', { exact: true })).toBeVisible()
+  await expect(notice).toHaveCount(0)
+
+  failing = true
+  await expect(notice).toBeVisible({ timeout: 30_000 })
+  // The last good bars are still drawn, under the warning.
+  await expect(sat.getByTitle('< 0.5: 2', { exact: true })).toBeVisible()
+
+  failing = false
+  await expect(notice).toHaveCount(0, { timeout: 30_000 })
+})

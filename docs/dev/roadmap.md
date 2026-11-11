@@ -30,8 +30,8 @@ restates its stages.
    parked, with the reason in `scale-plan/README.md` § Stage 11 as built). Its index and
    gallery changes were not checked by hand in a browser, and the numbers are 6b's job. Stage 4 was shrunk on
    2026-11-10 (decision 13's amendment) to fetching the raw Stats values on demand, because
-   its full design only pays at 100k images or so; its polling during a real job reached no
-   gate. The small-subfolder score sort that 6a's
+   its full design only pays at 100k images or so; its polling is tested against a simulated
+   job only. The small-subfolder score sort that 6a's
    baseline found is parked until a dataset nears 20k images with small subfolders
    (`scale-plan/README.md` § Stage 6). **Next is stage 6b**, then 7. 6b re-runs 6a's baseline
    commands with `--reuse-db` and `--compare`, so keep the seeded files and the baseline JSON

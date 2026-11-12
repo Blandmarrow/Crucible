@@ -238,6 +238,28 @@ def test_workflow_save_leaves_thresholds_alone(tmp_path):
     run(scenario())
 
 
+def test_ollama_max_concurrent_default_round_trip_and_bounds(tmp_path):
+    """The app-wide Ollama requests-in-flight setting (M10 T2): default 1, 1 to 16."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            r = await env.client.get(f"{API}/settings/thresholds")
+            assert r.status_code == 200, r.text
+            assert r.json()["ollama_max_concurrent"] == 1
+
+            for bad in (0, 17):
+                r = await env.client.patch(f"{API}/settings/thresholds", json={"ollama_max_concurrent": bad})
+                assert r.status_code == 422, f"{bad}: {r.text}"
+
+            r = await env.client.patch(f"{API}/settings/thresholds", json={"ollama_max_concurrent": 3})
+            assert r.status_code == 200 and r.json()["ollama_max_concurrent"] == 3, r.text
+            assert (await env.client.get(f"{API}/settings/thresholds")).json()["ollama_max_concurrent"] == 3
+            # Another setting's PATCH leaves it alone.
+            await env.client.patch(f"{API}/settings/thresholds", json={"blur_threshold": 50.0})
+            assert (await env.client.get(f"{API}/settings/thresholds")).json()["ollama_max_concurrent"] == 3
+
+    run(scenario())
+
+
 # --- comfy gen settings ---------------------------------------------------
 
 

@@ -31,43 +31,32 @@ def _encode_image(image_path: str, max_px: int, target_w: int | None, target_h: 
     return base64.b64encode(buf.getvalue()).decode()
 
 
-def _caption_sync(
-    image_path: str,
-    base_url: str,
-    api_key: str,
-    model_name: str,
-    prompt: str,
-    max_px: int,
-    max_tokens: int,
-    target_w: int | None,
-    target_h: int | None,
-    timeout_s: float,
-) -> str:
+def make_client(base_url: str, api_key: str, timeout_s: float):
+    """One `AsyncOpenAI` client for a whole caption job (M10 T2), or None when the
+    `openai` package is missing (it is not in the CI requirements).
+
+    max_retries=0: the SDK defaults to 2 and retries timeouts, so the configured
+    timeout would silently be a 3x ceiling. One attempt is what the UI promises.
+    The cost is losing automatic 429/5xx backoff for cloud providers — acceptable,
+    since a failed image is recoverable by re-running with the Uncaptioned-only
+    scope, and a 429 gets its own headline telling the user to lower Max concurrent
+    requests (PM-023).
+
+    The caller owns the client and closes it (`async with` or `await client.close()`)
+    after every request it sent has settled. Tests replace this function: the SDK
+    is built on `httpx2`, so an `httpx` transport cannot stand in for it.
+    """
     try:
-        from openai import OpenAI
+        from openai import AsyncOpenAI
     except ImportError:
         logger.error("openai package not installed; run: pip install openai>=1.0")
-        return ""
+        return None
+    return AsyncOpenAI(base_url=base_url, api_key=api_key or "no-key", timeout=timeout_s, max_retries=0)
 
-    b64 = _encode_image(image_path, max_px, target_w, target_h)
-    # max_retries=0: the SDK defaults to 2 and retries timeouts, so the configured
-    # timeout would silently be a 3x ceiling. One attempt is what the UI promises.
-    # The cost is losing automatic 429/5xx backoff for cloud providers — acceptable,
-    # since a failed image is recoverable by re-running with the Uncaptioned-only scope.
-    client = OpenAI(base_url=base_url, api_key=api_key or "no-key", timeout=timeout_s, max_retries=0)
-    resp = client.chat.completions.create(
-        model=model_name,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
-                    {"type": "text", "text": prompt},
-                ],
-            }
-        ],
-        max_tokens=max_tokens,
-    )
+
+def _caption_text(resp, model_name: str) -> str:
+    """The caption text out of a chat completion, with the two diagnoses a bare
+    string cannot carry logged on the way."""
     if not resp.choices:
         logger.warning("Provider returned no choices (choices=%r); returning empty caption", resp.choices)
         return ""
@@ -82,14 +71,14 @@ def _caption_sync(
         has_reasoning = bool(getattr(choice.message, "reasoning_content", None))
         logger.warning(
             "Model '%s' returned an empty caption (finish_reason=%r, reasoning_content=%s). "
-            "If this is a reasoning model it may have spent its whole budget thinking \u2014 "
-            "raise Max tokens in Settings \u2192 LLM Providers.",
+            "If this is a reasoning model it may have spent its whole budget thinking — "
+            "raise Max tokens in Settings → LLM Providers.",
             model_name, finish_reason, "present" if has_reasoning else "absent",
         )
     elif finish_reason == "length":
         logger.warning(
             "Model '%s' hit its token limit mid-caption (finish_reason='length'); the caption "
-            "is truncated. Raise Max tokens in Settings \u2192 LLM Providers.",
+            "is truncated. Raise Max tokens in Settings → LLM Providers.",
             model_name,
         )
     return text
@@ -107,10 +96,39 @@ async def caption_image(
     target_w: int | None = None,
     target_h: int | None = None,
     timeout_s: float = 300.0,
+    client=None,
 ) -> str:
+    """Caption one image. `client` is the job's shared client from `make_client`;
+    without one, a client is built for this call and closed after it.
+
+    The request is async, so a job's hard cancel aborts it rather than leaving a
+    thread waiting on the socket. The encode is CPU work and stays on the default
+    pool, here in `caption_image` where the GPU thread guard expects it.
+    """
     prompt = custom_prompt or STYLE_PROMPTS.get(style, STYLE_PROMPTS["detailed"])
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(
-        None, _caption_sync, image_path, base_url, api_key, model_name, prompt, max_px, max_tokens,
-        target_w, target_h, timeout_s,
-    )
+    own_client = client is None
+    if own_client:
+        client = make_client(base_url, api_key, timeout_s)
+        if client is None:
+            return ""
+    try:
+        b64 = await asyncio.get_running_loop().run_in_executor(
+            None, _encode_image, image_path, max_px, target_w, target_h
+        )
+        resp = await client.chat.completions.create(
+            model=model_name,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ],
+            max_tokens=max_tokens,
+        )
+    finally:
+        if own_client:
+            await client.close()
+    return _caption_text(resp, model_name)

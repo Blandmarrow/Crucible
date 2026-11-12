@@ -116,7 +116,7 @@ Chain two or more captioning steps that run in sequence as a single job:
 
 ## Job queuing
 
-Multiple captioning or pipeline jobs can be submitted while one is already running; they execute serially and each can be cancelled independently. A queue badge in the page header shows how many jobs are waiting. Each job shows a descriptive auto-generated name (model and image count) in the queue; enter a custom **label** in the optional field before starting to distinguish runs more clearly.
+Multiple captioning or pipeline jobs can be submitted while one is already running; they execute serially and each can be cancelled independently. Within one job, an OpenAI-compatible provider or Ollama can be sent several images at once: see **Max concurrent requests** in [Settings](settings.md#llm-providers). A queue badge in the page header shows how many jobs are waiting. Each job shows a descriptive auto-generated name (model and image count) in the queue; enter a custom **label** in the optional field before starting to distinguish runs more clearly.
 
 ## When images come back uncaptioned
 
@@ -126,7 +126,7 @@ why, and the same sentence appears on the run's row in the Logs page. Nothing is
 for those images — in particular, a caption they already had is left alone rather than
 blanked.
 
-Three reasons, each with its own fix:
+Four reasons, each with its own fix:
 
 - **"came back empty — the model returned no caption text."** The provider answered, but
   with nothing in it. The usual cause is a reasoning model spending its entire token budget
@@ -138,7 +138,13 @@ Three reasons, each with its own fix:
   phrases** removed all of it. Turn the matching option off to see what the model actually
   said, or change the prompt.
 - **"timed out."** The provider did not answer within its configured timeout — raise
-  **Timeout** in Settings → LLM Providers.
+  **Timeout** in Settings → LLM Providers. With a provider's **Max concurrent requests**
+  above 1, a local server that queues the extra requests can time them out too; lower
+  that instead. Ollama reports a timed-out request as *returned no caption text*, with a
+  note to lower its Max concurrent requests when that is above 1.
+- **"refused ... for too many requests (HTTP 429)."** A hosted provider, often on a free
+  tier, turned away requests that arrived too fast. Lower **Max concurrent requests** in
+  Settings → LLM Providers, or run again later.
 
 These are per-image and usually intermittent, so the quickest recovery is to re-run over
 the images that still have no caption: set **Scope** to *Uncaptioned only* and leave

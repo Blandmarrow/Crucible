@@ -63,13 +63,44 @@ def _no_real_llm_server(monkeypatch):
     at `127.0.0.1:1234` — LM Studio's real port on a dev machine — so a test could list,
     or unload, the developer's own models. Every call now fails as a refused connection
     would, which is what CI sees; a test that wants a server sets its own transport.
+
+    The two remote captioners get the same treatment (M10 T2). Ollama's clients are
+    built on `ollama_captioner._HTTP_TRANSPORT`. The OpenAI SDK is built on `httpx2`,
+    so no `httpx` transport reaches it: `openai_compat_captioner.make_client` is
+    replaced by a client whose every request fails as a refused connection would. A
+    test that wants a server patches `make_client` (or `caption_image`) itself.
     """
+    from backend.ml import ollama_captioner, openai_compat_captioner
     from backend.services import run_service
 
     def _refuse(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("no LLM server in tests", request=request)
 
     monkeypatch.setattr(run_service, "_LLM_TRANSPORT", httpx.MockTransport(_refuse))
+    monkeypatch.setattr(ollama_captioner, "_HTTP_TRANSPORT", httpx.MockTransport(_refuse))
+    monkeypatch.setattr(openai_compat_captioner, "make_client", lambda *a, **k: RefusingOpenAIClient())
+
+
+class RefusingOpenAIClient:
+    """An `AsyncOpenAI` stand-in whose every chat request fails as a refused
+    connection would. See `_no_real_llm_server`."""
+
+    class _Completions:
+        async def create(self, **_kwargs):
+            raise ConnectionError("no LLM server in tests")
+
+    def __init__(self):
+        self.chat = type("_Chat", (), {"completions": self._Completions()})()
+        self.closed = False
+
+    async def close(self):
+        self.closed = True
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc_info):
+        await self.close()
 
 
 @pytest.fixture(autouse=True)

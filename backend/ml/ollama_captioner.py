@@ -10,6 +10,15 @@ from backend.ml.image_utils import preprocess_for_caption
 
 logger = logging.getLogger(__name__)
 
+# The transport every Ollama client here is built on. None is httpx's real one;
+# tests set a `httpx.MockTransport` (the autouse `_no_real_llm_server` fixture
+# refuses every request), so no test reaches a developer's own Ollama.
+_HTTP_TRANSPORT: httpx.AsyncBaseTransport | None = None
+
+# One request's ceiling. A job's requests share one client (M10 T2), and a
+# request the server queues behind the ones in flight spends its wait here too.
+CAPTION_TIMEOUT_S = 300
+
 STYLE_PROMPTS = {
     "detailed": "Describe this image in rich detail, covering subjects, setting, lighting, style, and mood.",
     "short": "Briefly describe this image in one or two sentences.",
@@ -36,7 +45,7 @@ def _resize_for_ollama(
 
 async def list_vision_models() -> list[dict]:
     try:
-        async with httpx.AsyncClient(timeout=5) as client:
+        async with httpx.AsyncClient(timeout=5, transport=_HTTP_TRANSPORT) as client:
             resp = await client.get(f"{settings.ollama_base_url}/api/tags")
             if resp.status_code == 200:
                 data = resp.json()
@@ -51,6 +60,11 @@ async def list_vision_models() -> list[dict]:
     return []
 
 
+def make_client() -> httpx.AsyncClient:
+    """One client for a whole caption job (M10 T2); the caller closes it."""
+    return httpx.AsyncClient(timeout=CAPTION_TIMEOUT_S, transport=_HTTP_TRANSPORT)
+
+
 async def caption_image(
     image_path: str,
     model_name: str,
@@ -58,28 +72,40 @@ async def caption_image(
     custom_prompt: str = "",
     target_w: int | None = None,
     target_h: int | None = None,
+    client: httpx.AsyncClient | None = None,
 ) -> str:
+    """Caption one image. `client` is the job's shared client from `make_client`;
+    without one, a client is built for this call and closed after it.
+
+    Every failure is logged and returned as "", which the router reports as an
+    empty caption. A cancel is not an `Exception`, so it still propagates.
+    """
     prompt = custom_prompt or STYLE_PROMPTS.get(style, STYLE_PROMPTS["detailed"])
-    b64 = await asyncio.get_event_loop().run_in_executor(
+    b64 = await asyncio.get_running_loop().run_in_executor(
         None, _resize_for_ollama, image_path, settings.ollama_image_max_px, target_w, target_h
     )
 
+    own_client = client is None
+    if own_client:
+        client = make_client()
     try:
-        async with httpx.AsyncClient(timeout=300) as client:
-            resp = await client.post(
-                f"{settings.ollama_base_url}/api/generate",
-                json={
-                    "model": model_name,
-                    "prompt": prompt,
-                    "images": [b64],
-                    "stream": False,
-                },
-            )
-            resp.raise_for_status()
-            return resp.json().get("response", "").strip()
+        resp = await client.post(
+            f"{settings.ollama_base_url}/api/generate",
+            json={
+                "model": model_name,
+                "prompt": prompt,
+                "images": [b64],
+                "stream": False,
+            },
+        )
+        resp.raise_for_status()
+        return resp.json().get("response", "").strip()
     except Exception as e:
         logger.error("Ollama error on %s: %r", image_path, e, exc_info=True)
         return ""
+    finally:
+        if own_client:
+            await client.aclose()
 
 
 async def caption_batch(

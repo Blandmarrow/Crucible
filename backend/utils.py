@@ -1,4 +1,5 @@
 import asyncio
+import collections
 import errno
 import json
 import logging
@@ -8,11 +9,11 @@ import shutil
 import stat
 import sys
 import time
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Iterator, Sequence
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Generic, TypeVar
 
 import regex as _regex
 from fastapi import HTTPException
@@ -24,6 +25,7 @@ if TYPE_CHECKING:  # `models/image.py` imports this module, so a runtime import 
 logger = logging.getLogger(__name__)
 
 _T = TypeVar("_T")
+_R = TypeVar("_R")
 
 
 def chunked(seq: Sequence[_T], size: int = 10_000) -> Iterator[Sequence[_T]]:
@@ -1111,3 +1113,109 @@ def subsume_tags(tags: list[str]) -> list[str]:
         if not subsumed:
             survivors.append(tag)
     return survivors
+
+
+class InOrderCalls(Generic[_T, _R]):
+    """Run `call(item)` for each item as asyncio tasks, at most `bound` at once,
+    and hand the results back oldest first (M10 T2).
+
+    Use it as both a context manager and an iterator::
+
+        calls = InOrderCalls(items, call, bound, stop=lambda: cancel_requested(job_id))
+        async with calls:
+            async for i, item, result, exc in calls:
+                ...  # serial, in input order
+
+    - **Refill on demand.** New calls start only when the caller asks for the
+      next result, so at `bound=1` call k+1 starts after the caller has
+      finished with result k: exactly a plain serial loop.
+    - **Results in input order.** The oldest call is awaited first, so the
+      caller's serial work (its counts, its saves, its name picking) runs in
+      the same order as a serial loop, whatever order the calls finish in.
+    - **`stop()` is checked before every new call.** Once it is true nothing
+      new is sent and `stopped` is set; the calls already in flight are still
+      handed back, so the caller can count and keep them. `stopped` stays
+      False when every item had been sent before `stop()` turned true.
+    - **A call's `Exception` comes back as `exc`**, never raised. A call that
+      was cancelled while the caller itself is not being cancelled comes back
+      as a `RuntimeError` too: a `CancelledError` escaping here would read to
+      `JobQueue` as a user's Stop.
+    - **Leaving the block cancels and awaits every unfinished call**, so an
+      error or a hard cancel in the caller's loop leaks no task and nothing
+      outlives a client the caller closes after the block.
+    - `started` counts calls whose coroutine began running; a call cancelled
+      before it began is not counted.
+
+    It runs coroutines on the event loop and never dispatches to a thread, so
+    any `run_in_executor` stays in the caller's own code where the GPU thread
+    guard (`test_gpu_executor_guard.py`) can see it. For executor futures with
+    the same oldest-first draining, see `dataset_service._InOrderWindow`.
+    """
+
+    def __init__(
+        self,
+        items: Sequence[_T],
+        call: Callable[[_T], Awaitable[_R]],
+        bound: int,
+        *,
+        stop: Callable[[], bool] = lambda: False,
+    ):
+        self._items = items
+        self._call = call
+        self._bound = max(1, int(bound))
+        self._stop = stop
+        self._next = 0
+        self._q: collections.deque[tuple[int, _T, asyncio.Task]] = collections.deque()
+        self._current: asyncio.Task | None = None
+        self.started = 0
+        self.stopped = False
+
+    async def _run(self, item: _T) -> _R:
+        self.started += 1
+        return await self._call(item)
+
+    async def __aenter__(self) -> "InOrderCalls[_T, _R]":
+        return self
+
+    async def __aexit__(self, *exc_info) -> None:
+        tasks = [t for _i, _item, t in self._q]
+        if self._current is not None:
+            tasks.append(self._current)
+        self._q.clear()
+        self._current = None
+        for t in tasks:
+            t.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    def __aiter__(self) -> "InOrderCalls[_T, _R]":
+        return self
+
+    async def __anext__(self) -> tuple[int, _T, _R | None, Exception | None]:
+        while len(self._q) < self._bound and self._next < len(self._items):
+            if self._stop():
+                self.stopped = True
+                break
+            idx = self._next
+            item = self._items[idx]
+            self._next += 1
+            self._q.append((idx, item, asyncio.create_task(self._run(item))))
+        if not self._q:
+            raise StopAsyncIteration
+        idx, item, task = self._q.popleft()
+        # Held until the await settles, so a hard cancel landing on this await
+        # leaves the task where `__aexit__` cancels and awaits it.
+        self._current = task
+        try:
+            result = await task
+        except asyncio.CancelledError:
+            me = asyncio.current_task()
+            if me is not None and me.cancelling():
+                raise
+            self._current = None
+            return idx, item, None, RuntimeError("the request was cancelled")
+        except Exception as exc:
+            self._current = None
+            return idx, item, None, exc
+        self._current = None
+        return idx, item, result, None

@@ -234,3 +234,28 @@ def test_failure_headline_attributes_the_two_sentences_independently():
     assert two is not None
     assert "'openrouter' did not respond within its 60s" in two
     assert "Max tokens" in two
+
+
+def test_failure_headline_names_a_rate_limit_and_the_fix():
+    class _Cloud:
+        name = "cloudy"
+        timeout_s = 60
+
+    only = _failure_headline(0, None, rate_limited=3, rate_limit_provider=_Cloud())
+    assert only == (
+        "3 image(s) were refused by provider 'cloudy' for too many requests (HTTP 429). "
+        "Lower Max concurrent requests in Settings → LLM Providers, or run again later."
+    )
+    # No provider to name still reads sensibly, and joins with the other sentences.
+    both = _failure_headline(1, _Prov(), empty=2, rate_limited=1)
+    assert both is not None
+    assert "'?' for too many requests" in both and "1 image(s) timed out" in both
+    assert "2 image(s) came back empty" in both
+    assert _failure_headline(0, None, rate_limited=0) is None
+
+
+def test_failure_headline_positional_calls_are_unchanged_by_the_new_keywords():
+    # The 5-positional-argument shape both loops used before M10 T2.
+    assert _failure_headline(0, _Prov(), 2, 1, _Prov()) == _failure_headline(
+        0, _Prov(), 2, 1, _Prov(), rate_limited=0, rate_limit_provider=None)
+    assert "HTTP 429" not in _failure_headline(1, _Prov(), 2, 1, _Prov())

@@ -9,6 +9,8 @@ export interface ProviderOut {
   max_image_px: number;
   max_tokens: number;
   timeout_s: number;
+  /** Caption requests sent at once (1-16). */
+  max_concurrent: number;
   is_remote: boolean;
   /** The explicit setting; null = follow the URL. */
   billed: boolean | null;
@@ -25,6 +27,7 @@ export interface ProviderCreate {
   max_image_px?: number;
   max_tokens?: number;
   timeout_s?: number;
+  max_concurrent?: number;
   billed?: boolean;
 }
 
@@ -36,6 +39,7 @@ export interface ProviderUpdate {
   max_image_px?: number;
   max_tokens?: number;
   timeout_s?: number;
+  max_concurrent?: number;
   billed?: boolean;
 }
 

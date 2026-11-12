@@ -307,6 +307,38 @@ def test_provider_defaults_and_bounds(tmp_path):
     run(scenario())
 
 
+def test_provider_max_concurrent_default_bounds_and_patch(tmp_path):
+    """Requests in flight per caption job (M10 T2): default 1, 1 to 16."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            r = await env.client.post(f"{API}/providers/", json={
+                "name": "p", "base_url": "http://localhost:1234/v1"})
+            assert r.status_code == 201, r.text
+            assert r.json()["max_concurrent"] == 1
+            pid = r.json()["id"]
+
+            for bad in (0, 17):
+                r = await env.client.post(f"{API}/providers/", json={
+                    "name": f"bad{bad}", "base_url": "http://x/v1", "max_concurrent": bad})
+                assert r.status_code == 422, f"max_concurrent={bad}: {r.text}"
+                r = await env.client.patch(f"{API}/providers/{pid}", json={"max_concurrent": bad})
+                assert r.status_code == 422, f"PATCH max_concurrent={bad}: {r.text}"
+
+            r = await env.client.post(f"{API}/providers/", json={
+                "name": "wide", "base_url": "http://x/v1", "max_concurrent": 16})
+            assert r.status_code == 201 and r.json()["max_concurrent"] == 16, r.text
+
+            r = await env.client.patch(f"{API}/providers/{pid}", json={"max_concurrent": 5})
+            assert r.status_code == 200 and r.json()["max_concurrent"] == 5, r.text
+            listed = [p for p in (await env.client.get(f"{API}/providers/")).json() if p["id"] == pid]
+            assert listed[0]["max_concurrent"] == 5
+            # An unrelated PATCH leaves it alone.
+            r = await env.client.patch(f"{API}/providers/{pid}", json={"default_model": "m"})
+            assert r.json()["max_concurrent"] == 5
+
+    run(scenario())
+
+
 # --- filesystem ----------------------------------------------------------
 
 

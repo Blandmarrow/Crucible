@@ -44,6 +44,7 @@ const DEFAULTS: Thresholds = {
   comfyui_url: "",
   comfy_workflow_dir: "",
   llm_gpu_handoff: false,
+  ollama_max_concurrent: 1,
 };
 
 interface ThresholdField {
@@ -316,7 +317,7 @@ export default function SettingsPage() {
     !!captioningModels && !!captionDefaultModel && !modelOpts.some((o) => o.id === captionDefaultModel);
   const resolvedDefaultModel = staleDefaultModel ? "" : captionDefaultModel;
 
-  const [providerForm, setProviderForm] = useState<ProviderCreate & { id?: string }>({ name: "", base_url: "", api_key: "", default_model: "", max_image_px: 1024, max_tokens: 2048, timeout_s: 300 });
+  const [providerForm, setProviderForm] = useState<ProviderCreate & { id?: string }>({ name: "", base_url: "", api_key: "", default_model: "", max_image_px: 1024, max_tokens: 2048, timeout_s: 300, max_concurrent: 1 });
   const [showProviderForm, setShowProviderForm] = useState(false);
   const [editingProviderId, setEditingProviderId] = useState<string | null>(null);
   const [deletingProvider, setDeletingProvider] = useState<ProviderOut | null>(null);
@@ -347,13 +348,13 @@ export default function SettingsPage() {
   }
 
   function openAddProvider() {
-    setProviderForm({ name: "", base_url: "http://localhost:1234/v1", api_key: "", default_model: "", max_image_px: 1024, max_tokens: 2048, timeout_s: 300 });
+    setProviderForm({ name: "", base_url: "http://localhost:1234/v1", api_key: "", default_model: "", max_image_px: 1024, max_tokens: 2048, timeout_s: 300, max_concurrent: 1 });
     setEditingProviderId(null);
     setShowProviderForm(true);
   }
 
   function openEditProvider(p: ProviderOut) {
-    setProviderForm({ name: p.name, base_url: p.base_url, api_key: "", default_model: p.default_model, max_image_px: p.max_image_px, max_tokens: p.max_tokens, timeout_s: p.timeout_s, billed: p.billed ?? undefined });
+    setProviderForm({ name: p.name, base_url: p.base_url, api_key: "", default_model: p.default_model, max_image_px: p.max_image_px, max_tokens: p.max_tokens, timeout_s: p.timeout_s, max_concurrent: p.max_concurrent, billed: p.billed ?? undefined });
     setEditingProviderId(p.id);
     setShowProviderForm(true);
   }
@@ -369,6 +370,7 @@ export default function SettingsPage() {
         max_image_px: providerForm.max_image_px,
         max_tokens: providerForm.max_tokens,
         timeout_s: providerForm.timeout_s,
+        max_concurrent: providerForm.max_concurrent,
         ...(providerForm.billed !== undefined ? { billed: providerForm.billed } : {}),
       }});
     } else {
@@ -1225,7 +1227,7 @@ export default function SettingsPage() {
                   <div className="form-row" style={{ gap: 8 }}>
                     <div style={{ minWidth: 120 }}>
                       <label style={{ fontSize: 12.5 }}>Timeout</label>
-                      <p style={{ fontSize: 11, color: "var(--fg-mute)", margin: "2px 0 0" }}>Seconds to wait for one response — one attempt, not a retried one. A slow local reasoning model on a large image can exceed the 300 s default. Also bounds <strong>Stop</strong>: a captioning run is only interrupted between images, so stopping waits out the request in flight. 10–3600.</p>
+                      <p style={{ fontSize: 11, color: "var(--fg-mute)", margin: "2px 0 0" }}>Seconds to wait for one response — one attempt, not a retried one. A slow local reasoning model on a large image can exceed the 300 s default. Also bounds <strong>Stop</strong>: stopping a captioning run sends no new request but waits out the requests in flight. 10–3600.</p>
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       <NumberField
@@ -1237,6 +1239,22 @@ export default function SettingsPage() {
                         style={{ width: 140 }}
                       />
                       <span className="mono" style={{ fontSize: 12, color: "var(--fg-mute)" }}>s</span>
+                    </div>
+                  </div>
+                  <div className="form-row" style={{ gap: 8 }}>
+                    <div style={{ minWidth: 120 }}>
+                      <label style={{ fontSize: 12.5 }}>Max concurrent requests</label>
+                      <p style={{ fontSize: 11, color: "var(--fg-mute)", margin: "2px 0 0" }}>How many images to send at once. Match your server's parallel slots; extra requests wait in its queue and that wait counts against Timeout. 1–16.</p>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <NumberField
+                        className="input"
+                        min={1} max={16}
+                        value={providerForm.max_concurrent ?? 1}
+                        clamp={(n) => Math.min(16, Math.max(1, Math.round(n)))}
+                        onCommit={(n) => setProviderForm((f) => ({ ...f, max_concurrent: n }))}
+                        style={{ width: 140 }}
+                      />
                     </div>
                   </div>
                   {/* Untouched (billed undefined) follows the URL, as the server does for NULL. */}
@@ -1259,6 +1277,37 @@ export default function SettingsPage() {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {activeTab === "providers" && (
+        <div className="panel" style={{ marginTop: 16 }}>
+          <div className="panel-h">
+            <h3>Ollama</h3>
+          </div>
+          <div className="panel-b">
+            <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 6 }}>Max concurrent requests</div>
+            <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "0 0 10px" }}>
+              How many images a caption job sends Ollama at once. Raise it only if Ollama runs with OLLAMA_NUM_PARALLEL above 1.
+            </p>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <NumberField
+                className="input"
+                min={1} max={16}
+                value={form.ollama_max_concurrent ?? 1}
+                clamp={(n) => Math.min(16, Math.max(1, Math.round(n)))}
+                onCommit={(n) => setForm((prev) => ({ ...prev, ollama_max_concurrent: n }))}
+                style={{ width: 140 }}
+              />
+              <button
+                className="btn primary"
+                onClick={() => mutation.mutate({ ollama_max_concurrent: form.ollama_max_concurrent })}
+                disabled={!thresholds || mutation.isPending || form.ollama_max_concurrent === thresholds.ollama_max_concurrent}
+              >
+                Save
+              </button>
+            </div>
           </div>
         </div>
       )}

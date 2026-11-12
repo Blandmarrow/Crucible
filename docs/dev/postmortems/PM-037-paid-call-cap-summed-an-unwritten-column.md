@@ -86,7 +86,10 @@ now stands, with the two accepted inexactnesses.
 ### Status & date
 
 MITIGATED — fixed 2026-11-10 by M9 stage 10. A call in flight when the process dies is
-still not counted (at most one per stop), by the user's ruling that day. Other readers of
+still not counted (at most one per stop), by the user's ruling that day. Since M10 T2
+(2026-11-12) a caption job can have several requests in flight, so it can leave up to its
+provider's Max concurrent requests uncounted, by the user's ruling in decision 16; a
+failed or force-cancelled caption job now counts every request it started. Other readers of
 `done_items` would meet the same empty column: only the caption job and a run's own steps
 write it. One edge is left open in `docs/dev/comfyui/run-budgets.md` § Not yet: the
 rewrite's reserve reads failed caption calls as captions made. A second, a caption

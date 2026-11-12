@@ -133,3 +133,12 @@ dataset nears 50,000 photo-shaped or 20,000 ComfyUI-shaped images. The dataset-w
 scans are pinned to `ix_images_dataset_id`, documented at the pin, at the index and in the
 docs, with a plan guard test. Full record:
 [decisions/15-big-columns-stay-in-the-row.md](decisions/15-big-columns-stay-in-the-row.md).
+
+## 16. Remote caption requests run several at once
+
+**Decided** (2026-11-12, by the user): a caption job keeps up to N requests in flight to an
+OpenAI-compatible provider (a per-provider setting) or to Ollama (one app-wide setting),
+default 1 and at most 16, in both caption loops. A crash can leave up to N calls out of the
+paid-call cap's count. **Leaning** on counting every started request when a job fails or
+is hard-cancelled. Full record:
+[decisions/16-concurrent-caption-requests.md](decisions/16-concurrent-caption-requests.md).

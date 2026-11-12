@@ -17,13 +17,13 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-12, M10 T2 built)
+## Next session (updated 2026-11-12, M10 T2 merged)
 
 0. **M10, job throughput, is under way**
    ([decision 14](decisions/14-job-throughput-is-its-own-milestone.md)), planned in
    [throughput-plan/README.md](throughput-plan/README.md). M9 landed on 2026-11-12 (see
-   Landed). T1 merged on 2026-11-12 as PR #145, and T3 the same day as PR #146. T2 is
-   built on `feat/m10-t2-concurrent-captions` ([decision 16](decisions/16-concurrent-caption-requests.md)).
+   Landed). T1 merged on 2026-11-12 as PR #145, T3 the same day as PR #146, and T2 as PR
+   #147 ([decision 16](decisions/16-concurrent-caption-requests.md)).
    Next is T6, which waits on nothing, or T4's hand timing. See M10 below.
    - **Found while building T2, not fixed:** `/pipeline` silently ignores `save_backup`
      and `rename_on_caption`. Both are on `CaptionPipelineRequest` and the frontend sends
@@ -143,7 +143,7 @@ is not touched: only CPU work moves.
   calls at once, 2.0× to 2.3× faster, scores identical. Timing and the reason for the cap: `docs/dev/quality/scoring.md` § The
   technical scorer runs several images at once.
 - [x] T2: concurrent requests and a reused client for the OpenAI-compatible and Ollama
-  captioners. Built 2026-11-12 on `feat/m10-t2-concurrent-captions`: a per-provider Max
+  captioners. Merged 2026-11-12 as PR #147: a per-provider Max
   concurrent requests and one app-wide Ollama setting, default 1, in both caption loops; a
   crash leaves at most N calls uncounted ([decision 16](decisions/16-concurrent-caption-requests.md)).
   Detail: `docs/dev/captioning.md` § Requests in flight.

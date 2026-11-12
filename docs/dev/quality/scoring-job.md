@@ -1,6 +1,6 @@
 # Quality scoring job — how a run is chunked, resumed and unloaded
 
-This file covers how the `quality_score` job runs: the technical scorer's concurrent loop, the chunked job loop with its resume path and progress, and the model lifecycle with its unload endpoints. What each scorer measures, the columns it writes and the failure contract are `docs/dev/quality/scoring.md`. Model loading and eviction are `docs/dev/ml-models.md`; leases are `docs/dev/model-residency.md`. Part of the Quality family, routed from `docs/dev/quality.md`.
+This file covers how the `quality_score` job runs: the technical scorer's concurrent loop, the GPU checks' prefetch, the chunked job loop with its resume path and progress, and the model lifecycle with its unload endpoints. What each scorer measures, the columns it writes and the failure contract are `docs/dev/quality/scoring.md`. Model loading and eviction are `docs/dev/ml-models.md`; leases are `docs/dev/model-residency.md`. Part of the Quality family, routed from `docs/dev/quality.md`.
 
 ## The technical scorer runs several images at once
 
@@ -19,6 +19,53 @@ This file covers how the `quality_score` job runs: the technical scorer's concur
 
 Each call holds float32 copies of its image, about 0.5 GB for a 4096² file, so memory grows linearly with the bound while speed flattens early: OpenCV's own thread pool is already busy inside each call. 8 doubles the memory for 20% on large files only, which is not worth it on a machine that is also running ComfyUI. `cv2.setNumThreads` is left alone because it is process-wide and would change the video and SAM2 paths too.
 
+## The GPU checks prepare images ahead
+
+The six GPU checks — aesthetic (LAION or V2.5), watermark, CLIP embeddings, DINOv2, its layer pass, and NSFW — each split their per-image work in two (M10 T5). The **`prepare_*` half** opens the file with `open_rgb`, runs the model's preprocess and closes the image, returning a CPU tensor. The **`infer_*` half** moves that tensor to the card and runs the forward pass. `backend/ml/prefetch.py::run_prefetched` runs the prepare halves on asyncio's default pool, up to `_prefetch_workers()` images at once (half the cores, capped at `PREFETCH_MAX_WORKERS`, 8), while the GPU thread runs the infer half of the oldest one. T4 found decode plus preprocess to be 63–93% of each check on real images, all of it time the card spent waiting (`docs/dev/throughput-plan/README.md` § T4).
+
+| Module | Prepare | Infer |
+|---|---|---|
+| `aesthetic_scorer.py` | `prepare_clip`, shared by three checks (and `prepare_clip_bytes` for `embed-references`) | `infer_aesthetic`, `infer_watermark`, `infer_clip_embedding` |
+| `aesthetic_v2_5_scorer.py` | `prepare_v2_5` | `infer_v2_5`, which reads the model's dtype for the cast |
+| `dino_scorer.py` | `prepare_dino`, shared by both passes | `infer_dino`, `infer_dino_layers` |
+| `nsfw_scorer.py` | `prepare_nsfw` | `infer_nsfw` |
+
+The old `*_sync(path, entry)` functions remain as `infer(prepare(...))`, for `POST /quality/embed-references` and the bench script's parity check.
+
+**The scores cannot move.** The ops are the serial path's, in the same order, one image per forward pass (decision 14 rules out batching). A prepare half takes only the transform or processor, never the model entry, so it cannot reach the model or the device. `backend/tests/test_prefetch_halves.py` holds that structurally; `docs/dev/ml-models.md` § One GPU thread says why it matters.
+
+**It answers exactly like the serial loops it replaced**, which `backend/tests/test_prefetch.py` pins with fake halves:
+
+- Results come back in input order, because the GPU always takes the oldest prepared image.
+- A cancel returns a prefix. `cancel_requested` is checked before every top-up and before every GPU call, and images already prepared are dropped, unlike T1, which keeps its in-flight work.
+- A failure in either half is None at that index only, logged with its traceback on the scorer's own logger. Each loop maps None to its own failure value (`docs/dev/quality/scoring.md` § The failure contract). This also gave the CLIP loop, which used to fail silently, and the DINOv2 loops, which logged no traceback, the same logging as the rest.
+- Progress fires after images 1, 11, 21, with the same messages.
+
+The window counts the image the GPU is about to take, so while a forward pass runs, up to seven more images are being prepared behind it. On a 4–5 core machine the bound is 2, one image of lookahead, and below that it is 1, which is the serial loop. Each holds a decoded buffer while it is prepared and a small tensor after.
+
+**Checked on a real card on 2026-11-12** (32 GB, 32 logical cores, Windows), with all seven checks run through the real scoring loops, once from a `main` worktree and once from the branch:
+
+- **The scores did not move.** Every output — the floats, and the SHA-256 of every embedding — matched `main` bit for bit, on a real ComfyUI dataset of 1,876 images (mostly PNGs around 2000 px) at 4 and at 8 workers, and on 30 synthetic 4096² PNGs. The bench script's parity guard passed on every check as well.
+- **VRAM after an unload went down, not up**: 613 MiB on the branch against 677 MiB on `main` (547 MiB is the CUDA context alone), read from the process's `Dedicated Usage` counter as PM-035 was. The difference is the watermark text features no longer running on the event loop's thread.
+
+| Workers | Real set, first 600 | Real set, all 1,876 | 30 PNGs, 4096² | Peak RAM, PNGs |
+|---|---|---|---|---|
+| `main` (serial) | 327.9 s | 854.8 s | 53.3 s | 4.12 GB |
+| 1 | 339.0 s | | | |
+| 2 | 195.5 s (1.7×) | | | |
+| 4 | 139.0 s (2.4×) | 398.6 s (2.1×) | 19.9 s (2.7×) | 4.16 GB |
+| 6 | 126.2 s (2.6×) | | | |
+| 8 | 104.6 s (3.1×) | 374.1 s (2.3×) | 14.9 s (3.6×) | 4.33 GB |
+
+**Why the cap is 8.** It is never slower than 4 and costs about 0.2 GB, because a prepared tensor is small and the models dominate the process's memory. That is the opposite of T1's case, where each image in flight held 0.5 GB. The rest of the real set gains less from 8 than its first 600 images do: there V2.5 runs at 17 images/s against 29, and DINOv2 at 37 against 42.
+
+**Why it falls short of T4's simulated 4.2×**, which ignored the GIL and torch's own threads:
+
+- The HF-processor checks (V2.5, DINOv2) never keep more than about 4 cores busy, whatever the worker count, which looks like their preprocess holding the GIL. V2.5 is the slowest check of a run either way.
+- The open_clip checks and NSFW show 27 cores busy. Most of that is torch's CPU thread pool spinning, and the serial loop already showed 16. Holding torch to one thread brought it to 3 cores at no cost at 4 workers, but lost a fifth of the gain at 8. It is process-wide, so it is left alone, as `cv2.setNumThreads` is above.
+
+The watermark check's text features (a CUDA `encode_text`, once per chunk) also moved onto the GPU thread with T5. They used to run on the event loop's thread, which built a second set of CUDA handles there, PM-035's class, and the executor guard could not see it, since it only follows executor dispatches.
+
 ## The chunked job loop
 
 `start_score_job` in `backend/routers/quality.py` reads **only ids** in the request, so the scope is frozen when the job is queued. The job then runs the ticked checks one after another — aesthetic, technical, watermark, CLIP embeddings, DINOv2 (with the layer pass), NSFW, the order `_score_checks` returns — and **within each check** walks the ids in chunks of `SCORE_CHUNK` (1,000). Per chunk it reads the rows' current paths, runs the scorer, writes the results with one ORM bulk `update(Image)` (`updated_at`'s `onupdate` still fires, so the stats cache moves), commits, and calls `job_queue.raise_if_cancelled`. `_write_score_chunk` does the write: it re-reads `scores_stale`, the job's score columns and `quality_flags` in the writing session, right before the write, so the window for a concurrent writer is the write rather than the minutes of inference before it. A row deleted mid-job drops out at either read. This is M9 stage 3 (`docs/dev/scale-plan/README.md`).
@@ -29,7 +76,7 @@ Each call holds float32 copies of its image, about 0.5 GB for a 4096² file, so 
 
 **`only_unscored` is the resume path, and the rows are the checkpoint.** Each `_ScoreCheck` carries its own `unscored` predicate — `aesthetic_score IS NULL`; **any** of the six technical columns NULL, so a re-run fills a column added later, like `luminance_score`; `watermark_score`, `nsfw_score`, `clip_embedding`; `dino_embedding`, or `dino_layer_embeddings` when the layer pass is ticked — and `_check_filter` ORs onto it the rows that were **stale when the job started** (the user's ruling, 2026-11-08). That is a snapshot, `stale_at_start`, not a live `scores_stale` test: an earlier check can clear a row's bit, and a live test would then drop the row from the later checks, leaving its CLIP and DINOv2 embeddings describing the old pixels with nothing left to flag them. The stale half is load-bearing, not a convenience; see `docs/dev/quality/scores-stale.md` § The clear predicate. The request-time scope is the union of the ticked checks' filters, so the label's count and the `{"job_id": None, "message": "Nothing left to score"}` answer describe rows some check will visit; each chunk's path read then applies the check's own filter. A failed measurement is stored as NULL (`docs/dev/quality/scoring.md` § The failure contract), so it is retried. It cannot be combined with `only_mismatched` — they contradict on aesthetic — and that pair is a 422.
 
-**Progress follows the `video_extract` precedent: one monotone `percent` across the whole job.** Before the first check the job counts each check's rows (`len(ids)`, or a chunked COUNT under `only_unscored`), and the DINOv2 check counts twice when the layer pass is ticked. `done`/`total` count images within the current check, so `total` equals the job's `total_items` in a full run, and the message names the step: `Technical scoring 4,200/10,000 · step 2 of 3`. The seven scorers take an optional `progress` callback; given one, they call it every ten images in place of their own SSE event, and without one they behave as they always did. `backend/tests/test_score_chunking.py` holds all of this: chunk sizes, a cancel and a crash keeping the finished chunks, `only_unscored`'s per-check visits and its two refusals, the stale bit clearing across checks, a stale row still re-embedded after an earlier check cleared it, a row edited mid-job left stale, the marker beside its score, and the percent never going back.
+**Progress follows the `video_extract` precedent: one monotone `percent` across the whole job.** Before the first check the job counts each check's rows (`len(ids)`, or a chunked COUNT under `only_unscored`), and the DINOv2 check counts twice when the layer pass is ticked. `done`/`total` count images within the current check, so `total` equals the job's `total_items` in a full run, and the message names the step: `Technical scoring 4,200/10,000 · step 2 of 3`. The seven scorers take an optional `progress` callback; given one, they call it every ten images in place of their own SSE event, and without one they behave as they always did. For the six GPU checks that cadence lives once, in `run_prefetched`. `backend/tests/test_score_chunking.py` holds all of this: chunk sizes, a cancel and a crash keeping the finished chunks, `only_unscored`'s per-check visits and its two refusals, the stale bit clearing across checks, a stale row still re-embedded after an earlier check cleared it, a row edited mid-job left stale, the marker beside its score, and the percent never going back.
 
 ## The model lifecycle
 

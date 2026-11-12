@@ -1,6 +1,6 @@
 # M9 — Scale and data safety
 
-**Status: living.** The design plan for M9, which landed on 2026-11-11
+**Status: living.** The design plan for M9, which landed on 2026-11-12
 ([../roadmap-archive/m9-scale-and-data-safety.md](../roadmap-archive/m9-scale-and-data-safety.md)).
 It stays because it holds what M9 parked, each with the trigger that reopens it: the side
 table (§ Stage 7), stage 4's full design, the small-subfolder score sort (§ Stage 6) and

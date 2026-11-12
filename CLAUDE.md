@@ -6,7 +6,7 @@ Documentation Map near the end; load only the ones a task needs.
 
 ## Working here
 
-**Milestone (2026-11-11):** the docs-architecture upgrade (M1–M3), M5 (app-stored prompts), the
+**Milestone (2026-11-12):** the docs-architecture upgrade (M1–M3), M5 (app-stored prompts), the
 M7 style port, M6 (ComfyUI structured generation and automated runs, PR #110) and M9 (scale
 and data safety, decisions 13 and 15) are merged. M4, the rating feature, is ported on
 `feat/m4-rating-port` but held unmerged until the user decides to ship it; it re-parents onto

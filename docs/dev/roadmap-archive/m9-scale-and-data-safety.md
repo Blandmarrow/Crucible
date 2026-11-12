@@ -1,7 +1,7 @@
 # M9 — Scale and data safety
 
-**Status: archive (landed 2026-11-11).** *Record for the M9 line in the
-[roadmap](../roadmap.md#landed).* Merged stage by stage between 2026-11-08 and 2026-11-11,
+**Status: archive (landed 2026-11-12).** *Record for the M9 line in the
+[roadmap](../roadmap.md#landed).* Merged stage by stage between 2026-11-08 and 2026-11-12,
 PRs #124 to #143. Its plan, [scale-plan/README.md](../scale-plan/README.md), stays in
 place: it holds the designs that were parked, each with the trigger that reopens it.
 
@@ -58,7 +58,7 @@ resolves the overlap
     ComfyUI-shaped images; the dataset-wide Stats scans pinned to `ix_images_dataset_id`.
     Merged with the measurement, as PR #141.
   - [x] Build the plan guard for the Stats statements and the pin, with the pin's
-    documentation. Merged 2026-11-11 as PR #143: `_stats_scan` pins the
+    documentation. Merged 2026-11-12 as PR #143: `_stats_scan` pins the
     seven dataset-wide scans, the validator and a subfolder-scoped call stay unpinned (the
     second after a timing), and `backend/tests/test_stats_plan.py` reads every plan.
 - [x] Stage 8: Retry for interrupted jobs. Merged 2026-11-08 as PR #127, for `quality_score`

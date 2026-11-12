@@ -17,11 +17,11 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-11, M9 landed)
+## Next session (updated 2026-11-12, M9 landed)
 
 0. **M10, job throughput, is next**
    ([decision 14](decisions/14-job-throughput-is-its-own-milestone.md)), planned in
-   [throughput-plan/README.md](throughput-plan/README.md). M9 landed on 2026-11-11 (see
+   [throughput-plan/README.md](throughput-plan/README.md). M9 landed on 2026-11-12 (see
    Landed). Start with T1. T1 to T3 are CPU-only and do not depend on each other, and T6
    waits on nothing. See M10 below. M9 left four things open, none of which blocks M10
    ([roadmap-archive/m9-scale-and-data-safety.md § Left open](roadmap-archive/m9-scale-and-data-safety.md#left-open)):
@@ -87,7 +87,7 @@ restates its stages.
   the goal loop, gate, budgets, dry run, snapshot and recipes, the ComfyUI page rework, and two
   installs sharing a 16 GB card. Record:
   [roadmap-archive/m6-comfy-automation.md](roadmap-archive/m6-comfy-automation.md).
-- **M9 — Scale and data safety** (2026-11-11, PRs #124 to #143): a unique tie-breaker for
+- **M9 — Scale and data safety** (2026-11-12, PRs #124 to #143): a unique tie-breaker for
   every gallery sort and the index it cost, an orphan sweep that moves folders aside, scoring
   that commits per chunk and can be retried, Stats lists fetched on demand, paged style
   similarity, the paid-call cap counting caption calls, the hot-path wins, three rounds of

@@ -98,6 +98,7 @@ another), per image:
 | PNG 4096² | 32 GB | 1,322 ms | 61% | 1.09× | **4.26×** | 51% |
 | PNG 4096² | 16 GB | 1,218 ms | 68% | 1.05× | **4.14×** | 56% |
 | Real, ~2000 px | 32 GB | 334 ms | 54% | 1.16× | **4.16×** | 45% |
+| Real, first 600, over SMB | 16 GB | 475 ms | 69% | 1.13× | **3.75×** | 57% |
 
 Per check, decode plus preprocess (the half T5 moves) is 8–75% of the time on JPEGs,
 lowest for the V2.5 aesthetic model and highest for DINOv2 and NSFW. It is 73–99% on the
@@ -109,6 +110,13 @@ What else the runs showed:
 - **A cold file cache changes little on a local NVMe drive.** Evicting each file before it
   is read added 0.3–1.6 ms per JPEG and about 10% per PNG decode, and moved no T5 figure by
   more than 0.06×. Decoding, not reading, is the cost.
+- **A network share costs more, and T5 hides it too.** The 16 GB card's machine read the
+  real set's first 600 images from a datasets folder on an SMB share. Decode took about
+  54 ms per image even after a read-through, against 31 ms for the whole set on a local
+  disk on the other machine. Those are not the same files, and the share may not keep pages
+  cached, so the gap is not split between the two. Evicting each file first raised it to
+  64 ms, and the 4-worker figure to 4.21×. A read happens in T5's CPU half, so it overlaps
+  the GPU like the decode does.
 - **Preprocess does not lean on torch's own threads.** With torch held to one thread it
   moved from 3.6 to 3.4 ms on a JPEG and 56 to 53 ms on a PNG. So T5's workers will not
   be fighting torch's pool for cores, which was the main doubt over the 4-worker figure.

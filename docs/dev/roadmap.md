@@ -17,13 +17,14 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-12, M10 T1 merged)
+## Next session (updated 2026-11-12, M10 T3 merged)
 
 0. **M10, job throughput, is under way**
    ([decision 14](decisions/14-job-throughput-is-its-own-milestone.md)), planned in
    [throughput-plan/README.md](throughput-plan/README.md). M9 landed on 2026-11-12 (see
-   Landed). T1 merged on 2026-11-12 as PR #145. Next is T2 or T3: both are CPU-only and do
-   not depend on each other, and T6 waits on nothing. See M10 below. M9 left four things open, none of which blocks M10
+   Landed). T1 merged on 2026-11-12 as PR #145, and T3 the same day as PR #146. Next is
+   T2, which can reuse T3's `_InOrderWindow`, or T6, which waits on nothing. See M10
+   below. M9 left four things open, none of which blocks M10
    ([roadmap-archive/m9-scale-and-data-safety.md § Left open](roadmap-archive/m9-scale-and-data-safety.md#left-open)):
    - **Two findings wait for the user to place them in the order.** Style scoring's keyset
      page sorts the whole dataset for every page (a `TEMP B-TREE` behind
@@ -139,7 +140,10 @@ is not touched: only CPU work moves.
 - [ ] T2: concurrent requests and a reused client for the OpenAI-compatible and Ollama
   captioners, behind a per-provider setting that defaults to 1. An automated run's
   paid-call cap (M9 stage 10) must not overshoot by more than the requests in flight.
-- [ ] T3: parallel import, with one decode per file. Name and stem picking stays serial.
+- [x] T3: parallel import and rescan, with one decode per file. Merged 2026-11-12 as
+  PR #146: up to 8 files at once, and a PNG decoded once instead of
+  four times, 7.6× faster on JPEGs and 18× on large PNGs. Name and stem picking stays
+  serial. Detail: `docs/dev/image-import.md` § Several files at once, one decode each.
 - [ ] T4: time how much of a GPU scoring run is image decoding, on a real card. A hand
   measurement, since no gate runs torch. Needs nothing before it, and gates T5.
 - [ ] T5: decode ahead of the GPU call, on the default pool. Needs T4, and is built only if

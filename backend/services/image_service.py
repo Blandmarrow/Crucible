@@ -1,6 +1,7 @@
 import json
 import re
 from pathlib import Path
+from typing import NamedTuple
 from uuid import uuid4
 
 from PIL import Image, ImageOps
@@ -28,7 +29,11 @@ RESAMPLE_MAP = {
 
 
 def _open_safe(path: str) -> Image.Image:
-    img = Image.open(path)
+    return _safe_from(Image.open(path))
+
+
+def _safe_from(img: Image.Image) -> Image.Image:
+    """`_open_safe`'s gate for an image already opened: a new, transposed image."""
     img = ImageOps.exif_transpose(img)  # respect EXIF rotation
     if img.mode not in ("RGB", "RGBA"):
         img = img.convert("RGB")
@@ -122,9 +127,17 @@ def extract_generation_metadata(path: str) -> dict | None:
         img = Image.open(path)
     except Exception:
         return None
+    return _generation_metadata(img, getattr(img, "info", {}) or {})
 
-    info = getattr(img, "info", {}) or {}
 
+def _generation_metadata(img: Image.Image, info: dict) -> dict | None:
+    """`extract_generation_metadata`'s body, for an image already open.
+
+    `info` is the text chunks as the *unloaded* file shows them, which is what
+    the checks below have always seen. On a PNG, `_getexif()` at the end loads
+    the whole image, and that load can add chunks that follow the pixel data, so
+    a caller that has already loaded `img` must pass a copy taken before.
+    """
     # A1111 / sd-webui style
     if "parameters" in info:
         raw = info["parameters"]
@@ -204,6 +217,20 @@ def extract_embedded_provenance(path: str) -> dict | None:
     not a license id, and guessing one would put unverified images into the
     commercial-use bucket. Returns None when nothing is present.
     """
+    try:
+        with Image.open(path) as img:
+            return _embedded_provenance(img)
+    except Exception:
+        return None
+
+
+def _embedded_provenance(img: Image.Image) -> dict | None:
+    """`extract_embedded_provenance`'s body, for an image already open.
+
+    The tEXt keys are read *after* `getexif()`, which on a PNG loads the whole
+    image and with it any chunks that follow the pixel data. That is the order
+    this has always read them in.
+    """
     def _clean(v) -> str:
         if isinstance(v, bytes):
             v = v.decode("utf-8", errors="replace")
@@ -211,11 +238,10 @@ def extract_embedded_provenance(path: str) -> dict | None:
 
     parts: list[str] = []
     try:
-        with Image.open(path) as img:
-            exif = img.getexif() or {}
-            parts = [_clean(exif.get(_EXIF_ARTIST)), _clean(exif.get(_EXIF_COPYRIGHT))]
-            info = img.info or {}
-            parts += [_clean(info.get(k)) for k in _PNG_ATTRIBUTION_KEYS]
+        exif = img.getexif() or {}
+        parts = [_clean(exif.get(_EXIF_ARTIST)), _clean(exif.get(_EXIF_COPYRIGHT))]
+        info = img.info or {}
+        parts += [_clean(info.get(k)) for k in _PNG_ATTRIBUTION_KEYS]
     except Exception:
         return None
 
@@ -332,11 +358,15 @@ def temp_sibling(path: Path, tag: str) -> Path:
     return path.with_name(f"{path.stem}_{tag}_{uuid4().hex[:8]}{path.suffix}")
 
 
-def get_image_info(path: str) -> dict:
+def _measure(img: Image.Image, path: str) -> dict:
+    """The row fields an ingested file gets from its decoded pixels, or {} on failure.
+
+    `{}` rather than a raise, so a file whose pHash or stat fails still ingests
+    with those columns NULL: the behaviour `get_image_info` always had.
+    """
     import imagehash  # lazy: pulls scipy/PyWavelets; keep out of the module import graph
 
     try:
-        img = _open_safe(path)
         return {
             "width": img.width,
             "height": img.height,
@@ -348,11 +378,73 @@ def get_image_info(path: str) -> dict:
         return {}
 
 
-def generate_thumbnail(src_path: str, dest_path: str, size: int = 256) -> None:
-    img = _open_safe(src_path)
+def get_image_info(path: str) -> dict:
+    try:
+        img = _open_safe(path)
+    except Exception:
+        return {}
+    return _measure(img, path)
+
+
+def _save_thumbnail(img: Image.Image, dest_path: str, size: int) -> None:
+    """Shrink `img` in place and write it as the WEBP thumbnail."""
     img.thumbnail((size, size), Image.Resampling.LANCZOS)
     Path(dest_path).parent.mkdir(parents=True, exist_ok=True)
     img.save(dest_path, "WEBP", quality=85)
+
+
+def generate_thumbnail(src_path: str, dest_path: str, size: int = 256) -> None:
+    _save_thumbnail(_open_safe(src_path), dest_path, size)
+
+
+class IngestRead(NamedTuple):
+    """What `decode_for_ingest` reads from a file."""
+
+    info: dict
+    gen_meta: dict | None
+    embedded_provenance: dict | None
+
+
+def decode_for_ingest(src_path: str, thumb_path: str, size: int = 256) -> IngestRead:
+    """Everything an ingest reads from a file's pixels and headers, from one open (M10 T3).
+
+    The same as calling `get_image_info`, `generate_thumbnail`,
+    `extract_generation_metadata` and `extract_embedded_provenance` in turn.
+    Those open the file once each, and on a PNG every one of them decoded all of
+    its pixels: `exif_transpose` (inside `_open_safe`) and both metadata readers
+    call `getexif()`, which loads a PNG to look for an eXIf chunk after the
+    pixel data. A 4096px PNG was decoded four times. Here it is decoded once and
+    every reader shares the loaded image. A JPEG keeps its EXIF in the header,
+    so its readers never decoded, and it goes from two decodes to one.
+
+    The results are the same as the four calls':
+    - The metadata reader gets the text chunks of the unloaded file, which is
+      what it always saw (`_generation_metadata`), and the attribution reader
+      reads them after `getexif()`, as it always did.
+    - `_safe_from` hands back a loaded image (`exif_transpose` returns a
+      transpose or a `copy()`), so `thumbnail()` never took JPEG draft mode on a
+      fresh open either, and the pixels are the ones each call decoded.
+    - It fails the same way. An undecodable file raises from the open, as
+      `generate_thumbnail` did, while a failed pHash or stat still gives `{}`
+      and a thumbnail. The pHash is taken first because `thumbnail()` shrinks
+      the image in place.
+
+    `raw` is closed as soon as the transposed copy exists, so peak memory stays
+    one decoded image, as it was.
+    """
+    raw = Image.open(src_path)
+    try:
+        gen_meta = _generation_metadata(raw, dict(getattr(raw, "info", {}) or {}))
+        embedded = _embedded_provenance(raw)
+        img = _safe_from(raw)
+    finally:
+        raw.close()
+    try:
+        info = _measure(img, src_path)
+        _save_thumbnail(img, thumb_path, size)
+    finally:
+        img.close()
+    return IngestRead(info, gen_meta, embedded)
 
 
 def _save_measured(img: Image.Image, dest_path: str) -> dict:

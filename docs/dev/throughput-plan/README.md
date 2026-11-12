@@ -49,7 +49,7 @@ subagent reported it and it was not re-read; verify it before building on it.
 | `ollama_captioner` | One request at a time, and a new `httpx.AsyncClient` for each image | Checked |
 | The local captioners (Florence-2, PaliGemma, JoyCaption) | One image per call. `caption_batch` is defined in `florence_captioner.py`, `paligemma_captioner.py` and `ollama_captioner.py`, and nothing outside the tests calls it | Checked for `caption_batch`; from the audit for the per-image loop |
 | `wd14_tagger` | Its ONNX session is built with `providers=["CPUExecutionProvider"]`, one image per call | Checked |
-| `import_images_from_folder` | One file per `run_in_executor` call, awaited. Each file is opened about four times and fully decoded twice (once for size and phash, once for the thumbnail) | Checked for the loop; from the audit for the open count |
+| `import_images_from_folder` | One file per `run_in_executor` call, awaited. Each file is opened about four times and fully decoded twice (once for size and phash, once for the thumbnail). **Fixed by T3**, which found a PNG was decoded four times, not twice: up to 8 files at once and one decode each, 7.6× faster on JPEGs and 18× on large PNGs (`docs/dev/image-import.md` § Several files at once, one decode each) | Checked |
 | Detection jobs | One image per call, decode inside the GPU call, a session and a commit per image | From the audit |
 | Export | One image at a time. A plain copy never decodes; a resize or format change re-encodes on one core | From the audit |
 | `JobQueue` | One worker, so a CPU-only job waits behind a GPU job | Checked |
@@ -60,9 +60,16 @@ subagent reported it and it was not re-read; verify it before building on it.
 CPU-only work first, since it cannot touch the GPU rule at all.
 
 T1, the technical scorer on several cores, is done; its design and timing now live in
-`docs/dev/quality/scoring.md` § The technical scorer runs several images at once. Its
-bounded FIFO window (await the oldest future first) is the pattern T3 can reuse, since it
-keeps input order and a prefix on cancel without a reordering step.
+`docs/dev/quality/scoring.md` § The technical scorer runs several images at once. T3,
+parallel import and one decode per file, is done too; its design and timing live in
+`docs/dev/image-import.md` § Several files at once, one decode each.
+
+T3 put T1's bounded FIFO window (await the oldest future first) into a class,
+`_InOrderWindow` in `dataset_service.py`, kept private to that module for now. T2 can
+reuse it for requests in flight, since it holds any futures and keeps input order and a
+prefix on cancel. T1 can move onto it once `docs/dev/quality/scoring.md` is split (it is
+over budget, see `docs/dev/pending-splits.md`), and the class then belongs in
+`backend/utils.py`.
 
 ### T2 — Concurrent requests for the remote captioners
 
@@ -88,19 +95,6 @@ requests that arrive together; a hosted one just answers in parallel.
 
 **Acceptance.** With the setting at 1 the request order and results are as today. At N, a
 fake server sees at most N requests in flight, and a cancel stops new ones at once.
-
-### T3 — Parallel import, and one decode per file
-
-Ingest a bounded number of files at once on the default pool. The name and stem picking
-(`occupied_thumb_stems`, `planned_thumb_stems`) is stateful and must stay serial: pick
-names in order on the event loop, then fan out the file work
-(`docs/dev/image-import.md` § A stem-keyed derived artifact needs a collision guard at
-every writer). Then share one decode between `get_image_info` and `generate_thumbnail`,
-which today each open and decode the file.
-
-**Acceptance.** An import of a fixture folder produces the same rows, names, thumbnails and
-provenance as the serial path, in the same order. The rescan path gets the same treatment
-or a note saying why not.
 
 ### T4 — Time the decode share on a real card
 

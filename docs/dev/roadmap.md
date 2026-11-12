@@ -25,7 +25,7 @@ restates its stages.
    Landed). T1 merged on 2026-11-12 as PR #145, T3 the same day as PR #146, and T2 as PR
    #147 ([decision 16](decisions/16-concurrent-caption-requests.md)). T4's timing merged
    the same day as PR #148: T5 pays, up to 4.2× on a full run over real ComfyUI
-   images. T5 merged the same day as PR #TBD: scores identical to `main` on 1,876 real
+   images. T5 merged the same day as PR #149: scores identical to `main` on 1,876 real
    images, VRAM lower than `main`, 2.3× on the full real set and 3.6× on 4K PNGs at 8
    workers. Next is T6. See M10 below and `docs/dev/quality/scoring-job.md` § The GPU
    checks prepare images ahead.
@@ -166,7 +166,7 @@ is not touched: only CPU work moves.
   ComfyUI images, and T5 would make a full run 2.1× faster on small JPEGs and 4.2× on
   real images. Detail: [throughput-plan/README.md § T4](throughput-plan/README.md#t4--time-the-decode-share-on-a-real-card-done).
 - [x] T5: decode ahead of the GPU call, on the default pool. Merged 2026-11-12 as
-  PR #TBD: each GPU scorer split into a `prepare_*` and an `infer_*` half, run by
+  PR #149: each GPU scorer split into a `prepare_*` and an `infer_*` half, run by
   `ml/prefetch.py` up to 8 images ahead; scores identical to the serial path, VRAM lower,
   2.3× to 3.6× faster. Detail: `docs/dev/quality/scoring-job.md` § The GPU checks
   prepare images ahead.

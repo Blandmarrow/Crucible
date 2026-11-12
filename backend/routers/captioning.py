@@ -16,7 +16,8 @@ from backend.ml.model_manager import model_manager
 from backend.models import BackgroundJob, Image
 from backend.models.openai_provider import OpenAIProvider
 from backend.services.image_scope import flag_exclusions
-from backend.utils import ALLOWED_FLAG_KEYS, chunked, normalize_subfolder, subsume_tags
+from backend.schemas.openai_provider import MAX_CONCURRENT_REQUESTS
+from backend.utils import ALLOWED_FLAG_KEYS, InOrderCalls, chunked, normalize_subfolder, subsume_tags
 from backend.workers.job_queue import job_queue, run_job_config, run_job_label
 
 router = APIRouter(prefix="/captioning", tags=["captioning"])
@@ -43,6 +44,9 @@ def _failure_headline(
     empty: int = 0,
     stripped: int = 0,
     empty_provider: object | None = None,
+    *,
+    rate_limited: int = 0,
+    rate_limit_provider: object | None = None,
 ) -> str | None:
     """One sentence per diagnosis naming *why* images failed, for the badge and Logs row.
 
@@ -66,6 +70,12 @@ def _failure_headline(
             f"{getattr(timeout_provider, 'timeout_s', '?')}s timeout. "
             "Raise Timeout in Settings \u2192 LLM Providers."
         )
+    if rate_limited:
+        parts.append(
+            f"{rate_limited} image(s) were refused by provider "
+            f"'{getattr(rate_limit_provider, 'name', '?')}' for too many requests (HTTP 429). "
+            "Lower Max concurrent requests in Settings \u2192 LLM Providers, or run again later."
+        )
     if empty:
         sentence = (
             f"{empty} image(s) came back empty — the model returned no caption text."
@@ -81,6 +91,90 @@ def _failure_headline(
             "— turn off Strip thinking blocks or Strip refusals."
         )
     return " ".join(parts) if parts else None
+
+
+# ── Requests in flight (M10 T2) ───────────────────────────────────────────────
+# Both caption loops send a remote captioner up to `bound` requests at once and
+# finish each image serially, in input order (`utils.InOrderCalls`). See
+# docs/dev/captioning.md § Requests in flight.
+
+
+# Added to Ollama's empty-caption reason when requests run several at once.
+_OLLAMA_QUEUED_HINT = (
+    " (with Max concurrent requests above 1, a request Ollama queued may have timed out:"
+    " lower it in Settings → LLM Providers)"
+)
+
+
+def _is_rate_limited(exc: BaseException) -> bool:
+    """An HTTP 429, read by status code as `prompt_generator._status` does, so a
+    stand-in exception in a test (no `openai` in CI) is read the same way."""
+    return getattr(exc, "status_code", None) == 429
+
+
+def _clamp_bound(n: object) -> int:
+    """A stored concurrency setting as a usable bound: 1 to MAX_CONCURRENT_REQUESTS."""
+    try:
+        value = int(n or 1)
+    except (TypeError, ValueError):
+        value = 1
+    return max(1, min(MAX_CONCURRENT_REQUESTS, value))
+
+
+async def _ollama_bound() -> int:
+    """The app-wide Ollama setting, read once per job or pipeline step."""
+    from backend.database import AsyncSessionLocal
+    from backend.services.threshold_service import get_thresholds
+
+    async with AsyncSessionLocal() as s:
+        return (await get_thresholds(s)).ollama_max_concurrent
+
+
+async def _open_remote_client(
+    stack: contextlib.AsyncExitStack, *, is_ollama: bool, provider: object | None
+) -> object | None:
+    """The one client a job (or pipeline step) sends every request on, closed by
+    `stack` after the requests have settled. None for a local backend, and for an
+    install without the `openai` package, where `caption_image` returns "" as before.
+    """
+    if is_ollama:
+        client = ollama_captioner.make_client()
+        stack.push_async_callback(client.aclose)
+        return client
+    if provider is not None:
+        from backend.ml import openai_compat_captioner
+
+        client = openai_compat_captioner.make_client(
+            provider.base_url, provider.api_key, provider.timeout_s
+        )
+        if client is not None:
+            stack.push_async_callback(client.close)
+        return client
+    return None
+
+
+async def _record_calls_started(job_id: str, started: int) -> None:
+    """Count every request the job sent when it ends early (decision 16).
+
+    `done_items` normally moves one finished image at a time, in input order. When a
+    save fails the job or a hard cancel stops it, the requests still in flight were
+    sent, and may be billed, without reaching that write. This raises the count to
+    every request started, so an automated run's paid-call cap (`run_service._spent`)
+    never under-counts what this job did. It only ever raises the count, and a
+    failure here is logged rather than hiding the error that ended the job.
+    """
+    try:
+        from backend.database import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as s:
+            await s.execute(
+                sa_update(BackgroundJob)
+                .where(BackgroundJob.id == job_id, BackgroundJob.done_items < started)
+                .values(done_items=started)
+            )
+            await s.commit()
+    except Exception:
+        logger.error("Could not record %d caption requests for job %s", started, job_id, exc_info=True)
 
 
 _REFUSAL_RE = re.compile(
@@ -447,6 +541,7 @@ async def start_caption_job(
         # headline is built from. See the result_data write at the tail.
         failed_details: list[dict] = []
         timed_out = 0
+        rate_limited = 0
         empty_count = 0
         stripped_count = 0
 
@@ -494,242 +589,279 @@ async def start_caption_job(
                 if _thumb_dir.exists():
                     _occupied_thumb_stems = {p.stem for p in _thumb_dir.glob("*.webp")}
 
-        async with AsyncSessionLocal() as session:
-            for i, (img_id, file_path, img_filename, img_subfolder, existing_caption) in enumerate(image_data):
-                # Check for user-initiated stop before each image
-                job_queue.raise_if_cancelled(job_id)
+        # The requests run up to `bound` at once (M10 T2); everything after each
+        # one, from the done_items write to the progress event, stays serial and
+        # in input order on the one session. See docs/dev/captioning.md
+        # § Requests in flight.
+        if is_openai_compat:
+            bound = _clamp_bound(openai_provider.max_concurrent)
+        elif is_ollama:
+            bound = _clamp_bound(await _ollama_bound())
+        else:
+            bound = 1
+        if is_ollama and bound > 1:
+            # ollama_captioner turns every failure into "", a timeout included, so
+            # an overloaded server would otherwise read as a model with nothing to say.
+            _empty_reason += _OLLAMA_QUEUED_HINT
 
-                # Generate caption for this image
-                caption = ""
-                # Set by both except branches so an already-counted exception is
-                # not counted a second time as an empty caption below.
-                errored = False
-                try:
-                    if is_florence:
-                        from backend.ml.florence_captioner import caption_image as _fi
-                        caption = await _fi(file_path, florence_entry, body.style,
-                                            body.target_width, body.target_height)
-                    elif is_paligemma:
-                        from backend.ml.paligemma_captioner import caption_image as _pi
-                        caption = await _pi(file_path, paligemma_entry, body.style,
-                                            body.target_width, body.target_height)
-                    elif is_joycaption:
-                        from backend.ml.joycaption_captioner import caption_image as _ji
-                        caption = await _ji(file_path, joycaption_entry, body.style,
-                                            custom_prompt=body.custom_prompt,
-                                            target_w=body.target_width, target_h=body.target_height)
-                    elif is_ollama:
-                        caption = await ollama_captioner.caption_image(
-                            file_path, ollama_model_name, body.style, body.custom_prompt,
-                            body.target_width, body.target_height,
-                        )
-                    elif is_openai_compat:
-                        from backend.ml.openai_compat_captioner import caption_image as _oi
-                        caption = await _oi(
-                            file_path,
-                            base_url=openai_provider.base_url,
-                            api_key=openai_provider.api_key,
-                            model_name=openai_model_name,
-                            style=body.style,
-                            custom_prompt=body.custom_prompt,
-                            max_px=openai_provider.max_image_px,
-                            max_tokens=openai_provider.max_tokens,
-                            timeout_s=openai_provider.timeout_s,
-                            target_w=body.target_width,
-                            target_h=body.target_height,
-                        )
-                    elif is_wd14:
-                        from backend.ml import wd14_tagger
-                        caption = await asyncio.get_running_loop().run_in_executor(
-                            None, wd14_tagger.tag_image_sync, file_path, wd14_variant, body.wd14_threshold
-                        )
-                    else:
-                        # Unreachable: the model validator rejects anything _caption_backend
-                        # does not know. Here so a *future* prefix mistake surfaces as a
-                        # per-image failure with a traceback rather than a green empty job.
-                        raise RuntimeError(f"No captioning backend for model '{body.model}'")
-                except APITimeoutError as exc:
-                    # Ahead of the broad handler because this is the one failure with
-                    # an obvious user-side fix, and a bare traceback for it is what
-                    # made the original report read as "nothing happened". The image
-                    # still fails — only the diagnosis changes.
-                    logger.error(
-                        "Caption timed out for %s: provider '%s' did not respond within its "
-                        "configured %ss timeout. Raise Timeout in Settings \u2192 LLM Providers.",
-                        file_path, getattr(openai_provider, "name", "?"),
-                        getattr(openai_provider, "timeout_s", "?"),
+        async with contextlib.AsyncExitStack() as clients:
+            remote = await _open_remote_client(clients, is_ollama=is_ollama, provider=openai_provider)
+
+            async def _call(item):
+                img_id, file_path, img_filename, img_subfolder, existing_caption = item
+                if is_florence:
+                    from backend.ml.florence_captioner import caption_image as _fi
+                    return await _fi(file_path, florence_entry, body.style,
+                                        body.target_width, body.target_height)
+                elif is_paligemma:
+                    from backend.ml.paligemma_captioner import caption_image as _pi
+                    return await _pi(file_path, paligemma_entry, body.style,
+                                        body.target_width, body.target_height)
+                elif is_joycaption:
+                    from backend.ml.joycaption_captioner import caption_image as _ji
+                    return await _ji(file_path, joycaption_entry, body.style,
+                                        custom_prompt=body.custom_prompt,
+                                        target_w=body.target_width, target_h=body.target_height)
+                elif is_ollama:
+                    return await ollama_captioner.caption_image(
+                        file_path, ollama_model_name, body.style, body.custom_prompt,
+                        body.target_width, body.target_height,
+                        client=remote,
                     )
-                    timed_out += 1
-                    errored = True
-                    failed_image_ids.append(img_id)
-                    if len(failed_details) < _MAX_FAILED_DETAILS:
-                        failed_details.append({"file": Path(file_path).name, "error": str(exc) or type(exc).__name__})
-                except Exception as exc:
-                    logger.error("Caption failed for %s", file_path, exc_info=True)
-                    errored = True
-                    failed_image_ids.append(img_id)
-                    if len(failed_details) < _MAX_FAILED_DETAILS:
-                        failed_details.append({"file": Path(file_path).name, "error": str(exc) or type(exc).__name__})
+                elif is_openai_compat:
+                    from backend.ml.openai_compat_captioner import caption_image as _oi
+                    return await _oi(
+                        file_path,
+                        base_url=openai_provider.base_url,
+                        api_key=openai_provider.api_key,
+                        model_name=openai_model_name,
+                        style=body.style,
+                        custom_prompt=body.custom_prompt,
+                        max_px=openai_provider.max_image_px,
+                        max_tokens=openai_provider.max_tokens,
+                        timeout_s=openai_provider.timeout_s,
+                        target_w=body.target_width,
+                        target_h=body.target_height,
+                        client=remote,
+                    )
+                elif is_wd14:
+                    from backend.ml import wd14_tagger
+                    return await asyncio.get_running_loop().run_in_executor(
+                        None, wd14_tagger.tag_image_sync, file_path, wd14_variant, body.wd14_threshold
+                    )
+                else:
+                    # Unreachable: the model validator rejects anything _caption_backend
+                    # does not know. Here so a *future* prefix mistake surfaces as a
+                    # per-image failure with a traceback rather than a green empty job.
+                    raise RuntimeError(f"No captioning backend for model '{body.model}'")
 
-                # The durable count of calls made, written as soon as this one is over
-                # and whatever it returned: an automated run's paid-call cap sums it
-                # (`run_service._spent`), and a failed call was still billed. Before the
-                # save, so a save that fails the job keeps the call; committed here, so a
-                # cancel, a failure or a restart keeps every call before it. It equals
-                # the `done` the progress event below carries (PM-008: one unit).
-                await session.execute(
-                    sa_update(BackgroundJob).where(BackgroundJob.id == job_id).values(done_items=i + 1)
-                )
-                await session.commit()
-
-                # Reason A — nothing came back at all, without an exception to explain it.
-                if not caption and not errored:
-                    _record_empty(img_id, file_path, _empty_reason)
-
-                # Save immediately if a caption was produced
-                if caption:
-                    if body.strip_refusals:
-                        caption = _strip_refusals(caption)
-                    if caption:
-                        # Artifact detection always runs; stripping is optional per checkbox.
-                        is_prose_style = body.style not in _TAG_STYLES
-                        artifact_detected = False
-
-                        if _has_thinking(caption):
-                            artifact_detected = True
-                            if body.strip_thinking:
-                                caption = _strip_thinking(caption)
-
-                        if caption and body.strip_underscores and is_prose_style:
-                            caption = _normalize_underscores(caption)
-
-                        if caption and _has_hedges(caption):
-                            artifact_detected = True
-                            if body.strip_hedges:
-                                caption = _strip_hedges(caption)
-
-                        if body.style in _TAG_STYLES:
-                            new_tags = [
-                                _normalize_underscores(t.strip()) if body.strip_underscores else t.strip()
-                                for t in caption.split(",") if t.strip()
-                            ]
-                            if body.dedupe_tags:
-                                new_tags = subsume_tags(new_tags)
-                            if body.append_tags and existing_caption and body.delimiter_mode != "overwrite":
-                                existing_tags = [
-                                    _normalize_underscores(t.strip()) if body.strip_underscores else t.strip()
-                                    for t in existing_caption.split(",") if t.strip()
-                                ]
-                                existing_set = set(new_tags)
-                                new_tags = new_tags + [t for t in existing_tags if t not in existing_set]
-                            caption = ", ".join(new_tags)
-
-                        # Reason C — post-processing (thinking/refusal/hedge stripping,
-                        # tag dedupe) removed every word. Guarded here rather than at the
-                        # save because the delimiter merge below would otherwise write
-                        # "existing, " and set_caption would blank a good caption and its
-                        # .txt sidecar; skipping the write leaves both untouched.
-                        if not caption:
-                            _record_empty(
-                                img_id, file_path,
-                                "post-processing removed the entire caption",
-                                stripped=True,
+            # Stop sends no new request; the ones in flight are still saved and
+            # counted below, and the job ends cancelled after the loop.
+            calls = InOrderCalls(image_data, _call, bound, stop=lambda: job_queue.cancel_requested(job_id))
+            try:
+                async with AsyncSessionLocal() as session, calls:
+                    async for i, item, call_result, call_exc in calls:
+                        img_id, file_path, img_filename, img_subfolder, existing_caption = item
+                        caption = ""
+                        # Set by both except branches so an already-counted exception is
+                        # not counted a second time as an empty caption below.
+                        errored = False
+                        try:
+                            if call_exc is not None:
+                                raise call_exc
+                            caption = call_result
+                        except APITimeoutError as exc:
+                            # Ahead of the broad handler because this is the one failure with
+                            # an obvious user-side fix, and a bare traceback for it is what
+                            # made the original report read as "nothing happened". The image
+                            # still fails — only the diagnosis changes.
+                            logger.error(
+                                "Caption timed out for %s: provider '%s' did not respond within its "
+                                "configured %ss timeout. Raise Timeout in Settings \u2192 LLM Providers.",
+                                file_path, getattr(openai_provider, "name", "?"),
+                                getattr(openai_provider, "timeout_s", "?"),
                             )
-                        else:
-                            if body.delimiter_mode == "append" and existing_caption:
-                                caption = existing_caption + body.delimiter + caption
-                            elif body.delimiter_mode == "prepend" and existing_caption:
-                                caption = caption + body.delimiter + existing_caption
+                            timed_out += 1
+                            errored = True
+                            failed_image_ids.append(img_id)
+                            if len(failed_details) < _MAX_FAILED_DETAILS:
+                                failed_details.append({"file": Path(file_path).name, "error": str(exc) or type(exc).__name__})
+                        except Exception as exc:
+                            logger.error("Caption failed for %s", file_path, exc_info=True)
+                            errored = True
+                            if _is_rate_limited(exc):
+                                rate_limited += 1
+                            failed_image_ids.append(img_id)
+                            if len(failed_details) < _MAX_FAILED_DETAILS:
+                                failed_details.append({"file": Path(file_path).name, "error": str(exc) or type(exc).__name__})
 
-                            if body.save_backup:
-                                await asyncio.get_running_loop().run_in_executor(
-                                    None, _backup_sidecar, file_path
+                        # The durable count of calls made, written as soon as this one is over
+                        # and whatever it returned: an automated run's paid-call cap sums it
+                        # (`run_service._spent`), and a failed call was still billed. Before the
+                        # save, so a save that fails the job keeps the call; committed here, so a
+                        # cancel, a failure or a restart keeps every call before it. It equals
+                        # the `done` the progress event below carries (PM-008: one unit).
+                        await session.execute(
+                            sa_update(BackgroundJob).where(BackgroundJob.id == job_id).values(done_items=i + 1)
+                        )
+                        await session.commit()
+
+                        # Reason A — nothing came back at all, without an exception to explain it.
+                        if not caption and not errored:
+                            _record_empty(img_id, file_path, _empty_reason)
+
+                        # Save immediately if a caption was produced
+                        if caption:
+                            if body.strip_refusals:
+                                caption = _strip_refusals(caption)
+                            if caption:
+                                # Artifact detection always runs; stripping is optional per checkbox.
+                                is_prose_style = body.style not in _TAG_STYLES
+                                artifact_detected = False
+
+                                if _has_thinking(caption):
+                                    artifact_detected = True
+                                    if body.strip_thinking:
+                                        caption = _strip_thinking(caption)
+
+                                if caption and body.strip_underscores and is_prose_style:
+                                    caption = _normalize_underscores(caption)
+
+                                if caption and _has_hedges(caption):
+                                    artifact_detected = True
+                                    if body.strip_hedges:
+                                        caption = _strip_hedges(caption)
+
+                                if body.style in _TAG_STYLES:
+                                    new_tags = [
+                                        _normalize_underscores(t.strip()) if body.strip_underscores else t.strip()
+                                        for t in caption.split(",") if t.strip()
+                                    ]
+                                    if body.dedupe_tags:
+                                        new_tags = subsume_tags(new_tags)
+                                    if body.append_tags and existing_caption and body.delimiter_mode != "overwrite":
+                                        existing_tags = [
+                                            _normalize_underscores(t.strip()) if body.strip_underscores else t.strip()
+                                            for t in existing_caption.split(",") if t.strip()
+                                        ]
+                                        existing_set = set(new_tags)
+                                        new_tags = new_tags + [t for t in existing_tags if t not in existing_set]
+                                    caption = ", ".join(new_tags)
+
+                                # Reason C — post-processing (thinking/refusal/hedge stripping,
+                                # tag dedupe) removed every word. Guarded here rather than at the
+                                # save because the delimiter merge below would otherwise write
+                                # "existing, " and set_caption would blank a good caption and its
+                                # .txt sidecar; skipping the write leaves both untouched.
+                                if not caption:
+                                    _record_empty(
+                                        img_id, file_path,
+                                        "post-processing removed the entire caption",
+                                        stripped=True,
+                                    )
+                                else:
+                                    if body.delimiter_mode == "append" and existing_caption:
+                                        caption = existing_caption + body.delimiter + caption
+                                    elif body.delimiter_mode == "prepend" and existing_caption:
+                                        caption = caption + body.delimiter + existing_caption
+
+                                    if body.save_backup:
+                                        await asyncio.get_running_loop().run_in_executor(
+                                            None, _backup_sidecar, file_path
+                                        )
+
+                                    await set_caption(session, img_id, caption, body.style, body.model,
+                                                      has_ai_artifacts=artifact_detected)
+
+                                    if body.rename_on_caption:
+                                        try:
+                                            new_stem = slugify_filename(img_subfolder.replace("/", "_")) if img_subfolder else "image"
+                                            old_path = Path(file_path)
+                                            suf = old_path.suffix.lower()
+                                            _rename_db_names.discard(img_filename)
+                                            new_filename = unique_filename_with_thumb(
+                                                old_path.parent, new_stem, suf,
+                                                _rename_db_names, _occupied_thumb_stems, _planned_thumb_stems,
+                                            )
+                                            new_path = old_path.parent / new_filename
+                                            old_thumb = Path(thumbnail_path_for(str(old_path)))
+                                            new_thumb = Path(thumbnail_path_for(str(new_path)))
+                                            db_values: dict = dict(filename=new_filename, file_path=str(new_path))
+                                            if new_path != old_path:
+                                                db_values["is_auto_named"] = True
+                                                db_values["thumbnail_path"] = str(new_thumb)
+                                            # UPDATE staged *before* the rename: renamed
+                                            # first, a failing UPDATE left the image at its
+                                            # new name behind a row naming the old one. Now
+                                            # only the commit follows the rename (PM-013).
+                                            await session.execute(
+                                                sa_update(Image).where(Image.id == img_id).values(**db_values)
+                                            )
+                                            if new_path != old_path:
+                                                rename_with_sidecar(old_path, new_path)
+                                            await session.commit()
+                                            # Epilogue, after the commit (PM-013): a failed
+                                            # thumbnail move must not roll back the row of a
+                                            # file that has already been renamed.
+                                            if new_path != old_path and old_thumb != new_thumb:
+                                                try:
+                                                    if old_thumb.exists():
+                                                        old_thumb.replace(new_thumb)
+                                                except OSError:
+                                                    logger.warning(
+                                                        "Thumbnail move failed for %s; it will be regenerated",
+                                                        new_path.name, exc_info=True,
+                                                    )
+                                        except Exception:
+                                            # The caption itself is already committed by
+                                            # `set_caption`; this discards only the rename's
+                                            # staged UPDATE, so the next image does not start
+                                            # on a session left mid-transaction.
+                                            await session.rollback()
+                                            logger.error("Rename failed for %s", file_path, exc_info=True)
+                            else:
+                                # Reason B — the whole reply was a refusal and Strip refusals
+                                # removed it, leaving nothing to save.
+                                _record_empty(
+                                    img_id, file_path,
+                                    "the reply was entirely a refusal, removed by Strip refusals",
+                                    stripped=True,
                                 )
 
-                            await set_caption(session, img_id, caption, body.style, body.model,
-                                              has_ai_artifacts=artifact_detected)
+                        # Refresh VRAM reading only every 10 images (GPU call is not free)
+                        if i % 10 == 0:
+                            cached_vram_mb = _vram_mb()
 
-                            if body.rename_on_caption:
-                                try:
-                                    new_stem = slugify_filename(img_subfolder.replace("/", "_")) if img_subfolder else "image"
-                                    old_path = Path(file_path)
-                                    suf = old_path.suffix.lower()
-                                    _rename_db_names.discard(img_filename)
-                                    new_filename = unique_filename_with_thumb(
-                                        old_path.parent, new_stem, suf,
-                                        _rename_db_names, _occupied_thumb_stems, _planned_thumb_stems,
-                                    )
-                                    new_path = old_path.parent / new_filename
-                                    old_thumb = Path(thumbnail_path_for(str(old_path)))
-                                    new_thumb = Path(thumbnail_path_for(str(new_path)))
-                                    db_values: dict = dict(filename=new_filename, file_path=str(new_path))
-                                    if new_path != old_path:
-                                        db_values["is_auto_named"] = True
-                                        db_values["thumbnail_path"] = str(new_thumb)
-                                    # UPDATE staged *before* the rename: renamed
-                                    # first, a failing UPDATE left the image at its
-                                    # new name behind a row naming the old one. Now
-                                    # only the commit follows the rename (PM-013).
-                                    await session.execute(
-                                        sa_update(Image).where(Image.id == img_id).values(**db_values)
-                                    )
-                                    if new_path != old_path:
-                                        rename_with_sidecar(old_path, new_path)
-                                    await session.commit()
-                                    # Epilogue, after the commit (PM-013): a failed
-                                    # thumbnail move must not roll back the row of a
-                                    # file that has already been renamed.
-                                    if new_path != old_path and old_thumb != new_thumb:
-                                        try:
-                                            if old_thumb.exists():
-                                                old_thumb.replace(new_thumb)
-                                        except OSError:
-                                            logger.warning(
-                                                "Thumbnail move failed for %s; it will be regenerated",
-                                                new_path.name, exc_info=True,
-                                            )
-                                except Exception:
-                                    # The caption itself is already committed by
-                                    # `set_caption`; this discards only the rename's
-                                    # staged UPDATE, so the next image does not start
-                                    # on a session left mid-transaction.
-                                    await session.rollback()
-                                    logger.error("Rename failed for %s", file_path, exc_info=True)
-                    else:
-                        # Reason B — the whole reply was a refusal and Strip refusals
-                        # removed it, leaving nothing to save.
-                        _record_empty(
-                            img_id, file_path,
-                            "the reply was entirely a refusal, removed by Strip refusals",
-                            stripped=True,
-                        )
-
-                # Refresh VRAM reading only every 10 images (GPU call is not free)
-                if i % 10 == 0:
-                    cached_vram_mb = _vram_mb()
-
-                elapsed = time.monotonic() - start_time
-                throughput = round((i + 1) / elapsed, 2) if elapsed > 0 else 0
-                filename = Path(file_path).name
-                await broadcaster.emit(job_id, {
-                    "type": "progress",
-                    "job_id": job_id,
-                    "job_type": "caption",
-                    "status": "running",
-                    "done": i + 1,
-                    "total": total,
-                    "percent": round((i + 1) / total * 100, 1),
-                    "current_item": filename,
-                    "image_id": img_id,
-                    "message": f"{model_label}: {i + 1}/{total}",
-                    "throughput_ips": throughput,
-                    "vram_used_mb": cached_vram_mb,
-                })
+                        elapsed = time.monotonic() - start_time
+                        throughput = round((i + 1) / elapsed, 2) if elapsed > 0 else 0
+                        filename = Path(file_path).name
+                        await broadcaster.emit(job_id, {
+                            "type": "progress",
+                            "job_id": job_id,
+                            "job_type": "caption",
+                            "status": "running",
+                            "done": i + 1,
+                            "total": total,
+                            "percent": round((i + 1) / total * 100, 1),
+                            "current_item": filename,
+                            "image_id": img_id,
+                            "message": f"{model_label}: {i + 1}/{total}",
+                            "throughput_ips": throughput,
+                            "vram_used_mb": cached_vram_mb,
+                        })
+            except BaseException:
+                # A save that fails the job, or a hard cancel: the requests already
+                # sent are counted, the ones in flight included (decision 16).
+                await _record_calls_started(job_id, calls.started)
+                raise
+        if calls.stopped:
+            job_queue.raise_if_cancelled(job_id)
 
         # One model for the whole run, so the same provider (None for a local
         # backend) attributes both provider-dependent sentences.
         headline = _failure_headline(
-            timed_out, openai_provider, empty_count, stripped_count, openai_provider
+            timed_out, openai_provider, empty_count, stripped_count, openai_provider,
+            rate_limited=rate_limited, rate_limit_provider=openai_provider,
         )
 
         # Emit a summary event so the frontend can surface any failures to the user
@@ -761,6 +893,7 @@ async def start_caption_job(
                     job_row.result_data = {
                         "failed_count": len(failed_image_ids),
                         "timed_out": timed_out,
+                        "rate_limited": rate_limited,
                         "empty": empty_count,
                         "stripped": stripped_count,
                         "failure_summary": headline,
@@ -920,6 +1053,8 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
         # threshold problem. Each stays None when only local backends failed that way.
         timeout_provider: object | None = None
         empty_provider: object | None = None
+        rate_limited = 0
+        rate_limit_provider: object | None = None
 
         def _record_empty(img_id: str, file_path: str, reason: str, *, stripped: bool = False) -> None:
             """See the matching closure in /run's loop; the ids are a set here.
@@ -1033,167 +1168,196 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
                         )
                         prev_captions.update({row.id: (row.caption_text or "") for row in caption_result})
 
-            async with AsyncSessionLocal() as session:
-                cached_vram_mb = 0
-                for i, (img_id, file_path, img_filename, img_subfolder) in enumerate(image_data):
-                    # Cancellation check
-                    job_queue.raise_if_cancelled(job_id)
+            # Up to `bound` requests at once, finished in input order: see /run's loop.
+            if is_openai_compat:
+                bound = _clamp_bound(openai_provider.max_concurrent)
+            elif is_ollama:
+                bound = _clamp_bound(await _ollama_bound())
+            else:
+                bound = 1
+            if is_ollama and bound > 1:
+                # See /run's loop.
+                _empty_reason += _OLLAMA_QUEUED_HINT
 
+            async with contextlib.AsyncExitStack() as clients:
+                remote = await _open_remote_client(clients, is_ollama=is_ollama, provider=openai_provider)
+
+                async def _call(item):
+                    img_id, file_path, img_filename, img_subfolder = item
+                    # From this step's snapshot, so a request sent ahead of the
+                    # images before it reads the same previous caption.
                     prev_caption = prev_captions.get(img_id, "")
                     resolved_prompt = step.custom_prompt.replace("{previous_caption}", prev_caption)
-
-                    caption = ""
-                    # See the matching flag in /run's loop.
-                    errored = False
-                    try:
-                        if is_florence:
-                            from backend.ml.florence_captioner import caption_image as _fi
-                            caption = await _fi(file_path, florence_entry, step.style, step.target_width, step.target_height)
-                        elif is_paligemma:
-                            from backend.ml.paligemma_captioner import caption_image as _pi
-                            caption = await _pi(file_path, paligemma_entry, step.style, step.target_width, step.target_height)
-                        elif is_joycaption:
-                            from backend.ml.joycaption_captioner import caption_image as _ji
-                            caption = await _ji(file_path, joycaption_entry, step.style,
-                                                custom_prompt=resolved_prompt,
-                                                target_w=step.target_width, target_h=step.target_height)
-                        elif is_ollama:
-                            caption = await ollama_captioner.caption_image(
-                                file_path, ollama_model_name, step.style, resolved_prompt, step.target_width, step.target_height
-                            )
-                        elif is_openai_compat:
-                            from backend.ml.openai_compat_captioner import caption_image as _oi
-                            caption = await _oi(
-                                file_path,
-                                base_url=openai_provider.base_url,
-                                api_key=openai_provider.api_key,
-                                model_name=openai_model_name,
-                                style=step.style,
-                                custom_prompt=resolved_prompt,
-                                max_px=openai_provider.max_image_px,
-                                max_tokens=openai_provider.max_tokens,
-                                timeout_s=openai_provider.timeout_s,
-                                target_w=step.target_width,
-                                target_h=step.target_height,
-                            )
-                        elif is_wd14:
-                            from backend.ml import wd14_tagger
-                            caption = await asyncio.get_running_loop().run_in_executor(
-                                None, wd14_tagger.tag_image_sync, file_path, wd14_variant, step.wd14_threshold
-                            )
-                        else:
-                            # Unreachable — see the matching branch in /run's loop.
-                            raise RuntimeError(f"No captioning backend for model '{step.model}'")
-                    except APITimeoutError as exc:
-                        # See the matching branch in /run's loop.
-                        logger.error(
-                            "Pipeline step %d timed out for %s: provider '%s' did not respond "
-                            "within its configured %ss timeout. Raise Timeout in "
-                            "Settings \u2192 LLM Providers.",
-                            step_idx + 1, file_path, getattr(openai_provider, "name", "?"),
-                            getattr(openai_provider, "timeout_s", "?"),
+                    if is_florence:
+                        from backend.ml.florence_captioner import caption_image as _fi
+                        return await _fi(file_path, florence_entry, step.style, step.target_width, step.target_height)
+                    elif is_paligemma:
+                        from backend.ml.paligemma_captioner import caption_image as _pi
+                        return await _pi(file_path, paligemma_entry, step.style, step.target_width, step.target_height)
+                    elif is_joycaption:
+                        from backend.ml.joycaption_captioner import caption_image as _ji
+                        return await _ji(file_path, joycaption_entry, step.style,
+                                            custom_prompt=resolved_prompt,
+                                            target_w=step.target_width, target_h=step.target_height)
+                    elif is_ollama:
+                        return await ollama_captioner.caption_image(
+                            file_path, ollama_model_name, step.style, resolved_prompt, step.target_width, step.target_height,
+                            client=remote,
                         )
-                        timed_out += 1
-                        if timeout_provider is None:
-                            timeout_provider = openai_provider
-                        errored = True
-                        failed_image_ids.add(img_id)
-                        if len(failed_details) < _MAX_FAILED_DETAILS:
-                            failed_details.append({"file": Path(file_path).name, "error": str(exc) or type(exc).__name__})
-                    except Exception as exc:
-                        logger.error("Pipeline step %d caption failed for %s", step_idx + 1, file_path, exc_info=True)
-                        errored = True
-                        failed_image_ids.add(img_id)
-                        if len(failed_details) < _MAX_FAILED_DETAILS:
-                            failed_details.append({"file": Path(file_path).name, "error": str(exc) or type(exc).__name__})
+                    elif is_openai_compat:
+                        from backend.ml.openai_compat_captioner import caption_image as _oi
+                        return await _oi(
+                            file_path,
+                            base_url=openai_provider.base_url,
+                            api_key=openai_provider.api_key,
+                            model_name=openai_model_name,
+                            style=step.style,
+                            custom_prompt=resolved_prompt,
+                            max_px=openai_provider.max_image_px,
+                            max_tokens=openai_provider.max_tokens,
+                            timeout_s=openai_provider.timeout_s,
+                            target_w=step.target_width,
+                            target_h=step.target_height,
+                            client=remote,
+                        )
+                    elif is_wd14:
+                        from backend.ml import wd14_tagger
+                        return await asyncio.get_running_loop().run_in_executor(
+                            None, wd14_tagger.tag_image_sync, file_path, wd14_variant, step.wd14_threshold
+                        )
+                    else:
+                        # Unreachable — see the matching branch in /run's loop.
+                        raise RuntimeError(f"No captioning backend for model '{step.model}'")
 
-                    # Reason A — see the matching branch in /run's loop.
-                    if not caption and not errored:
-                        _record_empty(img_id, file_path, _empty_reason)
+                # Stop sends no new request; the ones in flight are still saved.
+                calls = InOrderCalls(image_data, _call, bound, stop=lambda: job_queue.cancel_requested(job_id))
+                async with AsyncSessionLocal() as session, calls:
+                    cached_vram_mb = 0
+                    async for i, item, call_result, call_exc in calls:
+                        img_id, file_path, img_filename, img_subfolder = item
+                        caption = ""
+                        # See the matching flag in /run's loop.
+                        errored = False
+                        try:
+                            if call_exc is not None:
+                                raise call_exc
+                            caption = call_result
+                        except APITimeoutError as exc:
+                            # See the matching branch in /run's loop.
+                            logger.error(
+                                "Pipeline step %d timed out for %s: provider '%s' did not respond "
+                                "within its configured %ss timeout. Raise Timeout in "
+                                "Settings \u2192 LLM Providers.",
+                                step_idx + 1, file_path, getattr(openai_provider, "name", "?"),
+                                getattr(openai_provider, "timeout_s", "?"),
+                            )
+                            timed_out += 1
+                            if timeout_provider is None:
+                                timeout_provider = openai_provider
+                            errored = True
+                            failed_image_ids.add(img_id)
+                            if len(failed_details) < _MAX_FAILED_DETAILS:
+                                failed_details.append({"file": Path(file_path).name, "error": str(exc) or type(exc).__name__})
+                        except Exception as exc:
+                            logger.error("Pipeline step %d caption failed for %s", step_idx + 1, file_path, exc_info=True)
+                            errored = True
+                            if _is_rate_limited(exc):
+                                rate_limited += 1
+                                if rate_limit_provider is None:
+                                    rate_limit_provider = openai_provider
+                            failed_image_ids.add(img_id)
+                            if len(failed_details) < _MAX_FAILED_DETAILS:
+                                failed_details.append({"file": Path(file_path).name, "error": str(exc) or type(exc).__name__})
 
-                    if caption:
-                        if step.strip_refusals:
-                            caption = _strip_refusals(caption)
+                        # Reason A — see the matching branch in /run's loop.
+                        if not caption and not errored:
+                            _record_empty(img_id, file_path, _empty_reason)
+
                         if caption:
-                            is_prose_style = step.style not in _TAG_STYLES and not is_wd14
-                            artifact_detected = False
+                            if step.strip_refusals:
+                                caption = _strip_refusals(caption)
+                            if caption:
+                                is_prose_style = step.style not in _TAG_STYLES and not is_wd14
+                                artifact_detected = False
 
-                            if _has_thinking(caption):
-                                artifact_detected = True
-                                if step.strip_thinking:
-                                    caption = _strip_thinking(caption)
+                                if _has_thinking(caption):
+                                    artifact_detected = True
+                                    if step.strip_thinking:
+                                        caption = _strip_thinking(caption)
 
-                            if caption and step.strip_underscores and is_prose_style:
-                                caption = _normalize_underscores(caption)
+                                if caption and step.strip_underscores and is_prose_style:
+                                    caption = _normalize_underscores(caption)
 
-                            if caption and _has_hedges(caption):
-                                artifact_detected = True
-                                if step.strip_hedges:
-                                    caption = _strip_hedges(caption)
+                                if caption and _has_hedges(caption):
+                                    artifact_detected = True
+                                    if step.strip_hedges:
+                                        caption = _strip_hedges(caption)
 
-                            if step.style in _TAG_STYLES or is_wd14:
-                                new_tags = [
-                                    _normalize_underscores(t.strip()) if step.strip_underscores else t.strip()
-                                    for t in caption.split(",") if t.strip()
-                                ]
-                                if step.dedupe_tags:
-                                    new_tags = subsume_tags(new_tags)
-                                existing_prev = prev_captions.get(img_id, "")
-                                if step.append_tags and existing_prev and step.delimiter_mode != "overwrite":
-                                    existing_tags = [
+                                if step.style in _TAG_STYLES or is_wd14:
+                                    new_tags = [
                                         _normalize_underscores(t.strip()) if step.strip_underscores else t.strip()
-                                        for t in existing_prev.split(",") if t.strip()
+                                        for t in caption.split(",") if t.strip()
                                     ]
-                                    existing_set = set(new_tags)
-                                    new_tags = new_tags + [t for t in existing_tags if t not in existing_set]
-                                caption = ", ".join(new_tags)
-                            # Reason C — see the matching branch in /run's loop: guarded
-                            # before the merge so a blanked caption never reaches
-                            # set_caption or the delimiter join.
-                            if not caption:
+                                    if step.dedupe_tags:
+                                        new_tags = subsume_tags(new_tags)
+                                    existing_prev = prev_captions.get(img_id, "")
+                                    if step.append_tags and existing_prev and step.delimiter_mode != "overwrite":
+                                        existing_tags = [
+                                            _normalize_underscores(t.strip()) if step.strip_underscores else t.strip()
+                                            for t in existing_prev.split(",") if t.strip()
+                                        ]
+                                        existing_set = set(new_tags)
+                                        new_tags = new_tags + [t for t in existing_tags if t not in existing_set]
+                                    caption = ", ".join(new_tags)
+                                # Reason C — see the matching branch in /run's loop: guarded
+                                # before the merge so a blanked caption never reaches
+                                # set_caption or the delimiter join.
+                                if not caption:
+                                    _record_empty(
+                                        img_id, file_path,
+                                        "post-processing removed the entire caption",
+                                        stripped=True,
+                                    )
+                                else:
+                                    existing = prev_captions.get(img_id, "")
+                                    if step.delimiter_mode == "append" and existing:
+                                        caption = existing + step.delimiter + caption
+                                    elif step.delimiter_mode == "prepend" and existing:
+                                        caption = caption + step.delimiter + existing
+                                    await set_caption(session, img_id, caption, step.style, step.model,
+                                                      has_ai_artifacts=artifact_detected)
+                            else:
+                                # Reason B — see the matching branch in /run's loop.
                                 _record_empty(
                                     img_id, file_path,
-                                    "post-processing removed the entire caption",
+                                    "the reply was entirely a refusal, removed by Strip refusals",
                                     stripped=True,
                                 )
-                            else:
-                                existing = prev_captions.get(img_id, "")
-                                if step.delimiter_mode == "append" and existing:
-                                    caption = existing + step.delimiter + caption
-                                elif step.delimiter_mode == "prepend" and existing:
-                                    caption = caption + step.delimiter + existing
-                                await set_caption(session, img_id, caption, step.style, step.model,
-                                                  has_ai_artifacts=artifact_detected)
-                        else:
-                            # Reason B — see the matching branch in /run's loop.
-                            _record_empty(
-                                img_id, file_path,
-                                "the reply was entirely a refusal, removed by Strip refusals",
-                                stripped=True,
-                            )
 
-                    overall_done += 1
-                    if i % 10 == 0:
-                        cached_vram_mb = _vram_mb()
+                        overall_done += 1
+                        if i % 10 == 0:
+                            cached_vram_mb = _vram_mb()
 
-                    elapsed = time.monotonic() - start_time
-                    throughput = round(overall_done / elapsed, 2) if elapsed > 0 else 0
-                    await broadcaster.emit(job_id, {
-                        "type": "progress",
-                        "job_id": job_id,
-                        "job_type": "caption_pipeline",
-                        "status": "running",
-                        "done": overall_done,
-                        "total": overall_total,
-                        "percent": round(overall_done / overall_total * 100, 1),
-                        "current_item": Path(file_path).name,
-                        "image_id": img_id,
-                        "message": f"Step {step_idx + 1}/{num_steps}: {model_label} — {i + 1}/{total_images}",
-                        "step_index": step_idx + 1,
-                        "step_total": num_steps,
-                        "throughput_ips": throughput,
-                        "vram_used_mb": cached_vram_mb,
-                    })
+                        elapsed = time.monotonic() - start_time
+                        throughput = round(overall_done / elapsed, 2) if elapsed > 0 else 0
+                        await broadcaster.emit(job_id, {
+                            "type": "progress",
+                            "job_id": job_id,
+                            "job_type": "caption_pipeline",
+                            "status": "running",
+                            "done": overall_done,
+                            "total": overall_total,
+                            "percent": round(overall_done / overall_total * 100, 1),
+                            "current_item": Path(file_path).name,
+                            "image_id": img_id,
+                            "message": f"Step {step_idx + 1}/{num_steps}: {model_label} — {i + 1}/{total_images}",
+                            "step_index": step_idx + 1,
+                            "step_total": num_steps,
+                            "throughput_ips": throughput,
+                            "vram_used_mb": cached_vram_mb,
+                        })
+            if calls.stopped:
+                job_queue.raise_if_cancelled(job_id)
 
             # Release the step's lease first, or evict_all would skip the very
             # model it is here to free.
@@ -1203,7 +1367,8 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
                 await model_manager.evict_all()
 
         headline = _failure_headline(
-            timed_out, timeout_provider, empty_count, stripped_count, empty_provider
+            timed_out, timeout_provider, empty_count, stripped_count, empty_provider,
+            rate_limited=rate_limited, rate_limit_provider=rate_limit_provider,
         )
 
         if failed_image_ids:
@@ -1226,6 +1391,7 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
                     job_row.result_data = {
                         "failed_count": len(failed_image_ids),
                         "timed_out": timed_out,
+                        "rate_limited": rate_limited,
                         "empty": empty_count,
                         "stripped": stripped_count,
                         "failure_summary": headline,

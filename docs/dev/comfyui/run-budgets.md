@@ -37,14 +37,23 @@ a job that failed, was cancelled or was interrupted by a restart still counts in
   because the provider was asked each time. It is written before the caption is saved, so
   a save that fails the whole job keeps the call. The queue's terminal writes and
   `mark_interrupted_jobs` never touch the column.
+  - **With several requests in flight** (M10 T2, a provider's Max concurrent requests),
+    each image is still counted in input order as it finishes. A Stop from the UI sends no
+    new request and waits for the ones in flight, which are counted as they finish. A job
+    that fails, or that shutdown cancels by force, raises the count to every request it
+    started (`_record_calls_started`), so the requests still in flight are counted too
+    (`docs/dev/captioning.md` § Requests in flight).
 
 Until M9 stage 10 no caption job wrote `done_items`, so the caption half was always 0 and
 a resume after a stopped caption job could bill the whole tail again (PM-037).
 
-Two known inexactnesses, both accepted (the user's ruling, 2026-11-10):
-- **A call in flight when the process dies is not counted**, nor one still running when
-  shutdown's grace runs out: at most one per stop, for either job. A Stop from the UI is
-  not such a case: it lands between images, after the call in flight has been counted.
+Two known inexactnesses, both accepted (the user's rulings, 2026-11-10 and 2026-11-12):
+- **A call in flight when the process dies is not counted**: at most one per stop for a
+  rewrite job, and for a caption job at most its provider's Max concurrent requests, N
+  ([decision 16](../decisions/16-concurrent-caption-requests.md)). A resume can then
+  overshoot the cap by that many. A rewrite call still running when shutdown's grace runs
+  out is not counted either. A caption job is: it counts every request it started. A Stop
+  from the UI is not such a case for either job, since it counts the calls in flight.
 - **A caption call that never left the machine is counted** (a file that will not open
   fails before the request). That errs towards stopping early.
 
@@ -166,8 +175,8 @@ arithmetic and nothing about the count.
   where the folders stand, because targets are absolute.
 - A first tail whose caption the paid-call cap trimmed is not made up by a later tail,
   which captions only its own passes.
-- A paid call in flight when the process dies is not counted (§ Who writes the paid-call
-  counts).
+- A paid call in flight when the process dies is not counted: up to N for a caption job
+  (§ Who writes the paid-call counts).
 - **The rewrite's reserve reads caption calls as captions made.** Failed calls count, so
   after a tail with failed calls `caption_calls` can pass the number of images captioned,
   even `max_images`, and the reserve shrinks to less than the next tail needs. A run

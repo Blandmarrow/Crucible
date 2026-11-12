@@ -59,3 +59,13 @@ def test_out_carries_both_fields():
         id="i", name="n", base_url="http://localhost:1/v1", api_key="", default_model="",
         max_image_px=1024, max_tokens=1, timeout_s=10, billed=True, created_at=__import__("datetime").datetime(2026, 1, 1)))
     assert out.billed is True and out.is_billed is True and out.is_remote is False
+
+
+def test_out_carries_max_concurrent():
+    row = SimpleNamespace(
+        id="i", name="n", base_url="http://localhost:1/v1", api_key="", default_model="",
+        max_image_px=1024, max_tokens=1, timeout_s=10, max_concurrent=4, billed=None,
+        created_at=__import__("datetime").datetime(2026, 1, 1))
+    assert OpenAIProviderOut.from_orm_row(row).max_concurrent == 4
+    del row.max_concurrent                      # a row-like object without the column
+    assert OpenAIProviderOut.from_orm_row(row).max_concurrent == 1

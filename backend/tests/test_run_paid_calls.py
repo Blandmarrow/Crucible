@@ -64,12 +64,13 @@ def _break_next_save(monkeypatch) -> dict:
     return state
 
 
-async def _provider(env, *, billed: bool) -> str:
+async def _provider(env, *, billed: bool, max_concurrent: int = 1) -> str:
     """A caption model id. A remote base URL is billed (`provider_is_billed`); a local one is not."""
     r = await env.client.post(f"{API}/providers/", json={
         "name": "cloud" if billed else "lmstudio",
         "base_url": "https://api.example.com/v1" if billed else "http://127.0.0.1:1234/v1",
         "default_model": "vl",
+        "max_concurrent": max_concurrent,
     })
     assert r.status_code == 201, r.text
     return f"openai_compat:{r.json()['id']}:vl"
@@ -308,6 +309,46 @@ def test_a_run_makes_no_more_caption_calls_than_its_cap_across_stopped_jobs(tmp_
             assert len(calls) == 5
             assert sum(j.done_items for j in jobs) == 5
             assert len(await _captioned_by(env, ds["id"], model)) == 3
+    run(go())
+
+
+def test_a_cap_holds_with_three_requests_in_flight_across_a_failed_job_and_a_resume(tmp_path, monkeypatch):
+    """Four images, a cap of five, three requests at once (M10 T2, decision 16). The first
+    job fails on its first save while two more requests are already in flight: those were
+    sent, so the job's `done_items` is raised to the three started, and the resume has two
+    calls left, not four. Counting only the one saved image would let the run spend six."""
+    async def go():
+        async with api_env(tmp_path) as env:
+            _fake, ds, plan_id = await _loop_plan(env, monkeypatch, _spec(GOOD, GOLD, count=2))
+            model = await _provider(env, billed=True, max_concurrent=3)
+            save = _break_next_save(monkeypatch)
+
+            async def behave(n):
+                if n == 1:
+                    save["armed"] = True        # the first save fails the job
+                await asyncio.sleep(0.02 * (4 - n))   # later requests come back first
+                return CAPTION
+
+            calls = _fake_captioner(monkeypatch, behave)
+            code, body = await _start(env, ds["id"], plan_id, RUN_STAGES,
+                                      caption={"model": model}, loop=_loop(max_images=4, max_paid_calls=5))
+            assert code == 200, body
+            run_id = body["id"]
+
+            out = await wait_for_run(env, run_id, timeout=60)
+            assert out["status"] == "failed" and "could not be saved" in out["error_msg"], out
+            (first,) = await _caption_jobs(env)
+            assert first.status == "failed"
+            assert first.done_items == len(calls) >= 2, (first.done_items, calls)
+            made_first = len(calls)
+
+            out = await _resume(env, run_id)
+            assert out["status"] == "completed", out
+            jobs = await _caption_jobs(env)
+            assert jobs[0].done_items == made_first
+            assert len(calls) <= 5                              # the cap held
+            assert sum(j.done_items for j in jobs) >= len(calls)     # and every call is on a row
+            assert len(calls) > made_first                      # the resume still spent what was left
     run(go())
 
 

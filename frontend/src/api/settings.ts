@@ -16,6 +16,8 @@ export interface Thresholds {
   comfy_workflow_dir: string;
   /** Unload a local Strata LLM server before ComfyUI generates (M6 §9). */
   llm_gpu_handoff: boolean;
+  /** Caption requests a job sends Ollama at once (1-16). */
+  ollama_max_concurrent: number;
 }
 
 /** One secret as the server reports it: never the plaintext, only a mask and its origin. */

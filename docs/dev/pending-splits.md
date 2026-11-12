@@ -279,3 +279,23 @@ utilities → `docs/dev/shared-utilities.md`.
   the folder tree and the grouped table; `styling.md` points at `page.md` for the rail and
   tree's `ContextMenu`. The `planBusy` bullet sits inside the run-bar bullet but belongs with
   the Rows tab's controls.
+
+## docs/dev/captioning.md
+
+- **Moves:** from § Captioning job execution, the failure-reporting bullets: Progress and
+  failures, A partial failure is durable (with its `failure_summary` and two-provider
+  sub-bullets and the Known gap paragraph), `/run` writes `done_items`, and An empty caption
+  is a counted failure (with its A/B/C sub-bullets and the test paragraph).
+- **New file:** docs/dev/caption-failures.md (mirrors docs/captioning.md § When images come
+  back uncaptioned)
+- **Why here:** M10 T2's live timings took it to ~3,590 of 3,500 words (2026-11-12). The
+  section is ~1,500 words, most of it how a failed image is counted, named and kept
+  durable; the bullets that stay (`has_ai_artifacts`, the flag lifecycle, tag styles) are
+  about what a saved caption carries, and sit better beside § Captioning post-processing.
+  That leaves about 2,000 words here and 1,300 in the new file, both under 60%.
+- **Watch for:** `docs/dev/comfyui/run-budgets.md` § Who writes the paid-call counts and
+  `docs/dev/llm-providers.md` § Captioner point at "§ Captioning job execution" for the
+  `done_items` and empty-caption bullets; both move. § Requests in flight (stays) points at
+  the `done_items` bullet and the timeout branch, and the `done_items` bullet points back
+  at it, so the two files cross-reference each other. `backend/tests/test_caption_empty_guard.py`
+  is named in the moving test paragraph.

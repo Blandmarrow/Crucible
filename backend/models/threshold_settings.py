@@ -24,6 +24,10 @@ class ThresholdSettings(Base):
     # Unload a local Strata LLM server before ComfyUI generates (M6 §9,
     # backend/services/llm_server.py). Off by default: only a card too small for both needs it.
     llm_gpu_handoff: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="0")
+    # How many caption requests a job sends Ollama at once (M10 T2). Ollama has no
+    # provider row, so this is its one app-wide equivalent of a provider's
+    # `max_concurrent`.
+    ollama_max_concurrent: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
 
     # Secrets, editable from Settings -> API Keys. The column names MUST equal the
     # backend.config.Settings field names of the same secrets: secrets_service uses one

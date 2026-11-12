@@ -43,6 +43,12 @@ Test providers use `127.0.0.1:1234`, which is LM Studio's real port on a develop
 machine, so a run test could otherwise list or unload real models, and pass or fail by
 what is running. A test that wants a server sets its own transport with `monkeypatch`.
 
+The same fixture covers the two remote captioners (M10 T2). `ollama_captioner._HTTP_TRANSPORT`
+gets the refusing transport. The OpenAI SDK is built on `httpx2`, so no `httpx` transport
+reaches it: `openai_compat_captioner.make_client` is replaced by `RefusingOpenAIClient`
+(in `conftest.py`), whose every request fails as a refused connection would. A test that
+wants a server patches `make_client`, or `caption_image` itself.
+
 ## Foreign keys in api_env
 
 `api_env` enforces foreign keys by default,

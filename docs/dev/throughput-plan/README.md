@@ -45,8 +45,8 @@ subagent reported it and it was not re-read; verify it before building on it.
 | `score_image_sync` | Decodes the file (`open_rgb`), preprocesses it, moves it to the card and runs the model, all inside the one GPU call. The card waits during the first two steps | Checked |
 | A full scoring run | Each check decodes every file again: up to five decodes for aesthetic, watermark, CLIP, DINOv2 and technical. Watermark and CLIP each run the CLIP image encoder | From the audit |
 | `technical_scorer.score_images_technical` | CPU-only (OpenCV). One `run_in_executor` call per image, awaited, so one core is busy. **Fixed by T1**: up to 4 at once, 2.0× to 2.3× faster (`docs/dev/quality/scoring.md` § The technical scorer runs several images at once) | Checked |
-| `openai_compat_captioner._caption_sync` | One request at a time, and a new `OpenAI(...)` client for each image | Checked |
-| `ollama_captioner` | One request at a time, and a new `httpx.AsyncClient` for each image | Checked |
+| `openai_compat_captioner._caption_sync` | One request at a time, and a new `OpenAI(...)` client for each image. **Fixed by T2**: up to a provider's Max concurrent requests at once, on one async client per job (`docs/dev/captioning.md` § Requests in flight) | Checked |
+| `ollama_captioner` | One request at a time, and a new `httpx.AsyncClient` for each image. **Fixed by T2**, with one app-wide setting since Ollama has no provider row | Checked |
 | The local captioners (Florence-2, PaliGemma, JoyCaption) | One image per call. `caption_batch` is defined in `florence_captioner.py`, `paligemma_captioner.py` and `ollama_captioner.py`, and nothing outside the tests calls it | Checked for `caption_batch`; from the audit for the per-image loop |
 | `wd14_tagger` | Its ONNX session is built with `providers=["CPUExecutionProvider"]`, one image per call | Checked |
 | `import_images_from_folder` | One file per `run_in_executor` call, awaited. Each file is opened about four times and fully decoded twice (once for size and phash, once for the thumbnail). **Fixed by T3**, which found a PNG was decoded four times, not twice: up to 8 files at once and one decode each, 7.6× faster on JPEGs and 18× on large PNGs (`docs/dev/image-import.md` § Several files at once, one decode each) | Checked |
@@ -62,39 +62,17 @@ CPU-only work first, since it cannot touch the GPU rule at all.
 T1, the technical scorer on several cores, is done; its design and timing now live in
 `docs/dev/quality/scoring.md` § The technical scorer runs several images at once. T3,
 parallel import and one decode per file, is done too; its design and timing live in
-`docs/dev/image-import.md` § Several files at once, one decode each.
+`docs/dev/image-import.md` § Several files at once, one decode each. T2, concurrent requests
+for the remote captioners, is done; its design lives in `docs/dev/captioning.md` § Requests
+in flight, and its rulings in [decision 16](../decisions/16-concurrent-caption-requests.md).
 
 T3 put T1's bounded FIFO window (await the oldest future first) into a class,
-`_InOrderWindow` in `dataset_service.py`, kept private to that module for now. T2 can
-reuse it for requests in flight, since it holds any futures and keeps input order and a
-prefix on cancel. T1 can move onto it once `docs/dev/quality/scoring.md` is split (it is
-over budget, see `docs/dev/pending-splits.md`), and the class then belongs in
+`_InOrderWindow` in `dataset_service.py`, kept private to that module for now. T2 did not
+reuse it: T2 runs coroutines, not executor futures, and a cancelled call has to come back
+as a failure with its item, which `pop_oldest` cannot do. T2 added `utils.InOrderCalls`
+instead. T1 can move onto `_InOrderWindow` once `docs/dev/quality/scoring.md` is split (it
+is over budget, see `docs/dev/pending-splits.md`), and the class then belongs in
 `backend/utils.py`.
-
-### T2 — Concurrent requests for the remote captioners
-
-For the OpenAI-compatible and Ollama captioners, send a bounded number of requests at once
-and reuse one client for the job. A local server such as vLLM or llama.cpp can batch
-requests that arrive together; a hosted one just answers in parallel.
-
-- **A per-provider setting, default 1.** Other people's servers differ, and a server that
-  cannot take two requests must keep working unchanged
-  (`docs/dev/llm-providers.md` owns the provider row and its hand-kept field list).
-- **Keep what PM-023 fixed**: the configured timeout, `max_retries=0`, and a failure that
-  shows on the job (`docs/dev/captioning.md`).
-- **The paid-call cap** of an automated run counts these calls (M9 stage 10). Concurrency
-  must not let a run overshoot its cap by more than the requests in flight; say by how many.
-  What stage 10 counts is `BackgroundJob.done_items`, written `i + 1` after each call in
-  the caption loop and equal to the SSE `done` (`docs/dev/comfyui/run-budgets.md` § Who
-  writes the paid-call counts). With requests in flight together, keep it one step per
-  finished call, failed ones included, and keep the row and the event the same number.
-  It is one commit per image for every caption model, which T2 may batch for the local
-  ones, whose count nothing reads.
-- **The Strata handoff** ([decision 10](../decisions/10-unload-strata-while-comfyui-generates.md))
-  is untouched: it happens between stages, not between requests.
-
-**Acceptance.** With the setting at 1 the request order and results are as today. At N, a
-fake server sees at most N requests in flight, and a cancel stops new ones at once.
 
 ### T4 — Time the decode share on a real card
 

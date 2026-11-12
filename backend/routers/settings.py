@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
 from backend.models.threshold_settings import ThresholdSettings
+from backend.schemas.openai_provider import MAX_CONCURRENT_REQUESTS
 from backend.schemas import mask_secret
 from backend.services.secrets_service import (
     SECRET_FIELDS,
@@ -36,6 +37,7 @@ class ThresholdsOut(BaseModel):
     comfyui_url: str = ""
     comfy_workflow_dir: str = ""
     llm_gpu_handoff: bool = False
+    ollama_max_concurrent: int = 1
 
     model_config = {"from_attributes": True}
 
@@ -55,6 +57,7 @@ class ThresholdsUpdate(BaseModel):
     comfyui_url: str | None = Field(default=None, max_length=500)
     comfy_workflow_dir: str | None = Field(default=None, max_length=1000)
     llm_gpu_handoff: bool | None = Field(default=None)
+    ollama_max_concurrent: int | None = Field(default=None, ge=1, le=MAX_CONCURRENT_REQUESTS)
 
     @field_validator("versioning_mode")
     @classmethod

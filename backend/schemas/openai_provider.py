@@ -4,6 +4,13 @@ from backend.schemas import UtcDatetime, mask_secret
 
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "[::1]"}
 
+# The most caption requests a job keeps in flight to one server (M10 T2), for a
+# provider's `max_concurrent` and the app-wide Ollama setting alike. Local servers
+# rarely run more parallel slots than this, a hosted free tier rate-limits long
+# before it, and it bounds what a crash can leave out of the paid-call count
+# (decision 16).
+MAX_CONCURRENT_REQUESTS = 16
+
 
 def _is_remote(base_url: str) -> bool:
     try:
@@ -35,6 +42,7 @@ class OpenAIProviderCreate(BaseModel):
     # than an OverflowError out of the SQLite integer bind on commit.
     max_tokens: int = Field(default=2048, ge=1, le=2**31 - 1)
     timeout_s: int = Field(default=300, ge=10, le=3600)
+    max_concurrent: int = Field(default=1, ge=1, le=MAX_CONCURRENT_REQUESTS)
     # None = unset, follow the URL (NULL in the column).
     billed: bool | None = None
 
@@ -54,6 +62,7 @@ class OpenAIProviderUpdate(BaseModel):
     # Same ceiling as OpenAIProviderCreate — a 422 instead of an OverflowError.
     max_tokens: int | None = Field(default=None, ge=1, le=2**31 - 1)
     timeout_s: int | None = Field(default=None, ge=10, le=3600)
+    max_concurrent: int | None = Field(default=None, ge=1, le=MAX_CONCURRENT_REQUESTS)
     # None = unchanged (PATCH uses exclude_none), so it can be set true/false but
     # not cleared back to NULL.
     billed: bool | None = None
@@ -73,6 +82,7 @@ class OpenAIProviderOut(BaseModel):
     max_image_px: int
     max_tokens: int
     timeout_s: int
+    max_concurrent: int
     is_remote: bool
     billed: bool | None
     is_billed: bool
@@ -95,6 +105,7 @@ class OpenAIProviderOut(BaseModel):
             max_image_px=row.max_image_px,
             max_tokens=getattr(row, "max_tokens", 2048),
             timeout_s=getattr(row, "timeout_s", 300),
+            max_concurrent=getattr(row, "max_concurrent", 1),
             is_remote=_is_remote(row.base_url),
             billed=getattr(row, "billed", None),
             is_billed=provider_is_billed(row),

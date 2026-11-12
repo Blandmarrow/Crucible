@@ -93,6 +93,8 @@ Version control mode radio (`off | manual | auto`) plus branch snapshot behavior
 
 Manage OpenAI-compatible provider configurations (see `docs/dev/llm-providers.md`). Add / edit / delete providers. Name and Base URL are required; changes are saved immediately per-mutation (no page-level Save). Provider mutations also invalidate `["captioning-models"]` so the model picker on CaptioningPage reflects changes immediately.
 
+Below the providers, an **Ollama** panel holds `ollama_max_concurrent` (1–16, default 1), a `ThresholdSettings` column because Ollama has no provider row: how many caption requests a job keeps in flight to Ollama (M10 T2, `docs/dev/captioning.md` § Requests in flight). It has its own Save button, like the ComfyUI fields, and is not part of the page-level Save.
+
 ## API Keys tab
 
 Three secrets — `hf_token`, `gelbooru_api_key`, `gelbooru_user_id` — that were previously readable only from `.env`/OS env, resolved once at import into the `backend.config.settings` singleton. They are now `String(500)` columns on the same `ThresholdSettings` row (migration `a2f4c6e8b0d1`, whose docstring records the three decisions below in full), editable from the page with no restart.

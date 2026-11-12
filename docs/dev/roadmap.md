@@ -17,14 +17,18 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-12, M10 T3 merged)
+## Next session (updated 2026-11-12, M10 T2 built)
 
 0. **M10, job throughput, is under way**
    ([decision 14](decisions/14-job-throughput-is-its-own-milestone.md)), planned in
    [throughput-plan/README.md](throughput-plan/README.md). M9 landed on 2026-11-12 (see
-   Landed). T1 merged on 2026-11-12 as PR #145, and T3 the same day as PR #146. Next is
-   T2, which can reuse T3's `_InOrderWindow`, or T6, which waits on nothing. See M10
-   below. M9 left four things open, none of which blocks M10
+   Landed). T1 merged on 2026-11-12 as PR #145, and T3 the same day as PR #146. T2 is
+   built on `feat/m10-t2-concurrent-captions` ([decision 16](decisions/16-concurrent-caption-requests.md)).
+   Next is T6, which waits on nothing, or T4's hand timing. See M10 below.
+   - **Found while building T2, not fixed:** `/pipeline` silently ignores `save_backup`
+     and `rename_on_caption`. Both are on `CaptionPipelineRequest` and the frontend sends
+     them, but `_run_pipeline_body` never reads them. Wants the user's call: wire them up,
+     or drop them from the request and the pipeline form. M9 left four things open, none of which blocks M10
    ([roadmap-archive/m9-scale-and-data-safety.md § Left open](roadmap-archive/m9-scale-and-data-safety.md#left-open)):
    - **Two findings wait for the user to place them in the order.** Style scoring's keyset
      page sorts the whole dataset for every page (a `TEMP B-TREE` behind
@@ -60,9 +64,10 @@ restates its stages.
    parked there (`docs/dev/dataset-folders.md` § Two known costs).
    M4 also resolves M9's overlap, listed in
    [scale-plan/README.md § Interaction with the other milestones](scale-plan/README.md#interaction-with-the-other-milestones).
-   M4's decision, number 4 on its branch, is unaffected; `main`'s next new decision is 16.
-4. Five docs seams are queued in [pending-splits.md](pending-splits.md) (counted
-   2026-11-12): `docs/dev/comfyui/page.md` and `docs/dev/comfyui/queue.md`, both over budget
+   M4's decision, number 4 on its branch, is unaffected; `main`'s next new decision is 17.
+4. Six docs seams are queued in [pending-splits.md](pending-splits.md) (counted
+   2026-11-12): `docs/dev/captioning.md` (3,586 of 3,500 since T2's timings; its failure
+   bullets move to a new file), `docs/dev/comfyui/page.md` and `docs/dev/comfyui/queue.md`, both over budget
    (3,936 and 3,538 words of 3,500), `docs/dev/quality/scoring.md` (3,696, over since T1;
    split it before T5 adds to it), `docs/scoring.md`'s residual
    seam, and `README.md`'s § Features deletion (deferred when its budget went to 4,000). Each
@@ -137,9 +142,11 @@ is not touched: only CPU work moves.
 - [x] T1: the technical scorer on several cores. Merged 2026-11-12 as PR #145: up to 4
   calls at once, 2.0× to 2.3× faster, scores identical. Timing and the reason for the cap: `docs/dev/quality/scoring.md` § The
   technical scorer runs several images at once.
-- [ ] T2: concurrent requests and a reused client for the OpenAI-compatible and Ollama
-  captioners, behind a per-provider setting that defaults to 1. An automated run's
-  paid-call cap (M9 stage 10) must not overshoot by more than the requests in flight.
+- [x] T2: concurrent requests and a reused client for the OpenAI-compatible and Ollama
+  captioners. Built 2026-11-12 on `feat/m10-t2-concurrent-captions`: a per-provider Max
+  concurrent requests and one app-wide Ollama setting, default 1, in both caption loops; a
+  crash leaves at most N calls uncounted ([decision 16](decisions/16-concurrent-caption-requests.md)).
+  Detail: `docs/dev/captioning.md` § Requests in flight.
 - [x] T3: parallel import and rescan, with one decode per file. Merged 2026-11-12 as
   PR #146: up to 8 files at once, and a PNG decoded once instead of
   four times, 7.6× faster on JPEGs and 18× on large PNGs. Name and stem picking stays

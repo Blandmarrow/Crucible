@@ -17,14 +17,13 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-12, M10 T1 done)
+## Next session (updated 2026-11-12, M10 T1 merged)
 
 0. **M10, job throughput, is under way**
    ([decision 14](decisions/14-job-throughput-is-its-own-milestone.md)), planned in
    [throughput-plan/README.md](throughput-plan/README.md). M9 landed on 2026-11-12 (see
-   Landed). T1 is done on `feat/m10-t1-technical-parallel`, not yet merged. Next is T2 or
-   T3: both are CPU-only and do not depend on each other, and T6 waits on nothing. See
-   M10 below. M9 left four things open, none of which blocks M10
+   Landed). T1 merged on 2026-11-12 as PR #145. Next is T2 or T3: both are CPU-only and do
+   not depend on each other, and T6 waits on nothing. See M10 below. M9 left four things open, none of which blocks M10
    ([roadmap-archive/m9-scale-and-data-safety.md § Left open](roadmap-archive/m9-scale-and-data-safety.md#left-open)):
    - **Two findings wait for the user to place them in the order.** Style scoring's keyset
      page sorts the whole dataset for every page (a `TEMP B-TREE` behind
@@ -134,9 +133,8 @@ by that timing. Plan: [throughput-plan/README.md](throughput-plan/README.md), wh
 each stage's design and acceptance; this list is the order. PM-035's one-GPU-thread rule
 is not touched: only CPU work moves.
 
-- [x] T1: the technical scorer on several cores. Done 2026-11-12 on
-  `feat/m10-t1-technical-parallel`: up to 4 calls at once, 2.0× to 2.3× faster, scores
-  identical. Timing and the reason for the cap: `docs/dev/quality/scoring.md` § The
+- [x] T1: the technical scorer on several cores. Merged 2026-11-12 as PR #145: up to 4
+  calls at once, 2.0× to 2.3× faster, scores identical. Timing and the reason for the cap: `docs/dev/quality/scoring.md` § The
   technical scorer runs several images at once.
 - [ ] T2: concurrent requests and a reused client for the OpenAI-compatible and Ollama
   captioners, behind a per-provider setting that defaults to 1. An automated run's

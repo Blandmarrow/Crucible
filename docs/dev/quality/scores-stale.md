@@ -24,7 +24,7 @@ The consequence lands far from the edit. `exclude_flags` at export drops images 
 
 ## The clear predicate
 
-**The clear site** is `_write_score_chunk` in `routers/quality.py`, run for every chunk of every check (the loop is `docs/dev/quality/scoring.md` § The chunked job loop). It is set-covering over what the run actually *wrote*, never over `body.run_*`:
+**The clear site** is `_write_score_chunk` in `routers/quality.py`, run for every chunk of every check (the loop is `docs/dev/quality/scoring-job.md` § The chunked job loop). It is set-covering over what the run actually *wrote*, never over `body.run_*`:
 
 ```python
 refreshed = done_cols | check.score_cols
@@ -39,7 +39,7 @@ if check.score_cols and row.scores_stale and img_id in clearable:
 **The union is exact only because every earlier check wrote this row, and `clearable` is what holds that.** It is `stale_at_start - missed`: the rows stale when the job started (a snapshot), minus any some check should have written but did not, because its chunk came back short. Real scorers only come back short on a cancel, after which the job raises, but the predicate does not rest on that. Two consequences:
 
 - **A row that turns stale mid-job is never cleared by that job.** It was edited while the job ran, so a score an earlier check measured may describe pixels that are gone. Under the old single-commit job that race spanned the whole run.
-- **Under `only_unscored`, the snapshot rows pass every check's filter.** A check otherwise visits only rows missing its own output. Without the snapshot, a stale row whose aesthetic score was present would be skipped by the aesthetic check, and the technical check would then count `aesthetic_score` as refreshed and clear the bit over a stale score. That is why the user's ruling (2026-11-08) puts stale rows in "what's missing", and why the filter reads the snapshot rather than the live bit (`docs/dev/quality/scoring.md` § The chunked job loop).
+- **Under `only_unscored`, the snapshot rows pass every check's filter.** A check otherwise visits only rows missing its own output. Without the snapshot, a stale row whose aesthetic score was present would be skipped by the aesthetic check, and the technical check would then count `aesthetic_score` as refreshed and clear the bit over a stale score. That is why the user's ruling (2026-11-08) puts stale rows in "what's missing", and why the filter reads the snapshot rather than the live bit (`docs/dev/quality/scoring-job.md` § The chunked job loop).
 
 One race is left, and it predates chunking: a row stale at the start and edited *again* between an earlier check's write and a later one's can still be cleared over the earlier check's pre-edit scores. Closing it would need a per-row edit counter read beside the paths.
 

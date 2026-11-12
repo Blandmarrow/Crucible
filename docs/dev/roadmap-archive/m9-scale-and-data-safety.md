@@ -23,7 +23,7 @@ resolves the overlap
 - [x] Stage 3: quality scoring commits per chunk within each check, with an "only unscored"
   resume option. Merged 2026-11-08 as PR #126: the option takes missing-or-stale rows and
   is a *Score what's missing* button (the user's calls). Detail:
-  `docs/dev/quality/scoring.md` § The chunked job loop.
+  `docs/dev/quality/scoring-job.md` § The chunked job loop.
 - [x] Stage 4: fetch the Stats page's raw value lists only when something needs them (saved
   custom edges or an open pencil editor), and return the means from `/stats`. Shrunk on
   2026-11-10 by decision 13's amendment. Merged 2026-11-11 as PR #139: the CSV export needs no list at all, and a dataset's

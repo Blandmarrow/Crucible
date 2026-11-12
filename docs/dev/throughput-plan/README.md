@@ -4,7 +4,7 @@
 [../roadmap.md](../roadmap.md); why it is a milestone of its own, and what it will not
 build, is [decision 14](../decisions/14-job-throughput-is-its-own-milestone.md). When a
 stage lands, move its durable rationale into the topic file that owns the code
-(`docs/dev/ml-models.md`, `docs/dev/quality/scoring.md`, `docs/dev/captioning.md`,
+(`docs/dev/ml-models.md`, `docs/dev/quality/scoring.md`, `docs/dev/quality/scoring-job.md`, `docs/dev/captioning.md`,
 `docs/dev/image-import.md`) and delete the stage from here. Delete the folder when
 everything is done or dropped.
 
@@ -44,7 +44,7 @@ subagent reported it and it was not re-read; verify it before building on it.
 | Every scorer (`backend/ml/aesthetic_scorer.py`, `dino_scorer.py`, `nsfw_scorer.py`) | One `run_on_gpu` call per image, awaited in a loop. `SCORE_CHUNK` sizes the DB chunk, not the inference batch | Checked for the aesthetic scorer; from the audit for the rest |
 | `score_image_sync` | Decodes the file (`open_rgb`), preprocesses it, moves it to the card and runs the model, all inside the one GPU call. The card waits during the first two steps | Checked |
 | A full scoring run | Each check is its own pass and decodes every file again: up to seven decodes with every box ticked, six GPU passes (aesthetic, watermark, CLIP, DINOv2 and its layers, NSFW) plus the technical check's own `cv2` read. Watermark and CLIP each run the CLIP image encoder again. **Measured by T4**: decode alone is 13–23% of a full run on small JPEGs and 54–68% on large PNGs and real ComfyUI images | Checked by T4 |
-| `technical_scorer.score_images_technical` | CPU-only (OpenCV). One `run_in_executor` call per image, awaited, so one core is busy. **Fixed by T1**: up to 4 at once, 2.0× to 2.3× faster (`docs/dev/quality/scoring.md` § The technical scorer runs several images at once) | Checked |
+| `technical_scorer.score_images_technical` | CPU-only (OpenCV). One `run_in_executor` call per image, awaited, so one core is busy. **Fixed by T1**: up to 4 at once, 2.0× to 2.3× faster (`docs/dev/quality/scoring-job.md` § The technical scorer runs several images at once) | Checked |
 | `openai_compat_captioner._caption_sync` | One request at a time, and a new `OpenAI(...)` client for each image. **Fixed by T2**: up to a provider's Max concurrent requests at once, on one async client per job (`docs/dev/captioning.md` § Requests in flight) | Checked |
 | `ollama_captioner` | One request at a time, and a new `httpx.AsyncClient` for each image. **Fixed by T2**, with one app-wide setting since Ollama has no provider row | Checked |
 | The local captioners (Florence-2, PaliGemma, JoyCaption) | One image per call. `caption_batch` is defined in `florence_captioner.py`, `paligemma_captioner.py` and `ollama_captioner.py`, and nothing outside the tests calls it | Checked for `caption_batch`; from the audit for the per-image loop |
@@ -60,7 +60,7 @@ subagent reported it and it was not re-read; verify it before building on it.
 CPU-only work first, since it cannot touch the GPU rule at all.
 
 T1, the technical scorer on several cores, is done; its design and timing now live in
-`docs/dev/quality/scoring.md` § The technical scorer runs several images at once. T3,
+`docs/dev/quality/scoring-job.md` § The technical scorer runs several images at once. T3,
 parallel import and one decode per file, is done too; its design and timing live in
 `docs/dev/image-import.md` § Several files at once, one decode each. T2, concurrent requests
 for the remote captioners, is done; its design lives in `docs/dev/captioning.md` § Requests
@@ -70,8 +70,8 @@ T3 put T1's bounded FIFO window (await the oldest future first) into a class,
 `_InOrderWindow` in `dataset_service.py`, kept private to that module for now. T2 did not
 reuse it: T2 runs coroutines, not executor futures, and a cancelled call has to come back
 as a failure with its item, which `pop_oldest` cannot do. T2 added `utils.InOrderCalls`
-instead. T1 can move onto `_InOrderWindow` once `docs/dev/quality/scoring.md` is split (it
-is over budget, see `docs/dev/pending-splits.md`), and the class then belongs in
+instead. T1 can move onto `_InOrderWindow` once `docs/dev/quality/scoring.md` is split (into
+`docs/dev/quality/scoring-job.md`), and the class then belongs in
 `backend/utils.py`.
 
 ### T4 — Time the decode share on a real card (done)

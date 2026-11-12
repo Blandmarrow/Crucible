@@ -27,7 +27,7 @@ POPCNT = np.array([bin(x).count("1") for x in range(256)], dtype=np.uint8)
 # 2.3x on 1024px JPEGs and 2.0x on 4096px PNGs (2 GB peak); 8 added nothing on
 # the small files and 20% on the large ones for 4 GB; 12 and 16 were no faster.
 # OpenCV's own thread pool is already busy inside each call, which is why the
-# curve flattens early. See docs/dev/quality/scoring.md.
+# curve flattens early. See docs/dev/quality/scoring-job.md.
 TECHNICAL_MAX_WORKERS = 4
 
 

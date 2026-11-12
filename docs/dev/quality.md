@@ -11,7 +11,8 @@ entry point: the tables below route from a code path to whichever file in
 
 | File | Covers |
 |---|---|
-| [scoring.md](quality/scoring.md) | The scorers and their columns, the failure contract, the scoring job's model lifecycle, flag thresholds, e2e coverage |
+| [scoring.md](quality/scoring.md) | The scorers and their columns, the failure contract, flag thresholds, e2e coverage |
+| [scoring-job.md](quality/scoring-job.md) | The chunked job loop and its resume path, the technical scorer's concurrency, the model lifecycle and its unload endpoints |
 | [aesthetic-model.md](quality/aesthetic-model.md) | LAION vs V2.5, the `aesthetic_model` marker, the two destructive consumers, per-model coverage |
 | [scores-stale.md](quality/scores-stale.md) | The `scores_stale` bit: `record_in_place`, the clear predicate, the surfaces |
 | [duplicate-detection.md](quality/duplicate-detection.md) | `find_duplicates_sync`, and the duplicate flag as a relationship kept true by `duplicate_service.py` |
@@ -29,8 +30,8 @@ not a see-also, and says which part of the code it owns.
 
 | Editing… | Read |
 |---|---|
-| `backend/routers/quality.py` | `docs/dev/quality/scoring.md` for `POST /quality/score`, the job and the model endpoints; + `docs/dev/quality/duplicate-detection.md` for `_flag_duplicates`; + `docs/dev/quality/duplicate-resolution.md` for `GET /quality/duplicates/{dataset_id}` and the resolve; + `docs/dev/quality/style-similarity.md` for `POST /quality/style-similarity`, `embed-references` and `embedding-coverage`; + `docs/dev/quality/style-match.md` for the GET and `_record_style_run`; + `docs/dev/quality/aesthetic-model.md` for `aesthetic-coverage` and `only_mismatched` |
-| `backend/ml/technical_scorer.py` | `docs/dev/quality/scoring.md`; + `docs/dev/quality/duplicate-detection.md` for `find_duplicates_sync` |
+| `backend/routers/quality.py` | `docs/dev/quality/scoring-job.md` for `POST /quality/score`, the job and the model endpoints; + `docs/dev/quality/duplicate-detection.md` for `_flag_duplicates`; + `docs/dev/quality/duplicate-resolution.md` for `GET /quality/duplicates/{dataset_id}` and the resolve; + `docs/dev/quality/style-similarity.md` for `POST /quality/style-similarity`, `embed-references` and `embedding-coverage`; + `docs/dev/quality/style-match.md` for the GET and `_record_style_run`; + `docs/dev/quality/aesthetic-model.md` for `aesthetic-coverage` and `only_mismatched` |
+| `backend/ml/technical_scorer.py` | `docs/dev/quality/scoring.md`; + `docs/dev/quality/scoring-job.md` for `TECHNICAL_MAX_WORKERS` and the concurrent loop; + `docs/dev/quality/duplicate-detection.md` for `find_duplicates_sync` |
 | `backend/ml/aesthetic_scorer.py`, `backend/ml/aesthetic_v2_5_scorer.py` | `docs/dev/quality/aesthetic-model.md` for the shared batch loop and the marker; + `docs/dev/quality/scoring.md` for the columns and the failure contract |
 | `backend/ml/dino_scorer.py`, `backend/ml/nsfw_scorer.py` | `docs/dev/quality/scoring.md` |
 | `backend/ml/similarity_scorer.py` | `docs/dev/quality/style-similarity.md` |
@@ -46,7 +47,7 @@ not a see-also, and says which part of the code it owns.
 
 | Editing… | Read |
 |---|---|
-| `frontend/src/pages/QualityPage.tsx` | `docs/dev/quality/scoring.md` § Frontend coverage for the scoring panel; + `docs/dev/quality/aesthetic-model.md` for the picker; + `docs/dev/quality/duplicate-resolution.md` for the duplicates panel; + `docs/dev/quality/style-similarity.md` for the style picker |
+| `frontend/src/pages/QualityPage.tsx` | `docs/dev/quality/scoring.md` § Frontend coverage for the scoring panel; + `docs/dev/quality/scoring-job.md` § The model lifecycle for *Unload models*; + `docs/dev/quality/aesthetic-model.md` for the picker; + `docs/dev/quality/duplicate-resolution.md` for the duplicates panel; + `docs/dev/quality/style-similarity.md` for the style picker |
 | `frontend/src/constants/aestheticModels.ts` | `docs/dev/quality/aesthetic-model.md` |
 | `frontend/src/constants/styleModes.ts` | `docs/dev/quality/style-match.md` § The shared mode copy; + `docs/dev/quality/style-similarity.md` for `DEFAULT_DINO_LAYER`, `normalizeDinoLayer` and `describeEmbeddingGap` |
 | `frontend/src/utils/percentile.ts` | `docs/dev/quality/style-match.md` § The client-side percentile contract |

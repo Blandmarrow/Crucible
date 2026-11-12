@@ -140,7 +140,7 @@ contents intact, and that a second startup leaves `.orphaned` alone.
 and it is a separate *Score what's missing* button rather than a saved checkbox. Two
 departures from the approach: the request reads ids only and the job reads each chunk's
 paths itself, and progress goes through an optional `progress` callback on the seven
-scorers. The as-built rules: `docs/dev/quality/scoring.md` § The chunked job loop. Peak
+scorers. The as-built rules: `docs/dev/quality/scoring-job.md` § The chunked job loop. Peak
 memory is not yet measured; that is stage 6's harness.
 
 **Hand-checked 2026-11-08** on a throwaway instance:

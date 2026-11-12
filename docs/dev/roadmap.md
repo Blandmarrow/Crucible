@@ -23,8 +23,8 @@ restates its stages.
    ([decision 14](decisions/14-job-throughput-is-its-own-milestone.md)), planned in
    [throughput-plan/README.md](throughput-plan/README.md). M9 landed on 2026-11-12 (see
    Landed). T1 merged on 2026-11-12 as PR #145, T3 the same day as PR #146, and T2 as PR
-   #147 ([decision 16](decisions/16-concurrent-caption-requests.md)). T4's timing is done
-   on `feat/m10-t4-decode-timing`: T5 pays, up to 4.2× on a full run over real ComfyUI
+   #147 ([decision 16](decisions/16-concurrent-caption-requests.md)). T4's timing merged
+   the same day as PR #148: T5 pays, up to 4.2× on a full run over real ComfyUI
    images. Next is T5, then T6. See M10 below.
    - **Found while building T2, not fixed:** `/pipeline` silently ignores `save_backup`
      and `rename_on_caption`. Both are on `CaptionPipelineRequest` and the frontend sends
@@ -161,8 +161,8 @@ is not touched: only CPU work moves.
   four times, 7.6× faster on JPEGs and 18× on large PNGs. Name and stem picking stays
   serial. Detail: `docs/dev/image-import.md` § Several files at once, one decode each.
 - [x] T4: time how much of a GPU scoring run is image decoding, on a real card. Timed
-  2026-11-12 on two cards with `backend/scripts/bench_score_decode.py`, on
-  `feat/m10-t4-decode-timing`: decode plus preprocess is 63–93% of each check on real
+  2026-11-12 on two cards with `backend/scripts/bench_score_decode.py`, merged as
+  PR #148: decode plus preprocess is 63–93% of each check on real
   ComfyUI images, and T5 would make a full run 2.1× faster on small JPEGs and 4.2× on
   real images. Detail: [throughput-plan/README.md § T4](throughput-plan/README.md#t4--time-the-decode-share-on-a-real-card-done).
 - [ ] T5: decode ahead of the GPU call, on the default pool, with about 4 workers. T4

@@ -6,7 +6,9 @@ build, is [decision 14](../decisions/14-job-throughput-is-its-own-milestone.md).
 stage lands, move its durable rationale into the topic file that owns the code
 (`docs/dev/ml-models.md`, `docs/dev/quality/scoring.md`, `docs/dev/quality/scoring-job.md`, `docs/dev/captioning.md`,
 `docs/dev/image-import.md`) and delete the stage from here. Delete the folder when
-everything is done or dropped.
+everything is done or dropped. M10 landed on 2026-11-12 with T6 parked
+([roadmap-archive/m10-job-throughput.md](../roadmap-archive/m10-job-throughput.md)), so
+this folder now holds T6, T4's timing and the open questions.
 
 A review on 2026-11-09 read the long-running jobs for throughput lost to anything other
 than model speed. It found one pattern everywhere: **each job handles one image at a time,
@@ -134,13 +136,39 @@ What else the runs showed:
 met on both cards and on real data.
 
 
-### T6 — Fetch model weights off the GPU thread
+### T6 — Fetch model weights off the GPU thread (parked)
 
 PM-035's follow-up. A first-run model download happens inside a loader, and loaders run on
 the GPU thread, so the download holds up every other GPU call until it ends. Fetch the
 weights on the default pool first, then load on the GPU thread
 (`docs/dev/model-registry.md` and `docs/dev/image-processing-models.md` list where each
-model's weights are cached). It waits on nothing and can go at any time.
+model's weights are cached).
+
+**Parked on 2026-11-12, by the user's call.** It costs a stall once per model per machine,
+and every later load reads from the cache, so it is not worth its size now. Reopen it if a
+first-run download is seen holding up a job that matters, such as a long download stalling
+an automated run's scoring.
+
+What sizing it found, read from `backend/ml/model_manager.py` and the predictor modules
+that day, so the next session need not count again:
+
+- **About 11 loaders download on the GPU thread, five ways.** Hugging Face
+  `from_pretrained`: Florence-2 (both variants), PaliGemma-2, JoyCaption, DINOv2, NSFW,
+  SAM2 and Grounding DINO. `open_clip`'s `pretrained=`: the LAION aesthetic backbone.
+  `torch.hub`, inside the `aesthetic_predictor_v2_5` package: V2.5's head. Our own URL
+  download: the LAION head and LaMa. `sentence-transformers`: the tag embedder.
+- **Not on the list:** SAM 3 never downloads (its checkpoint is placed by hand), and WD14
+  and NudeNet do not load through `run_on_gpu`.
+- **The hard part is the file list.** A Hugging Face prefetch (`snapshot_download`) must
+  fetch exactly the files the loader later reads. Too broad pulls gigabytes nobody uses;
+  too narrow lets the loader download the rest on the GPU thread, silently. Loading with
+  `local_files_only=True` after the prefetch would make a miss fail loudly instead, at the
+  price of breaking a first run where the list has a gap.
+- **No gate can check it.** CI has no torch and no real download, so a mocked test can
+  prove the fetch runs before the load but not that the file lists match. That needs a
+  first run on an empty cache, model by model.
+- **A smaller first cut** is the eight Hugging Face loaders alone, through one helper,
+  leaving the other three ways for later.
 
 ## Not built
 

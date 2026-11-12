@@ -17,29 +17,19 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-12, T5 merged, T6 next)
+## Next session (updated 2026-11-12, M10 landed, M7 next)
 
-0. **M10, job throughput, is under way**
-   ([decision 14](decisions/14-job-throughput-is-its-own-milestone.md)), planned in
-   [throughput-plan/README.md](throughput-plan/README.md). M9 landed on 2026-11-12 (see
-   Landed). T1 merged on 2026-11-12 as PR #145, T3 the same day as PR #146, and T2 as PR
-   #147 ([decision 16](decisions/16-concurrent-caption-requests.md)). T4's timing merged
-   the same day as PR #148: T5 pays, up to 4.2× on a full run over real ComfyUI
-   images. T5 merged the same day as PR #149: scores identical to `main` on 1,876 real
-   images, VRAM lower than `main`, 2.3× on the full real set and 3.6× on 4K PNGs at 8
-   workers. Next is T6. See M10 below and `docs/dev/quality/scoring-job.md` § The GPU
-   checks prepare images ahead.
-   - **Found while building T2, not fixed:** `/pipeline` silently ignores `save_backup`
-     and `rename_on_caption`. Both are on `CaptionPipelineRequest` and the frontend sends
-     them, but `_run_pipeline_body` never reads them. Wants the user's call: wire them up,
-     or drop them from the request and the pipeline form.
-   - **Found while building T4, half fixed by T5:** `score_images_watermark` called
-     `_precompute_watermark_text_features`, a CUDA `encode_text`, on the event-loop thread
-     (PM-035's class). T5 sends it through `run_on_gpu`. Still open:
-     `test_gpu_executor_guard.py` cannot see a direct GPU call like that one, because it
-     only follows executor dispatches, so it wants a rule for direct calls. T4 also listed
-     repeated work in a scoring run (throughput plan § Open questions), none of it timed.
-   - M9 left four things open, none of which blocks M10
+0. **M7 is next**: the CLIP QuickGELU plan or Stage 3, neither of which waits on anything
+   (see M7 below). M10 landed on 2026-11-12 (see Landed) with T6 parked by the user's call:
+   a first-run download stalls the GPU thread once per model per machine, not worth its
+   size now. Its sizing and the trigger that reopens it are in
+   [throughput-plan/README.md § T6](throughput-plan/README.md#t6--fetch-model-weights-off-the-gpu-thread-parked).
+   - M10 left two findings open
+   ([roadmap-archive/m10-job-throughput.md § Left open](roadmap-archive/m10-job-throughput.md#left-open)):
+   `/pipeline` silently ignores `save_backup` and `rename_on_caption`, which wants the
+   user's call (wire them up, or drop them), and `test_gpu_executor_guard.py` cannot see a
+   direct GPU call made on the event-loop thread, which wants a rule for direct calls.
+   - M9 left four things open, none of which blocks M7
    ([roadmap-archive/m9-scale-and-data-safety.md § Left open](roadmap-archive/m9-scale-and-data-safety.md#left-open)):
    - **Two findings wait for the user to place them in the order.** Style scoring's keyset
      page sorts the whole dataset for every page (a `TEMP B-TREE` behind
@@ -50,13 +40,10 @@ restates its stages.
    - **Parked, each with a trigger** in [scale-plan/README.md](scale-plan/README.md): the
      side table ([decision 15](decisions/15-big-columns-stay-in-the-row.md)), stage 4's full
      design, the small-subfolder score sort and stage 11's cache header.
-1. **After M10 comes M7**: the CLIP QuickGELU plan or Stage 3, neither of which waits on
-   anything (see M7 below).
-
-2. M5's five stages merged on 2026-10-30 as PR #101. Only its cleanup is open, and that waits
+1. M5's five stages merged on 2026-10-30 as PR #101. Only its cleanup is open, and that waits
    a release. See [server-state-plan/README.md](server-state-plan/README.md) for what was
    checked by hand.
-3. **M4 is implemented but held.** The port is complete on `feat/m4-rating-port` (pushed,
+2. **M4 is implemented but held.** The port is complete on `feat/m4-rating-port` (pushed,
    not merged): the rating column, phase 0, rebindable rating keys and the docs, with every
    gate green. The user chose on 2026-11-02 not to ship it yet, so PR #106 was closed and the
    branch waits. On that branch only, for now: decision 4 (rating keys and old snapshots), the
@@ -76,14 +63,14 @@ restates its stages.
    M4 also resolves M9's overlap, listed in
    [scale-plan/README.md § Interaction with the other milestones](scale-plan/README.md#interaction-with-the-other-milestones).
    M4's decision, number 4 on its branch, is unaffected; `main`'s next new decision is 17.
-4. Two docs seams are queued in [pending-splits.md](pending-splits.md), neither over budget:
+3. Two docs seams are queued in [pending-splits.md](pending-splits.md), neither over budget:
    `docs/scoring.md`'s residual seam and `README.md`'s § Features deletion (deferred when its
    budget went to 4,000). The five over or near budget were split on 2026-11-12 (see the
    history there). Each is picked up by the next session that appends to its file.
    Re-measure first and check both halves land under 60% of budget — two of those five
    recorded seams had to be re-cut on execution. CLAUDE.md is now at ~99% of its budget, so
    the next split that adds a Map row needs a hub or a budget call first.
-5. A split moves sections, so `§` pointers that named a section in the same file now
+4. A split moves sections, so `§` pointers that named a section in the same file now
    point across files. `check_docs.py` does not check them, so grep `§` in every touched
    file and check each against the destination's headings by hand.
 
@@ -110,6 +97,12 @@ restates its stages.
   measurement up to 1M rows, and [decision 15](decisions/15-big-columns-stay-in-the-row.md):
   no side table yet, and the Stats scans pinned to their index with a plan guard. Record:
   [roadmap-archive/m9-scale-and-data-safety.md](roadmap-archive/m9-scale-and-data-safety.md).
+- **M10 — Job throughput** (2026-11-12, PRs #145 to #149): the technical scorer on 4
+  cores, concurrent remote caption requests
+  ([decision 16](decisions/16-concurrent-caption-requests.md)), parallel import with one
+  decode per file, the decode share timed on two cards, and the GPU checks preparing
+  images ahead, 2.3× to 3.6× faster with identical scores. T6 parked. Record:
+  [roadmap-archive/m10-job-throughput.md](roadmap-archive/m10-job-throughput.md).
 - **Handoff notes, 2 to 9 November 2026**: the closed items of this file's Next session
   block (M6's loose ends, the M7 port, M8's follow-ups, PRs #131 and #132, Copy from plan),
   moved out on 2026-11-09. Record:
@@ -138,40 +131,6 @@ add migrations, and M6 merged first, so **M4 re-parents its first migration** on
    branch. M4's port branch is still held unmerged.
 
 ## Milestones
-
-### M10 — Job throughput
-
-The next milestone, now that M9 has landed
-([decision 14](decisions/14-job-throughput-is-its-own-milestone.md)). It comes before M7.
-Gate: T1–T3 merged with their tests, T4's timing recorded, and T5 then built or ruled out
-by that timing. Plan: [throughput-plan/README.md](throughput-plan/README.md), which holds
-each stage's design and acceptance; this list is the order. PM-035's one-GPU-thread rule
-is not touched: only CPU work moves.
-
-- [x] T1: the technical scorer on several cores. Merged 2026-11-12 as PR #145: up to 4
-  calls at once, 2.0× to 2.3× faster, scores identical. Timing and the reason for the cap: `docs/dev/quality/scoring-job.md` § The
-  technical scorer runs several images at once.
-- [x] T2: concurrent requests and a reused client for the OpenAI-compatible and Ollama
-  captioners. Merged 2026-11-12 as PR #147: a per-provider Max
-  concurrent requests and one app-wide Ollama setting, default 1, in both caption loops; a
-  crash leaves at most N calls uncounted ([decision 16](decisions/16-concurrent-caption-requests.md)).
-  Detail: `docs/dev/captioning.md` § Requests in flight.
-- [x] T3: parallel import and rescan, with one decode per file. Merged 2026-11-12 as
-  PR #146: up to 8 files at once, and a PNG decoded once instead of
-  four times, 7.6× faster on JPEGs and 18× on large PNGs. Name and stem picking stays
-  serial. Detail: `docs/dev/image-import.md` § Several files at once, one decode each.
-- [x] T4: time how much of a GPU scoring run is image decoding, on a real card. Timed
-  2026-11-12 on two cards with `backend/scripts/bench_score_decode.py`, merged as
-  PR #148: decode plus preprocess is 63–93% of each check on real
-  ComfyUI images, and T5 would make a full run 2.1× faster on small JPEGs and 4.2× on
-  real images. Detail: [throughput-plan/README.md § T4](throughput-plan/README.md#t4--time-the-decode-share-on-a-real-card-done).
-- [x] T5: decode ahead of the GPU call, on the default pool. Merged 2026-11-12 as
-  PR #149: each GPU scorer split into a `prepare_*` and an `infer_*` half, run by
-  `ml/prefetch.py` up to 8 images ahead; scores identical to the serial path, VRAM lower,
-  2.3× to 3.6× faster. Detail: `docs/dev/quality/scoring-job.md` § The GPU checks
-  prepare images ahead.
-- [ ] T6: fetch a model's weights off the GPU thread, so a first-run download inside a
-  loader no longer holds up every other GPU call (PM-035's follow-up). Waits on nothing.
 
 ### M5 — App-stored prompts
 

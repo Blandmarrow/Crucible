@@ -152,6 +152,11 @@ def test_the_lease_is_held_during_inference_and_released_after(tmp_path):
         _src(tmp_path), str(tmp_path / "out.png"), MODEL_PATH, False, None, None
     )
     assert (info["width"], info["height"]) == (8, 6)
+    # The real function body, torch stubbed: the pHash every caller stores is
+    # the written output's (GPT-016).
+    import imagehash
+    with PilImage.open(info["out_path"]) as written:
+        assert info["phash"] == str(imagehash.phash(written.convert("RGB")))
     assert model.seen == [(1, True)], "the model ran without a lease"
     assert entry.leases == 0
     assert MODEL_ID in model_manager._registry

@@ -250,10 +250,10 @@ def inpaint_image_sync(
     of them ingestible). Every caller has to follow it — the row, the thumbnail
     and the file on disk must all name the same picture (PM-009).
 
-    `phash` is returned and every caller must store it, unlike
-    `upscale_image_sync`'s omission: inpainting changes pixels without changing
-    geometry, and `phash` is the only thing duplicate detection keys on, so a
-    stale one is the entire failure mode.
+    `phash` is returned and every caller must store it, as with every
+    pixel-writing worker: inpainting changes pixels without changing geometry,
+    and `phash` is the only thing duplicate detection keys on, so a stale one is
+    the entire failure mode.
     """
     import io
 

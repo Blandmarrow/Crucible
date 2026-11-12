@@ -60,9 +60,13 @@ def _fake_upscale(src, dest, model_path, replace, target_width=None, target_heig
 
     with PilImage.open(src) as probe:
         w, h = probe.size
+    import imagehash
+
     out_path = src if replace else dest
     fmt, out_path = normalize_image_format(Path(src).suffix, out_path)
     result = PilImage.new("RGB", (w * 2, h * 2), UPSCALED)
+    # Hashed in memory before the save, as the real worker does.
+    phash = str(imagehash.phash(result))
     result.save(out_path, format=fmt, **image_save_kwargs(fmt))
     result.close()
     return {
@@ -70,6 +74,7 @@ def _fake_upscale(src, dest, model_path, replace, target_width=None, target_heig
         "height": h * 2,
         "file_size_bytes": Path(out_path).stat().st_size,
         "format": fmt,
+        "phash": phash,
         "out_path": out_path,
     }
 

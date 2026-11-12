@@ -58,13 +58,19 @@ def upscale_image_sync(
 
     replace=True  → overwrites src in place; dest is ignored.
     replace=False → writes to dest (must be provided).
-    Returns {width, height, file_size_bytes, format, out_path}.
+    Returns {width, height, file_size_bytes, format, phash, out_path}.
 
     `out_path` is the path actually written, which is **not** the one asked for
     when `normalize_image_format` falls back to PNG (.bmp/.gif/.tiff/.avif, all
     of them ingestible). Every caller has to follow it — the row, the thumbnail
     and the file on disk must all name the same picture (PM-009).
+
+    `phash` is hashed from the output in memory, before the save, as every
+    pixel-writing worker does (`image_service._save_measured`, `lama_inpainter`),
+    and every caller must store it: duplicate detection keys on nothing else,
+    and a copy row built without one never enters a duplicate scan (GPT-016).
     """
+    import imagehash  # lazy: pulls scipy/PyWavelets
     import torch
     import numpy as np
     from PIL import Image, ImageOps
@@ -116,6 +122,7 @@ def upscale_image_sync(
     fmt, out_path = normalize_image_format(Path(src).suffix, out_path)
     save_kwargs = image_save_kwargs(fmt)
 
+    phash_str = str(imagehash.phash(result_img))
     result_img.save(out_path, format=fmt, **save_kwargs)
     stat = Path(out_path).stat()
     w_out, h_out = result_img.size
@@ -126,6 +133,7 @@ def upscale_image_sync(
         "height": h_out,
         "file_size_bytes": stat.st_size,
         "format": fmt,
+        "phash": phash_str,
         "out_path": out_path,
     }
 

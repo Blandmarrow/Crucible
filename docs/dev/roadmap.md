@@ -17,7 +17,7 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-12, M10 T4 timed)
+## Next session (updated 2026-11-12, the split queue executed before T5)
 
 0. **M10, job throughput, is under way**
    ([decision 14](decisions/14-job-throughput-is-its-own-milestone.md)), planned in
@@ -25,7 +25,8 @@ restates its stages.
    Landed). T1 merged on 2026-11-12 as PR #145, T3 the same day as PR #146, and T2 as PR
    #147 ([decision 16](decisions/16-concurrent-caption-requests.md)). T4's timing merged
    the same day as PR #148: T5 pays, up to 4.2× on a full run over real ComfyUI
-   images. Next is T5, then T6. See M10 below.
+   images. Next is T5, then T6. See M10 below. T5's notes go in
+   `docs/dev/quality/scoring-job.md`, split out for it on 2026-11-12.
    - **Found while building T2, not fixed:** `/pipeline` silently ignores `save_backup`
      and `rename_on_caption`. Both are on `CaptionPipelineRequest` and the frontend sends
      them, but `_run_pipeline_body` never reads them. Wants the user's call: wire them up,
@@ -74,15 +75,13 @@ restates its stages.
    M4 also resolves M9's overlap, listed in
    [scale-plan/README.md § Interaction with the other milestones](scale-plan/README.md#interaction-with-the-other-milestones).
    M4's decision, number 4 on its branch, is unaffected; `main`'s next new decision is 17.
-4. Six docs seams are queued in [pending-splits.md](pending-splits.md) (counted
-   2026-11-12): `docs/dev/captioning.md` (3,586 of 3,500 since T2's timings; its failure
-   bullets move to a new file), `docs/dev/comfyui/page.md` and `docs/dev/comfyui/queue.md`, both over budget
-   (3,936 and 3,538 words of 3,500), `docs/dev/quality/scoring.md` (3,696, over since T1;
-   split it before T5 adds to it), `docs/scoring.md`'s residual
-   seam, and `README.md`'s § Features deletion (deferred when its budget went to 4,000). Each
-   is picked up by the next session that appends to its file. Re-measure first and check both
-   halves land under 60% of budget — five of M3's seven recorded seams had to be re-cut on
-   execution.
+4. Two docs seams are queued in [pending-splits.md](pending-splits.md), neither over budget:
+   `docs/scoring.md`'s residual seam and `README.md`'s § Features deletion (deferred when its
+   budget went to 4,000). The five over or near budget were split on 2026-11-12 (see the
+   history there). Each is picked up by the next session that appends to its file.
+   Re-measure first and check both halves land under 60% of budget — two of those five
+   recorded seams had to be re-cut on execution. CLAUDE.md is now at ~99% of its budget, so
+   the next split that adds a Map row needs a hub or a budget call first.
 5. A split moves sections, so `§` pointers that named a section in the same file now
    point across files. `check_docs.py` does not check them, so grep `§` in every touched
    file and check each against the destination's headings by hand.
@@ -149,7 +148,7 @@ each stage's design and acceptance; this list is the order. PM-035's one-GPU-thr
 is not touched: only CPU work moves.
 
 - [x] T1: the technical scorer on several cores. Merged 2026-11-12 as PR #145: up to 4
-  calls at once, 2.0× to 2.3× faster, scores identical. Timing and the reason for the cap: `docs/dev/quality/scoring.md` § The
+  calls at once, 2.0× to 2.3× faster, scores identical. Timing and the reason for the cap: `docs/dev/quality/scoring-job.md` § The
   technical scorer runs several images at once.
 - [x] T2: concurrent requests and a reused client for the OpenAI-compatible and Ollama
   captioners. Merged 2026-11-12 as PR #147: a per-provider Max

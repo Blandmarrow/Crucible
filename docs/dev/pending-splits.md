@@ -46,41 +46,6 @@ staleness sweep while still recording the seam.
 
 ## Queue
 
-## docs/dev/quality/scoring.md
-
-- **Moves:** § The chunked job loop (~660 words), § The technical scorer runs several images
-  at once (~375) and § The model lifecycle (~915)
-- **New file:** docs/dev/quality/scoring-job.md, with a row in the hub `docs/dev/quality.md`'s
-  routing table; scoring.md keeps the scorers and their columns, the failure contract, flag
-  thresholds and frontend coverage
-- **Why here:** M10 T1 took it to 3,696 of 3,500 words (2026-11-12). The file holds two
-  subjects: *what* each scorer measures and records, and *how the scoring job runs* (chunks,
-  resume, progress, concurrency, loading and unloading models). The three sections above are
-  the second subject. Moving only the job loop and T1's section would leave ~2,660, 76% of
-  budget, so the model lifecycle goes too, leaving ~1,950 and ~1,950. The rest of M10 (T5's
-  decode-ahead) will add to the job half, not the scorer half.
-- **Watch for:** seven files name these sections as `quality/scoring.md` § …:
-  `model-residency.md`, `settings.md`, `quality/aesthetic-model.md`,
-  `quality/scores-stale.md`, the throughput and scale plans and the M9 archive record. Grep
-  for all three section names. `backend/ml/technical_scorer.py`'s comment above
-  `TECHNICAL_MAX_WORKERS` names scoring.md too. § The failure contract stays, but the job
-  loop's § "What a stop leaves behind" leans on it, so keep a cross-reference.
-
-## docs/dev/comfyui/queue.md
-
-- **Moves:** the row endpoints of § Backend that M6 §8b and §8c grew: the folder's exemption
-  and `set-subfolder`, the `linked` modes, "A live run locks its plan's folders and rows",
-  `rows/place`, `rows/copy`, the folder tree's endpoints and plan duplicate.
-- **New file:** docs/dev/comfyui/rows-api.md, with a row in the hub `docs/dev/comfyui.md`;
-  queue.md keeps the data model, `comfy_service.py`, ComfyClient, plan CRUD, the library and
-  the gotchas.
-- **Why here:** §8c took it to 3,141 of 3,500 words (2026-11-05). Every §8 stage added a row
-  endpoint to one section; §8d added none, and the 2026-11-05 review fixes' guards took it
-  over budget, to ~3,530.
-- **Watch for:** `prompt_origin`'s writer table names `rows/copy`; `docs/dev/comfyui/page.md`,
-  `library-dnd.md` and `structured.md` point at `queue.md` § Backend for these endpoints, so
-  grep `queue.md` across docs/dev and repoint each that means a row endpoint.
-
 ## docs/scoring.md
 
 - **Moves:** § Quality flags (162 words) and § Stale scores (320) — only if the file grows
@@ -98,6 +63,23 @@ staleness sweep while still recording the seam.
   `docs/captioning.md`; both are user-doc markdown links, so a move FAILs the checker
   until they are repointed. Do **not** take `### VRAM after a run` as the seam: it is six
   lines and belongs exactly where it is, under § Running a scoring run.
+
+Five splits were executed on 2026-11-12 on `docs/split-queue-2026-11-12`, ahead of M10 T5.
+`docs/dev/quality/scoring.md` → `docs/dev/quality/scoring-job.md` held as recorded (1,749 +
+2,048), and so did `docs/dev/comfyui/queue.md` → `docs/dev/comfyui/rows-api.md` (1,997 +
+1,713). Two were **re-cut on execution**. `docs/dev/captioning.md` → `docs/dev/caption-failures.md`:
+the recorded bullets would have left 2,302 words (66%), so § Requests in flight's 429 and
+failed-job-counts bullets and § Ollama timeout went too, all failure counting; § Captioning
+job execution then had no reason to exist, and its three staying bullets joined
+§ Captioning post-processing (2,093 + 1,614). `docs/dev/comfyui/page.md` →
+`docs/dev/comfyui/rows-tab.md`: the recorded seam would have left ~2,617 (75%), so the rows
+table, its Folder column, `SetRowFolderModal` and `SaveToLibraryModal` went with the rail
+and selection bar (1,990 + 2,101). The page and queue splits ran in one pass, because three
+moved pointers changed both file and target. `docs/dev/styling.md` → `docs/dev/menus-popovers.md`
+had no entry; it was taken at 96% of budget, before its next edit tripped it. The two
+non-hub splits left CLAUDE.md at ~99% of `MAX_CLAUDE_WORDS` by the user's choice, so the
+**next split that needs a Map row needs a decision first**: put a family behind a hub
+(captioning, at four files, qualifies under decision 2) or raise the budget.
 
 `docs/dev/statistics.md` → `docs/dev/statistics-panels.md` was executed on 2026-11-11 on
 `docs/split-database-statistics`, and was **re-cut on execution**. The recorded seam (§ The raw lists load on
@@ -263,39 +245,3 @@ utilities → `docs/dev/shared-utilities.md`.
   it is the index doc for the same material, so anything § Features says that the topic docs
   do not is a fact to move *there* rather than lose. A handful of Features bullets name
   things with no topic doc at all (verify each against the Docs table before cutting).
-
-## docs/dev/comfyui/page.md
-
-- **Moves:** § The plan rail, the folder tree and the grouped table, plus the Rows toolbar,
-  `ComfyRowsSelectionBar` and the selection-prune bullets out of § Frontend
-- **New file:** docs/dev/comfyui/rows-tab.md (mirrors docs/comfy-queue.md, the Rows tab's user guide)
-- **Why here:** the §8 review fixes took it to ~3,520 of 3,500 words (2026-11-05). § Frontend
-  is ~2,200 words of which about half is the Rows tab (toolbar, selection bar, table,
-  selection and busy rules); the rest is the page shell (routing, header, `WorkflowPinPanel`,
-  the defaults strip, the run bar, `activeRuns`) and § The layout. The Rows-tab half is one
-  subsystem with its own user doc, so it splits cleanly and leaves both near 60%.
-- **Watch for:** `library-dnd.md`, `blueprint-tab.md`, `persistence.md` (the
-  `COMFY_ROWS_VIEW_KEY` row) and the hub's routing table point at `page.md` § The plan rail,
-  the folder tree and the grouped table; `styling.md` points at `page.md` for the rail and
-  tree's `ContextMenu`. The `planBusy` bullet sits inside the run-bar bullet but belongs with
-  the Rows tab's controls.
-
-## docs/dev/captioning.md
-
-- **Moves:** from § Captioning job execution, the failure-reporting bullets: Progress and
-  failures, A partial failure is durable (with its `failure_summary` and two-provider
-  sub-bullets and the Known gap paragraph), `/run` writes `done_items`, and An empty caption
-  is a counted failure (with its A/B/C sub-bullets and the test paragraph).
-- **New file:** docs/dev/caption-failures.md (mirrors docs/captioning.md § When images come
-  back uncaptioned)
-- **Why here:** M10 T2's live timings took it to ~3,590 of 3,500 words (2026-11-12). The
-  section is ~1,500 words, most of it how a failed image is counted, named and kept
-  durable; the bullets that stay (`has_ai_artifacts`, the flag lifecycle, tag styles) are
-  about what a saved caption carries, and sit better beside § Captioning post-processing.
-  That leaves about 2,000 words here and 1,300 in the new file, both under 60%.
-- **Watch for:** `docs/dev/comfyui/run-budgets.md` § Who writes the paid-call counts and
-  `docs/dev/llm-providers.md` § Captioner point at "§ Captioning job execution" for the
-  `done_items` and empty-caption bullets; both move. § Requests in flight (stays) points at
-  the `done_items` bullet and the timeout branch, and the `done_items` bullet points back
-  at it, so the two files cross-reference each other. `backend/tests/test_caption_empty_guard.py`
-  is named in the moving test paragraph.

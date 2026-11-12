@@ -37,7 +37,7 @@ restates its stages.
      old embeddings surviving an in-place pixel rewrite, was half true and is fixed
      (2026-11-12, PR #150): the edit and a pixel-changing restore now clear them
      (`docs/dev/quality/scores-stale.md` § Embeddings are cleared, not marked).
-     Found beside it and fixed the same day: upscale, LUT and crop + upscale now store
+     Found beside it and fixed the same day (PR #151): upscale, LUT and crop + upscale now store
      the `phash` of what they wrote, in both modes (`docs/dev/image-processing-models.md`).
    - **Not checked by hand:** stage 11's index and gallery changes in a browser, stage 4's
      polling against a real job, and the Stats page under the pin in a browser.

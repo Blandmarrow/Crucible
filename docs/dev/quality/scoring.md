@@ -32,6 +32,23 @@ The column is NULL until the technical scorer runs again, and nothing detects th
 
 `backend/tests/test_technical_scorer_failures.py` is what holds that contract: both failure branches (an unreadable file, a missing file, and an exception raised out of the executor) against a readable control, plus a structural check that the assertion list covers **every** field the scorer writes — so a seventh score column added without a null default fails there rather than in a histogram. Three of the five cases call `score_technical_sync` for real and carry `@needs_cv2`; the executor branch monkeypatches the scorer to raise before it imports anything, and the structural check only reads `_unmeasured()`, so those two need no decoder at all. All five run in CI, which installs cv2 — the marker is for a local venv without it.
 
+## The technical scorer runs several images at once
+
+`score_images_technical` keeps up to `_technical_workers()` calls of `score_technical_sync` in flight on asyncio's default pool: half the logical cores, capped at `TECHNICAL_MAX_WORKERS` (4), and never below 1. OpenCV and numpy release the GIL, so threads are enough, and no GPU code is involved, so PM-035's one-GPU-thread rule does not apply. This is M10's T1 (`docs/dev/throughput-plan/README.md`).
+
+**It answers exactly like the serial loop it replaced.** The futures sit in a FIFO window and are awaited oldest first, which gives four guarantees with no reordering step: results in input order; a **prefix** of the input on a cancel, which `routers/quality.py` relies on when it writes `c_ids[:len(values)]`; `_unmeasured()` at the index of a failed image only; and progress after images 1, 11, 21, as before. A cancel stops new submissions at once, then lets the calls already in flight finish and keeps their results, since a pool thread cannot be stopped anyway. So a cancel lets at most four more images finish than it used to. The `run_in_executor` call must stay in `score_images_technical`'s own body: Rule A of `test_gpu_executor_guard.py` exempts it by its *innermost* enclosing function, so moving it into a nested helper fails the guard. `backend/tests/test_technical_scorer_parallel.py` holds all of this, including exact parity with the serial path on a varied fixture.
+
+**Why the cap is 4.** Timed on 2026-11-12 on 32 logical cores, with each bound in its own process:
+
+| Bound | 2,000 JPEGs, 1024×768 | 100 PNGs, 4096×4096 | Peak memory, PNGs |
+|---|---|---|---|
+| 1 (the old serial loop) | 66.5 images/s | 2.2 images/s | 0.6 GB |
+| 4 | 152 images/s (2.3×) | 4.5 images/s (2.0×) | 2.0 GB |
+| 8 | 156 images/s (2.35×) | 5.5 images/s (2.4×) | 4.1 GB |
+| 12 and 16 | slower | 5.5–5.6 images/s | 6.0–7.9 GB |
+
+Each call holds float32 copies of its image, about 0.5 GB for a 4096² file, so memory grows linearly with the bound while speed flattens early: OpenCV's own thread pool is already busy inside each call. 8 doubles the memory for 20% on large files only, which is not worth it on a machine that is also running ComfyUI. `cv2.setNumThreads` is left alone because it is process-wide and would change the video and SAM2 paths too.
+
 ## The chunked job loop
 
 `start_score_job` in `backend/routers/quality.py` reads **only ids** in the request, so the scope is frozen when the job is queued. The job then runs the ticked checks one after another — aesthetic, technical, watermark, CLIP embeddings, DINOv2 (with the layer pass), NSFW, the order `_score_checks` returns — and **within each check** walks the ids in chunks of `SCORE_CHUNK` (1,000). Per chunk it reads the rows' current paths, runs the scorer, writes the results with one ORM bulk `update(Image)` (`updated_at`'s `onupdate` still fires, so the stats cache moves), commits, and calls `job_queue.raise_if_cancelled`. `_write_score_chunk` does the write: it re-reads `scores_stale`, the job's score columns and `quality_flags` in the writing session, right before the write, so the window for a concurrent writer is the write rather than the minutes of inference before it. A row deleted mid-job drops out at either read. This is M9 stage 3 (`docs/dev/scale-plan/README.md`).

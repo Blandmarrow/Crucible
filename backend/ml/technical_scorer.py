@@ -1,9 +1,11 @@
 import asyncio
+import collections
 import functools
 import itertools
 import logging
 from collections.abc import Awaitable, Callable
 import math
+import os
 import time
 
 import numpy as np
@@ -17,6 +19,21 @@ UNIFORMITY_THRESHOLD = 12.0  # grayscale std dev below this = near-uniform
 
 # 256-entry popcount lookup: POPCNT[b] = number of set bits in byte value b.
 POPCNT = np.array([bin(x).count("1") for x in range(256)], dtype=np.uint8)
+
+# Most technical scoring calls in flight at once (M10 T1). OpenCV and numpy
+# release the GIL, so plain threads on the default pool run in parallel. Peak
+# memory grows with this: each call holds float32 copies of its image, about
+# 0.5 GB at peak for a 4096x4096 file. Measured on 32 logical cores: 4 gave
+# 2.3x on 1024px JPEGs and 2.0x on 4096px PNGs (2 GB peak); 8 added nothing on
+# the small files and 20% on the large ones for 4 GB; 12 and 16 were no faster.
+# OpenCV's own thread pool is already busy inside each call, which is why the
+# curve flattens early. See docs/dev/quality/scoring.md.
+TECHNICAL_MAX_WORKERS = 4
+
+
+def _technical_workers() -> int:
+    """Half the cores, leaving the rest for the server, capped and at least 1."""
+    return max(1, min(TECHNICAL_MAX_WORKERS, (os.cpu_count() or 2) // 2))
 
 
 def _unmeasured() -> dict:
@@ -111,34 +128,71 @@ async def score_images_technical(
     uniformity_threshold: float = UNIFORMITY_THRESHOLD,
     progress: Callable[[int], Awaitable[None]] | None = None,
 ) -> list[dict]:
+    """Score every path, up to `_technical_workers()` at once on the default pool.
+
+    The result is in input order and is always a *prefix* of the input: a cancel
+    stops new submissions at once, the calls already in flight finish (a pool
+    thread cannot be stopped, and their results are real), and the caller writes
+    `ids[:len(result)]`. So a cancel lets at most the bound's worth of extra
+    images finish compared with the serial loop this replaced.
+
+    Futures are awaited oldest-first, which keeps order, the prefix and the
+    progress count without any reordering. Each call is the same pure function
+    as before, so the scores are identical to the serial path's.
+
+    The `run_in_executor` call must stay in this function's own body: the GPU
+    thread guard (`test_gpu_executor_guard.py`, Rule A) exempts it by its
+    innermost enclosing function.
+    """
     from backend.workers.progress import broadcaster
     from backend.workers.job_queue import job_queue
 
-    loop = asyncio.get_event_loop()
-    results = []
+    loop = asyncio.get_running_loop()
+    results: list[dict] = []
     total = len(image_paths)
+    bound = _technical_workers()
+    window: collections.deque[tuple[str, asyncio.Future]] = collections.deque()
 
-    for i, path in enumerate(image_paths):
-        if job_id and job_queue.cancel_requested(job_id):
-            break
+    async def finish_oldest() -> None:
+        path, fut = window.popleft()
         try:
-            fn = functools.partial(score_technical_sync, path, blur_threshold, noise_threshold, uniformity_threshold)
-            scores = await loop.run_in_executor(None, fn)
+            scores = await fut
         except Exception:
             logger.warning("technical: scoring failed for %s", path, exc_info=True)
             scores = _unmeasured()
         results.append(scores)
 
+        # Same cadence as the serial loop: emit after images 1, 11, 21, ...
+        done = len(results)
+        if (done - 1) % 10 != 0:
+            return
         if progress is not None:
-            if i % 10 == 0:
-                await progress(i + 1)
-        elif job_id and i % 10 == 0:
+            await progress(done)
+        elif job_id:
             await broadcaster.emit(job_id, {
                 "type": "progress", "job_id": job_id, "job_type": "quality_score",
-                "status": "running", "done": i + 1, "total": total,
-                "percent": round((i + 1) / total * 100, 1),
-                "message": f"Technical scoring {i + 1}/{total}",
+                "status": "running", "done": done, "total": total,
+                "percent": round(done / total * 100, 1),
+                "message": f"Technical scoring {done}/{total}",
             })
+
+    try:
+        for path in image_paths:
+            if job_id and job_queue.cancel_requested(job_id):
+                break
+            fn = functools.partial(score_technical_sync, path, blur_threshold, noise_threshold, uniformity_threshold)
+            window.append((path, loop.run_in_executor(None, fn)))
+            if len(window) >= bound:
+                await finish_oldest()
+
+        while window:
+            await finish_oldest()
+    finally:
+        # Only non-empty on a hard cancel. The pool threads run on regardless;
+        # cancelling their asyncio wrappers just stops an exception nobody will
+        # read from being logged as "never retrieved".
+        for _path, fut in window:
+            fut.cancel()
 
     return results
 

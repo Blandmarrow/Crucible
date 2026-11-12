@@ -32,7 +32,7 @@ a job that failed, was cancelled or was interrupted by a restart still counts in
 - **Rewrite**: `start_rewrite_job` writes `result_data["calls"]` after every batch
   (`docs/dev/comfyui/run-loop.md` § The rewrite stage).
 - **Caption**: the caption job writes `done_items = i + 1` after every call, in
-  `start_caption_job`'s loop (`docs/dev/captioning.md` § Captioning job execution). It is
+  `start_caption_job`'s loop (`docs/dev/caption-failures.md` § What a failed job counts). It is
   written whatever the call returned (a caption, an empty reply, a timeout, any error),
   because the provider was asked each time. It is written before the caption is saved, so
   a save that fails the whole job keeps the call. The queue's terminal writes and
@@ -42,7 +42,7 @@ a job that failed, was cancelled or was interrupted by a restart still counts in
     new request and waits for the ones in flight, which are counted as they finish. A job
     that fails, or that shutdown cancels by force, raises the count to every request it
     started (`_record_calls_started`), so the requests still in flight are counted too
-    (`docs/dev/captioning.md` § Requests in flight).
+    (`docs/dev/caption-failures.md` § What a failed job counts).
 
 Until M9 stage 10 no caption job wrote `done_items`, so the caption half was always 0 and
 a resume after a stopped caption job could bill the whole tail again (PM-037).

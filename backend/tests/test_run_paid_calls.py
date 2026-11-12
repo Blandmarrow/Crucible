@@ -1,7 +1,7 @@
 """An automated run's paid-call cap counts caption calls (M9 stage 10, PM-037), over real
 `BackgroundJob` rows and the real caption job body. Nothing here stubs `_spent`.
 
-What is pinned (docs/dev/comfyui/run-budgets.md § Budgets, docs/dev/captioning.md):
+What is pinned (docs/dev/comfyui/run-budgets.md § Budgets, docs/dev/caption-failures.md):
 - the caption job writes `done_items` after each call, whatever the call returned, so
   the count survives a completed, a failed and a cancelled job alike;
 - `_spent` sums it over the run's `caption` children in every end state, an interrupted

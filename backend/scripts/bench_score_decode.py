@@ -1,14 +1,17 @@
 """Time how much of a GPU scoring check is image decoding (M10 T4).
 
-M10's T5 would decode and preprocess the next images on the default pool while the GPU
-thread runs the current one. Decision 14 builds it only if a timing on a real card shows
-that decoding is a large share of a run, and no CI gate runs torch, so this is that
-timing, run by hand. Plan: ``docs/dev/throughput-plan/README.md`` § T4.
+M10's T5 decodes and preprocesses the next images on the default pool while the GPU
+thread runs the current one. Decision 14 built it only once this timing, on a real card,
+showed that decoding is a large share of a run; no CI gate runs torch, so it is run by
+hand. Its T4 figures are in ``docs/dev/throughput-plan/README.md`` § T4.
 
-Every GPU check's ``*_sync`` function does four things per image, all inside one
-``run_on_gpu`` call: decode the file (``open_rgb``), preprocess it (an open_clip transform
-or an HF processor), move the tensor to the card, and run the model. This script times
-those four stages separately, for each check:
+Every GPU check does four things per image: decode the file (``open_rgb``), preprocess it
+(an open_clip transform or an HF processor), move the tensor to the card, and run the
+model. Since T5 the first two are each scorer's ``prepare_*`` half and the last two its
+``infer_*`` half; each scorer module's ``*_sync`` function, listed below, composes the
+two serially on one thread, so the parity check exercises both halves (though not the
+production path's hand-off between threads). This script times the four stages separately, for
+each check:
 
 =================  ==============================================================
 ``aesthetic``      ``aesthetic_scorer.score_image_sync`` (LAION, the default)
@@ -389,8 +392,8 @@ def _sync(dev: str) -> None:
 
 
 # Each twin repeats its app function's steps exactly and returns (output, stage times).
-# The one reordering is `img.close()`, moved from after the copy to before it so the
-# close is charged to preprocessing; it changes no pixel the model sees.
+# `img.close()` comes before the copy, as in the app's `prepare_*` halves since T5, so
+# the close is charged to preprocessing.
 def _twin_aesthetic(path: str, handle: dict) -> tuple:
     import torch
 

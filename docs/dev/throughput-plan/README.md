@@ -42,7 +42,7 @@ subagent reported it and it was not re-read; verify it before building on it.
 | Path | What it does now | Source |
 |---|---|---|
 | Every scorer (`backend/ml/aesthetic_scorer.py`, `dino_scorer.py`, `nsfw_scorer.py`) | One `run_on_gpu` call per image, awaited in a loop. `SCORE_CHUNK` sizes the DB chunk, not the inference batch | Checked for the aesthetic scorer; from the audit for the rest |
-| `score_image_sync` | Decodes the file (`open_rgb`), preprocesses it, moves it to the card and runs the model, all inside the one GPU call. The card waits during the first two steps | Checked |
+| `score_image_sync` | Decodes the file (`open_rgb`), preprocesses it, moves it to the card and runs the model, all inside the one GPU call. The card waits during the first two steps. **Fixed by T5**: each scorer's `prepare_*` half runs on the default pool, up to 8 images ahead, 2.3× to 3.6× faster, scores identical | Checked |
 | A full scoring run | Each check is its own pass and decodes every file again: up to seven decodes with every box ticked, six GPU passes (aesthetic, watermark, CLIP, DINOv2 and its layers, NSFW) plus the technical check's own `cv2` read. Watermark and CLIP each run the CLIP image encoder again. **Measured by T4**: decode alone is 13–23% of a full run on small JPEGs and 54–68% on large PNGs and real ComfyUI images | Checked by T4 |
 | `technical_scorer.score_images_technical` | CPU-only (OpenCV). One `run_in_executor` call per image, awaited, so one core is busy. **Fixed by T1**: up to 4 at once, 2.0× to 2.3× faster (`docs/dev/quality/scoring-job.md` § The technical scorer runs several images at once) | Checked |
 | `openai_compat_captioner._caption_sync` | One request at a time, and a new `OpenAI(...)` client for each image. **Fixed by T2**: up to a provider's Max concurrent requests at once, on one async client per job (`docs/dev/captioning.md` § Requests in flight) | Checked |
@@ -65,14 +65,17 @@ parallel import and one decode per file, is done too; its design and timing live
 `docs/dev/image-import.md` § Several files at once, one decode each. T2, concurrent requests
 for the remote captioners, is done; its design lives in `docs/dev/captioning.md` § Requests
 in flight, and its rulings in [decision 16](../decisions/16-concurrent-caption-requests.md).
+T5, decoding ahead of the GPU call, is done; its design, the checks that the scores did not
+move, and its timing live in `docs/dev/quality/scoring-job.md` § The GPU checks prepare
+images ahead. It reached 2.3× on the real set against T4's simulated 4.2×, for reasons
+recorded there.
 
-T3 put T1's bounded FIFO window (await the oldest future first) into a class,
-`_InOrderWindow` in `dataset_service.py`, kept private to that module for now. T2 did not
-reuse it: T2 runs coroutines, not executor futures, and a cancelled call has to come back
-as a failure with its item, which `pop_oldest` cannot do. T2 added `utils.InOrderCalls`
-instead. T1 can move onto `_InOrderWindow` once `docs/dev/quality/scoring.md` is split (into
-`docs/dev/quality/scoring-job.md`), and the class then belongs in
-`backend/utils.py`.
+T3 put T1's bounded FIFO window (await the oldest future first) into a class, now
+`utils.InOrderWindow` (T5 moved it out of `dataset_service.py` to use it in
+`ml/prefetch.py`). T2 did not reuse it: T2 runs coroutines, not executor futures, and a
+cancelled call has to come back as a failure with its item, which `pop_oldest` cannot do.
+T2 added `utils.InOrderCalls` instead. T1 can still move onto `InOrderWindow`; it keeps its
+own deque for now.
 
 ### T4 — Time the decode share on a real card (done)
 
@@ -130,26 +133,6 @@ What else the runs showed:
 **Verdict: T5 pays.** Decision 14's condition, that decoding be a large share of a run, is
 met on both cards and on real data.
 
-### T5 — Decode ahead of the GPU call
-
-Justified by T4. Prepare the next few images on the default pool while the GPU thread runs
-the current one. Split each `*_sync` scorer into a CPU half (`open_rgb`, `preprocess`,
-close the image) and a GPU half (`.to(device)`, the forward pass).
-
-- **Use about 4 workers, not 1.** T4's large-image gain comes from several images being
-  prepared at once. Re-time the worker count, as T1 and T3 did, since each in-flight 4K
-  image holds a decoded buffer and its tensor.
-
-- **Bound the queue** to a few images. A prepared tensor sits in RAM until the card takes
-  it.
-- **Keep the invariants**: `open_rgb` for every open, and `img.close()` right after
-  preprocessing (`CLAUDE.md` § Key invariants).
-- **One image per forward pass still**, so the scores cannot change.
-
-**Acceptance.** Scores are identical to the serial path on a fixture. VRAM after the job
-and an unload returns to where PM-035's fix left it (its hand check, repeated). Re-run
-`bench_score_decode.py` and a real scoring job, and compare against T4's figures above.
-Its twins must then be split the same way, or its parity guard will fail.
 
 ### T6 — Fetch model weights off the GPU thread
 
@@ -169,6 +152,14 @@ model's weights are cached). It waits on nothing and can go at any time.
 - **A second GPU thread, or GPU calls on the default pool.** That is PM-035.
 
 ## Open questions, for later
+
+- **What still holds the GPU checks back after T5.** Two different limits, measured on
+  2026-11-12 (`docs/dev/quality/scoring-job.md` § The GPU checks prepare images ahead).
+  The HF-processor checks (V2.5, DINOv2) never use more than about 4 cores at any worker
+  count, which looks like their preprocess holding the GIL; V2.5's SigLIP processor is the
+  slowest half of a run. The open_clip checks and NSFW show 27 cores busy, most of it
+  torch's CPU pool spinning, and the serial loop already showed 16. Holding torch to one
+  thread is process-wide, so it was left alone, as T1 left OpenCV's.
 
 - **WD14 on the GPU.** It runs on the CPU provider. Was that a choice (VRAM, a Windows
   provider problem) or a default? Find out before proposing a change.

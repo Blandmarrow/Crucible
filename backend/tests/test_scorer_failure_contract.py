@@ -13,14 +13,22 @@ The booleans stay False rather than None because `routers/quality.py` folds them
 into a JSON flags dict where None is not expressible; an unmeasured image is
 simply not flagged.
 
-No model weights needed: each `*_sync` scorer is replaced by one that raises
-before it would load anything. The scorer *modules* still `import torch` at the
+No model weights needed: each scorer's halves (M10 T5) are replaced, the
+`prepare_*` half by a stub and the `infer_*` half by one that raises. The scorer *modules* still `import torch` at the
 top, though, which CI never has — hence `needs_torch` on the four that import one.
 The fifth asserts on the ORM alone and is the only part of this contract CI
 enforces; the rest run on any machine with the real venv.
 """
 
+from types import SimpleNamespace
+
 from backend.tests.conftest import needs_torch, run
+
+
+def _stub_prepares(monkeypatch, aes, v25):
+    """The CPU halves succeed, so the failure under test is the GPU half's."""
+    monkeypatch.setattr(aes, "prepare_clip", lambda *a, **k: None)
+    monkeypatch.setattr(v25, "prepare_v2_5", lambda *a, **k: None)
 
 
 @needs_torch
@@ -40,11 +48,12 @@ def test_an_aesthetic_failure_records_no_score(monkeypatch):
         calls.append(1)
         raise RuntimeError("CLIP exploded")
 
-    monkeypatch.setattr(aes, "score_image_sync", boom)
-    monkeypatch.setattr(v25, "score_image_v2_5_sync", lambda *a, **k: 5.0)
+    _stub_prepares(monkeypatch, aes, v25)
+    monkeypatch.setattr(aes, "infer_aesthetic", boom)
+    monkeypatch.setattr(v25, "infer_v2_5", lambda *a, **k: 5.0)
 
     async def scenario():
-        return await aes.score_images_batch(["/nope/a.png", "/nope/b.png"], {})
+        return await aes.score_images_batch(["/nope/a.png", "/nope/b.png"], {"preprocess": None})
 
     scores = run(scenario())
     assert scores == [None, None], "0.0 is outside the column's 1-10 range"
@@ -64,8 +73,8 @@ def test_a_v2_5_failure_records_no_score_either(monkeypatch):
 
     Stubbing LAION to *succeed* is what makes this pin the shared loop rather
     than merely observe two dead paths: delete the `model == "v2_5"` branch and
-    the scores come back `[5.0, 5.0]`; rename `score_image_v2_5_sync` and the
-    call count is 0.
+    the scores come back `[5.0, 5.0]`; rename `infer_v2_5` and the call count
+    is 0.
     """
     import backend.ml.aesthetic_scorer as aes
     import backend.ml.aesthetic_v2_5_scorer as v25
@@ -76,11 +85,14 @@ def test_a_v2_5_failure_records_no_score_either(monkeypatch):
         calls.append(1)
         raise RuntimeError("SigLIP exploded")
 
-    monkeypatch.setattr(v25, "score_image_v2_5_sync", boom)
-    monkeypatch.setattr(aes, "score_image_sync", lambda *a, **k: 5.0)
+    _stub_prepares(monkeypatch, aes, v25)
+    monkeypatch.setattr(v25, "infer_v2_5", boom)
+    monkeypatch.setattr(aes, "infer_aesthetic", lambda *a, **k: 5.0)
 
     async def scenario():
-        return await aes.score_images_batch(["/nope/a.png", "/nope/b.png"], None, model="v2_5")
+        return await aes.score_images_batch(
+            ["/nope/a.png", "/nope/b.png"], SimpleNamespace(processor=None), model="v2_5",
+        )
 
     scores = run(scenario())
     assert scores == [None, None], "0.0 is outside the column's 1-10 range"
@@ -94,11 +106,12 @@ def test_a_watermark_failure_records_no_score_and_no_flag(monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("CLIP exploded")
 
-    monkeypatch.setattr(aes, "score_watermark_sync", boom)
+    monkeypatch.setattr(aes, "prepare_clip", lambda *a, **k: None)
+    monkeypatch.setattr(aes, "infer_watermark", boom)
     monkeypatch.setattr(aes, "_precompute_watermark_text_features", lambda *a, **k: None)
 
     async def scenario():
-        return await aes.score_images_watermark(["/nope/a.png"], {})
+        return await aes.score_images_watermark(["/nope/a.png"], {"preprocess": None})
 
     results = run(scenario())
     assert results == [{"watermark_score": None, "has_watermark": False}]
@@ -115,11 +128,12 @@ def test_a_watermark_failure_is_logged(monkeypatch, caplog):
     def boom(*a, **k):
         raise RuntimeError("CLIP exploded")
 
-    monkeypatch.setattr(aes, "score_watermark_sync", boom)
+    monkeypatch.setattr(aes, "prepare_clip", lambda *a, **k: None)
+    monkeypatch.setattr(aes, "infer_watermark", boom)
     monkeypatch.setattr(aes, "_precompute_watermark_text_features", lambda *a, **k: None)
 
     async def scenario():
-        return await aes.score_images_watermark(["/nope/a.png"], {})
+        return await aes.score_images_watermark(["/nope/a.png"], {"preprocess": None})
 
     with caplog.at_level(logging.WARNING, logger="backend.ml.aesthetic_scorer"):
         run(scenario())
@@ -133,10 +147,11 @@ def test_an_nsfw_failure_records_no_score_and_is_not_flagged(monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("classifier exploded")
 
-    monkeypatch.setattr(nsfw, "score_image_sync", boom)
+    monkeypatch.setattr(nsfw, "prepare_nsfw", lambda *a, **k: {})
+    monkeypatch.setattr(nsfw, "infer_nsfw", boom)
 
     async def scenario():
-        return await nsfw.score_images_nsfw_batch(["/nope/a.png"], {}, threshold=0.5)
+        return await nsfw.score_images_nsfw_batch(["/nope/a.png"], {"processor": None}, threshold=0.5)
 
     results = run(scenario())
     assert results == [{"nsfw_score": None, "is_nsfw": False}]

@@ -45,6 +45,10 @@ ML_CPU_DISPATCHES = {
     ("technical_scorer.py", "score_images_technical"): "cv2/numpy blur, noise and uniformity",
     ("ollama_captioner.py", "caption_image"): "PIL resize before an HTTP call",
     ("openai_compat_captioner.py", "caption_image"): "PIL encode + an HTTP request",
+    ("prefetch.py", "run_prefetched"): (
+        "the GPU scorers' prepare_* halves: open_rgb + preprocess to a CPU tensor; "
+        "test_prefetch_halves.py keeps the device out of them"
+    ),
 }
 
 # Rule B's exemptions: callables in a GPU module that run on the CPU.
@@ -56,6 +60,7 @@ CPU_CALLEES_IN_TORCH_MODULES = {
 # accelerator without importing it, so they are named by hand.
 GPU_MODULES_WITHOUT_TORCH = {
     "tag_embedder": "embed_texts_sync runs a SentenceTransformer that model_manager put on the GPU",
+    "prefetch": "run_prefetched sends each scorer's infer_* half to the GPU thread",
 }
 
 # Every other torch-free module, with why it never touches the accelerator. A new

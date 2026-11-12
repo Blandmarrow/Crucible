@@ -1149,7 +1149,7 @@ class InOrderCalls(Generic[_T, _R]):
     It runs coroutines on the event loop and never dispatches to a thread, so
     any `run_in_executor` stays in the caller's own code where the GPU thread
     guard (`test_gpu_executor_guard.py`) can see it. For executor futures with
-    the same oldest-first draining, see `dataset_service._InOrderWindow`.
+    the same oldest-first draining, see `InOrderWindow` below.
     """
 
     def __init__(
@@ -1219,3 +1219,68 @@ class InOrderCalls(Generic[_T, _R]):
             return idx, item, None, exc
         self._current = None
         return idx, item, result, None
+
+
+class InOrderWindow:
+    """At most `bound` futures in flight, finished oldest first (M10 T3, T5).
+
+    T1's pattern (`technical_scorer.score_images_technical`): awaiting the oldest
+    future first keeps input order, a prefix on cancel and the progress count,
+    with no reordering step. The rows a loop adds, and its `failed` list, come
+    out in the same order as the serial loop's. Used by folder import and rescan
+    (`dataset_service`) and the GPU scorers' prefetch (`ml/prefetch.py`).
+
+    It never dispatches anything. Each caller makes its futures with
+    `run_in_executor` in its own body, so the GPU thread guard
+    (`test_gpu_executor_guard.py`) still sees every dispatch. A helper that took
+    the callable would hide it from Rule B.
+    """
+
+    def __init__(self, bound: int):
+        self._bound = bound
+        self._q: collections.deque[tuple[object, asyncio.Future]] = collections.deque()
+
+    def __len__(self) -> int:
+        return len(self._q)
+
+    def full(self) -> bool:
+        return len(self._q) >= self._bound
+
+    def push(self, item, fut: asyncio.Future) -> None:
+        self._q.append((item, fut))
+
+    def push_done(self, item, result=None, exc: BaseException | None = None) -> None:
+        """An item finished on the event loop, queued behind the ones in flight.
+
+        So a failure in a loop's serial step (or an item with no pool work)
+        lands in `failed` and the progress count in input order, not ahead of
+        the files still running.
+        """
+        fut = asyncio.get_running_loop().create_future()
+        if exc is not None:
+            fut.set_exception(exc)
+        else:
+            fut.set_result(result)
+        self._q.append((item, fut))
+
+    async def pop_oldest(self) -> tuple[object, object, Exception | None]:
+        """`(item, result, None)`, or `(item, None, exc)` when the work raised."""
+        item, fut = self._q.popleft()
+        try:
+            return item, await fut, None
+        except Exception as exc:
+            return item, None, exc
+
+    def cancel_pending(self) -> None:
+        """Only non-empty on a hard cancel, an early stop or an unexpected raise.
+
+        A pool thread that has started runs on regardless: cancelling its
+        asyncio wrapper only stops one that has not started, and keeps an
+        exception nobody will read from being logged as "never retrieved".
+        """
+        for _item, fut in self._q:
+            if not fut.done():
+                fut.cancel()
+            elif not fut.cancelled():
+                fut.exception()
+        self._q.clear()

@@ -1,5 +1,4 @@
 import asyncio
-import collections
 import logging
 import os
 import re
@@ -25,6 +24,7 @@ from backend.services.label_service import copy_labels, live_label_ids
 from backend.services.image_service import decode_for_ingest, read_provenance_sidecar
 from backend.services.video_service import UnreadableVideoError, claimed_poster_stems, probe_and_poster
 from backend.utils import (
+    InOrderWindow,
     chunked,
     copy_with_sidecar,
     join_subfolder,
@@ -502,7 +502,7 @@ def _ingest_file_sync(
 
     Pure filesystem + CPU work (no DB session) so it can run in a single executor hop,
     keeping the blocking copy/decode/phash/thumbnail off the event loop. Folder
-    import runs several of these at once (`_InOrderWindow`), so it must touch no
+    import runs several of these at once (`InOrderWindow`), so it must touch no
     path but its own `dest_file`, `thumb_path` and `.txt` sidecar.
     """
     shutil.copy2(src_file, dest_file)
@@ -1061,70 +1061,6 @@ def _import_workers() -> int:
     return max(1, min(IMPORT_MAX_WORKERS, (os.cpu_count() or 2) // 2))
 
 
-class _InOrderWindow:
-    """At most `bound` futures in flight, finished oldest first (M10 T3).
-
-    T1's pattern (`technical_scorer.score_images_technical`): awaiting the oldest
-    future first keeps input order, a prefix on cancel and the progress count,
-    with no reordering step. The rows a loop adds, and its `failed` list, come
-    out in the same order as the serial loop's.
-
-    It never dispatches anything. Each caller makes its futures with
-    `run_in_executor` in its own body, so the GPU thread guard
-    (`test_gpu_executor_guard.py`, Rule B) still sees and resolves every
-    callable. A helper that took the callable would hide it from the guard.
-    """
-
-    def __init__(self, bound: int):
-        self._bound = bound
-        self._q: collections.deque[tuple[object, asyncio.Future]] = collections.deque()
-
-    def __len__(self) -> int:
-        return len(self._q)
-
-    def full(self) -> bool:
-        return len(self._q) >= self._bound
-
-    def push(self, item, fut: asyncio.Future) -> None:
-        self._q.append((item, fut))
-
-    def push_done(self, item, result=None, exc: BaseException | None = None) -> None:
-        """An item finished on the event loop, queued behind the ones in flight.
-
-        So a failure in a loop's serial step (or an item with no pool work)
-        lands in `failed` and the progress count in input order, not ahead of
-        the files still running.
-        """
-        fut = asyncio.get_running_loop().create_future()
-        if exc is not None:
-            fut.set_exception(exc)
-        else:
-            fut.set_result(result)
-        self._q.append((item, fut))
-
-    async def pop_oldest(self) -> tuple[object, object, Exception | None]:
-        """`(item, result, None)`, or `(item, None, exc)` when the work raised."""
-        item, fut = self._q.popleft()
-        try:
-            return item, await fut, None
-        except Exception as exc:
-            return item, None, exc
-
-    def cancel_pending(self) -> None:
-        """Only non-empty on a hard cancel or an unexpected raise.
-
-        A pool thread that has started runs on regardless: cancelling its
-        asyncio wrapper only stops one that has not started, and keeps an
-        exception nobody will read from being logged as "never retrieved".
-        """
-        for _item, fut in self._q:
-            if not fut.done():
-                fut.cancel()
-            elif not fut.cancelled():
-                fut.exception()
-        self._q.clear()
-
-
 def _rescan_file_sync(
     original: Path, f: Path, thumb_path: str | None, read_caption: bool
 ) -> tuple[str | None, RegisteredFile | None]:
@@ -1218,7 +1154,7 @@ async def import_images_from_folder(
     # thumbnail, sidecars) runs several at once, and rows are added oldest first,
     # so they keep input order too (M10 T3).
     loop = asyncio.get_running_loop()
-    window = _InOrderWindow(_import_workers())
+    window = InOrderWindow(_import_workers())
 
     async def finish_oldest() -> None:
         nonlocal added, failed_count
@@ -1594,7 +1530,7 @@ async def rescan_dataset(
     # for a new file, the decode and thumbnail. Rows and caption updates are
     # applied oldest first, so they land in the serial loop's order.
     loop = asyncio.get_running_loop()
-    window = _InOrderWindow(_import_workers())
+    window = InOrderWindow(_import_workers())
     # Thumbnail paths of the files in flight. Two nested files with one stem
     # share a `thumbnail_path_for` path (the nested-file defect described at the
     # rename branch). The serial loop wrote them one after the other, so a second

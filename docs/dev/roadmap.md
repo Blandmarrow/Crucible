@@ -17,7 +17,7 @@ A feature with its own design plan keeps that plan in a transient folder (`TRANS
 in `scripts/check_docs.py`); this file names the plan and its place in the order, and never
 restates its stages.
 
-## Next session (updated 2026-11-12, the split queue executed before T5)
+## Next session (updated 2026-11-12, T5 merged, T6 next)
 
 0. **M10, job throughput, is under way**
    ([decision 14](decisions/14-job-throughput-is-its-own-milestone.md)), planned in
@@ -25,19 +25,20 @@ restates its stages.
    Landed). T1 merged on 2026-11-12 as PR #145, T3 the same day as PR #146, and T2 as PR
    #147 ([decision 16](decisions/16-concurrent-caption-requests.md)). T4's timing merged
    the same day as PR #148: T5 pays, up to 4.2× on a full run over real ComfyUI
-   images. Next is T5, then T6. See M10 below. T5's notes go in
-   `docs/dev/quality/scoring-job.md`, split out for it on 2026-11-12.
+   images. T5 merged the same day as PR #149: scores identical to `main` on 1,876 real
+   images, VRAM lower than `main`, 2.3× on the full real set and 3.6× on 4K PNGs at 8
+   workers. Next is T6. See M10 below and `docs/dev/quality/scoring-job.md` § The GPU
+   checks prepare images ahead.
    - **Found while building T2, not fixed:** `/pipeline` silently ignores `save_backup`
      and `rename_on_caption`. Both are on `CaptionPipelineRequest` and the frontend sends
      them, but `_run_pipeline_body` never reads them. Wants the user's call: wire them up,
      or drop them from the request and the pipeline form.
-   - **Found while building T4, not fixed:** `aesthetic_scorer.score_images_watermark`
-     calls `_precompute_watermark_text_features`, a CUDA `encode_text`, on the event-loop
-     thread rather than through `run_on_gpu`. That is PM-035's class: it builds a second
-     set of CUDA handles and blocks the loop. `test_gpu_executor_guard.py` cannot see it,
-     because it only follows executor dispatches. The fix is one `await run_on_gpu(...)`,
-     and the guard wants a rule for direct calls. T4 also listed repeated work in a scoring
-     run (throughput plan § Open questions), none of it timed.
+   - **Found while building T4, half fixed by T5:** `score_images_watermark` called
+     `_precompute_watermark_text_features`, a CUDA `encode_text`, on the event-loop thread
+     (PM-035's class). T5 sends it through `run_on_gpu`. Still open:
+     `test_gpu_executor_guard.py` cannot see a direct GPU call like that one, because it
+     only follows executor dispatches, so it wants a rule for direct calls. T4 also listed
+     repeated work in a scoring run (throughput plan § Open questions), none of it timed.
    - M9 left four things open, none of which blocks M10
    ([roadmap-archive/m9-scale-and-data-safety.md § Left open](roadmap-archive/m9-scale-and-data-safety.md#left-open)):
    - **Two findings wait for the user to place them in the order.** Style scoring's keyset
@@ -164,8 +165,11 @@ is not touched: only CPU work moves.
   PR #148: decode plus preprocess is 63–93% of each check on real
   ComfyUI images, and T5 would make a full run 2.1× faster on small JPEGs and 4.2× on
   real images. Detail: [throughput-plan/README.md § T4](throughput-plan/README.md#t4--time-the-decode-share-on-a-real-card-done).
-- [ ] T5: decode ahead of the GPU call, on the default pool, with about 4 workers. T4
-  shows it pays.
+- [x] T5: decode ahead of the GPU call, on the default pool. Merged 2026-11-12 as
+  PR #149: each GPU scorer split into a `prepare_*` and an `infer_*` half, run by
+  `ml/prefetch.py` up to 8 images ahead; scores identical to the serial path, VRAM lower,
+  2.3× to 3.6× faster. Detail: `docs/dev/quality/scoring-job.md` § The GPU checks
+  prepare images ahead.
 - [ ] T6: fetch a model's weights off the GPU thread, so a first-run download inside a
   loader no longer holds up every other GPU call (PM-035's follow-up). Waits on nothing.
 

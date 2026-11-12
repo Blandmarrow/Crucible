@@ -485,22 +485,32 @@ the user): **no side table now.** The win shows only at sizes nobody has, and th
 helps ComfyUI-shaped rows is the wide, risky one. Reopen it when a dataset nears 50,000
 photo-shaped or 20,000 ComfyUI-shaped images, starting with the script again. **The
 dataset-wide Stats scans are pinned to `ix_images_dataset_id`**, with a plan guard test.
-What is left to build:
+**As built (2026-11-11).**
 
-- **The plan guard.** Lift the statements `get_dataset_stats` and `get_score_values` build
-  inline (`backend/services/dataset_service.py`) into module-level builders, as
-  `_image_validator_stmt` already is, and read each one's plan the way
-  `backend/tests/test_image_sort_plan.py` does.
-- **The pin**, on the seven dataset-wide scans and not on the validator. SQLAlchemy's
-  `with_hint` looked, from its source, to be dropped without a word on SQLite; confirm that
-  with a compile test first, and if so emit the hint with a small compiler hook. The guard
-  then asserts the pinned index in each plan, which also proves the hint reached the SQL.
-- **Time a subfolder-scoped Stats call** under the forced index before pinning that form,
-  on a kept bench file. Pin it only if it wins there too.
-- **Document the pin** where a later editor would look: at the pin (why this index, when to
-  re-time it), at the index's declaration in `backend/models/image.py` (do not drop it as
-  redundant), in `docs/dev/database.md` and `docs/dev/statistics.md`, and in the guard
-  test's docstring.
+- **The pin.** `_stats_scan` (`backend/services/dataset_service.py`) scopes every Stats
+  statement and pins the dataset-wide form to `ix_images_dataset_id`. The seven statements
+  `get_dataset_stats` and `get_score_values` built inline are now named builders beside it
+  (`_stats_rows_stmt`, `_stats_coverage_stmt`, `_stats_aesthetic_models_stmt`,
+  `_stats_flag_sums_stmt`, `_stats_embedding_count_stmt`, `_stats_license_stmt`,
+  `_score_values_rows_stmt`). The validator is not pinned.
+- **The mechanism.** SQLAlchemy's SQLite dialect does drop a table hint without a word
+  (checked on 2.1.6). `backend/database.py` implements the compiler's `get_from_hint_text`,
+  and `indexed_by` wraps `Select.with_hint` for it
+  (`docs/dev/database.md` § SQLite engine and schema conventions).
+- **A subfolder-scoped call is not pinned**, after timing it (decision 15's amendment; the
+  "subfolder" section of the report's stage 7 addendum). `ix_images_dataset_subfolder`
+  serves it in table order already, and the forced index lost on every statement.
+- **The plan guard** is `backend/tests/test_stats_plan.py`. It reads the plan of every
+  builder, pinned and subfolder-scoped, then calls both endpoints and reads every statement
+  the driver is sent, so a scan added later without the pin fails. It also holds the
+  index's shape.
+- **The pin is documented** at the pin, at the index's declaration in
+  `backend/models/image.py`, in `docs/dev/database.md`, in
+  `docs/dev/statistics.md` § The Stats scans and their index pin, and in the guard test.
+
+Left open by the measuring, and not part of stage 7: style scoring's keyset page sorts the
+whole dataset for every page (a likely fix is to page on `rowid`, which
+`ix_images_dataset_id` serves with no sort).
 
 The rest of this section is the design as it stood before the measurement. It is kept for
 whoever reopens the split.

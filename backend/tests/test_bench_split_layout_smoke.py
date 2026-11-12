@@ -81,9 +81,24 @@ def test_every_layout_holds_the_same_rows(seeded, capsys):
     gallery = {c.removeprefix("gallery ") for c in split.GALLERY_CASES} | {split.ROWS_LABEL}
     pages = {f"keyset page of {_STYLE_PAGE_SIZE}, {cols}, {where}"
              for cols in ("clip + dino", "layers") for where in ("first", "middle")}
-    assert labels == stats | gallery | pages | {"legacy: whole set in one statement (bench_similarity)"}
+    # The same eight statements again, scoped to a large subfolder and to a 20-row one.
+    scoped = {f"{label} [{sub}]" for label in stats for sub in split.STATS_SUBFOLDERS}
+    assert labels == stats | scoped | gallery | pages | {
+        "legacy: whole set in one statement (bench_similarity)"}
     # Only the Stats statements take an index hint: a hinted sort would be another query.
-    assert {label for (label, index) in row if index != "default"} == stats
+    assert {label for (label, index) in row if index != "default"} == stats | scoped
+    # The app pins its dataset-wide scans (decision 15). That hint is taken off at
+    # capture and reported, so "default" here is still SQLite's own choice.
+    assert set(report["app_hints"]) == stats - {"validator"}
+    assert set(report["app_hints"].values()) == {"INDEXED BY ix_images_dataset_id"}
+    assert "INDEXED BY" not in row[("row fetch (stats)", "default")]["sql"]
+    assert row[("row fetch (stats)", "dataset_id")]["sql"].count("INDEXED BY") == 1
+    small = f"row fetch (stats) [{bench.SMALL_SUBFOLDER}]"
+    assert row[(small, "default")]["rows"] == bench.SMALL_SUBFOLDER_ROWS
+    assert 0 < row[("row fetch (stats) [set_a]", "default")]["rows"] < ROWS
+    # Its own index when SQLite chooses, the dataset's when forced.
+    assert any("ix_images_dataset_subfolder" in step for step in row[(small, "default")]["plan"])
+    assert any("ix_images_dataset_id" in step for step in row[(small, "dataset_id")]["plan"])
 
     content = report["layouts"]["row"]["content"]
     assert content["rows"] == ROWS + 40  # every dataset's rows, not just the measured one
@@ -213,6 +228,15 @@ def test_only_a_seeded_bench_file_is_accepted(tmp_path):
         _report(other)
     with pytest.raises(SystemExit, match="Refusing to run"):
         _report(bench._real_db_path())
+
+
+def test_a_hint_the_app_adds_is_taken_off_at_capture():
+    # Decision 15 pins the dataset-wide Stats scans. Left in, "default" would not be
+    # SQLite's own choice, and a forced choice would put a second hint after the first.
+    pinned = "SELECT count(*) \nFROM images INDEXED BY ix_images_dataset_id \nWHERE images.dataset_id = ?"
+    assert split.APP_HINT.sub("", pinned) == "SELECT count(*) \nFROM images \nWHERE images.dataset_id = ?"
+    assert split.APP_HINT.search(pinned).group(0).strip() == "INDEXED BY ix_images_dataset_id"
+    assert split.APP_HINT.search("SELECT 1 FROM images WHERE images.dataset_id = ?") is None
 
 
 def test_a_mismatch_is_reported():

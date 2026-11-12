@@ -100,5 +100,10 @@ rule as it now stands.
 ### Status & date
 
 MITIGATED — found 2026-11-09, fixed the same day by M9 stage 9. The guard test covers the
-gallery's sorts only; another paged query that gains an `ORDER BY` key has no guard.
-Last reviewed for staleness: 2026-11-09.
+gallery's sorts. Since M9 stage 7 (2026-11-11) `backend/tests/test_stats_plan.py` covers
+the Stats statements too: stage 11's index had changed every one of their plans with no
+test to see it, the same failure by another road. Another paged query that gains an
+`ORDER BY` key still has no guard, and one is known to sort already: style scoring's keyset
+page sorts the whole dataset for every page of 2,000 (the stage 7 addendum of
+`backend/scripts/scaling_bottlenecks_report.md`).
+Last reviewed for staleness: 2026-11-11.

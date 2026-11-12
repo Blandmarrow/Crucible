@@ -808,6 +808,58 @@ python -m backend.scripts.bench_split_layout --db <work dir>/bench-photo-100000-
   one-statement similarity load took 15.6 s on `split4`, and 2.8 s in the second run, the
   same as `split3`.
 
+### A subfolder-scoped Stats call, photo 100k on the Windows machine, ms
+
+Added on the same day, for decision 15's condition on the pin: the two Stats endpoints
+again, scoped to one subfolder, on the `row` layout only. `set_a` holds 29,671 of the
+100,000 rows and `small` holds 20. 249 evictions, none failed; the same rows under every
+index.
+
+| Statement | Subfolder | Own, warm | Forced, warm | Own, cold | Forced, cold |
+|---|---|---|---|---|---|
+| validator | `set_a` | 59 | 454 | 3,746 | 5,107 |
+| row fetch (stats) | `set_a` | 278 | 512 | 4,897 | 5,137 |
+| coverage counts | `set_a` | 59 | 456 | 3,686 | 5,138 |
+| `aesthetic_model` group | `set_a` | 224 | 460 | 4,858 | 5,100 |
+| flag sums | `set_a` | 73 | 468 | 3,812 | 5,138 |
+| embedding count | `set_a` | 61 | 462 | 3,761 | 5,108 |
+| license group | `set_a` | 81 | 461 | 4,322 | 5,111 |
+| validator | `small` | <0.1 | 456 | 6 | 5,156 |
+| row fetch (stats) | `small` | <0.1 | 455 | 19 | 5,131 |
+| coverage counts | `small` | <0.1 | 454 | 6 | 5,109 |
+
+- **SQLite's own choice wins on every statement, so a subfolder-scoped call is not
+  pinned.** Its plan is
+  `SEARCH images USING INDEX ix_images_dataset_subfolder (dataset_id=? AND subfolder=?)`,
+  which reads that subfolder's rows and no others, in table order.
+- **Forced, every statement costs what a scan of the whole dataset costs**, about 455 ms
+  warm and 5.1 s cold whatever the subfolder's size, because `ix_images_dataset_id` knows
+  nothing of subfolders.
+- A 1M run of the same cases was started and stopped before its forced pass, so the
+  subfolder case is timed at 100k only. The result does not rest on size: a forced index
+  must read the dataset to answer for one folder.
+
+### The pin as built, through the app, photo 100k on the Windows machine, ms
+
+`bench_scaling.py --only stats --reuse-db` with the pin in the code, compared with stage
+6b's JSON (`--compare`): the endpoints themselves, ORM and Pydantic included. The cold
+run made 61 evictions, none failed.
+
+| Case | 6b, warm | Pinned, warm | 6b, cold | Pinned, cold |
+|---|---|---|---|---|
+| Stats, cold cache entry | 4,508.7 | 3,525.1 | 18,041.1 | 7,449.9 |
+| Stats, cached poll | 13.3 | 13.8 | 27.0 | 28.6 |
+| Score values, cold cache entry | 1,921.9 | 1,747.1 | 14,852.4 | 5,648.1 |
+| Score values, cached poll | 408.3 | 417.1 | 416.5 | 437.8 |
+
+- **A Stats load is 22% cheaper warm and 59% cheaper cold**, and a score-values load 9%
+  and 62%. Every scan's plan reads `SEARCH images USING INDEX ix_images_dataset_id`.
+- **A cached poll does not move**: it runs the validator alone, which is not pinned and
+  still reads `ix_images_dataset_updated_at` as a covering index.
+- The pinned scan returns the same rows in table order, so `score_means`, a float sum in
+  row order, differs from the unpinned value at about its 14th significant digit
+  (`docs/dev/statistics.md` § The Stats scans and their index pin).
+
 ### What this run does not cover
 
 - **Rows of real, varied size.** The seed's rows are nearly all one size, so `blobs_last`
@@ -820,8 +872,6 @@ python -m backend.scripts.bench_split_layout --db <work dir>/bench-photo-100000-
 - **Other shapes for the side table**: a count that only asks whether a side row exists,
   which SQLite could answer from the primary key's index alone, and the two final-layer
   vectors apart from the 18 KB layer blob.
-- **A subfolder-scoped Stats call under the forced index.** Only dataset-wide statements
-  were captured. With a subfolder filter SQLite may do better with
-  `ix_images_dataset_subfolder`, which a forced `ix_images_dataset_id` would rule out.
+- **A subfolder-scoped Stats call at 1M.** It was timed at 100k only (the section above).
 - 1M on the slower disk, 250k, several datasets in one file, and a ComfyUI-shaped file
   larger than 20k.

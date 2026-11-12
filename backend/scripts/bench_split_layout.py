@@ -18,6 +18,9 @@ What it does:
    `bench_scaling.py` runs it, and every statement the two Stats endpoints and a few
    gallery pages issue is kept with its real parameters (`<db>.stage7-stmts.json`).
    Capture needs the app's models, so it only works on the blobs-in-row file. The
+   Stats endpoints are captured dataset-wide and again scoped to one subfolder (30% of
+   the rows, and 20 rows), since a subfolder scope has an index of its own. An index
+   hint the app itself puts on a statement is taken off at capture and listed.
    Style scoring's keyset pages are compiled from the construct `_score_paginated`
    builds (`backend/routers/quality.py`), since capturing them would mean running a
    scoring job; `bench_scaling.bench_similarity`'s one-statement load is kept beside
@@ -103,7 +106,11 @@ INDEX_CHOICES = {
 LAYOUT_VERSION = 1
 
 # Bump when the statement list changes, so an older capture is taken again.
-STATEMENTS_VERSION = 2
+STATEMENTS_VERSION = 3
+# An index hint the app itself puts on a statement (decision 15 pins the dataset-wide
+# Stats scans). It is taken off at capture, so "default" below stays SQLite's own choice
+# and the forced choices do not stack a second hint on the first.
+APP_HINT = re.compile(r" INDEXED BY \w+")
 
 LEGACY_SIMILARITY_SQL = (
     "SELECT images.id, images.dino_embedding FROM images "
@@ -134,6 +141,11 @@ GALLERY_CASES = (
     "gallery aesthetic_score desc deep",  # indexed: the control that should not move
 )
 STATS_CASES = ("stats cold", "score-values cold")
+# The same two endpoints scoped to one subfolder: 30% of the dataset, and 20 rows. A
+# subfolder scope has an index of its own (`ix_images_dataset_subfolder`), so whether the
+# forced index helps there is a separate question from the dataset-wide one.
+STATS_SUBFOLDERS = ("set_a", bench.SMALL_SUBFOLDER)
+STATS_GROUPS = ("stats", "stats_subfolder")
 
 
 # --------------------------------------------------------------------------- capture
@@ -165,6 +177,10 @@ async def capture_statements(db_path: Path, datasets_dir: Path, n: int) -> list[
     missing = wanted - {c["name"] for c in cases}
     if missing:
         raise SystemExit(f"bench_scaling no longer builds these cases: {sorted(missing)}")
+    for sub in STATS_SUBFOLDERS:
+        for ep in ("stats", "score-values"):
+            cases.append({"name": f"{ep} cold subfolder={sub}", "group": "stats", "subfolder": sub,
+                          "reqs": [(f"/api/v1/datasets/{bench.DATASET_ID}/{ep}", {"subfolder": sub})]})
 
     capture = bench.Capture()
     engine = bench.make_engine(db_path, capture, cold=False)
@@ -174,6 +190,8 @@ async def capture_statements(db_path: Path, datasets_dir: Path, n: int) -> list[
     labels: dict[str, int] = {}
 
     def add(group: str, label: str, sql: str, params: tuple, joins: dict | None = None) -> None:
+        app_hint = APP_HINT.search(sql)
+        sql = APP_HINT.sub("", sql)
         if (sql, params) in seen:
             return  # the validator opens both Stats endpoints
         seen.add((sql, params))
@@ -184,7 +202,7 @@ async def capture_statements(db_path: Path, datasets_dir: Path, n: int) -> list[
         if bad:
             raise SystemExit(f"{label}: a parameter that JSON cannot keep: {bad[0]!r}")
         out.append({"group": group, "label": label, "sql": sql, "params": list(params),
-                    "joins": joins or {}})
+                    "joins": joins or {}, "app_hint": app_hint.group(0).strip() if app_hint else None})
 
     try:
         async with bench.app_client(Session, datasets_dir) as client:
@@ -197,10 +215,14 @@ async def capture_statements(db_path: Path, datasets_dir: Path, n: int) -> list[
                 images = [(s, p) for s, p in capture.stmts
                           if "FROM images" in s and s.lstrip().upper().startswith(("SELECT", "WITH"))]
                 if case["group"] == "stats":
+                    sub = case.get("subfolder")
                     for sql, params in images:
                         label = _stats_label(sql)
-                        add("stats", label, sql, params,
-                            {"image_embeddings": "JOIN"} if label == "embedding count" else None)
+                        joins = {"image_embeddings": "JOIN"} if label == "embedding count" else None
+                        if sub is None:
+                            add("stats", label, sql, params, joins)
+                        else:
+                            add("stats_subfolder", f"{label} [{sub}]", sql, params, joins)
                     continue
                 if not images:
                     raise SystemExit(f"{case['name']}: no statement on images was captured")
@@ -521,7 +543,7 @@ def measure_layout(db_path: Path, layout: str, stmts: list[dict], reps: int,
         try:
             con.execute("PRAGMA synchronous=NORMAL")
             for stmt in stmts:
-                if hint and stmt["group"] != "stats":
+                if hint and stmt["group"] not in STATS_GROUPS:
                     continue  # forcing an index under a sort would measure something else
                 entry = {"group": stmt["group"], "label": stmt["label"], "index": index_name}
                 results.append(entry)
@@ -615,6 +637,8 @@ async def run(args) -> dict:
         "started": datetime.now().isoformat(timespec="seconds"), "machine": bench.machine_info(),
         "source": src.name, "seed": seed, "n": n, "cold": bool(args.cold),
         "reps": args.reps, "cold_reps": args.cold_reps, "statements": len(stmts), "layouts": {},
+        # What the app pins today, so a reader can tell "default" from "as the app runs it".
+        "app_hints": {s["label"]: s["app_hint"] for s in stmts if s.get("app_hint")},
     }
     out = Path(args.json) if args.json else None
     print(f"# Layout experiment on {src.name} (N={n:,}), SQLite {sqlite3.sqlite_version}\n", flush=True)
@@ -703,7 +727,7 @@ def print_markdown(report: dict) -> None:
     passes = [("warm_ms", f"warm, best of {report['reps']}")]
     if report["cold"]:
         passes.append(("cold_ms", f"cold, best of {report['cold_reps']}"))
-    for group in ("stats", "gallery", "similarity"):
+    for group in (*STATS_GROUPS, "gallery", "similarity"):
         keys = [k for k in by_key if k[0] == group]
         if not keys:
             continue
@@ -724,6 +748,13 @@ def print_markdown(report: dict) -> None:
         for name, r in per_layout.items():
             plan = "; ".join(r.get("plan") or [r.get("note") or r["status"]]).replace("|", "\\|")
             print(f"| {key[1]} | {name} | `{plan}` |")
+
+    if report.get("app_hints"):
+        print("\n### Hinted by the app itself\n")
+        print("These statements carry an index hint in the app. It was taken off for the "
+              "\"default\" rows above, which are SQLite's own choice.\n")
+        for label, hint in report["app_hints"].items():
+            print(f"- {label}: `{hint}`")
 
     skipped = sorted({(r["label"], name, r.get("note") or r["status"])
                       for name, d in layouts.items() for r in d["results"] if r["status"] != "ok"})

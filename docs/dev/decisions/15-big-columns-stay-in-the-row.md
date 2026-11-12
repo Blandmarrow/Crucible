@@ -83,3 +83,29 @@
   versions agreeing on the order of the layouts, and the row layout reproducing stage 6b's
   figures. The pin itself is verified when it is built: the plan guard test asserts the
   pinned index in each statement's plan, which also proves the hint reached the SQL.
+- **Amendments:**
+  - **2026-11-11, the subfolder-scoped call is not pinned.** Timed as the decision asked,
+    on the kept bench files (the "subfolder" section of the report's stage 7 addendum).
+    SQLite already reads a subfolder-scoped Stats statement through
+    `ix_images_dataset_subfolder`, which lists that subfolder's rows in table order, and
+    the forced index lost on every statement: at 100,000 rows, 512 ms against 278 ms warm
+    for the row scan of a subfolder holding 30% of the rows, and 455 ms against under a
+    millisecond for a 20-row subfolder (5.1 s against 19 ms cold). `_stats_scan`
+    (`backend/services/dataset_service.py`) pins the dataset-wide form only, and
+    `backend/tests/test_stats_plan.py` asserts both halves.
+  - **2026-11-11, how the pin is built.** SQLAlchemy's SQLite dialect drops a table hint
+    without a word (checked on 2.1.6), so `backend/database.py` implements the compiler's
+    `get_from_hint_text` and `indexed_by` wraps `Select.with_hint` for it. The guard test
+    reads the compiled SQL, the plan, and every statement the two Stats endpoints really
+    send.
+  - **2026-11-11, the pin moves `score_means` in its last digits.** Found while checking
+    the built pin against the unpinned payloads on the 100,000-row bench file. The rows
+    are the same; their order is not, and each score mean is a float sum in row order, so
+    each differed at about the 14th significant digit (mean aesthetic 5.003639352915172
+    against 5.003639352915125). Nothing visible moves: the page prints a mean with
+    `toFixed`, and nothing stores it. Every other field, and every subfolder-scoped
+    payload, compared equal. The pinned order is also the steadier one: the unpinned scan
+    ran in `updated_at` order, which any write to any row reshuffles, where table order
+    changes only when rows come and go. Recorded because the owner rejects a speedup that
+    changes output ([decision 14](14-job-throughput-is-its-own-milestone.md)), and this is
+    the one place the pin touches a value at all.

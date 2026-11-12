@@ -1,4 +1,5 @@
 import asyncio
+import collections
 import logging
 import os
 import re
@@ -21,13 +22,7 @@ from backend.models import Dataset, DatasetVersion, Image, ImageLabel, StyleSimi
 from backend.services.caption_service import _write_txt_sidecar
 from backend.services.duplicate_service import carry_duplicate_flags
 from backend.services.label_service import copy_labels, live_label_ids
-from backend.services.image_service import (
-    extract_generation_metadata,
-    extract_embedded_provenance,
-    generate_thumbnail,
-    get_image_info,
-    read_provenance_sidecar,
-)
+from backend.services.image_service import decode_for_ingest, read_provenance_sidecar
 from backend.services.video_service import UnreadableVideoError, claimed_poster_stems, probe_and_poster
 from backend.utils import (
     chunked,
@@ -482,16 +477,16 @@ async def sweep_orphan_dataset_folders(db: AsyncSession) -> list[str]:
     return handled
 
 
-def _capture_provenance(src_file: Path, dest_file: Path) -> dict:
+def _capture_provenance(src_file: Path, embedded: dict | None) -> dict:
     """Provenance captured from a file being ingested: sidecar JSON, then embedded.
 
-    Sidecar wins over embedded (EXIF / PNG text) per field. The caller layers
-    request-supplied values on top of this, and leaves anything still unset NULL
-    so it inherits the dataset default (see backend/licenses.py).
+    Sidecar wins over embedded (EXIF / PNG text, which `decode_for_ingest` read)
+    per field. The caller layers request-supplied values on top of this, and
+    leaves anything still unset NULL so it inherits the dataset default (see
+    backend/licenses.py).
     """
     captured = read_provenance_sidecar(src_file) or {}
-    embedded = extract_embedded_provenance(str(dest_file)) or {}
-    for field, value in embedded.items():
+    for field, value in (embedded or {}).items():
         if not captured.get(field):
             captured[field] = value
     return captured
@@ -506,20 +501,20 @@ def _ingest_file_sync(
     """Copy an imported file and derive its metadata/thumbnail/caption/provenance.
 
     Pure filesystem + CPU work (no DB session) so it can run in a single executor hop,
-    keeping the blocking copy/decode/phash/thumbnail off the event loop.
+    keeping the blocking copy/decode/phash/thumbnail off the event loop. Folder
+    import runs several of these at once (`_InOrderWindow`), so it must touch no
+    path but its own `dest_file`, `thumb_path` and `.txt` sidecar.
     """
     shutil.copy2(src_file, dest_file)
-    info = get_image_info(str(dest_file))
-    gen_meta = extract_generation_metadata(str(dest_file))
-    generate_thumbnail(str(dest_file), thumb_path)
+    read = decode_for_ingest(str(dest_file), thumb_path)
     caption = read_caption_sidecar(src_file) if read_caption else None
     if caption:
         # Written here rather than by the caller so the import loop pays no extra
         # executor hop per file; the caller still does the ORM assignment (the
         # caption_token_count listener only fires on attribute assignment).
         _write_txt_sidecar(str(dest_file), caption)
-    provenance = _capture_provenance(src_file, dest_file)
-    return info, gen_meta, caption, provenance
+    provenance = _capture_provenance(src_file, read.embedded_provenance)
+    return read.info, read.gen_meta, caption, provenance
 
 
 class RegisteredFile(NamedTuple):
@@ -538,10 +533,8 @@ class RegisteredFile(NamedTuple):
 
 def _register_file_sync(f: Path, thumb_path: str) -> RegisteredFile:
     """Derive metadata + thumbnail + provenance for a file already on disk (rescan)."""
-    info = get_image_info(str(f))
-    gen_meta = extract_generation_metadata(str(f))
-    generate_thumbnail(str(f), thumb_path)
-    return RegisteredFile(info, gen_meta, _capture_provenance(f, f))
+    read = decode_for_ingest(str(f), thumb_path)
+    return RegisteredFile(read.info, read.gen_meta, _capture_provenance(f, read.embedded_provenance))
 
 
 def _copy_caption_file_sync(txt_file: Path, image_path: str) -> str:
@@ -585,8 +578,7 @@ def _copy_snapshot_image_sync(
     shutil.copy2(src_file, new_path)
     if caption_text:
         new_path.with_suffix(".txt").write_text(caption_text, encoding="utf-8")
-    generate_thumbnail(str(new_path), str(new_thumb))
-    return get_image_info(str(new_path)).get("phash")
+    return decode_for_ingest(str(new_path), str(new_thumb)).info.get("phash")
 
 
 def _name_to_slug(name: str) -> str:
@@ -1054,6 +1046,124 @@ def _ingest_video_sync(src_file: Path, dest_file: Path, poster_file: Path) -> tu
         raise
 
 
+# Most files folder import and rescan work on at once (M10 T3). Each one is a
+# copy, a decode, a pHash and a WEBP encode, which release the GIL, so plain
+# threads on the default pool run in parallel. Peak memory grows with this:
+# about 110 MB a file for a 4096px PNG. Measured on 32 logical cores, 8 gave
+# 6.4x on 1024px JPEGs and 5.6x on 4096px PNGs (0.9 GB peak); 16 gave the PNGs
+# 6.6x for 1.7 GB. See docs/dev/image-import.md § Several files at once, one
+# decode each.
+IMPORT_MAX_WORKERS = 8
+
+
+def _import_workers() -> int:
+    """Half the cores, leaving the rest for the server, capped and at least 1."""
+    return max(1, min(IMPORT_MAX_WORKERS, (os.cpu_count() or 2) // 2))
+
+
+class _InOrderWindow:
+    """At most `bound` futures in flight, finished oldest first (M10 T3).
+
+    T1's pattern (`technical_scorer.score_images_technical`): awaiting the oldest
+    future first keeps input order, a prefix on cancel and the progress count,
+    with no reordering step. The rows a loop adds, and its `failed` list, come
+    out in the same order as the serial loop's.
+
+    It never dispatches anything. Each caller makes its futures with
+    `run_in_executor` in its own body, so the GPU thread guard
+    (`test_gpu_executor_guard.py`, Rule B) still sees and resolves every
+    callable. A helper that took the callable would hide it from the guard.
+    """
+
+    def __init__(self, bound: int):
+        self._bound = bound
+        self._q: collections.deque[tuple[object, asyncio.Future]] = collections.deque()
+
+    def __len__(self) -> int:
+        return len(self._q)
+
+    def full(self) -> bool:
+        return len(self._q) >= self._bound
+
+    def push(self, item, fut: asyncio.Future) -> None:
+        self._q.append((item, fut))
+
+    def push_done(self, item, result=None, exc: BaseException | None = None) -> None:
+        """An item finished on the event loop, queued behind the ones in flight.
+
+        So a failure in a loop's serial step (or an item with no pool work)
+        lands in `failed` and the progress count in input order, not ahead of
+        the files still running.
+        """
+        fut = asyncio.get_running_loop().create_future()
+        if exc is not None:
+            fut.set_exception(exc)
+        else:
+            fut.set_result(result)
+        self._q.append((item, fut))
+
+    async def pop_oldest(self) -> tuple[object, object, Exception | None]:
+        """`(item, result, None)`, or `(item, None, exc)` when the work raised."""
+        item, fut = self._q.popleft()
+        try:
+            return item, await fut, None
+        except Exception as exc:
+            return item, None, exc
+
+    def cancel_pending(self) -> None:
+        """Only non-empty on a hard cancel or an unexpected raise.
+
+        A pool thread that has started runs on regardless: cancelling its
+        asyncio wrapper only stops one that has not started, and keeps an
+        exception nobody will read from being logged as "never retrieved".
+        """
+        for _item, fut in self._q:
+            if not fut.done():
+                fut.cancel()
+            elif not fut.cancelled():
+                fut.exception()
+        self._q.clear()
+
+
+def _rescan_file_sync(
+    original: Path, f: Path, thumb_path: str | None, read_caption: bool
+) -> tuple[str | None, RegisteredFile | None]:
+    """One rescanned file's pool work: its caption, and its registration if new.
+
+    The caption is read from `original`, the path the file had before any
+    collision rename, because its `.txt` sidecar stays at the original stem (see
+    the rename branch in `rescan_dataset`). `thumb_path` is None for a file that
+    already has a row, which only needs its caption.
+    """
+    caption = read_caption_sidecar(original) if read_caption else None
+    reg = _register_file_sync(f, thumb_path) if thumb_path is not None else None
+    return caption, reg
+
+
+class _PendingRescan(NamedTuple):
+    """One image file of a rescan, between its serial step and its row."""
+
+    i: int
+    f: Path
+    original_name: str
+    existing_img: Image | None = None
+    thumb_path: str | None = None
+
+
+class _PendingImport(NamedTuple):
+    """One image file of a folder import, between its name pick and its row.
+
+    Every field past `src_file` is None when the name pick itself failed.
+    """
+
+    i: int
+    src_file: Path
+    new_name: str | None = None
+    rel_subfolder: str | None = None
+    dest_file: Path | None = None
+    thumb_path: str | None = None
+
+
 async def import_images_from_folder(
     db: AsyncSession,
     dataset: Dataset,
@@ -1101,74 +1211,106 @@ async def import_images_from_folder(
     occupied_thumb_stems: set[str] = {p.stem for p in dest_thumbs.glob("*.webp")} if dest_thumbs.exists() else set()
     planned_thumb_stems: set[str] = set()
 
-    for i, src_file in enumerate(image_files):
-        if job_id and job_queue.cancel_requested(job_id):
-            break
-        try:
-            # Through the shared rule, so an on-disk `knight ` folder (possible on
-            # Linux) files as `knight` and a blank or `.` segment is dropped.
-            if preserve_structure:
-                rel_subfolder = join_subfolder(str(src_file.parent.relative_to(src)))
-            else:
-                rel_subfolder = join_subfolder(subfolder or "")
+    # Names are picked serially, in input order, on the event loop: the pick
+    # reserves each name in `db_filenames` and `planned_thumb_stems` before any
+    # copy starts, so picking ahead of the copies still in flight gives the same
+    # names the one-at-a-time loop did. Only the per-file work (copy, decode,
+    # thumbnail, sidecars) runs several at once, and rows are added oldest first,
+    # so they keep input order too (M10 T3).
+    loop = asyncio.get_running_loop()
+    window = _InOrderWindow(_import_workers())
 
-            slug = slugify_filename(src_file.stem) or "image"
-            new_name = unique_filename_with_thumb(
-                dest_images, slug, src_file.suffix.lower(), db_filenames,
-                occupied_thumb_stems, planned_thumb_stems,
-            )
-            dest_file = dest_images / new_name
-            thumb_path = str(dest_thumbs / (dest_file.stem + ".webp"))
-
-            info, gen_meta, caption, captured = await asyncio.get_running_loop().run_in_executor(
-                None, _ingest_file_sync, src_file, dest_file, thumb_path, import_captions
-            )
-
-            img = Image(
-                dataset_id=dataset.id,
-                filename=new_name,
-                original_filename=src_file.name,
-                subfolder=rel_subfolder,
-                file_path=str(dest_file),
-                thumbnail_path=thumb_path,
-                generation_metadata=gen_meta,
-                # Request-supplied provenance wins over the sidecar, which wins
-                # over EXIF; anything still unset stays NULL and inherits.
-                **merge_provenance(provenance, captured),
-                **info,
-            )
-            if caption:
-                # The sidecar itself was already written inside _ingest_file_sync.
-                img.caption_text = caption
-                img.captioned_by = "import"
-                img.captioned_at = datetime.utcnow()
-            db.add(img)
-            added += 1
-        except Exception as exc:  # skip broken files, continue import
+    async def finish_oldest() -> None:
+        nonlocal added, failed_count
+        p, result, exc = await window.pop_oldest()
+        if exc is None:
+            try:
+                info, gen_meta, caption, captured = result
+                img = Image(
+                    dataset_id=dataset.id,
+                    filename=p.new_name,
+                    original_filename=p.src_file.name,
+                    subfolder=p.rel_subfolder,
+                    file_path=str(p.dest_file),
+                    thumbnail_path=p.thumb_path,
+                    generation_metadata=gen_meta,
+                    # Request-supplied provenance wins over the sidecar, which wins
+                    # over EXIF; anything still unset stays NULL and inherits.
+                    **merge_provenance(provenance, captured),
+                    **info,
+                )
+                if caption:
+                    # The sidecar itself was already written inside _ingest_file_sync.
+                    img.caption_text = caption
+                    img.captioned_by = "import"
+                    img.captioned_at = datetime.utcnow()
+                db.add(img)
+                added += 1
+            except Exception as row_exc:
+                exc = row_exc
+        if exc is not None:  # skip broken files, continue import
             failed_count += 1
             if len(failed) < _MAX_FAILED_DETAILS:
-                failed.append({"file": src_file.name, "error": str(exc)})
-            logger.warning("import: failed for %s", src_file, exc_info=True)
+                failed.append({"file": p.src_file.name, "error": str(exc)})
+            logger.warning("import: failed for %s", p.src_file, exc_info=exc)
 
         # Commit periodically so completed work survives a crash/cancel mid-import and the
         # gallery populates live. expire_on_commit=False (see database.py) means `dataset`
         # attributes stay valid across these commits.
-        if (i + 1) % 200 == 0:
+        if (p.i + 1) % 200 == 0:
             await db.commit()
 
-        if job_id and i % 10 == 0:
-            pct = round((i + 1) / total * 100, 1)
+        if job_id and p.i % 10 == 0:
+            pct = round((p.i + 1) / total * 100, 1)
             await broadcaster.emit(job_id, {
                 "type": "progress",
                 "job_id": job_id,
                 "job_type": "import",
                 "status": "running",
-                "done": i + 1,
+                "done": p.i + 1,
                 "total": total,
                 "percent": pct,
-                "current_item": src_file.name,
-                "message": f"Importing {src_file.name}",
+                "current_item": p.src_file.name,
+                "message": f"Importing {p.src_file.name}",
             })
+
+    try:
+        for i, src_file in enumerate(image_files):
+            # A cancel stops new files at once. The ones in flight finish and get
+            # their rows below, since their bytes are already in images/.
+            if job_id and job_queue.cancel_requested(job_id):
+                break
+            try:
+                # Through the shared rule, so an on-disk `knight ` folder (possible on
+                # Linux) files as `knight` and a blank or `.` segment is dropped.
+                if preserve_structure:
+                    rel_subfolder = join_subfolder(str(src_file.parent.relative_to(src)))
+                else:
+                    rel_subfolder = join_subfolder(subfolder or "")
+
+                slug = slugify_filename(src_file.stem) or "image"
+                new_name = unique_filename_with_thumb(
+                    dest_images, slug, src_file.suffix.lower(), db_filenames,
+                    occupied_thumb_stems, planned_thumb_stems,
+                )
+                dest_file = dest_images / new_name
+                thumb_path = str(dest_thumbs / (dest_file.stem + ".webp"))
+            except Exception as exc:
+                window.push_done(_PendingImport(i, src_file), exc=exc)
+            else:
+                window.push(
+                    _PendingImport(i, src_file, new_name, rel_subfolder, dest_file, thumb_path),
+                    loop.run_in_executor(
+                        None, _ingest_file_sync, src_file, dest_file, thumb_path, import_captions
+                    ),
+                )
+            if window.full():
+                await finish_oldest()
+
+        while window:
+            await finish_oldest()
+    finally:
+        window.cancel_pending()
 
     # Videos, after the images. They land flat in videos/ regardless of
     # preserve_structure — subfolders are an image-side concept, and a video's
@@ -1446,102 +1588,150 @@ async def rescan_dataset(
     failed_count = 0
     failed: list[dict] = []
 
-    cancelled = False
-    for i, f in enumerate(disk_files):
-        if job_id and job_queue.cancel_requested(job_id):
-            cancelled = True
-            break
-        try:
-            # Before the collision rename below rebinds `f`. This is the name the
-            # user gave the file, and `original_filename` is what
-            # `import_captions_from_folder` matches a later `a.txt` against — so
-            # recording the *new* name would lose both the record and the pairing.
-            original_name = f.name
-            seen_filenames.add(f.name)
-            caption = (
-                await asyncio.get_running_loop().run_in_executor(None, read_caption_sidecar, f)
-                if import_captions else None
-            )
+    # The same window as folder import (M10 T3). The serial step below keeps
+    # everything stateful in input order on the event loop: `seen_filenames`,
+    # the name pick and the collision rename. The pool does the caption read and,
+    # for a new file, the decode and thumbnail. Rows and caption updates are
+    # applied oldest first, so they land in the serial loop's order.
+    loop = asyncio.get_running_loop()
+    window = _InOrderWindow(_import_workers())
+    # Thumbnail paths of the files in flight. Two nested files with one stem
+    # share a `thumbnail_path_for` path (the nested-file defect described at the
+    # rename branch). The serial loop wrote them one after the other, so a second
+    # one waits here rather than writing the same file at the same time.
+    in_flight_thumbs: set[str] = set()
 
-            existing_img = by_filename.get(f.name)
-            if existing_img is None:
-                # Flat images/ only. A nested file carries two separate defects
-                # that predate this guard — the reconcile key above is the bare
-                # filename, so images/sub/a.png is treated as already-existing
-                # whenever images/a.png is registered, and thumbnail_path_for
-                # resolves it to images/thumbnails/ rather than the dataset's
-                # own, with subfolder="" hardcoded below. Disambiguating against
-                # the wrong thumbnail directory would not help, so nested files
-                # keep behaving exactly as they did.
-                if f.parent == images_dir:
-                    # disk_exclude is what keeps this from renaming *every* file
-                    # it finds: unlike an import, the file is already sitting in
-                    # images/, so without it `unique_filename` sees its own name
-                    # occupied and steps straight to `_001`. Its own stem is
-                    # likewise absent from occupied_thumb_stems: nothing has
-                    # generated its thumbnail yet, and this arm only runs when
-                    # the file has no row, so the set's row term cannot hold it
-                    # either.
-                    new_name = unique_filename_with_thumb(
-                        images_dir, f.stem, f.suffix.lower(),
-                        db_names, occupied_thumb_stems, planned_thumb_stems,
-                        disk_exclude={f.name},
+    async def finish_oldest() -> None:
+        nonlocal added, captions_updated, failed_count
+        p, result, exc = await window.pop_oldest()
+        in_flight_thumbs.discard(p.thumb_path)
+        if exc is None:
+            try:
+                caption, reg = result
+                if reg is not None:
+                    img = Image(
+                        dataset_id=dataset.id,
+                        filename=p.f.name,
+                        original_filename=p.original_name,
+                        subfolder="",
+                        file_path=str(p.f),
+                        thumbnail_path=p.thumb_path,
+                        generation_metadata=reg.gen_meta,
+                        **merge_provenance(reg.provenance),
+                        **reg.info,
                     )
-                    if new_name != f.name:
-                        # The file only, not its .txt sidecar — the deliberate
-                        # exception to the rename_with_sidecar rule. The two
-                        # files share a stem, so a single `a.txt` belongs to
-                        # both equally and moving it would take it away from the
-                        # image that kept the name. `caption` above was read
-                        # before this, so nothing is lost either way.
-                        f = f.rename(images_dir / new_name)
-                        seen_filenames.add(f.name)
-                        renamed += 1
-                thumb_path = thumbnail_path_for(f)
-                reg = await asyncio.get_running_loop().run_in_executor(
-                    None, _register_file_sync, f, thumb_path
-                )
-                img = Image(
-                    dataset_id=dataset.id,
-                    filename=f.name,
-                    original_filename=original_name,
-                    subfolder="",
-                    file_path=str(f),
-                    thumbnail_path=thumb_path,
-                    generation_metadata=reg.gen_meta,
-                    **merge_provenance(reg.provenance),
-                    **reg.info,
-                )
-                if caption:
-                    img.caption_text = caption
-                    img.captioned_by = "import"
-                    img.captioned_at = datetime.utcnow()
-                db.add(img)
-                added += 1
-            elif caption is not None and caption != (existing_img.caption_text or "").strip():
-                existing_img.caption_text = caption
-                existing_img.captioned_by = "import"
-                existing_img.captioned_at = datetime.utcnow()
-                captions_updated += 1
-        except Exception as exc:  # skip broken files, continue rescan
+                    if caption:
+                        img.caption_text = caption
+                        img.captioned_by = "import"
+                        img.captioned_at = datetime.utcnow()
+                    db.add(img)
+                    added += 1
+                elif (
+                    p.existing_img is not None
+                    and caption is not None
+                    and caption != (p.existing_img.caption_text or "").strip()
+                ):
+                    p.existing_img.caption_text = caption
+                    p.existing_img.captioned_by = "import"
+                    p.existing_img.captioned_at = datetime.utcnow()
+                    captions_updated += 1
+            except Exception as row_exc:
+                exc = row_exc
+        if exc is not None:  # skip broken files, continue rescan
             failed_count += 1
             if len(failed) < _MAX_FAILED_DETAILS:
-                failed.append({"file": f.name, "error": str(exc)})
-            logger.warning("rescan: failed for %s", f, exc_info=True)
+                failed.append({"file": p.f.name, "error": str(exc)})
+            logger.warning("rescan: failed for %s", p.f, exc_info=exc)
 
-        if job_id and i % 10 == 0:
-            pct = round((i + 1) / total * 100, 1) if total else 100.0
+        if job_id and p.i % 10 == 0:
+            pct = round((p.i + 1) / total * 100, 1) if total else 100.0
             await broadcaster.emit(job_id, {
                 "type": "progress",
                 "job_id": job_id,
                 "job_type": "rescan",
                 "status": "running",
-                "done": i + 1,
+                "done": p.i + 1,
                 "total": total,
                 "percent": pct,
-                "current_item": f.name,
-                "message": f"Scanning {f.name}",
+                "current_item": p.f.name,
+                "message": f"Scanning {p.f.name}",
             })
+
+    cancelled = False
+    try:
+        for i, f in enumerate(disk_files):
+            if job_id and job_queue.cancel_requested(job_id):
+                cancelled = True
+                break
+            # Before the collision rename below rebinds `f`. This is the name the
+            # user gave the file, and `original_filename` is what
+            # `import_captions_from_folder` matches a later `a.txt` against — so
+            # recording the *new* name would lose both the record and the pairing.
+            # `original` is also where the caption is read from: its `.txt`
+            # does not move with a renamed file.
+            original = f
+            original_name = f.name
+            existing_img = None
+            thumb_path = None
+            try:
+                seen_filenames.add(f.name)
+                existing_img = by_filename.get(f.name)
+                if existing_img is None:
+                    # Flat images/ only. A nested file carries two separate defects
+                    # that predate this guard — the reconcile key above is the bare
+                    # filename, so images/sub/a.png is treated as already-existing
+                    # whenever images/a.png is registered, and thumbnail_path_for
+                    # resolves it to images/thumbnails/ rather than the dataset's
+                    # own, with subfolder="" hardcoded below. Disambiguating against
+                    # the wrong thumbnail directory would not help, so nested files
+                    # keep behaving exactly as they did.
+                    if f.parent == images_dir:
+                        # disk_exclude is what keeps this from renaming *every* file
+                        # it finds: unlike an import, the file is already sitting in
+                        # images/, so without it `unique_filename` sees its own name
+                        # occupied and steps straight to `_001`. Its own stem is
+                        # likewise absent from occupied_thumb_stems: nothing has
+                        # generated its thumbnail yet, and this arm only runs when
+                        # the file has no row, so the set's row term cannot hold it
+                        # either.
+                        new_name = unique_filename_with_thumb(
+                            images_dir, f.stem, f.suffix.lower(),
+                            db_names, occupied_thumb_stems, planned_thumb_stems,
+                            disk_exclude={f.name},
+                        )
+                        if new_name != f.name:
+                            # The file only, not its .txt sidecar — the deliberate
+                            # exception to the rename_with_sidecar rule. The two
+                            # files share a stem, so a single `a.txt` belongs to
+                            # both equally and moving it would take it away from the
+                            # image that kept the name. The caption is read from
+                            # `original`, so nothing is lost either way.
+                            f = f.rename(images_dir / new_name)
+                            seen_filenames.add(f.name)
+                            renamed += 1
+                    thumb_path = thumbnail_path_for(f)
+            except Exception as exc:  # skip broken files, continue rescan
+                window.push_done(_PendingRescan(i, f, original_name), exc=exc)
+            else:
+                while thumb_path is not None and thumb_path in in_flight_thumbs:
+                    await finish_oldest()
+                item = _PendingRescan(i, f, original_name, existing_img, thumb_path)
+                if thumb_path is None and not import_captions:
+                    # A registered file with no caption to read: no pool work.
+                    window.push_done(item, result=(None, None))
+                else:
+                    if thumb_path is not None:
+                        in_flight_thumbs.add(thumb_path)
+                    window.push(item, loop.run_in_executor(
+                        None, _rescan_file_sync, original, f, thumb_path, import_captions
+                    ))
+            if window.full():
+                await finish_oldest()
+
+        while window:
+            await finish_oldest()
+    finally:
+        window.cancel_pending()
 
     # When cancelled mid-scan, unscanned files would falsely appear "missing" — suppress
     # the report in that case (partial add/caption results are still committed).

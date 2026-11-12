@@ -65,8 +65,8 @@ from backend.services.label_service import copy_labels, label_filter_clause, lab
 from backend.services.image_service import (
     aspect_crop_rect,
     crop_image_to_dest,
+    decode_for_ingest,
     extract_generation_metadata,
-    extract_embedded_provenance,
     generate_thumbnail,
     get_image_info,
     resize_image,
@@ -88,10 +88,8 @@ def _write_upload_sync(src_fileobj, dest: Path, thumb_path: str) -> tuple[dict, 
     """
     with open(dest, "wb") as f:
         shutil.copyfileobj(src_fileobj, f)
-    info = get_image_info(str(dest))
-    gen_meta = extract_generation_metadata(str(dest))
-    generate_thumbnail(str(dest), thumb_path)
-    return info, gen_meta, extract_embedded_provenance(str(dest)) or {}
+    read = decode_for_ingest(str(dest), thumb_path)
+    return read.info, read.gen_meta, read.embedded_provenance or {}
 
 
 def _write_video_upload_sync(src_fileobj, dest: Path, poster_path: Path) -> tuple[dict, str | None]:
@@ -730,9 +728,8 @@ async def upload_images(
         except Exception as exc:
             # Same per-file containment as the video branch above, and for the
             # same reason: `_write_upload_sync` copies the file *first*, then runs
-            # `get_image_info`, `extract_generation_metadata` and
-            # `generate_thumbnail`, any of which can raise on a corrupt or
-            # truncated image — and the single commit sits after this loop.
+            # `decode_for_ingest`, which raises on a corrupt or truncated image
+            # — and the single commit sits after this loop.
             logger.exception("upload: processing %s failed", upload.filename)
             dest.unlink(missing_ok=True)
             Path(thumb_path).unlink(missing_ok=True)

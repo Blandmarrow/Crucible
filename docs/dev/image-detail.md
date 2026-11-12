@@ -62,7 +62,7 @@ What matters at this page's level:
 
 ## AI generation metadata
 
-Extracted at import time and on direct upload via `extract_generation_metadata(path)` in `backend/services/image_service.py`. Stored in `Image.generation_metadata` (JSON column, nullable). Returned by `ImageOut`; `ImageListItem` carries only `has_generation_metadata` (§ Gallery generation metadata above).
+Extracted at import time and on direct upload by `extract_generation_metadata`'s body in `backend/services/image_service.py`, run inside `decode_for_ingest` so it shares the ingest's one open of the file (`docs/dev/image-import.md` § Several files at once, one decode each). Stored in `Image.generation_metadata` (JSON column, nullable). Returned by `ImageOut`; `ImageListItem` carries only `has_generation_metadata` (§ Gallery generation metadata above).
 
 Supported formats:
 

@@ -981,6 +981,22 @@ class CaptionPipelineRequest(BaseModel):
             raise ValueError("Pipeline requires at least 2 steps")
         return v
 
+    @field_validator("save_backup", "rename_on_caption")
+    @classmethod
+    def _not_in_a_pipeline_yet(cls, v: bool, info) -> bool:
+        """Refused rather than ignored: the pipeline loop never read either flag,
+        so a run that asked for a backup or a rename silently got neither. The
+        page disables both boxes in pipeline mode; this answers anything else
+        that still sends them (an older tab, a script). Wiring them up is parked:
+        the backup goes before each image's first write, and the rename needs a
+        pass after the last step, through a helper shared with /run's loop."""
+        if v:
+            raise ValueError(
+                f"{info.field_name} is not supported for a captioning pipeline yet; "
+                "use a single-model run, or leave it off"
+            )
+        return v
+
 
 @router.post("/pipeline")
 async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(get_db)):

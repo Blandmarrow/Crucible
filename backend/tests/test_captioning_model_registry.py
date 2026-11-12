@@ -292,3 +292,29 @@ def test_pipeline_rejects_a_non_captioner_step(tmp_path):
             assert jobs == []
 
     run(scenario())
+
+
+@pytest.mark.parametrize("flag", ["save_backup", "rename_on_caption"])
+def test_pipeline_refuses_backup_and_rename_rather_than_ignoring_them(tmp_path, flag):
+    """The pipeline loop never read either flag, so asking for a backup or a
+    rename got neither, silently. Until it supports them it says so: a 422 that
+    names the flag, and no job."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("caps")
+            await upload_image(env, ds["id"])
+            r = await env.client.post(
+                f"{API}/captioning/pipeline",
+                json={
+                    "dataset_id": ds["id"],
+                    "steps": [{"model": "florence2_large"}, {"model": "florence2_large"}],
+                    flag: True,
+                },
+            )
+            assert r.status_code == 422, r.text
+            assert flag in r.text
+            async with env.Session() as s:
+                jobs = (await s.execute(select(BackgroundJob))).scalars().all()
+            assert jobs == []
+
+    run(scenario())

@@ -35,7 +35,7 @@ restates its stages.
      page sorts the whole dataset for every page (a `TEMP B-TREE` behind
      `ix_images_dataset_updated_at`), with no test reading that plan. The second finding,
      old embeddings surviving an in-place pixel rewrite, was half true and is fixed
-     (2026-11-12): the edit and a pixel-changing restore now clear them
+     (2026-11-12, PR #150): the edit and a pixel-changing restore now clear them
      (`docs/dev/quality/scores-stale.md` § Embeddings are cleared, not marked).
    - **Not checked by hand:** stage 11's index and gallery changes in a browser, stage 4's
      polling against a real job, and the Stats page under the pin in a browser.

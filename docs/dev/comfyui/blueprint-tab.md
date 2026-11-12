@@ -5,7 +5,8 @@ saves, the outline draft and its review, `BlueprintPreview`, Apply and Top up, t
 button and `RewriteModal`, their e2e, and the tab's two-column layout. What the server does
 with a blueprint is `docs/dev/comfyui/structured.md`; the outline call and the rewrite pass
 are `docs/dev/comfyui/structured-llm.md`. The rest of the page — the scroller, the sticky
-header, the plan rail and the rows queue — is `docs/dev/comfyui/page.md`.
+header, and the run bar — is `docs/dev/comfyui/page.md`; the plan rail and the rows queue are
+`docs/dev/comfyui/rows-tab.md`.
 
 ## The panel
 

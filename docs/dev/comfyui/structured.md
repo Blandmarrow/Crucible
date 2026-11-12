@@ -116,7 +116,7 @@ went on counting the row's images as kept, and Top up re-ran it into the new fol
   …/rows` returns it as `blueprint_linked`. Orphans are not linked: they keep their
   `leaf_id` as provenance and move freely, and a moved orphan stays adoptable by a leaf whose
   path is its new folder.
-- **A folder change on a linked row takes `linked`**, on `set-subfolder` and on the
+- **A folder change on a linked row takes `linked`**, on `set-subfolder` (`docs/dev/comfyui/rows-api.md`) and on the
   `subfolder` branch of `PATCH /rows/{id}`.
   - `"refuse"` is the default, a 409.
   - `"unlink"` moves the row and clears `leaf_id`. A completed unlinked row's images then

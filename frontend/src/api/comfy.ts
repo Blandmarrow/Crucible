@@ -293,7 +293,7 @@ export const comfyApi = {
   }) =>
     client.post<{ placed: number; unlinked: number; skipped: number }>(`/comfy/plans/${planId}/rows/place`, body).then((r) => r.data),
   /** Copy (or move) rows from another plan, in any dataset, into `targetPlanId`, keeping
-   *  each row's folder unless `subfolder` overrides it (docs/dev/comfyui/queue.md). */
+   *  each row's folder unless `subfolder` overrides it (docs/dev/comfyui/rows-api.md). */
   copyRows: (targetPlanId: string, body: {
     source_plan_id: string; row_ids: string[]; move?: boolean; subfolder?: string | null; linked?: LinkedMode;
   }) =>

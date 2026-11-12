@@ -26,7 +26,7 @@ gates are green and it is pushed.
   - [x] §8c, the library side panel, Copy to plan, the row menu and drag and drop
     (2026-11-05). What it delivered is `docs/dev/comfyui/library-dnd.md`.
   - [x] §8d: the Add menu, the selection bar, the paste dialog on `ModalShell`
-    (2026-11-05). What it delivered is the Rows toolbar in `docs/dev/comfyui/page.md`.
+    (2026-11-05). What it delivered is the Rows toolbar in `docs/dev/comfyui/rows-tab.md`.
   - [x] §8 review fixes (2026-11-05), under four rulings by the user that day:
     [§ Review fixes](#review-fixes-2026-11-05).
 - [x] §9, two installs and a 16 GB card (2026-11-06), added so the branch could be tested on
@@ -214,7 +214,7 @@ recommendations:
   the toolbar, since it is not a selection action.
 
 **What the reviews found.** An Opus review of §8b found a case-blind `LIKE` that let a
-folder delete take another folder's rows (`docs/dev/comfyui/queue.md`). §8c found that a
+folder delete take another folder's rows (`docs/dev/comfyui/rows-api.md`). §8c found that a
 live `comfy_generate` run did not lock its plan's rows on the server, and fixed it; an Opus
 review of §8c found no backend bug, and its five frontend findings were fixed, each pinned
 by a test where e2e can reach it.
@@ -224,7 +224,7 @@ by a test where e2e can reach it.
 A review of all of §8 (three Opus reviewers and a doc audit) found no high-severity bug. It
 fixed what it found, under four rulings by the user that day:
 1. **One lock for deletes.** Plan delete and `rows/delete` refuse whatever folder delete
-   refuses (`docs/dev/comfyui/queue.md`). Plan delete had no guard at all.
+   refuses (`docs/dev/comfyui/rows-api.md`). Plan delete had no guard at all.
 2. **A live Run's plan takes no new rows.** `rows/copy`, `rows/bulk` and `POST …/rows`
    refuse it, as Apply does. This reversed §8c's "a copy has no guard on the target".
 3. **The selection is pruned to the rows on show**, whatever hid them

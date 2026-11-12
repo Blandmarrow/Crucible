@@ -3,9 +3,10 @@
 M6 §8c on the ComfyUI page's Rows tab (the rulings:
 `docs/dev/roadmap-archive/m6-comfy-automation.md` § The page rework). It covers the prompt library side panel (`ComfyLibraryPanel`) with its
 *Other plans* tab, Copy to plan, the row menu, and drag and drop with the button route behind
-every drag. The rest of the page is `docs/dev/comfyui/page.md`. The endpoints are
-`docs/dev/comfyui/queue.md` § Backend: the library's nested categories, `rows/place` and
-`rows/copy`. The user guide is `docs/comfy-queue.md`.
+every drag. The rest of the page is `docs/dev/comfyui/page.md` and the Rows tab's table, toolbar,
+selection bar and rail are `docs/dev/comfyui/rows-tab.md`. The endpoints are
+`docs/dev/comfyui/queue.md` § Backend for the library's nested categories, and
+`docs/dev/comfyui/rows-api.md` for `rows/place` and `rows/copy`. The user guide is `docs/comfy-queue.md`.
 
 ## The library panel
 
@@ -108,7 +109,7 @@ the page usable without a mouse, and e2e drives the buttons.
   move with linked rows asks first. The mutation is `useCopyRowsMutation` in
   `components/comfy/copyRows.ts`, shared with the drop on a plan, which opens this modal with
   `initialTargetId` and `initialMove` when a move has to ask. Its button is the selection
-  bar's *Copy to plan…* since §8d (`docs/dev/comfyui/page.md`).
+  bar's *Copy to plan…* since §8d (`docs/dev/comfyui/rows-tab.md`).
 - **The row menu** opens from a grip button at each row's start (`aria-label="Row actions"`).
   The same button becomes the row's drag handle in the drag layer, as the gallery's label
   button is both. Its entries are *Move to top of folder*, *Move up*, *Move down* and *Move to

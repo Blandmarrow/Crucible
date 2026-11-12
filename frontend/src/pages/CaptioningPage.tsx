@@ -580,8 +580,8 @@ function CaptioningForm({ saved }: { saved: Partial<CaptioningWorkflow> | null }
           steps,
           image_ids: scope === "selected" ? selectedIdsForDataset : undefined,
           subfolder: scope !== "selected" ? activeSubfolder : undefined,
-          save_backup: saveBackup,
-          rename_on_caption: renameOnCaption,
+          // No save_backup / rename_on_caption: the pipeline does not support
+          // them yet and the backend refuses `true` (the boxes are disabled below).
           min_aesthetic_score: minAestheticScore !== "" ? parseFloat(minAestheticScore) : undefined,
           exclude_flags: excludeFlags.size > 0 ? [...excludeFlags] : undefined,
           label: jobLabel.trim() || undefined,
@@ -1119,14 +1119,36 @@ function CaptioningForm({ saved }: { saved: Partial<CaptioningWorkflow> | null }
                     { label: "Normalise underscores in prose (word_word → word word)", val: stripUnderscores, set: setStripUnderscores },
                     { label: "Strip hedging phrases (\"It appears to be…\" → \"…\")", val: stripHedges, set: setStripHedges },
                     { label: "Merge redundant tags (drop \"tail\" when \"long tail\" present; tag styles only)", val: dedupeTags, set: setDedupeTags },
-                    { label: <>Save backup of previous caption to <span className="mono">.caption.bak</span></>, val: saveBackup, set: setSaveBackup },
-                    { label: "Rename files using subfolder name and increment", val: renameOnCaption, set: setRenameOnCaption },
-                  ] as { label: React.ReactNode; val: boolean; set: (v: boolean) => void }[]).map((opt, i) => (
-                    <label key={i} className="row-flex" style={{ gap: 8, cursor: "pointer" }}>
-                      <input type="checkbox" className="checkbox" checked={opt.val} onChange={(e) => opt.set(e.target.checked)} />
-                      <span style={{ fontSize: 12.5 }}>{opt.label}</span>
-                    </label>
-                  ))}
+                    { label: <>Save backup of previous caption to <span className="mono">.caption.bak</span></>, val: saveBackup, set: setSaveBackup, singleOnly: true },
+                    { label: "Rename files using subfolder name and increment", val: renameOnCaption, set: setRenameOnCaption, singleOnly: true },
+                  ] as { label: React.ReactNode; val: boolean; set: (v: boolean) => void; singleOnly?: boolean }[]).map((opt, i) => {
+                    // A pipeline does not support backup or rename yet. Shown
+                    // unchecked and disabled, with the stored choice kept, so a
+                    // return to a single-model run restores it.
+                    const off = isPipeline && opt.singleOnly;
+                    return (
+                      <label
+                        key={i}
+                        className="row-flex"
+                        style={{ gap: 8, cursor: off ? "not-allowed" : "pointer", opacity: off ? 0.5 : 1 }}
+                        title={off ? "Not available in a pipeline yet. Remove the extra steps to use it." : undefined}
+                      >
+                        <input
+                          type="checkbox"
+                          className="checkbox"
+                          checked={off ? false : opt.val}
+                          disabled={off}
+                          onChange={(e) => opt.set(e.target.checked)}
+                        />
+                        <span style={{ fontSize: 12.5 }}>{opt.label}</span>
+                      </label>
+                    );
+                  })}
+                  {isPipeline && (
+                    <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: 0 }}>
+                      Backup and rename work in single-model runs only, not in a pipeline yet.
+                    </p>
+                  )}
                 </div>
               </div>
 

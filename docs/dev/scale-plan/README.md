@@ -3,8 +3,9 @@
 **Status: living.** The design plan for M9, which landed on 2026-11-12
 ([../roadmap-archive/m9-scale-and-data-safety.md](../roadmap-archive/m9-scale-and-data-safety.md)).
 It stays because it holds what M9 parked, each with the trigger that reopens it: the side
-table (§ Stage 7), stage 4's full design, the small-subfolder score sort (§ Stage 6) and
-stage 11's cache header. Why M9 came first, and what it deliberately did not build, is
+table (§ Stage 7), stage 4's full design, the small-subfolder score sort (§ Stage 6),
+stage 11's cache header, and style scoring's whole-dataset sort per page (§ Stage 7's
+finding outside the layout). Why M9 came first, and what it deliberately did not build, is
 [decision 13](../decisions/13-scale-work-first.md).
 
 On 2026-11-08 Crucible received an outside source review ("Crucible-improvements.md",
@@ -481,7 +482,14 @@ they say:
   That takes most of the force out of "run it while databases are small".
 - **A finding outside the layout:** style scoring's keyset page sorts the whole dataset
   for every page of 2,000 (a `TEMP B-TREE` behind `ix_images_dataset_updated_at`), about a
-  second a page at 1M. No test reads that plan.
+  second a page at 1M. No test reads that plan. **Parked on 2026-11-12, by the user's
+  call.** The cost grows with the square of the dataset (every page re-sorts everything),
+  so it is invisible at today's sizes: well under a second for a whole run at 20,000
+  images. Reopen it when a dataset nears 100,000 images or a style run is seen taking
+  minutes. The likely fix is to page on `rowid`, which `ix_images_dataset_id` serves with
+  no sort, plus a plan guard like `test_stats_plan.py`'s. Changing the page order can move
+  a stored style score by one step in its 4th decimal (float32 rounding, measured in
+  § Stage 5), so check that against the owner's quality-over-speed rule before shipping.
 
 **Decided 2026-11-11** ([decision 15](../decisions/15-big-columns-stay-in-the-row.md), by
 the user): **no side table now.** The win shows only at sizes nobody has, and the half that

@@ -42,7 +42,9 @@ None of this was part of the gate. Each item is listed so it is not found again 
 - **Found while building T2, not fixed:** `/pipeline` silently ignores `save_backup` and
   `rename_on_caption`. Both are on `CaptionPipelineRequest` and the frontend sends them,
   but `_run_pipeline_body` never reads them. Wants the user's call: wire them up, or drop
-  them from the request and the pipeline form.
+  them from the request and the pipeline form. **Closed for now on 2026-11-12, by the
+  user's call:** the page disables both boxes in pipeline mode and the route refuses
+  `true` with a 422. Wiring them up is parked.
 - **Found while building T4, half fixed by T5:** `score_images_watermark` called
   `_precompute_watermark_text_features`, a CUDA `encode_text`, on the event-loop thread
   (PM-035's class). T5 sends it through `run_on_gpu`. Still open:

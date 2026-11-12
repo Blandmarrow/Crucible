@@ -69,8 +69,8 @@ export interface CaptionPipelineParams {
   image_ids?: string[];
   subfolder?: string;
   steps: PipelineStep[];
-  save_backup?: boolean;
-  rename_on_caption?: boolean;
+  // No save_backup / rename_on_caption: a pipeline does not support them yet,
+  // and the backend answers 422 to `true` (`CaptionPipelineRequest`).
   min_aesthetic_score?: number;
   exclude_flags?: string[];
   label?: string;

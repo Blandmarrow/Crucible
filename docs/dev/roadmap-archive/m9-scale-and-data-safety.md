@@ -100,7 +100,8 @@ None of this was part of the gate. Each item is listed so it is not found again 
 - **Found by stage 7's measuring, and not fixed:** style scoring's keyset page sorts the
   whole dataset for every page of 2,000 (a `TEMP B-TREE` behind
   `ix_images_dataset_updated_at`), and no test reads that plan. A likely fix is to page on
-  `rowid`, which `ix_images_dataset_id` serves with no sort.
+  `rowid`, which `ix_images_dataset_id` serves with no sort. **Parked on 2026-11-12, by the
+  user's call**, with a trigger in `docs/dev/scale-plan/README.md` § Stage 7.
 - **Reported and not verified:** nothing clears an image's embeddings when its pixels are
   rewritten in place, and the embedding checks only fill NULL rows, so a cropped or
   upscaled image may keep vectors from its old pixels. **Fixed on 2026-11-12, after this

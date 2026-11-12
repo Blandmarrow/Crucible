@@ -68,6 +68,7 @@ A setup saved before this change is copied over the first time each browser open
 - **Merge redundant tags** — drops a tag that is contained in a longer one in the same caption (`tail` when `long tail` is present) and collapses exact duplicates; tag styles only → [details](tag-consolidation.md)
 - Back up the original `.txt` sidecar before overwriting
 - **Rename on caption** — after each caption is saved, rename the image file to `{subfolder_slug}_{NNN}.ext` (or `image_{NNN}.ext` for root images); useful for building consistently named datasets
+- The backup and rename options work in single-model runs only. Add a second step and both are greyed out, because a pipeline does not support them yet
 - **Target resolution preprocessing** — when a target width/height is set, each image is center-cropped to that aspect ratio and scaled to that resolution *in memory* before being sent to the model; no files are written to disk
 
 ### The AI-artifacts flag

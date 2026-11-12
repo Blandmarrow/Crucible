@@ -26,14 +26,16 @@ restates its stages.
    [throughput-plan/README.md § T6](throughput-plan/README.md#t6--fetch-model-weights-off-the-gpu-thread-parked).
    - M10 left two findings open
    ([roadmap-archive/m10-job-throughput.md § Left open](roadmap-archive/m10-job-throughput.md#left-open)):
-   `/pipeline` silently ignores `save_backup` and `rename_on_caption`, which wants the
-   user's call (wire them up, or drop them), and `test_gpu_executor_guard.py` cannot see a
-   direct GPU call made on the event-loop thread, which wants a rule for direct calls.
+   `test_gpu_executor_guard.py` cannot see a direct GPU call made on the event-loop
+   thread, which wants a rule for direct calls. The other, `/pipeline` silently ignoring
+   `save_backup` and `rename_on_caption`, is closed for now by the user's call
+   (2026-11-12): the page disables both boxes in pipeline mode and the route refuses
+   `true` with a 422. Wiring them up is parked; how is in the validator's docstring
+   (`CaptionPipelineRequest` in `backend/routers/captioning.py`).
    - M9 left four things open, none of which blocks M7
    ([roadmap-archive/m9-scale-and-data-safety.md § Left open](roadmap-archive/m9-scale-and-data-safety.md#left-open)):
-   - **One finding waits for the user to place it in the order.** Style scoring's keyset
-     page sorts the whole dataset for every page (a `TEMP B-TREE` behind
-     `ix_images_dataset_updated_at`), with no test reading that plan. The second finding,
+   - **Both findings are placed.** Style scoring's whole-dataset sort per page is parked by
+     the user's call (2026-11-12), with a trigger, in the scale plan below. The other,
      old embeddings surviving an in-place pixel rewrite, was half true and is fixed
      (2026-11-12, PR #150): the edit and a pixel-changing restore now clear them
      (`docs/dev/quality/scores-stale.md` § Embeddings are cleared, not marked).
@@ -43,7 +45,8 @@ restates its stages.
      polling against a real job, and the Stats page under the pin in a browser.
    - **Parked, each with a trigger** in [scale-plan/README.md](scale-plan/README.md): the
      side table ([decision 15](decisions/15-big-columns-stay-in-the-row.md)), stage 4's full
-     design, the small-subfolder score sort and stage 11's cache header.
+     design, the small-subfolder score sort, stage 11's cache header and style scoring's
+     sort per page.
 1. M5's five stages merged on 2026-10-30 as PR #101. Only its cleanup is open, and that waits
    a release. See [server-state-plan/README.md](server-state-plan/README.md) for what was
    checked by hand.

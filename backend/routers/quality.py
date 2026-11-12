@@ -3,7 +3,7 @@ import base64
 import contextlib
 import functools
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal
 
@@ -11,7 +11,7 @@ import numpy as np
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import and_, delete, func, null, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
@@ -1004,8 +1004,12 @@ async def _record_style_run(body: StyleSimilarityRequest, db: AsyncSession, resu
         run.dino_layer = result.get("dino_layer")
         run.clip_weight = result.get("clip_weight")
         run.dino_weight = result.get("dino_weight")
-        run.reference_image_ids = list(body.reference_image_ids[:REFERENCE_IDS_STORED_MAX])
-        run.reference_count = len(body.reference_image_ids)
+        # The references that actually had vectors, not the ids requested: a
+        # reference edited in place since it was embedded has none, is dropped
+        # from the mean, and must not be listed as one the run compared against.
+        used = result.get("reference_image_ids_used", body.reference_image_ids)
+        run.reference_image_ids = list(used[:REFERENCE_IDS_STORED_MAX])
+        run.reference_count = len(used)
         run.external_reference_count = len(body.reference_embeddings)
         run.scored_count = int(result.get("updated") or 0)
         run.skipped_count = int(result.get("skipped") or 0)
@@ -1015,6 +1019,14 @@ async def _record_style_run(body: StyleSimilarityRequest, db: AsyncSession, resu
     except Exception:  # noqa: BLE001 — a lost descriptor must never fail a committed run
         logger.exception("Failed to record style-similarity run descriptor for dataset %s", body.dataset_id)
         await db.rollback()
+
+
+@dataclass
+class _StyleOutcome:
+    """What a style run's branch reports beyond its return dict
+    (`compute_style_similarity` says why)."""
+    used_ref_ids: list[str] = field(default_factory=list)
+    cleared: int = 0
 
 
 @router.post("/style-similarity")
@@ -1030,8 +1042,19 @@ async def compute_style_similarity(
     every failure path in that function raises `HTTPException` and so never reaches
     this line. That matters: a run that raised must not overwrite a descriptor
     that still correctly describes the values in the column.
+
+    `outcome` is filled by whichever branch ran, for the same reason: the
+    references that had vectors, and how many skipped candidates lost a style
+    score from an earlier run. Both reach the response, so the toast can say a
+    reference was dropped, and the descriptor records only the used ids.
     """
-    result = await _score_style_similarity(body, db)
+    outcome = _StyleOutcome()
+    result = await _score_style_similarity(body, db, outcome)
+    requested = list(dict.fromkeys(body.reference_image_ids))
+    used = set(outcome.used_ref_ids)
+    result["reference_image_ids_used"] = [i for i in requested if i in used]
+    result["references_skipped"] = len(requested) - len(result["reference_image_ids_used"])
+    result["cleared"] = outcome.cleared
     await _record_style_run(body, db, result)
     return result
 
@@ -1044,7 +1067,9 @@ async def _select_by_ids(db: AsyncSession, cols: tuple, ids) -> list:
     return rows
 
 
-async def _score_style_similarity(body: StyleSimilarityRequest, db: AsyncSession) -> dict:
+async def _score_style_similarity(
+    body: StyleSimilarityRequest, db: AsyncSession, outcome: _StyleOutcome,
+) -> dict:
     from backend.ml.similarity_scorer import compute_style_similarity as _cosine_sim
     from backend.ml.similarity_scorer import (
         blend_scores,
@@ -1098,6 +1123,16 @@ async def _score_style_similarity(body: StyleSimilarityRequest, db: AsyncSession
           goes, because each row carries a 12-entry `dino_layer_scores` dict that is
           too big to hold for the whole dataset. Those two hold the lock for the whole
           scan, and always have.
+
+        **A candidate the run had to skip loses its old style score**, in the same
+        transaction. `extra_filters` is exactly "has the vectors this mode needs",
+        so its negation is the skipped set. Such a row's score came from an earlier
+        run — possibly another mode, and, when an in-place edit cleared its
+        vectors, from pixels that no longer exist — and left in place it would sit
+        in this run's percentiles as if this run had measured it. Only rows in the
+        run's scope: a selection-scoped run leaves the rest of the dataset alone,
+        as it always has. Only after something was scored: a run that scored
+        nothing raises before the commit, and changes nothing.
         """
         total_updated = 0
         pending_ids: list[str] = []
@@ -1137,6 +1172,21 @@ async def _score_style_similarity(body: StyleSimilarityRequest, db: AsyncSession
             ])
         total_updated += len(pending_ids)
         if total_updated:
+            for id_filter in id_filters:
+                res = await db.execute(
+                    update(Image)
+                    .where(
+                        Image.dataset_id == body.dataset_id,
+                        *id_filter,
+                        ~and_(*extra_filters),
+                        Image.style_similarity_score.isnot(None),
+                    )
+                    # SQL NULL, not JSON 'null': the JSON type writes a Python
+                    # None as the string unless told otherwise.
+                    .values(style_similarity_score=None, dino_layer_scores=null())
+                    .execution_options(synchronize_session=False)
+                )
+                outcome.cleared += res.rowcount or 0
             await db.commit()
         return total_updated
 
@@ -1158,6 +1208,7 @@ async def _score_style_similarity(body: StyleSimilarityRequest, db: AsyncSession
         if body.reference_image_ids:
             ref_rows_raw = await _select_by_ids(db, (Image.id, col), body.reference_image_ids)
             ref_embs.extend(r[1] for r in ref_rows_raw if r[1] is not None)
+            outcome.used_ref_ids = [r[0] for r in ref_rows_raw if r[1] is not None]
         for b64 in body.reference_embeddings:
             ref_embs.append(base64.b64decode(b64))
         if not ref_embs:
@@ -1176,6 +1227,7 @@ async def _score_style_similarity(body: StyleSimilarityRequest, db: AsyncSession
             if body.reference_image_ids:
                 ref_rows_raw = await _select_by_ids(db, (Image.id, col), body.reference_image_ids)
                 ref_embs.extend(r[1] for r in ref_rows_raw if r[1] is not None)
+                outcome.used_ref_ids = [r[0] for r in ref_rows_raw if r[1] is not None]
             for b64 in body.reference_embeddings:
                 ref_embs.append(base64.b64decode(b64))
             if not ref_embs:
@@ -1197,6 +1249,7 @@ async def _score_style_similarity(body: StyleSimilarityRequest, db: AsyncSession
                     slice_layer_embedding(r[1], layer)
                     for r in ref_rows_raw if r[1] is not None
                 )
+                outcome.used_ref_ids = [r[0] for r in ref_rows_raw if r[1] is not None]
             for b64 in body.reference_embeddings:
                 ref_embs.append(slice_layer_embedding(base64.b64decode(b64), layer))
             if not ref_embs:
@@ -1230,6 +1283,7 @@ async def _score_style_similarity(body: StyleSimilarityRequest, db: AsyncSession
                 ref_rows = [(r[0], r[1], r[2]) for r in ref_result if r[1] is not None and r[2] is not None]
         else:
             ref_rows = []
+        outcome.used_ref_ids = [r[0] for r in ref_rows]
         if not ref_rows:
             detail = (
                 "No images with both CLIP and per-layer DINOv2 embeddings found among reference images. Run per-layer embedding extraction first."
@@ -1331,6 +1385,7 @@ async def _score_style_similarity(body: StyleSimilarityRequest, db: AsyncSession
         if body.reference_image_ids:
             ref_rows_raw = await _select_by_ids(db, (Image.id, col), body.reference_image_ids)
             ref_blobs.extend(r[1] for r in ref_rows_raw if r[1] is not None)
+            outcome.used_ref_ids = [r[0] for r in ref_rows_raw if r[1] is not None]
         if not ref_blobs:
             raise HTTPException(status_code=400, detail="No per-layer DINOv2 embeddings found for reference images. Run per-layer embedding extraction first.")
 

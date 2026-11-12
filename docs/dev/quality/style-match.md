@@ -14,7 +14,9 @@ strong DINOv2 one, or meaningless on a layer-3 run where every image lands in 0.
 per dataset, `dataset_id` unique, overwritten by every successful run — it describes the
 values *currently* in the column, not a history. It holds the mode, the layer, the blend
 weights, up to `REFERENCE_IDS_STORED_MAX = 64` reference ids, the true reference counts, the
-scored/skipped counts and `scoped_image_count`.
+scored/skipped counts and `scoped_image_count`. The ids and the count are of the references
+the run *used* — those with vectors (`docs/dev/quality/style-similarity.md` § A run clears
+what it skipped, and records only the references it used).
 
 **Every recorded field comes from the run's `result` dict, not from `body`.** Each of the
 six success returns carries `dino_layer` / `clip_weight` / `dino_weight` alongside `updated`

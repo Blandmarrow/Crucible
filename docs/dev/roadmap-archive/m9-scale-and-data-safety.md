@@ -103,4 +103,7 @@ None of this was part of the gate. Each item is listed so it is not found again 
   `rowid`, which `ix_images_dataset_id` serves with no sort.
 - **Reported and not verified:** nothing clears an image's embeddings when its pixels are
   rewritten in place, and the embedding checks only fill NULL rows, so a cropped or
-  upscaled image may keep vectors from its old pixels.
+  upscaled image may keep vectors from its old pixels. **Fixed on 2026-11-12, after this
+  record closed.** Half true: a scored row is marked stale and revisited, but a row with
+  vectors and no score was not, and a restore had the same gap. Both now clear the
+  vectors (`docs/dev/quality/scores-stale.md` § Embeddings are cleared, not marked).

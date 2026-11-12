@@ -50,7 +50,9 @@ export interface StyleRunDescriptor {
    *  when they were blended the same way. */
   clip_weight: number | null;
   dino_weight: number | null;
-  /** Capped at 64 server-side; `reference_count` is the true number. Deliberately
+  /** The references the run actually used — those with vectors at run time; a
+   *  requested reference with none was dropped from the mean and is not listed.
+   *  Capped at 64 server-side; `reference_count` is the true number. Deliberately
    *  not kept in sync with `images`, so an id here may no longer resolve. */
   reference_image_ids: string[];
   reference_count: number;
@@ -62,6 +64,18 @@ export interface StyleRunDescriptor {
    *  this descriptor does not describe. */
   scoped_image_count: number | null;
   updated_at: string | null;
+}
+
+/** What `POST /quality/style-similarity` answers. `skipped` counts candidates
+ *  with no vectors for the mode; `cleared` is how many of those lost a style
+ *  score from an earlier run, so no stale score sits among this run's.
+ *  `references_skipped` counts requested references with no vectors, left out
+ *  of the mean. */
+export interface StyleRunResult {
+  updated: number;
+  skipped: number;
+  cleared?: number;
+  references_skipped?: number;
 }
 
 /** The dataset's style-score distribution — what makes one raw cosine readable.
@@ -174,7 +188,7 @@ export const qualityApi = {
     embedding_type?: "clip" | "dino" | "combined" | "dino_all_layers" | "combined_all_layers";
     dino_layer?: number;
   }) =>
-    client.post<{ updated: number; skipped: number }>("/quality/style-similarity", params).then((r) => r.data),
+    client.post<StyleRunResult>("/quality/style-similarity", params).then((r) => r.data),
 
   /** The four models scoring can load, each with a `loaded` flag. Global, not
    *  dataset-scoped — VRAM residency is a property of the process. */

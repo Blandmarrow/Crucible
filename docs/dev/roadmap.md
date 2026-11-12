@@ -31,10 +31,12 @@ restates its stages.
    direct GPU call made on the event-loop thread, which wants a rule for direct calls.
    - M9 left four things open, none of which blocks M7
    ([roadmap-archive/m9-scale-and-data-safety.md § Left open](roadmap-archive/m9-scale-and-data-safety.md#left-open)):
-   - **Two findings wait for the user to place them in the order.** Style scoring's keyset
+   - **One finding waits for the user to place it in the order.** Style scoring's keyset
      page sorts the whole dataset for every page (a `TEMP B-TREE` behind
-     `ix_images_dataset_updated_at`), with no test reading that plan. And a report, not
-     verified, that an in-place pixel rewrite leaves an image's old embeddings in place.
+     `ix_images_dataset_updated_at`), with no test reading that plan. The second finding,
+     old embeddings surviving an in-place pixel rewrite, was half true and is fixed
+     (2026-11-12): the edit and a pixel-changing restore now clear them
+     (`docs/dev/quality/scores-stale.md` § Embeddings are cleared, not marked).
    - **Not checked by hand:** stage 11's index and gallery changes in a browser, stage 4's
      polling against a real job, and the Stats page under the pin in a browser.
    - **Parked, each with a trigger** in [scale-plan/README.md](scale-plan/README.md): the

@@ -958,6 +958,47 @@ def score_columns(cls: type) -> frozenset[str]:
     return frozenset(c.key for c in cls.__table__.columns if c.key.endswith("_score"))
 
 
+@lru_cache(maxsize=None)
+def embedding_columns(cls: type) -> frozenset[str]:
+    """Every stored embedding column on a mapped class, derived by suffix.
+
+    `clip_embedding`, `dino_embedding` and `dino_layer_embeddings` on `Image`:
+    vectors measured from the pixels, which `clear_embeddings` drops when the
+    pixels are replaced. Derived like `score_columns`, so a fourth embedding is
+    covered the moment it is added. All three are `deferred` (megabytes per row
+    between them), which `backend/tests/test_embeddings_cleared.py` pins, since
+    `clear_embeddings`' safety rests on it.
+    """
+    return frozenset(
+        c.key for c in cls.__table__.columns
+        if c.key.endswith(("_embedding", "_embeddings"))
+    )
+
+
+def clear_embeddings(img: "Image") -> None:
+    """Drop an image's stored embeddings because its pixels were just replaced.
+
+    Called by `record_in_place` for every in-place rewrite, and by snapshot
+    restore after it writes a file's old bytes back. Embeddings have no stale
+    bit, and one cannot be decided here: the columns are `deferred`, so reading
+    one to ask "was there a vector?" would lazy-load on an async session. So the
+    columns are cleared unconditionally — assigning to an unloaded deferred
+    column records the new value without loading the old one, and a row that had
+    no vectors gets a harmless NULL in its UPDATE.
+
+    NULL is the honest state: every reader already skips a row with no vector
+    (style similarity counts it as skipped, the coverage counts as missing), and
+    "Score what's missing" with Embeddings or DINOv2 ticked refills it. A stale
+    vector, by contrast, is silently compared as if it described the new pixels.
+
+    Pure attribute assignment: it cannot raise and emits no IO, so it may sit
+    between an irreversible file write and the `commit()` that describes it
+    (PM-013).
+    """
+    for col in embedding_columns(type(img)):
+        setattr(img, col, None)
+
+
 def record_in_place(img: "Image", op: str, **params) -> None:
     """Record that an operation overwrote an image's file, in the two columns that carry it.
 
@@ -987,6 +1028,13 @@ def record_in_place(img: "Image", op: str, **params) -> None:
     (upload → resize → export). It is never written `False` here: clearing is the
     quality job's job.
 
+    **The embeddings are cleared, not marked** (`clear_embeddings`), and
+    unconditionally rather than behind the bit's "carries a score" test. A row
+    with vectors but no score — embed for style similarity, then crop — would
+    otherwise keep vectors of pixels that no longer exist with nothing to say so.
+    `style_similarity_score`, derived from those vectors, stays: it is a
+    `*_score`, so the bit covers it like the rest.
+
     List-concat reassignment, never `.append()` — SQLAlchemy compares JSON columns
     by equality, so mutating the loaded list in place looks unchanged and the
     UPDATE is skipped (CLAUDE.md § Key invariants).
@@ -1006,6 +1054,8 @@ def record_in_place(img: "Image", op: str, **params) -> None:
     # pinned by `backend/tests/test_scores_stale.py`.
     if any(getattr(img, c) is not None for c in score_columns(type(img))):
         img.scores_stale = True
+    # Writes only, to columns that *are* deferred: assignment never loads them.
+    clear_embeddings(img)
 
 
 def normalize_image_format(suffix: str, out_path: str) -> tuple[str, str]:

@@ -287,6 +287,10 @@ async def _edit_loop(
                 img.width = info["width"]
                 img.height = info["height"]
                 img.file_size_bytes = info["file_size_bytes"]
+                # A grade or an upscale changes the picture duplicate detection
+                # hashes, so the row's pHash would describe the pre-edit pixels
+                # (GPT-016). Both workers hash their output in memory.
+                img.phash = info["phash"]
                 # `updated_at` is stamped by `record_in_place` below.
                 if Path(actual_out_path) != src_path:
                     # The PNG fallback wrote a *different* file. Without this
@@ -374,6 +378,9 @@ async def _edit_loop(
                     height=info["height"],
                     file_size_bytes=info["file_size_bytes"],
                     format=info["format"],
+                    # Without it the copy never enters a duplicate scan, which
+                    # selects `phash IS NOT NULL`.
+                    phash=info["phash"],
                     # A same-dataset derivative keeps its parent's source/license.
                     **copy_provenance(img),
                 )

@@ -368,7 +368,9 @@ def test_a_detection_crop_refreshes_dataset_totals(tmp_path):
 
 
 def test_crop_upscale_refreshes_the_phash(tmp_path, monkeypatch):
-    """`upscale_image_sync` reports no phash, so the row kept the pre-crop one."""
+    """The crop changes the picture, so the row's pre-crop pHash must go. The row
+    once kept it, because `upscale_image_sync` reported none; it returns one now,
+    and the job stores it."""
     from backend.tests.test_upscale_png_fallback_http import MODEL, _install_fake
 
     async def scenario():
@@ -408,5 +410,140 @@ def test_a_rewrite_never_writes_over_an_image_named_like_its_temp_file(tmp_path)
             assert other_path.read_bytes() == before
             _assert_row_describes_its_file(await _row(env, img["id"]))
             _assert_row_describes_its_file(await _row(env, other["id"]))
+
+    run(scenario())
+
+
+# ---------------------------------------------------------------------------
+# Upscale and LUT carry a pHash, in place and as a copy
+# ---------------------------------------------------------------------------
+#
+# Neither worker returned one, so a replace kept the pre-edit pHash and a copy
+# row had none at all — and duplicate detection selects `phash IS NOT NULL`, so
+# the copy never entered a scan. The LUT cases run the real `apply_lut_sync`
+# (numpy only); the upscale cases use the PNG-fallback suite's fake, which keeps
+# the worker's contract.
+
+
+def _inverting_cube(path: Path) -> Path:
+    """A 2x2x2 LUT that inverts every channel: an identity LUT changes nothing,
+    so it could not show the pHash moving. R varies fastest, then G, then B."""
+    lines = ['TITLE "invert"', "LUT_3D_SIZE 2"]
+    for b in (0.0, 1.0):
+        for g in (0.0, 1.0):
+            for r in (0.0, 1.0):
+                lines.append(f"{1 - r:.6f} {1 - g:.6f} {1 - b:.6f}")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+async def _run_lut(env, ds_id, image_id, lut: Path, replace: bool) -> dict:
+    r = await env.client.post(f"{API}/lut/run", json={
+        "dataset_id": ds_id, "image_ids": [image_id],
+        "lut_path": str(lut), "intensity": 1.0, "replace": replace,
+    })
+    assert r.status_code == 200, r.text
+    job = await wait_for_job(env, r.json()["job_id"], timeout=60)
+    assert job["status"] == "completed", job
+    return job
+
+
+async def _the_other_row(env, ds_id, image_id) -> Image:
+    """The one row in the dataset that is not `image_id`: the copy an edit made."""
+    async with env.Session() as db:
+        rows = (await db.execute(
+            select(Image).where(Image.dataset_id == ds_id, Image.id != image_id)
+        )).scalars().all()
+    assert len(rows) == 1, [r.filename for r in rows]
+    return rows[0]
+
+
+def test_a_lut_replace_refreshes_the_phash(tmp_path):
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            img = await upload_image(env, ds["id"], "a.png", _patterned_png())
+            before = (await _row(env, img["id"])).phash
+
+            await _run_lut(env, ds["id"], img["id"], _inverting_cube(tmp_path / "inv.cube"), True)
+
+            row = await _row(env, img["id"])
+            _assert_row_describes_its_file(row)
+            assert row.phash != before, "the grade changed the picture"
+
+    run(scenario())
+
+
+def test_a_lut_copy_carries_a_phash(tmp_path):
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            img = await upload_image(env, ds["id"], "a.png", _patterned_png())
+
+            await _run_lut(env, ds["id"], img["id"], _inverting_cube(tmp_path / "inv.cube"), False)
+
+            copy = await _the_other_row(env, ds["id"], img["id"])
+            assert copy.phash is not None
+            _assert_row_describes_its_file(copy)
+
+    run(scenario())
+
+
+def test_an_upscale_replace_refreshes_the_phash(tmp_path, monkeypatch):
+    from backend.tests.test_upscale_png_fallback_http import _install_fake, _run_upscale
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            _install_fake(monkeypatch)
+            ds = await env.create_dataset("d")
+            img = await upload_image(env, ds["id"], "a.png", _patterned_png())
+            before = (await _row(env, img["id"])).phash
+
+            job = await _run_upscale(env, ds["id"], img["id"], True)
+            assert job["status"] == "completed", job
+
+            row = await _row(env, img["id"])
+            _assert_row_describes_its_file(row)
+            assert row.phash != before, "the fake's output is a different picture"
+
+    run(scenario())
+
+
+def test_an_upscale_copy_carries_a_phash(tmp_path, monkeypatch):
+    from backend.tests.test_upscale_png_fallback_http import _install_fake, _run_upscale
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            _install_fake(monkeypatch)
+            ds = await env.create_dataset("d")
+            img = await upload_image(env, ds["id"], "a.png", _patterned_png())
+
+            job = await _run_upscale(env, ds["id"], img["id"], False)
+            assert job["status"] == "completed", job
+
+            copy = await _the_other_row(env, ds["id"], img["id"])
+            assert copy.phash is not None
+            _assert_row_describes_its_file(copy)
+
+    run(scenario())
+
+
+def test_a_crop_upscale_copy_carries_a_phash(tmp_path, monkeypatch):
+    from backend.tests.test_upscale_png_fallback_http import MODEL, _install_fake
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            _install_fake(monkeypatch)
+            ds = await env.create_dataset("d")
+            img = await upload_image(env, ds["id"], "a.png", _patterned_png())
+            r = await env.client.post(f"{API}/images/{img['id']}/crop", json={
+                "x": 0, "y": 0, "width": 16, "height": 16, "replace": False, "upscale_model": MODEL,
+            })
+            assert r.status_code == 200, r.text
+            assert (await wait_for_job(env, r.json()["job_id"], timeout=60))["status"] == "completed"
+
+            copy = await _the_other_row(env, ds["id"], img["id"])
+            assert copy.phash is not None
+            _assert_row_describes_its_file(copy)
 
     run(scenario())

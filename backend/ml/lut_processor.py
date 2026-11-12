@@ -198,13 +198,17 @@ def apply_lut_sync(
     replace=True  → overwrites src in place; dest is ignored.
     replace=False → writes to dest.
     intensity     → 0.0 = no change, 1.0 = full LUT.
-    Returns {width, height, file_size_bytes, format, out_path}.
+    Returns {width, height, file_size_bytes, format, phash, out_path}.
 
     `out_path` is the path actually written, which is **not** the one asked for
     when `normalize_image_format` falls back to PNG (.bmp/.gif/.tiff/.avif).
     Every caller has to follow it (PM-009); `upscale_image_sync` returns the
     same key for the same reason.
+
+    `phash` is hashed from the graded output in memory, before the save, and
+    every caller must store it — see `upscale_image_sync`.
     """
+    import imagehash  # lazy: pulls scipy/PyWavelets
     from PIL import Image, ImageOps
 
     lut = _load_lut(lut_path)
@@ -229,6 +233,7 @@ def apply_lut_sync(
     fmt, out_path = normalize_image_format(Path(src).suffix, out_path)
     save_kwargs = image_save_kwargs(fmt)
 
+    phash_str = str(imagehash.phash(result_img))
     result_img.save(out_path, format=fmt, **save_kwargs)
     stat = Path(out_path).stat()
     w_out, h_out = result_img.size
@@ -239,5 +244,6 @@ def apply_lut_sync(
         "height": h_out,
         "file_size_bytes": stat.st_size,
         "format": fmt,
+        "phash": phash_str,
         "out_path": out_path,
     }

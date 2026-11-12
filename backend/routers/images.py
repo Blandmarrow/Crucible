@@ -68,7 +68,6 @@ from backend.services.image_service import (
     decode_for_ingest,
     extract_generation_metadata,
     generate_thumbnail,
-    get_image_info,
     resize_image,
     temp_sibling,
 )
@@ -1955,11 +1954,6 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
             final_path = dest_path.with_suffix(out_tmp.suffix)
             superseded: Path | None = None
             stale = 0
-            # `upscale_image_sync` reports no phash, and the crop changed the
-            # picture, so the row's would describe the pre-crop image (GPT-016).
-            # Measured from the written temp, before the swap; `get_image_info`
-            # never raises and answers `{}` on an unreadable file.
-            measured = await loop2.run_in_executor(None, get_image_info, str(out_tmp))
 
             async with AsyncSessionLocal() as session:
                 updated = await session.get(Image, replace_cfg["image_id"])
@@ -1978,8 +1972,10 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
                         updated.width = info["width"]
                         updated.height = info["height"]
                         updated.file_size_bytes = info["file_size_bytes"]
-                        if measured.get("phash"):
-                            updated.phash = measured["phash"]
+                        # The crop changed the picture, so the row's pHash would
+                        # describe the pre-crop image (GPT-016). The worker hashes
+                        # the output it wrote.
+                        updated.phash = info["phash"]
                         if final_path != dest_path:
                             # A .bmp read back as .png: the row has to follow the
                             # written file and the original has to go, or the
@@ -2165,6 +2161,8 @@ async def crop(image_id: str, body: ImageCropRequest, db: AsyncSession = Depends
                     height=info["height"],
                     file_size_bytes=info["file_size_bytes"],
                     format=info["format"],
+                    # Without it the crop never enters a duplicate scan.
+                    phash=info["phash"],
                     **cfg["provenance"],
                 )
                 session.add(new_img)

@@ -578,12 +578,15 @@ def test_lut_and_upscale_derivatives_copy_provenance_over_the_async_session(tmp_
 
             def _fake_process(src, out_path, *a, **kw):
                 # Same contract as the real helpers: write the file, return the
-                # {width, height, file_size_bytes, format, out_path} dict.
+                # {width, height, file_size_bytes, format, phash, out_path} dict.
+                import imagehash
+
                 shutil.copy2(src, out_path)
                 with PilImage.open(out_path) as probe:
                     w, h = probe.size
+                    phash = str(imagehash.phash(probe.convert("RGB")))
                 return {
-                    "width": w, "height": h, "format": "PNG",
+                    "width": w, "height": h, "format": "PNG", "phash": phash,
                     "file_size_bytes": os.path.getsize(out_path), "out_path": out_path,
                 }
 

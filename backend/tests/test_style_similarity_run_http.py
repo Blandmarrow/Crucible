@@ -18,6 +18,8 @@ with no coverage at all.
 Embeddings are seeded as float16 blobs straight through `env.Session()` — extracting
 real ones needs CLIP.
 """
+import base64
+
 import numpy as np
 from sqlalchemy import select
 
@@ -498,5 +500,135 @@ def test_the_final_embedding_and_layer_12_are_different_vectors(tmp_path):
             # of the column can tell which run wrote it.
             run_row = await _run_row(env, ds["id"])
             assert run_row.dino_layer == 12
+
+    run(scenario())
+
+
+# ---------------------------------------------------------------------------
+# Skipped candidates and references without vectors
+# ---------------------------------------------------------------------------
+#
+# An in-place edit clears an image's embeddings (`utils.clear_embeddings`), so
+# "has a style score from an earlier run but no vectors now" is the normal state
+# of an edited image. A run must neither leave that old score among its own nor
+# count an edited reference it could not use.
+
+
+async def _style_of(env, image_id: str) -> tuple:
+    async with env.Session() as db:
+        return (await db.execute(
+            select(Image.style_similarity_score, Image.dino_layer_scores)
+            .where(Image.id == image_id)
+        )).one()
+
+
+def test_a_skipped_candidate_loses_the_style_score_an_earlier_run_left(tmp_path):
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds, imgs = await _three_clip_images(env)
+            edited = await upload_image(env, ds["id"], "edited.png", png_bytes((9, 9, 9)))
+            # Scored by an earlier run, then edited: the score stayed, the vectors went.
+            await _seed(env, edited["id"], style_similarity_score=0.42,
+                        dino_layer_scores={"7": 0.42})
+
+            r = await env.client.post(f"{API}/quality/style-similarity", json={
+                "dataset_id": ds["id"],
+                "reference_image_ids": [imgs[0]["id"]],
+                "embedding_type": "clip",
+            })
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert (body["updated"], body["skipped"], body["cleared"]) == (3, 1, 1)
+            assert await _style_of(env, edited["id"]) == (None, None)
+
+    run(scenario())
+
+
+def test_a_scoped_run_leaves_scores_outside_its_scope_alone(tmp_path):
+    """A selection-scoped run has always left the rest of the dataset's scores in
+    place; clearing skipped rows must not reach past the selection."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds, imgs = await _three_clip_images(env)
+            outside = await upload_image(env, ds["id"], "outside.png", png_bytes((8, 8, 8)))
+            await _seed(env, outside["id"], style_similarity_score=0.42)
+
+            r = await env.client.post(f"{API}/quality/style-similarity", json={
+                "dataset_id": ds["id"],
+                "image_ids": [i["id"] for i in imgs],
+                "reference_image_ids": [imgs[0]["id"]],
+                "embedding_type": "clip",
+            })
+            assert r.status_code == 200, r.text
+            assert r.json()["cleared"] == 0
+            assert (await _style_of(env, outside["id"]))[0] == 0.42
+
+    run(scenario())
+
+
+def test_a_run_that_scores_nothing_clears_nothing(tmp_path):
+    """No candidate has vectors: the run answers 400 before its commit, so the
+    old score is still there afterwards."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("style")
+            ref = await upload_image(env, ds["id"], "ref.png", png_bytes((1, 1, 1)))
+            await _seed(env, ref["id"], dino_embedding=_emb(1))  # a DINOv2 vector only
+            old = await upload_image(env, ds["id"], "old.png", png_bytes((2, 2, 2)))
+            await _seed(env, old["id"], style_similarity_score=0.42)
+
+            r = await env.client.post(f"{API}/quality/style-similarity", json={
+                "dataset_id": ds["id"],
+                "reference_embeddings": [base64.b64encode(_emb(5)).decode()],
+                "reference_image_ids": [],
+                "embedding_type": "clip",
+            })
+            assert r.status_code == 400, r.text
+            assert (await _style_of(env, old["id"]))[0] == 0.42
+
+    run(scenario())
+
+
+def test_a_reference_without_vectors_is_reported_and_not_recorded(tmp_path):
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds, imgs = await _three_clip_images(env)
+            edited_ref = await upload_image(env, ds["id"], "ref.png", png_bytes((7, 7, 7)))
+
+            r = await env.client.post(f"{API}/quality/style-similarity", json={
+                "dataset_id": ds["id"],
+                "reference_image_ids": [imgs[0]["id"], edited_ref["id"]],
+                "embedding_type": "clip",
+            })
+            assert r.status_code == 200, r.text
+            assert r.json()["references_skipped"] == 1
+
+            run_row = await _run_row(env, ds["id"])
+            assert run_row.reference_count == 1
+            assert run_row.reference_image_ids == [imgs[0]["id"]]
+
+    run(scenario())
+
+
+def test_combined_mode_reports_a_reference_missing_one_of_its_two_vectors(tmp_path):
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("style")
+            imgs = []
+            for i in range(3):
+                img = await upload_image(env, ds["id"], f"i{i}.png", png_bytes((i * 40, 10, 10)))
+                await _seed(env, img["id"], clip_embedding=_emb(i), dino_embedding=_emb(i + 10))
+                imgs.append(img)
+            half = await upload_image(env, ds["id"], "half.png", png_bytes((5, 5, 5)))
+            await _seed(env, half["id"], clip_embedding=_emb(9))  # no DINOv2 vector
+
+            r = await env.client.post(f"{API}/quality/style-similarity", json={
+                "dataset_id": ds["id"],
+                "reference_image_ids": [imgs[0]["id"], half["id"]],
+                "embedding_type": "combined",
+            })
+            assert r.status_code == 200, r.text
+            assert r.json()["references_skipped"] == 1
+            assert (await _run_row(env, ds["id"])).reference_image_ids == [imgs[0]["id"]]
 
     run(scenario())

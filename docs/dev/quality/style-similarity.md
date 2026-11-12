@@ -113,3 +113,30 @@ similarity pays for a 1.2 GB model, and unticking it afterwards sticks.
 **Every branch pages, not only these two** (M9 stage 5). `clip`, `dino` on the final embedding, `dino` at a layer and `combined` in both forms go through the same `_score_paginated()`, each with a small `score_chunk` that scores one page. The scan runs inside the HTTP request, so a branch that selects its candidates whole holds the dataset's blobs at once; `dino` at a layer did exactly that with the 18 KB blob until stage 5. Paging moves a score by at most one step in its 4th decimal: each candidate is scored against the reference mean on its own, but a float32 matrix product's last bits depend on the batch's shape and row order, so a value on a rounding boundary can flip. The whole-set SELECT before it had no ORDER BY, so it had the same wobble. A hand check on 804 real images found 1 flip in 8,576 scores at the default page size. The layer is sliced in Python with `slice_layer_embedding` rather than with SQL `substr`, which would skip its length check and still walk the row's overflow chain. `backend/tests/test_style_similarity_paging.py` shrinks the page to 2 and checks, per mode, that every candidate SELECT has a `LIMIT`, that no scorer call sees more than one page, that no UPDATE runs before the last page is read, and that every score matches one computed straight from the seeded blobs.
 
 **When the UPDATEs run decides how long SQLite's one write lock is held.** The first UPDATE takes it until the commit, and other writers (a scoring job's chunk commit, a caption save) wait the driver's default 5 s and then fail with "database is locked". The commit comes once, at the end, so a run that raises leaves the column as it was, which the route's success-only descriptor write relies on. The four one-score branches pass `defer_write=True`: they keep only `(id, score)` per row while scanning and write everything after the last page, so the lock is held for the writes alone, as it was when they selected their candidates whole. The two `*_all_layers` branches write page by page, because a 12-entry `dino_layer_scores` dict per row is too big to hold for a whole dataset. They hold the lock for the whole scan, and always have.
+
+## A run clears what it skipped, and records only the references it used
+
+Both rules exist because an in-place edit clears an image's embeddings
+(`docs/dev/quality/scores-stale.md` § Embeddings are cleared, not marked), which makes "a
+style score but no vectors" the normal state of an edited image rather than a rare one.
+
+**A skipped candidate loses its old style score.** After the last page is written and before
+the commit, `_score_paginated` runs one UPDATE per id filter that sets `style_similarity_score`
+and `dino_layer_scores` to NULL on every row in the run's scope that fails the branch's
+`extra_filters` (its "has the vectors this mode needs" test, negated) and still carries a
+score. Left alone, such a score — from an earlier run, maybe another mode, maybe from
+pixels that no longer exist — sat in this run's percentile distribution as if this run had
+measured it, and a new style run could never replace it. The scope is the run's: a
+selection-scoped run leaves the rest of the dataset alone, as it always has. Only after
+something was scored: a run that scored nothing raises its 400 before the commit, so it
+changes nothing. `dino_layer_scores` is written as SQL `null()`, since the JSON type stores a
+Python `None` as the string `'null'`. The response's `cleared` counts these rows.
+
+**The descriptor records the references that had vectors.** Each branch fills
+`_StyleOutcome.used_ref_ids` where it drops reference rows with no vectors; the route turns
+that into `reference_image_ids_used` (request order, deduplicated) and `references_skipped`,
+and `_record_style_run` stores the used ids and their count. Before, `reference_count` was
+`len(body.reference_image_ids)`, so an edited reference left out of the mean was still
+listed and counted on the detail page. Both toasts read the new fields through
+`styleRunMessage` in `frontend/src/constants/styleModes.ts`.
+`backend/tests/test_style_similarity_run_http.py` covers both rules.

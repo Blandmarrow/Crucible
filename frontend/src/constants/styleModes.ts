@@ -170,3 +170,32 @@ export function describeEmbeddingGap(
     needs: parts.map((p) => p.name).join(" and "),
   };
 }
+
+/** The toast after a style run, shared by the Score page and the gallery's
+ *  `SelectionToolbar` (both start runs; the copy had drifted once already).
+ *
+ *  Two things a run can do quietly that the message must say: a candidate with no
+ *  vectors is skipped **and loses any style score an earlier run left** (`cleared`),
+ *  so it cannot sit among this run's scores; and a reference with no vectors —
+ *  typically one edited in place since it was embedded — is left out of the
+ *  reference mean (`references_skipped`), so the run compared against fewer
+ *  references than were picked. */
+export function styleRunMessage(data: {
+  updated: number;
+  skipped?: number;
+  cleared?: number;
+  references_skipped?: number;
+}): string {
+  const skipped = data.skipped ?? 0;
+  const cleared = data.cleared ?? 0;
+  const refsSkipped = data.references_skipped ?? 0;
+  let msg = `Style similarity scored for ${data.updated} images`;
+  if (skipped > 0) {
+    const lost = cleared > 0 ? `; ${cleared} lost an older style score` : "";
+    msg += ` (${skipped} skipped — run embeddings first${lost})`;
+  }
+  if (refsSkipped > 0) {
+    msg += `. ${refsSkipped} reference image${refsSkipped === 1 ? " has" : "s have"} no embeddings and ${refsSkipped === 1 ? "was" : "were"} left out`;
+  }
+  return msg;
+}

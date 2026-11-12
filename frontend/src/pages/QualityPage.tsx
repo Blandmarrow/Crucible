@@ -16,7 +16,7 @@ import StyleReferencePicker from "../components/quality/StyleReferencePicker";
 import { DINO_LAYER_LABELS } from "../constants/dinoLabels";
 import {
   STYLE_MODES, STYLE_MODE_NOTE, DINO_LAYER_NOTE, styleModeLabel, normalizeDinoLayer,
-  describeEmbeddingGap, DEFAULT_DINO_LAYER, type StyleMode, type DinoLayerChoice,
+  describeEmbeddingGap, DEFAULT_DINO_LAYER, styleRunMessage, type StyleMode, type DinoLayerChoice,
 } from "../constants/styleModes";
 import { AESTHETIC_MODELS, aestheticModelLabel, type AestheticModel } from "../constants/aestheticModels";
 import { QUALITY_WORKFLOW_KEY, QUALITY_FILTERS_PREFIX } from "../constants/storage";
@@ -613,11 +613,7 @@ export default function QualityPage() {
       });
     },
     onSuccess: (data) => {
-      const skipped = data.skipped ?? 0;
-      const msg = skipped > 0
-        ? `Style similarity scored for ${data.updated} images (${skipped} skipped — run embeddings first)`
-        : `Style similarity scored for ${data.updated} images`;
-      toast.success(msg);
+      toast.success(styleRunMessage(data));
       // The lone `["images", datasetId]` this replaces left two surfaces stale: the
       // Stats page's style histogram, which reads `["score-values"]` and so sat on
       // pre-run numbers until something else invalidated it, and the new

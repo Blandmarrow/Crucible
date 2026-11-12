@@ -39,7 +39,7 @@ import { DETECTION_MODELS, detectionModelFamily } from "../../constants/detectio
 import StyleReferencePicker from "../quality/StyleReferencePicker";
 import { DINO_LAYER_LABELS } from "../../constants/dinoLabels";
 import {
-  STYLE_MODES, STYLE_MODE_NOTE, DINO_LAYER_NOTE, DEFAULT_DINO_LAYER,
+  STYLE_MODES, STYLE_MODE_NOTE, DINO_LAYER_NOTE, DEFAULT_DINO_LAYER, styleRunMessage,
   type StyleMode, type DinoLayerChoice,
 } from "../../constants/styleModes";
 import { invalidateDatasetContentScope } from "../../constants/queryKeys";
@@ -489,11 +489,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
       });
     },
     onSuccess: (data) => {
-      const skipped = data.skipped ?? 0;
-      const msg = skipped > 0
-        ? `Style similarity scored for ${data.updated} images (${skipped} skipped — run embeddings first)`
-        : `Style similarity scored for ${data.updated} images`;
-      toast.success(msg);
+      toast.success(styleRunMessage(data));
       // Same widening as QualityPage's copy: `["score-values"]` (the Stats style
       // histogram) was never invalidated by a style run, and the distribution the
       // card meter reads rides the shared scope. See the note there.

@@ -55,8 +55,8 @@ from backend.services.detection_service import (
 from backend.services.label_service import labels_by_image, live_label_ids, set_labels
 from backend.services.threshold_service import get_thresholds
 from backend.utils import (
-    chunked, contained_path, replace_retrying, score_columns, thumbnail_path_for,
-    within_datasets_dir,
+    chunked, clear_embeddings, contained_path, replace_retrying, score_columns,
+    thumbnail_path_for, within_datasets_dir,
 )
 
 logger = logging.getLogger(__name__)
@@ -1658,6 +1658,12 @@ async def restore_snapshot(
                     p.file_restored = True
                     p.content_written = True
                     files_restored += 1
+                    # The embeddings are not mirrored, so the row still holds
+                    # the vectors of the pixels just replaced. Only here: a
+                    # skipped write (`needs_restore` False) left matching
+                    # pixels, and a failed one left the old pixels intact.
+                    if p.img is not None:
+                        clear_embeddings(p.img)
                     if p.renamed:
                         # The pre-rename copy (backed up in Pass 1) is now stale.
                         await loop.run_in_executor(
@@ -1687,6 +1693,10 @@ async def restore_snapshot(
                     await loop.run_in_executor(
                         None, _remove_stale_files, str(src), True, stale_thumb
                     )
+                    # The row now names the target's pixels, but its vectors were
+                    # measured on `src`'s, which nothing proved identical.
+                    if p.img is not None:
+                        clear_embeddings(p.img)
 
             elif p.renamed:
                 # No recorded content change — the image was only renamed/moved since

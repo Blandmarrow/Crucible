@@ -44,7 +44,7 @@ subagent reported it and it was not re-read; verify it before building on it.
 | Every scorer (`backend/ml/aesthetic_scorer.py`, `dino_scorer.py`, `nsfw_scorer.py`) | One `run_on_gpu` call per image, awaited in a loop. `SCORE_CHUNK` sizes the DB chunk, not the inference batch | Checked for the aesthetic scorer; from the audit for the rest |
 | `score_image_sync` | Decodes the file (`open_rgb`), preprocesses it, moves it to the card and runs the model, all inside the one GPU call. The card waits during the first two steps | Checked |
 | A full scoring run | Each check decodes every file again: up to five decodes for aesthetic, watermark, CLIP, DINOv2 and technical. Watermark and CLIP each run the CLIP image encoder | From the audit |
-| `technical_scorer.score_images_technical` | CPU-only (OpenCV). One `run_in_executor` call per image, awaited, so one core is busy | Checked |
+| `technical_scorer.score_images_technical` | CPU-only (OpenCV). One `run_in_executor` call per image, awaited, so one core is busy. **Fixed by T1**: up to 4 at once, 2.0× to 2.3× faster (`docs/dev/quality/scoring.md` § The technical scorer runs several images at once) | Checked |
 | `openai_compat_captioner._caption_sync` | One request at a time, and a new `OpenAI(...)` client for each image | Checked |
 | `ollama_captioner` | One request at a time, and a new `httpx.AsyncClient` for each image | Checked |
 | The local captioners (Florence-2, PaliGemma, JoyCaption) | One image per call. `caption_batch` is defined in `florence_captioner.py`, `paligemma_captioner.py` and `ollama_captioner.py`, and nothing outside the tests calls it | Checked for `caption_batch`; from the audit for the per-image loop |
@@ -59,16 +59,10 @@ subagent reported it and it was not re-read; verify it before building on it.
 
 CPU-only work first, since it cannot touch the GPU rule at all.
 
-### T1 — The technical scorer on several cores
-
-Run a bounded number of `score_technical_sync` calls at once on the default pool
-(`asyncio.gather` under a semaphore, or `as_completed`), keeping the result order, the
-failure contract (`_unmeasured()` per failed image), the per-image cancel check and the
-`progress` callback that stage 3 of M9 added. OpenCV releases the GIL, so threads are
-enough. Pick the bound from the core count, and leave cores for the server.
-
-**Acceptance.** The scores match the serial path exactly on a fixture (it is the same
-function per image). A timing on a few thousand images shows the gain.
+T1, the technical scorer on several cores, is done; its design and timing now live in
+`docs/dev/quality/scoring.md` § The technical scorer runs several images at once. Its
+bounded FIFO window (await the oldest future first) is the pattern T3 can reuse, since it
+keeps input order and a prefix on cancel without a reordering step.
 
 ### T2 — Concurrent requests for the remote captioners
 

@@ -46,6 +46,26 @@ staleness sweep while still recording the seam.
 
 ## Queue
 
+## docs/dev/quality/scoring.md
+
+- **Moves:** § The chunked job loop (~660 words), § The technical scorer runs several images
+  at once (~375) and § The model lifecycle (~915)
+- **New file:** docs/dev/quality/scoring-job.md, with a row in the hub `docs/dev/quality.md`'s
+  routing table; scoring.md keeps the scorers and their columns, the failure contract, flag
+  thresholds and frontend coverage
+- **Why here:** M10 T1 took it to 3,696 of 3,500 words (2026-11-12). The file holds two
+  subjects: *what* each scorer measures and records, and *how the scoring job runs* (chunks,
+  resume, progress, concurrency, loading and unloading models). The three sections above are
+  the second subject. Moving only the job loop and T1's section would leave ~2,660, 76% of
+  budget, so the model lifecycle goes too, leaving ~1,950 and ~1,950. The rest of M10 (T5's
+  decode-ahead) will add to the job half, not the scorer half.
+- **Watch for:** seven files name these sections as `quality/scoring.md` § …:
+  `model-residency.md`, `settings.md`, `quality/aesthetic-model.md`,
+  `quality/scores-stale.md`, the throughput and scale plans and the M9 archive record. Grep
+  for all three section names. `backend/ml/technical_scorer.py`'s comment above
+  `TECHNICAL_MAX_WORKERS` names scoring.md too. § The failure contract stays, but the job
+  loop's § "What a stop leaves behind" leans on it, so keep a cross-reference.
+
 ## docs/dev/comfyui/queue.md
 
 - **Moves:** the row endpoints of § Backend that M6 §8b and §8c grew: the folder's exemption

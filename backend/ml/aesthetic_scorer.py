@@ -43,15 +43,41 @@ def download_weights(dest: Path) -> None:
     logger.info("Aesthetic predictor weights saved to %s", dest)
 
 
-def score_image_sync(image_path: str, model_entry: dict) -> float:
+# ── Each check in two halves (M10 T5) ───────────────────────────────────────────
+#
+# `prepare_*` is the CPU half and runs on the default pool, a few images ahead
+# (`backend/ml/prefetch.py`). It takes only the transform, never the model entry,
+# and returns a CPU tensor: no `.to(device)` and no model, which
+# `backend/tests/test_prefetch_halves.py` holds. `infer_*` is the GPU half and runs
+# on the GPU thread. The `*_sync` functions compose the two for the callers that
+# score one image at a time.
+
+
+def prepare_clip(image_path: str, preprocess) -> torch.Tensor:
+    """CPU half shared by the aesthetic, watermark and CLIP embedding checks:
+    the open_clip `preprocess` of the image, batched to (1, 3, 224, 224)."""
     from backend.ml.image_utils import open_rgb
+    img = open_rgb(image_path)
+    try:
+        return preprocess(img).unsqueeze(0)
+    finally:
+        img.close()
+
+
+def prepare_clip_bytes(image_bytes: bytes, preprocess) -> torch.Tensor:
+    """`prepare_clip` from raw bytes (`POST /quality/embed-references`)."""
+    from backend.ml.image_utils import open_rgb_bytes
+    img = open_rgb_bytes(image_bytes)
+    try:
+        return preprocess(img).unsqueeze(0)
+    finally:
+        img.close()
+
+
+def infer_aesthetic(tensor: torch.Tensor, model_entry: dict) -> float:
     clip_model = model_entry["clip"]
     mlp = model_entry["mlp"]
-    preprocess = model_entry["preprocess"]
-
-    img = open_rgb(image_path)
-    tensor = preprocess(img).unsqueeze(0).to(_device.get_device())
-    img.close()
+    tensor = tensor.to(_device.get_device())
 
     with torch.no_grad(), _device.autocast_ctx():
         features = clip_model.encode_image(tensor)
@@ -59,6 +85,10 @@ def score_image_sync(image_path: str, model_entry: dict) -> float:
         score = mlp(features.float()).item()
 
     return round(max(1.0, min(10.0, score)), 3)
+
+
+def score_image_sync(image_path: str, model_entry: dict) -> float:
+    return infer_aesthetic(prepare_clip(image_path, model_entry["preprocess"]), model_entry)
 
 
 WATERMARK_PROMPTS = [
@@ -80,13 +110,10 @@ def _precompute_watermark_text_features(model_entry: dict) -> torch.Tensor:
     return text_feats
 
 
-def score_watermark_sync(image_path: str, model_entry: dict,
-                          text_features: torch.Tensor,
-                          watermark_threshold: float = 0.6) -> dict:
-    from backend.ml.image_utils import open_rgb
-    img = open_rgb(image_path)
-    tensor = model_entry["preprocess"](img).unsqueeze(0).to(_device.get_device())
-    img.close()
+def infer_watermark(tensor: torch.Tensor, model_entry: dict,
+                    text_features: torch.Tensor,
+                    watermark_threshold: float = 0.6) -> dict:
+    tensor = tensor.to(_device.get_device())
     with torch.no_grad(), _device.autocast_ctx():
         img_feats = model_entry["clip"].encode_image(tensor)
         img_feats = img_feats / img_feats.norm(dim=-1, keepdim=True)
@@ -96,6 +123,15 @@ def score_watermark_sync(image_path: str, model_entry: dict,
     return {"watermark_score": round(score, 4), "has_watermark": score >= watermark_threshold}
 
 
+def score_watermark_sync(image_path: str, model_entry: dict,
+                          text_features: torch.Tensor,
+                          watermark_threshold: float = 0.6) -> dict:
+    return infer_watermark(
+        prepare_clip(image_path, model_entry["preprocess"]), model_entry,
+        text_features, watermark_threshold,
+    )
+
+
 async def score_images_watermark(
     image_paths: list[str],
     model_entry_dict: dict,
@@ -103,67 +139,53 @@ async def score_images_watermark(
     watermark_threshold: float = 0.6,
     progress: Callable[[int], Awaitable[None]] | None = None,
 ) -> list[dict]:
-    from backend.workers.progress import broadcaster
-    from backend.workers.job_queue import job_queue
+    from backend.ml.prefetch import run_prefetched
 
-    text_feats = _precompute_watermark_text_features(model_entry_dict)
-    results = []
-    total = len(image_paths)
+    # A CUDA `encode_text`, so it goes to the GPU thread like every other GPU call
+    # (PM-035). It used to run here on the event loop's thread, which built a
+    # second set of CUDA handles and blocked the loop while it ran.
+    text_feats = await _device.run_on_gpu(_precompute_watermark_text_features, model_entry_dict)
+    results = await run_prefetched(
+        image_paths,
+        functools.partial(prepare_clip, preprocess=model_entry_dict["preprocess"]),
+        functools.partial(
+            infer_watermark, model_entry=model_entry_dict,
+            text_features=text_feats, watermark_threshold=watermark_threshold,
+        ),
+        job_id=job_id, progress=progress,
+        message="Watermark check", failure="Watermark scoring", log=logger,
+    )
+    # "Nothing measured", not a zero — the technical scorer's contract
+    # (docs/dev/quality/scoring.md § The failure contract). A 0.0 here claimed the
+    # image was confidently watermark-free about a file no decoder read, and it
+    # inflated `score_coverage`. The flag stays False rather than None because
+    # routers/quality.py folds it into a JSON flags dict where None is not
+    # expressible.
+    return [
+        r if r is not None else {"watermark_score": None, "has_watermark": False}
+        for r in results
+    ]
 
-    for i, path in enumerate(image_paths):
-        if job_id and job_queue.cancel_requested(job_id):
-            break
-        try:
-            fn = functools.partial(score_watermark_sync, path, model_entry_dict, text_feats, watermark_threshold)
-            r = await _device.run_on_gpu(fn)
-        except Exception:
-            # "Nothing measured", not a zero — the technical scorer's contract
-            # (docs/dev/quality/scoring.md § The failure contract). A 0.0 here claimed the
-            # image was confidently watermark-free about a file no decoder read,
-            # and it inflated `score_coverage`. The flag stays False rather than
-            # None because routers/quality.py folds it into a JSON flags dict
-            # where None is not expressible. This branch used to log nothing at
-            # all, so a whole run could fail silently.
-            logger.warning("Watermark scoring failed for %s", path, exc_info=True)
-            r = {"watermark_score": None, "has_watermark": False}
-        results.append(r)
 
-        if progress is not None:
-            if i % 10 == 0:
-                await progress(i + 1)
-        elif job_id and i % 10 == 0:
-            await broadcaster.emit(job_id, {
-                "type": "progress", "job_id": job_id, "job_type": "quality_score",
-                "status": "running", "done": i + 1, "total": total,
-                "percent": round((i + 1) / total * 100, 1),
-                "message": f"Watermark check {i + 1}/{total}",
-            })
-
-    return results
+def infer_clip_embedding(tensor: torch.Tensor, model_entry: dict) -> bytes:
+    """Returns L2-normalized float16 numpy bytes, shape (768,) for ViT-L-14."""
+    tensor = tensor.to(_device.get_device())
+    with torch.no_grad():
+        feats = model_entry["clip"].encode_image(tensor)
+        feats = feats / feats.norm(dim=-1, keepdim=True)
+    return feats[0].cpu().numpy().astype(np.float16).tobytes()
 
 
 def extract_clip_embedding_sync(image_path: str, model_entry: dict) -> bytes:
     """Returns L2-normalized float16 numpy bytes, shape (768,) for ViT-L-14."""
-    from backend.ml.image_utils import open_rgb
-    img = open_rgb(image_path)
-    tensor = model_entry["preprocess"](img).unsqueeze(0).to(_device.get_device())
-    img.close()
-    with torch.no_grad():
-        feats = model_entry["clip"].encode_image(tensor)
-        feats = feats / feats.norm(dim=-1, keepdim=True)
-    return feats[0].cpu().numpy().astype(np.float16).tobytes()
+    return infer_clip_embedding(prepare_clip(image_path, model_entry["preprocess"]), model_entry)
 
 
 def extract_clip_embedding_from_bytes_sync(image_bytes: bytes, model_entry: dict) -> bytes:
     """Returns L2-normalized float16 numpy bytes from raw image bytes."""
-    from backend.ml.image_utils import open_rgb_bytes
-    img = open_rgb_bytes(image_bytes)
-    tensor = model_entry["preprocess"](img).unsqueeze(0).to(_device.get_device())
-    img.close()
-    with torch.no_grad():
-        feats = model_entry["clip"].encode_image(tensor)
-        feats = feats / feats.norm(dim=-1, keepdim=True)
-    return feats[0].cpu().numpy().astype(np.float16).tobytes()
+    return infer_clip_embedding(
+        prepare_clip_bytes(image_bytes, model_entry["preprocess"]), model_entry,
+    )
 
 
 async def extract_clip_embeddings_batch(
@@ -172,34 +194,15 @@ async def extract_clip_embeddings_batch(
     job_id: str | None = None,
     progress: Callable[[int], Awaitable[None]] | None = None,
 ) -> list[bytes | None]:
-    from backend.workers.progress import broadcaster
-    from backend.workers.job_queue import job_queue
+    from backend.ml.prefetch import run_prefetched
 
-    results = []
-    total = len(image_paths)
-
-    for i, path in enumerate(image_paths):
-        if job_id and job_queue.cancel_requested(job_id):
-            break
-        try:
-            fn = functools.partial(extract_clip_embedding_sync, path, model_entry_dict)
-            r = await _device.run_on_gpu(fn)
-        except Exception:
-            r = None
-        results.append(r)
-
-        if progress is not None:
-            if i % 10 == 0:
-                await progress(i + 1)
-        elif job_id and i % 10 == 0:
-            await broadcaster.emit(job_id, {
-                "type": "progress", "job_id": job_id, "job_type": "quality_score",
-                "status": "running", "done": i + 1, "total": total,
-                "percent": round((i + 1) / total * 100, 1),
-                "message": f"CLIP embeddings {i + 1}/{total}",
-            })
-
-    return results
+    return await run_prefetched(
+        image_paths,
+        functools.partial(prepare_clip, preprocess=model_entry_dict["preprocess"]),
+        functools.partial(infer_clip_embedding, model_entry=model_entry_dict),
+        job_id=job_id, progress=progress,
+        message="CLIP embeddings", failure="CLIP embedding", log=logger,
+    )
 
 
 async def score_images_batch(
@@ -223,43 +226,24 @@ async def score_images_batch(
     itself (`.model` + `.processor`). The default keeps every existing caller
     unchanged.
     """
-    from backend.workers.progress import broadcaster
-    from backend.workers.job_queue import job_queue
+    from backend.ml.prefetch import run_prefetched
 
     if model == "v2_5":
         # Imported inside the branch so a LAION run never imports the package.
-        from backend.ml.aesthetic_v2_5_scorer import score_image_v2_5_sync
-        score_one = score_image_v2_5_sync
+        from backend.ml.aesthetic_v2_5_scorer import infer_v2_5, prepare_v2_5
+        prepare = functools.partial(prepare_v2_5, processor=model_handle.processor)
+        infer = functools.partial(infer_v2_5, model_entry=model_handle)
     else:
-        score_one = score_image_sync
+        prepare = functools.partial(prepare_clip, preprocess=model_handle["preprocess"])
+        infer = functools.partial(infer_aesthetic, model_entry=model_handle)
 
-    scores: list[float | None] = []
-    total = len(image_paths)
-
-    for i, path in enumerate(image_paths):
-        if job_id and job_queue.cancel_requested(job_id):
-            break
-        try:
-            score = await _device.run_on_gpu(score_one, path, model_handle)
-        except Exception:
-            # NULL, not 0.0 — the technical scorer's failure contract
-            # (docs/dev/quality/scoring.md § The failure contract). `aesthetic_score` is
-            # a 1–10 column, so 0.0 was not merely a wrong measurement but an
-            # out-of-range one, and it sorted the failure to the bottom of every
-            # "worst first" view as though it had been judged.
-            logger.warning("Aesthetic scoring failed for %s", path, exc_info=True)
-            score = None
-        scores.append(score)
-
-        if progress is not None:
-            if i % 10 == 0:
-                await progress(i + 1)
-        elif job_id and i % 10 == 0:
-            await broadcaster.emit(job_id, {
-                "type": "progress", "job_id": job_id, "job_type": "quality_score",
-                "status": "running", "done": i + 1, "total": total,
-                "percent": round((i + 1) / total * 100, 1),
-                "message": f"Scoring image {i + 1}/{total}",
-            })
-
-    return scores
+    # A failure is NULL, not 0.0 — the technical scorer's failure contract
+    # (docs/dev/quality/scoring.md § The failure contract). `aesthetic_score` is a
+    # 1–10 column, so 0.0 was not merely a wrong measurement but an out-of-range
+    # one, and it sorted the failure to the bottom of every "worst first" view as
+    # though it had been judged.
+    return await run_prefetched(
+        image_paths, prepare, infer,
+        job_id=job_id, progress=progress,
+        message="Scoring image", failure="Aesthetic scoring", log=logger,
+    )

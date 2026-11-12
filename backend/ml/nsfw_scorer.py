@@ -12,17 +12,22 @@ _MODEL_NAME = "Marqo/nsfw-image-detection-384"
 _INPUT_SIZE = 384
 
 
-def score_image_sync(image_path: str, model_entry: dict) -> float:
-    """Return NSFW probability (0–1) for the image at image_path."""
+def prepare_nsfw(image_path: str, processor) -> dict[str, torch.Tensor]:
+    """CPU half (M10 T5, `backend/ml/prefetch.py`): the processor's inputs, still
+    on the CPU."""
     from backend.ml.image_utils import open_rgb
 
-    processor = model_entry["processor"]
+    img = open_rgb(image_path)
+    try:
+        return dict(processor(images=img, return_tensors="pt"))
+    finally:
+        img.close()
+
+
+def infer_nsfw(inputs: dict[str, torch.Tensor], model_entry: dict) -> float:
+    """GPU half: the NSFW probability (0–1)."""
     model = model_entry["model"]
     nsfw_idx = model_entry["nsfw_idx"]
-
-    img = open_rgb(image_path)
-    inputs = processor(images=img, return_tensors="pt")
-    img.close()
 
     inputs = {k: v.to(_device.get_device()) for k, v in inputs.items()}
 
@@ -31,6 +36,11 @@ def score_image_sync(image_path: str, model_entry: dict) -> float:
         probs = logits.softmax(dim=-1)[0]
 
     return round(float(probs[nsfw_idx].item()), 4)
+
+
+def score_image_sync(image_path: str, model_entry: dict) -> float:
+    """Return NSFW probability (0–1) for the image at image_path."""
+    return infer_nsfw(prepare_nsfw(image_path, model_entry["processor"]), model_entry)
 
 
 async def score_images_nsfw_batch(
@@ -43,50 +53,28 @@ async def score_images_nsfw_batch(
     """Score a batch of images for NSFW content, emitting SSE progress.
 
     Returns a list of dicts with keys: nsfw_score (float | None), is_nsfw (bool).
-    `nsfw_score` is None for an image that could not be scored — see the failure
-    contract in the except branch below.
+    `nsfw_score` is None for an image that could not be scored — NULL, not 0.0,
+    the technical scorer's failure contract (docs/dev/quality/scoring.md § The
+    failure contract). A 0.0 asserted the image was confidently safe about a file
+    no decoder ever read, which is the wrong direction to guess in, and it counted
+    toward `score_coverage` so nothing flagged the gap.
     """
-    from backend.workers.progress import broadcaster
-    from backend.workers.job_queue import job_queue
+    from backend.ml.prefetch import run_prefetched
 
-    results = []
-    total = len(image_paths)
-
-    for i, path in enumerate(image_paths):
-        if job_id and job_queue.cancel_requested(job_id):
-            break
-        try:
-            fn = functools.partial(score_image_sync, path, model_entry)
-            score = await _device.run_on_gpu(fn)
-        except Exception:
-            # NULL, not 0.0 — the technical scorer's failure contract
-            # (docs/dev/quality/scoring.md § The failure contract). A 0.0 asserted the
-            # image was confidently safe about a file no decoder ever read, which
-            # is the wrong direction to guess in, and it counted toward
-            # `score_coverage` so nothing flagged the gap.
-            logger.warning("NSFW scoring failed for %s", path, exc_info=True)
-            score = None
-        results.append({
+    scores = await run_prefetched(
+        image_paths,
+        functools.partial(prepare_nsfw, processor=model_entry["processor"]),
+        functools.partial(infer_nsfw, model_entry=model_entry),
+        job_id=job_id, progress=progress,
+        message="NSFW scoring", failure="NSFW scoring", log=logger,
+    )
+    return [
+        {
             "nsfw_score": score,
             # False rather than None: routers/quality.py folds this into a JSON
             # flags dict where None is not expressible. An unmeasured image is
             # simply not flagged.
             "is_nsfw": score is not None and score >= threshold,
-        })
-
-        if progress is not None:
-            if i % 10 == 0:
-                await progress(i + 1)
-        elif job_id and i % 10 == 0:
-            await broadcaster.emit(job_id, {
-                "type": "progress",
-                "job_id": job_id,
-                "job_type": "quality_score",
-                "status": "running",
-                "done": i + 1,
-                "total": total,
-                "percent": round((i + 1) / total * 100, 1),
-                "message": f"NSFW scoring {i + 1}/{total}",
-            })
-
-    return results
+        }
+        for score in scores
+    ]

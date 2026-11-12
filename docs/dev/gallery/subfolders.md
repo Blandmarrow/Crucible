@@ -29,7 +29,7 @@ The `(root)` row renders **whenever the sidebar does**, even at count 0: `rootEn
 ## The subfolder row context menu
 
 Right-clicking a **named** subfolder row opens the shared `ContextMenu`
-(`components/common/ContextMenu.tsx` — see `docs/dev/styling.md` § Context menu). State
+(`components/common/ContextMenu.tsx` — see `docs/dev/menus-popovers.md` § Context menu). State
 is `folderMenu: {x, y, node}`, and the menu renders with the other overlays after
 `</DndContext>` rather than inside `renderSubfolderNode`, whose node can collapse out
 from under it.

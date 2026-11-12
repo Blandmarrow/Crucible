@@ -269,7 +269,7 @@ the user in Firefox for what only a browser shows. Prod's data was never written
 Fixed that day, each with a regression test, under rulings by the user:
 - **`ContextMenu` keeps a disabled item focusable but inert.** A folder's menu during a run
   had every item disabled, so nothing took focus and the arrows were dead
-  (`docs/dev/styling.md`).
+  (`docs/dev/menus-popovers.md`).
 - **The library panel's selection actions keep a fixed slot**, as the rows bar's did on
   2026-11-05: the block appeared on the first tick and pushed the tree down
   (`docs/dev/comfyui/library-dnd.md`).

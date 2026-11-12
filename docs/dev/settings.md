@@ -57,7 +57,7 @@ Nothing here is a `ThresholdSettings` field — the vocabulary is its own table 
 `/labels`, and every edit saves immediately rather than through the page-level Save
 button. See `docs/dev/labels-ui.md` for the panel and `docs/dev/labels.md` for the `/labels` endpoints it calls.
 
-**Recolouring** is a per-row swatch button opening a `usePopover` panel (`docs/dev/styling.md`
+**Recolouring** is a per-row swatch button opening a `usePopover` panel (`docs/dev/menus-popovers.md`
 § Anchored popovers) — twenty swatches in the shared `SwatchGrid`, which the create form
 above the list renders too so the two palettes cannot drift, plus a Custom
 `input[type=color]`. Two rules govern that input, and neither is optional. It commits **on

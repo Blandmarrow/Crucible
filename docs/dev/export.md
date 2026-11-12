@@ -45,7 +45,7 @@ Export page's control is the gallery's minus the tallies — the same `LabelPick
 Any/All toggle, the "Unlabelled only" option and the vocabulary bounds-check on a restored
 preset, but no `counts` prop, so its rows carry no per-label image count the way the
 gallery's do. It is `placement="inline"`: the page body is `overflowY: auto` and would clip
-an absolutely positioned panel (`docs/dev/styling.md` § Anchored popovers).
+an absolutely positioned panel (`docs/dev/menus-popovers.md` § Anchored popovers).
 
 Validation is **shared with the image endpoints**, not re-implemented: all four
 handlers (the three POSTs and `preview`) call `utils.validate_label_filter_params`,

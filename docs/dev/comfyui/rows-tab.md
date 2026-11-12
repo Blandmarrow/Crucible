@@ -139,7 +139,7 @@ another tab means going back to Rows.
     reason as the tooltip. The server refuses them anyway (409). While the plan runs every
     folder write is disabled the same way.
   - `ContextMenu` gained `disabled` and `title` for this: `aria-disabled` rather than
-    `disabled`, since a disabled button shows no tooltip (`docs/dev/styling.md`).
+    `disabled`, since a disabled button shows no tooltip (`docs/dev/menus-popovers.md`).
   - A rename or move re-points the stored collapsed paths (`repath`) and the folder filter;
     a delete clears a filter inside it. Every folder write invalidates rows, the plan, the
     plan list, prompts and the blueprint preview.

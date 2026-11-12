@@ -17,7 +17,7 @@ gallery's label filter control itself is `docs/dev/gallery/filters.md` § Galler
 | `src/hooks/useLabels.ts` | `useLabels`: `useQuery(["labels"], staleTime 5 min)` + memoized `byId`/`byHotkey`, and `isLoaded` (the query's `isSuccess`) for the bounds checks below. `useAssignImageLabels(imageId)`: the one assign mutation for a single image, shared by the hotkeys and the detail panel — see § Hotkeys |
 | `src/components/settings/LabelsPanel.tsx` | The Settings tab body — the 20-colour palette, inline rename, hotkey capture, up/down reorder, delete via `ConfirmDialog` naming `usage_count` |
 | `src/components/settings/HotkeyCaptureButton.tsx` | Captures the next keypress while focused |
-| `src/components/common/LabelPicker.tsx` | `LabelCheckList` (searchable checkbox list + `footer` slot) and `LabelPicker` (the same behind a trigger). The one control behind all four picking surfaces — see `docs/dev/styling.md` § Anchored popovers, including why `placement` is not a style choice |
+| `src/components/common/LabelPicker.tsx` | `LabelCheckList` (searchable checkbox list + `footer` slot) and `LabelPicker` (the same behind a trigger). The one control behind all four picking surfaces — see `docs/dev/menus-popovers.md` § Anchored popovers, including why `placement` is not a style choice |
 | `src/components/image/LabelsPanel.tsx` | Detail-page block: removable chips + an inline `LabelPicker`, one `assign` per tick through `useAssignImageLabels` |
 | `src/components/gallery/LabelsBulkModal.tsx` | Dumb modal (form state only) with *Add* and *Remove* `LabelCheckList`s |
 | `src/utils/keyboard.ts` | `isTextEntryTarget(e)`, adopted by both of `ImageDetailPage`'s pre-existing keydown effects |

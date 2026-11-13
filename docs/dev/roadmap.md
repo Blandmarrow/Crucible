@@ -31,17 +31,15 @@ restates its stages.
    linking the record that holds the full text.
 5. **Landed**: one line per finished milestone or handoff record.
 
-## Next session (updated 2026-11-13, scoring doc split)
+## Next session (updated 2026-11-13, scoring doc split merged)
 
 1. **M7 Stage 3 is next** (see Now). It waits on nothing.
 2. **The CLIP QuickGELU fix is merged** (PR #154,
    [decision 17](decisions/17-clip-quickgelu-fix.md)). Left for the user, on their own
    install: start it with `manage start` to run the migration, which backs the database up
    first, then re-embed, re-check watermarks and re-score LAION from the Quality page.
-3. **`docs/scoring.md` is split** on `docs/split-scoring`: § Quality flags, § Stale scores
-   and § Choosing the aesthetic model moved to `docs/reading-scores.md`. Merge its PR.
-4. M4 stays held, with its merge checklist under Waiting. The previous block's closed item is
-   in [roadmap-archive/handoff-2026-11-13.md](roadmap-archive/handoff-2026-11-13.md#next-session-updated-2026-11-13-clip-fix-merged).
+3. M4 stays held, with its merge checklist under Waiting. The previous block's closed item is
+   in [roadmap-archive/handoff-2026-11-13.md](roadmap-archive/handoff-2026-11-13.md#next-session-updated-2026-11-13-scoring-doc-split).
 
 ## Now
 

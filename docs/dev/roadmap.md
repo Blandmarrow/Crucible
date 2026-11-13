@@ -31,22 +31,81 @@ restates its stages.
    linking the record that holds the full text.
 5. **Landed**: one line per finished milestone or handoff record.
 
-## Next session (updated 2026-11-13, crop box fix merged)
+## Next session (updated 2026-11-13, enhancement issues ordered first)
 
-1. **M7 Stage 3 is next** (see Now). It waits on nothing. Issue #91's crop box fix merged
-   as PR #156 and closed the issue; one gap is left open, EXIF orientation in a PNG or WebP
-   (`docs/dev/image-detail.md` § The crop box).
+1. **M11 is next** (see Now): the open enhancement issues, which the user ordered ahead of
+   everything else. Start with #24, the smallest. #48 waits on a question to its reporter,
+   and #19 on the user picking a light palette. M7's Stage 3 waits behind M11, under
+   Waiting.
 2. **The CLIP QuickGELU fix is merged** (PR #154,
    [decision 17](decisions/17-clip-quickgelu-fix.md)). Left for the user, on their own
    install: start it with `manage start` to run the migration, which backs the database up
    first, then re-embed, re-check watermarks and re-score LAION from the Quality page.
 3. M4 stays held, with its merge checklist under Waiting. The previous block's closed item is
-   in [roadmap-archive/handoff-2026-11-13.md](roadmap-archive/handoff-2026-11-13.md#next-session-updated-2026-11-13-crop-box-fix-in-progress).
+   in [roadmap-archive/handoff-2026-11-13.md](roadmap-archive/handoff-2026-11-13.md#next-session-updated-2026-11-13-crop-box-fix-merged).
 
 ## Now
 
+### M11 — Open enhancement issues
+
+Ordered first by the user on 2026-11-13, ahead of M7's Stage 3 (now under Waiting). It holds
+every open GitHub issue labelled `enhancement` except #90, which stays parked under Later.
+Each issue holds the *what*; a box adds only the code pointer found when the issues were
+reviewed. Gate: each box ships with its user docs (`README.md` and the matching
+`docs/*.md`), on its own branch unless it says otherwise. The two design-first items get a
+plan folder and are expanded here before any code. The tiers are the order.
+
+Tier 1, small:
+
+- [ ] #24 Remove captions: a `clear` operation for caption bulk edit. Today's `remove`
+  (`BulkEditRequest` in `backend/schemas/caption.py`) strips a piece of text, not the whole
+  caption. To decide: whether a cleared caption empties its `.txt` sidecar or deletes it.
+- [ ] #105 Re-caption with the existing caption: `/pipeline` fills `{previous_caption}` only
+  when `step_idx > 0` (`backend/routers/captioning.py`). Lift that, then add a "fix this
+  caption" box on the detail page that sends the current caption plus a correction note.
+  LLM captioners only.
+- [ ] #48 Toggle thumbnails: ask the reporter what the problem is first. The likely fix is a
+  thumbnail size setting (today `thumbnail_size = 256` in `backend/config.py`, set only by
+  environment variable) plus the existing Rebuild thumbnails job. Full resolution in the
+  gallery as an opt-in at most; thumbnails stay on, since other views depend on them.
+
+Tier 2, medium:
+
+- [ ] #9 Duplicates across datasets: a read-only report job. The `phash` scan
+  (`find_duplicates_sync` in `backend/ml/technical_scorer.py`) already scales; the duplicate
+  flag stays per dataset and the report writes none (CLAUDE.md § Key invariants, PM-022).
+- [ ] #16 Keyboard navigation: the file browser first (arrows, Enter, Backspace). Only
+  `ContextMenu` handles arrow keys today. The rest of the app is a separate box, added once
+  this lands.
+- [ ] #19 Light mode: a second set of the colour tokens on `:root` in
+  `frontend/src/index.css`, a setting to switch, then the hard-coded colours moved onto
+  tokens: about 160 hex or rgba values in `.tsx` files and about 200 fixed gray, white or
+  black classes in 15 files, plus the shadows and the brand mark (`scripts/check_mark.py`).
+  Waits on the user picking a light palette. The token conversion suits `delegate-to-loop`.
+
+Tier 3, captioning helpers, one batch:
+
+- [ ] #45 Other images' captions: a similar-images panel on the detail page, ranked by
+  shared tags first and by the stored CLIP or DINO vectors later.
+- [ ] #50 Check for a better tag: post counts and aliases through the booru routes
+  (`/search` and `/autocomplete` in `backend/routers/booru.py`). Overlaps
+  `TagConsolidatePage`.
+- [ ] #52 Synonyms: an offline WordNet lookup, a Settings toggle, and a popover in the
+  caption editor. Check WordNet's licence before adding it.
+
+Tier 4, design first:
+
+- [ ] #130 Better comparisons: a design pass. Candidates: zoom and pan kept in sync across 2
+  to 4 images, a swipe or overlay A/B view, and a contact sheet export.
+- [ ] #129 Chat with an LLM: a plan folder. Read-only tools first, writes behind a
+  confirmation, and the paid-call cap applies; weak tool calling in local models is the main
+  risk. Large enough to become its own milestone when it is expanded.
+
+## Waiting
+
 ### M7 — Style embedding
 
+Waits on M11, by the user's ordering of 2026-11-13; nothing else blocks it.
 Gate: the layer and blend change merged with its docs, then the remaining stages expanded here
 in their plan's order. Plan: [style-embedding-plan/README.md](style-embedding-plan/README.md).
 Stage 2 there (DINOv3) is not built, by
@@ -75,8 +134,6 @@ Stage 2 there (DINOv3) is not built, by
   the Quality page's coverage line and the Stats page's Aesthetic tile, with no page errors.
 - [ ] Stage 3: dense features for prompt-free subject masks. Untested; separate from style
   scoring.
-
-## Waiting
 
 ### M4 — Rating feature (held)
 

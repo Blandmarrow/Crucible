@@ -171,6 +171,14 @@ Each line links the record that holds the full text.
   orientation tag in a PNG or WebP, which Pillow honours, is not confirmed to be applied
   by every browser; one that ignores it would crop the wrong region
   (`docs/dev/image-detail.md` § The crop box, PR #156).
+- Face similarity (issue #90), researched 2026-11-13 and parked by the user. The pick is
+  YuNet to find faces and SFace to compare them. Both are built into OpenCV, so there is no
+  new dependency, and their weights are MIT and Apache-2.0. InsightFace was rejected because
+  its weights are for non-commercial use only. In a trial on LFW, a standard set of face
+  photos, SFace separated each of six people perfectly from 1,500 others. On this
+  dataset's anime frames it could not tell the characters apart, though YuNet still found
+  the faces. The plan follows style similarity's two steps: store the face vectors in a
+  scoring job, then run a fast pass against reference faces.
 
 ## Landed
 

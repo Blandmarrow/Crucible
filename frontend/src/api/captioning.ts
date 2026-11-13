@@ -50,7 +50,7 @@ export interface PipelineStep {
   model: string;
   style: string;
   custom_prompt: string;
-  overwrite: boolean;
+  // No `overwrite`: a pipeline's scope is the request's `overwrite` below (PM-038).
   append_tags: boolean;
   strip_refusals: boolean;
   strip_thinking?: boolean;
@@ -69,6 +69,10 @@ export interface CaptionPipelineParams {
   image_ids?: string[];
   subfolder?: string;
   steps: PipelineStep[];
+  /** False takes only uncaptioned images when step 1 overwrites (`CaptionPipelineRequest`).
+   *  Required, unlike the backend's default, so no caller can leave the scope to chance:
+   *  the page sends `scope !== "uncaptioned"`, the same as its single-step `/run`. */
+  overwrite: boolean;
   // No save_backup / rename_on_caption: a pipeline does not support them yet,
   // and the backend answers 422 to `true` (`CaptionPipelineRequest`).
   min_aesthetic_score?: number;

@@ -75,4 +75,12 @@ Available from: the **Remove Watermark** button in the Image Detail page toolbar
 
 ### Crop
 
-- **Crop** — by default creates a new image record (non-destructive); toggle **Replace** to overwrite the source instead; choose aspect ratio, anchor point, and optional output pixel dimensions; supports atomic crop + upscale in one step. Replace + upscale on a BMP/GIF/TIFF/AVIF saves as PNG (above); it is refused with a message naming the file if something untracked already occupies that name
+The **Crop** button in the Image Detail page toolbar draws a box over the image:
+
+- **Shape the box** — drag inside it to move it, drag an edge or corner to resize it. The arrow keys nudge it too, once you click it
+- **Aspect ratio** — **Free** lets you resize width and height on their own; a preset (1:1, 4:3, 16:9, 3:2, 9:16) keeps the box in that shape while you drag. Picking a preset reshapes the box you have around its centre
+- **Exact numbers** — the **Box** row under the toolbar shows the box's X, Y, W and H in the image's own pixels. Type into them for an exact crop; with a preset on, typing W sets H to match, and the other way round
+- **Resize to** — optional output size. The cropped part is scaled to it after cutting. Fill in only W or only H to keep the shape; fill in both and the box locks to that shape, so the result is never stretched
+- **Where it goes** — by default the crop is saved as a new image (`{name}_crop`) and the page opens it; tick **Replace** to overwrite the source instead
+- **Crop + upscale** — pick an upscale model to crop and upscale in one step. Replace + upscale on a BMP/GIF/TIFF/AVIF saves as PNG (above); it is refused with a message naming the file if something untracked already occupies that name
+- **Crop from Detections** opens the tool with the box around the image's visible detections → [details](detection.md#managing-detections)

@@ -29,6 +29,66 @@ export function captionBackend(model: string): string | null {
   return null;
 }
 
+/**
+ * Whether a model reads a custom prompt: the backends whose `caption_image` takes
+ * `custom_prompt` (JoyCaption, Ollama, OpenAI-compatible). Florence-2, PaliGemma-2
+ * and WD14 ignore it, so a prompt box, a `{previous_caption}` toggle or the detail
+ * page's Fix mode offered for them would be a silent no-op.
+ *
+ * Built on `captionBackend`, never on `modelType` — see the note above.
+ */
+export function takesPrompt(model: string): boolean {
+  const backend = captionBackend(model);
+  return backend === "joycaption_" || backend === "ollama:" || backend === "openai_compat:";
+}
+
+/** The placeholder the backend fills with the image's caption (`_resolve_prompt`). */
+export const PREVIOUS_CAPTION = "{previous_caption}";
+
+/**
+ * The instruction an "Include … caption" toggle sends when the prompt box is empty. A
+ * custom prompt *replaces* the style preset in every prompt-taking backend, so the bare
+ * placeholder would send the caption alone, with no instruction at all.
+ */
+const REFINE_PROMPT = [
+  "Here is an existing caption for this image:",
+  "",
+  PREVIOUS_CAPTION,
+  "",
+  "Write an improved caption for the image, keeping what the existing caption gets right. " +
+    "Reply with the caption only.",
+].join("\n");
+
+/**
+ * `prompt` with `{previous_caption}` added when `on` and the prompt does not already
+ * place it — the Captioning page's "Include … caption" toggles, step 1 and later steps,
+ * and the Runs page's fill from that page. An empty prompt becomes `REFINE_PROMPT`.
+ */
+export function withPreviousCaption(prompt: string, on: boolean): string {
+  if (!on || prompt.includes(PREVIOUS_CAPTION)) return prompt;
+  return prompt.trim() ? `${prompt}\n\n${PREVIOUS_CAPTION}` : REFINE_PROMPT;
+}
+
+/**
+ * The detail page's Fix mode prompt (#105): a fixed template around the user's note.
+ * The backend fills `{previous_caption}` from the stored caption, which Fix saves first
+ * when the draft is dirty, so the model sees what the user sees.
+ */
+export function buildFixPrompt(note: string): string {
+  return [
+    "Here is the current caption for this image:",
+    "",
+    PREVIOUS_CAPTION,
+    "",
+    "A person checked it against the image and says it needs this correction:",
+    "",
+    note.trim(),
+    "",
+    "Rewrite the caption so it fixes this. Keep everything else that is accurate, and " +
+      "keep the same format, style and length. Reply with the caption only.",
+  ].join("\n");
+}
+
 export type CaptionModelOption = { id: string; label: string; group: string };
 
 /**

@@ -21,7 +21,9 @@ The export's **Has caption** filter is ticked to start with, so an image with no
 is left out. A custom resize is a whole number from 1 to 16384; a blank one counts as 1024.
 
 Each section has a **Fill from the Captioning page** or **Fill from the Export page**
-button. It copies what that page last used, and you can change anything after. Without
+button. It copies what that page last used, and you can change anything after. If the
+Captioning page's **Include current caption** box was ticked, the copied prompt already
+contains `{previous_caption}` (see [Building on the current caption](captioning.md#building-on-the-current-caption)). Without
 it, the form starts from the usual defaults. A run keeps its settings once started, so
 changing those pages later does not change a run in progress.
 

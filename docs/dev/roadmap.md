@@ -31,13 +31,16 @@ restates its stages.
    linking the record that holds the full text.
 5. **Landed**: one line per finished milestone or handoff record.
 
-## Next session (updated 2026-11-13, #24 and the button fix merged)
+## Next session (updated 2026-11-13, #105 merged)
 
-1. **M11 continues** (see Now) with #105. #48 waits on a question to its reporter, and #19
-   on the user picking a light palette. M7's Stage 3 waits behind M11, under Waiting.
-2. M4 stays held, with its merge checklist under Waiting. The previous block's closed item,
-   #24's PR and the button-colour fix found alongside it, is in
-   [roadmap-archive/handoff-2026-11-13.md](roadmap-archive/handoff-2026-11-13.md#next-session-updated-2026-11-13-24-built).
+1. **M11 goes on with Tier 2** (see Now): #9, #16, then #19. #48 waits on a question to its
+   reporter, and #19 on the user picking a light palette. M7's Stage 3 waits behind M11,
+   under Waiting.
+2. **A bug found while building #105**, under Later: a pipeline run ignores the
+   *Uncaptioned only* scope. It wants the user's call on whether it jumps the M11 queue.
+3. M4 stays held, with its merge checklist under Waiting. The closed item of the previous
+   block, #105's PR, is in
+   [roadmap-archive/handoff-2026-11-13.md](roadmap-archive/handoff-2026-11-13.md#next-session-updated-2026-11-13-105-built).
 
 ## Now
 
@@ -56,10 +59,11 @@ Tier 1, small:
   PR #157, which closed the issue. The user chose to delete a cleared caption's
   `.txt`, and to make that the rule for every path that empties a caption
   (`docs/dev/image-import.md` § Caption sidecars).
-- [ ] #105 Re-caption with the existing caption: `/pipeline` fills `{previous_caption}` only
-  when `step_idx > 0` (`backend/routers/captioning.py`). Lift that, then add a "fix this
-  caption" box on the detail page that sends the current caption plus a correction note.
-  LLM captioners only.
+- [x] #105 Re-caption with the existing caption: merged 2026-11-13 as PR #159, which closed
+  the issue. `{previous_caption}` now works on every pipeline step and on `/run`, the
+  detail page's AI panel has a Fix current mode, and the Captioning page's step 1 has an
+  "Include current caption" toggle (`docs/dev/captioning.md` § The `{previous_caption}`
+  placeholder).
 - [ ] #48 Toggle thumbnails: ask the reporter what the problem is first. The likely fix is a
   thumbnail size setting (today `thumbnail_size = 256` in `backend/config.py`, set only by
   environment variable) plus the existing Rebuild thumbnails job. Full resolution in the
@@ -224,6 +228,10 @@ Each line links the record that holds the full text.
   orientation tag in a PNG or WebP, which Pillow honours, is not confirmed to be applied
   by every browser; one that ignores it would crop the wrong region
   (`docs/dev/image-detail.md` § The crop box, PR #156).
+- A pipeline run ignores the Captioning page's *Uncaptioned only* scope. `/pipeline`'s scope
+  query has no empty-caption filter and `PipelineStep.overwrite` is never read, so a run of
+  two or more steps rewrites captioned images too, where a one-step run skips them. Found
+  while building #105 (2026-11-13); `docs/dev/captioning.md` § Captioning post-processing.
 - Face similarity (issue #90), researched 2026-11-13 and parked by the user. The pick is
   YuNet to find faces and SFace to compare them. Both are built into OpenCV, so there is no
   new dependency, and their weights are MIT and Apache-2.0. InsightFace was rejected because

@@ -18,7 +18,7 @@ import ModelPicker from "../components/providers/ModelPicker";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import type { ModelInfo, OllamaModel, Wd14ModelInfo } from "../types";
 import { STYLE_LABELS, modelType } from "../constants/captionStyles";
-import { captionBackend, captionModelIds } from "../constants/captionModels";
+import { captionBackend, captionModelIds, takesPrompt, withPreviousCaption } from "../constants/captionModels";
 import { FLAG_OPTIONS } from "../constants/flags";
 import {
   CAPTION_DEFAULT_MODEL_KEY,
@@ -270,6 +270,7 @@ function CaptioningForm({ saved }: { saved: Partial<CaptioningWorkflow> | null }
       : (localStorage.getItem(CAPTION_DEFAULT_STYLE_KEY) ?? CAPTIONING_WORKFLOW_DEFAULTS.style)
   );
   const [customPrompt, setCustomPrompt] = useState(workflow.customPrompt);
+  const [usePreviousCaption, setUsePreviousCaption] = useState(workflow.usePreviousCaption ?? false);
   const [wd14Threshold, setWd14Threshold] = useState(workflow.wd14Threshold);
   const [targetWidth, setTargetWidth] = useState<number | null>(workflow.targetWidth);
   const [targetHeight, setTargetHeight] = useState<number | null>(workflow.targetHeight);
@@ -416,7 +417,7 @@ function CaptioningForm({ saved }: { saved: Partial<CaptioningWorkflow> | null }
 
   // Persist the "workflow" config (model/prompt/style/toggles/pipeline) — global, debounced.
   const rebaselineWorkflow = useDebouncedPersist(CAPTIONING_WORKFLOW_PATH, {
-    selectedModel, providerModelInput, style, customPrompt, wd14Threshold,
+    selectedModel, providerModelInput, style, customPrompt, usePreviousCaption, wd14Threshold,
     targetWidth, targetHeight, scope, delimiterMode, delimiterParts,
     stripRefusals, stripThinking, stripUnderscores, stripHedges, dedupeTags,
     saveBackup, renameOnCaption,
@@ -500,11 +501,18 @@ function CaptioningForm({ saved }: { saved: Partial<CaptioningWorkflow> | null }
     onSettled: () => qc.invalidateQueries({ queryKey: ["captioning-models"] }),
   });
 
+  // Step 1's "Include current caption" only applies where it can mean something: a model
+  // that reads a prompt, and a scope that can hold captioned images. `/run` queues only
+  // empty captions for Uncaptioned *with Overwrite*; append and prepend take every image.
+  const step1CaptionsEmpty = scope === "uncaptioned" && delimiterMode === "overwrite";
+  const step1IncludesCaption = usePreviousCaption && takesPrompt(resolvedModel) && !step1CaptionsEmpty;
+  const step1Prompt = withPreviousCaption(customPrompt, step1IncludesCaption);
+
   function buildStep1(): PipelineStep {
     return {
       model: resolvedModel,
       style: isWd14 ? "tags" : style,
-      custom_prompt: customPrompt,
+      custom_prompt: step1Prompt,
       overwrite: scope === "all",
       append_tags: true,
       strip_refusals: stripRefusals,
@@ -524,10 +532,7 @@ function CaptioningForm({ saved }: { saved: Partial<CaptioningWorkflow> | null }
     const isStepWd14 = s.model.startsWith("wd14:");
     const isStepOAI = s.model.startsWith("openai_compat:");
     const stepModel = isStepOAI ? resolveModelId(s.model, s.providerModelInput) : s.model;
-    let custom_prompt = s.customPrompt;
-    if (s.usePreviousCaption && !custom_prompt.includes("{previous_caption}")) {
-      custom_prompt = custom_prompt ? `${custom_prompt}\n\n{previous_caption}` : "{previous_caption}";
-    }
+    const custom_prompt = withPreviousCaption(s.customPrompt, s.usePreviousCaption && takesPrompt(stepModel));
     return {
       model: stepModel,
       style: isStepWd14 ? "tags" : s.style,
@@ -592,7 +597,7 @@ function CaptioningForm({ saved }: { saved: Partial<CaptioningWorkflow> | null }
         model: resolvedModel,
         style: isWd14 ? "tags" : style,
         overwrite: scope !== "uncaptioned",
-        custom_prompt: customPrompt,
+        custom_prompt: step1Prompt,
         image_ids: scope === "selected" ? selectedIdsForDataset : undefined,
         subfolder: scope !== "selected" ? activeSubfolder : undefined,
         ...(targetWidth && targetHeight ? { target_width: targetWidth, target_height: targetHeight } : {}),
@@ -712,6 +717,7 @@ function CaptioningForm({ saved }: { saved: Partial<CaptioningWorkflow> | null }
     // Fields with no Settings-configured default — reset to hardcoded defaults.
     setProviderModelInput(CAPTIONING_WORKFLOW_DEFAULTS.providerModelInput);
     setCustomPrompt(CAPTIONING_WORKFLOW_DEFAULTS.customPrompt);
+    setUsePreviousCaption(CAPTIONING_WORKFLOW_DEFAULTS.usePreviousCaption);
     setWd14Threshold(CAPTIONING_WORKFLOW_DEFAULTS.wd14Threshold);
     setTargetWidth(CAPTIONING_WORKFLOW_DEFAULTS.targetWidth);
     setTargetHeight(CAPTIONING_WORKFLOW_DEFAULTS.targetHeight);
@@ -927,15 +933,44 @@ function CaptioningForm({ saved }: { saved: Partial<CaptioningWorkflow> | null }
                 <div className="form-row">
                   <div className="lbl-col">
                     <h4>Prompt</h4>
-                    <p>Override the default model prompt. Used by Ollama and OpenAI-compatible models.</p>
+                    <p>
+                      Override the default model prompt. Used by Ollama and OpenAI-compatible models.
+                      Use <span className="mono" style={{ fontSize: 11 }}>{"{previous_caption}"}</span> to
+                      insert each image's current caption.
+                    </p>
                   </div>
-                  <textarea
-                    className="input"
-                    style={{ height: 80 }}
-                    value={customPrompt}
-                    onChange={(e) => setCustomPrompt(e.target.value)}
-                    placeholder="Leave blank to use the style preset prompt…"
-                  />
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {takesPrompt(resolvedModel) && (
+                      <label
+                        style={{
+                          display: "flex", alignItems: "center", gap: 6, fontSize: 12.5,
+                          cursor: step1CaptionsEmpty ? "default" : "pointer",
+                          opacity: step1CaptionsEmpty ? 0.55 : 1,
+                        }}
+                        title={step1CaptionsEmpty
+                          ? "With Uncaptioned only and Overwrite, every image in scope has an empty caption. Pick Selected or All, or Append or Prepend, to use this."
+                          : "Adds each image's current caption to the prompt. With the prompt box empty, asks the model to improve it."}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={usePreviousCaption}
+                          disabled={step1CaptionsEmpty}
+                          onChange={(e) => setUsePreviousCaption(e.target.checked)}
+                        />
+                        Include current caption
+                        {step1CaptionsEmpty && (
+                          <span style={{ color: "var(--fg-dim)", fontSize: 11 }}>— needs Selected or All</span>
+                        )}
+                      </label>
+                    )}
+                    <textarea
+                      className="input"
+                      style={{ height: 80 }}
+                      value={customPrompt}
+                      onChange={(e) => setCustomPrompt(e.target.value)}
+                      placeholder="Leave blank to use the style preset prompt…"
+                    />
+                  </div>
                 </div>
               )}
 
@@ -1591,14 +1626,16 @@ function PipelineStepCard({
                 <p>Use <span className="mono" style={{ fontSize: 11 }}>{"{previous_caption}"}</span> to reference the previous step's output.</p>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, cursor: "pointer" }}>
-                  <input
-                    type="checkbox"
-                    checked={step.usePreviousCaption}
-                    onChange={(e) => onChange({ usePreviousCaption: e.target.checked })}
-                  />
-                  Include previous caption
-                </label>
+                {takesPrompt(step.model) && (
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={step.usePreviousCaption}
+                      onChange={(e) => onChange({ usePreviousCaption: e.target.checked })}
+                    />
+                    Include previous caption
+                  </label>
+                )}
                 <textarea
                   className="input"
                   style={{ height: 80 }}

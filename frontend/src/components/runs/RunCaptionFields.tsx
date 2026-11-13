@@ -4,7 +4,7 @@ import toast from "react-hot-toast";
 import { captioningApi } from "../../api/captioning";
 import { providersApi } from "../../api/providers";
 import { appDataApi } from "../../api/appData";
-import { captionBackend, captionModelOptions } from "../../constants/captionModels";
+import { captionBackend, captionModelOptions, takesPrompt, withPreviousCaption } from "../../constants/captionModels";
 import { STYLE_LABELS, modelType } from "../../constants/captionStyles";
 import { CAPTIONING_WORKFLOW_DEFAULTS } from "../../constants/captioningWorkflow";
 import { captionModelId, type CaptionForm } from "./runForms";
@@ -76,7 +76,12 @@ export default function RunCaptionFields({ value, onChange }: { value: CaptionFo
         base: w.selectedModel,
         providerModel: w.providerModelInput,
         style: w.style,
-        customPrompt: w.customPrompt,
+        // The page's step-1 "Include current caption" is a toggle there but has no field
+        // here, so it is baked into the prompt the way the page itself sends it.
+        customPrompt: withPreviousCaption(
+          w.customPrompt,
+          w.usePreviousCaption && takesPrompt(w.selectedModel),
+        ),
         wd14Threshold: w.wd14Threshold,
         targetWidth: w.targetWidth,
         targetHeight: w.targetHeight,

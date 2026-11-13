@@ -6,7 +6,7 @@ import { currentPaneView, usePaneStore } from "../store/paneStore";
 import { matchPath } from "react-router";
 import { useUiPrefsStore } from "../store/uiPrefsStore";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ChevronLeft, ChevronRight, Save, Crop, AlertTriangle, Copy, Sparkles, ChevronDown, ChevronUp, Type, Eye, EyeOff, ScanSearch, Pencil, Maximize2, Palette, CheckSquare, Square, Crosshair, Combine, Focus, BoxSelect, Eraser } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Save, Crop, AlertTriangle, Copy, Sparkles, ChevronDown, ChevronUp, Type, Eye, EyeOff, ScanSearch, Pencil, Maximize2, Palette, CheckSquare, Square, Crosshair, Combine, Focus, BoxSelect, Eraser, RotateCcw } from "lucide-react";
 import ReactCrop, { type PercentCrop } from "react-image-crop";
 import "react-image-crop/dist/ReactCrop.css";
 import toast from "react-hot-toast";
@@ -33,7 +33,7 @@ import StyleMatchPanel from "../components/image/StyleMatchPanel";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import ModelPicker from "../components/providers/ModelPicker";
 import { STYLE_LABELS, modelType } from "../constants/captionStyles";
-import { captionBackend, captionModelIds } from "../constants/captionModels";
+import { buildFixPrompt, captionBackend, captionModelIds, takesPrompt } from "../constants/captionModels";
 import { DINO_LAYER_LABELS } from "../constants/dinoLabels";
 import { ASPECT_PRESETS } from "../constants/aspectRatios";
 import { DETECTION_MODELS, detectionModelFamily } from "../constants/detectionModels";
@@ -365,7 +365,15 @@ export default function ImageDetailPage() {
   const [aiTargetHeight, setAiTargetHeight] = useState<number | null>(null);
   // The image the job captions travels with it: the user can arrow away while it
   // runs, and the completion effect must refresh *that* image, not the one on screen.
-  const [aiJob, setAiJob] = useState<{ jobId: string; imageId: string; datasetId: string } | null>(null);
+  // `undoText` is set by Fix mode only: the caption the fix replaced, offered back by
+  // "Undo fix" once the job lands (as `fixUndo`, keyed to the same image).
+  const [aiJob, setAiJob] = useState<
+    { jobId: string; imageId: string; datasetId: string; undoText?: string } | null
+  >(null);
+  // "generate" writes a fresh caption; "fix" sends the current one plus `fixNote` (#105).
+  const [aiMode, setAiMode] = useState<"generate" | "fix">("generate");
+  const [fixNote, setFixNote] = useState("");
+  const [fixUndo, setFixUndo] = useState<{ imageId: string; text: string } | null>(null);
   const [aiProviderModel, setAiProviderModel] = useState("");
   const [aiWd14Threshold, setAiWd14Threshold] = useState(0.35);
   const [aiDelimiterMode, setAiDelimiterMode] = useState<DelimiterMode>("overwrite");
@@ -1003,11 +1011,21 @@ export default function ImageDetailPage() {
   useEffect(() => {
     if (!aiJob || !aiJobProgress) return;
     if (aiJobProgress.status === "completed") {
-      setDraft((d) => (d?.imageId === aiJob.imageId ? null : d));
+      const isFix = aiJob.undoText !== undefined;
       qc.invalidateQueries({ queryKey: ["caption", aiJob.imageId] });
       qc.invalidateQueries({ queryKey: ["images", aiJob.datasetId] });
       setAiJob(null);
-      toast.success("Caption generated");
+      // A caption job ends `completed` even when its one image failed (a timeout, a 429,
+      // a refusal stripped to nothing): the loss is carried by `caption_summary`'s
+      // `failed_count`, which the store has merged by now (PM-023). Then the caption is
+      // unchanged, so neither the draft nor Undo fix may act as if it had been replaced.
+      if ((aiJobProgress.failed_count ?? 0) > 0) {
+        toast.error(aiJobProgress.failure_summary || (isFix ? "The fix failed" : "Captioning failed"));
+        return;
+      }
+      setDraft((d) => (d?.imageId === aiJob.imageId ? null : d));
+      if (isFix) setFixUndo({ imageId: aiJob.imageId, text: aiJob.undoText! });
+      toast.success(isFix ? "Caption fixed" : "Caption generated");
     } else if (aiJobProgress.status === "failed") {
       setAiJob(null);
       toast.error("Captioning failed");
@@ -1231,6 +1249,20 @@ export default function ImageDetailPage() {
     qc.invalidateQueries({ queryKey: ["caption", id] });
   };
 
+  // A later write to the image supersedes the fix "Undo fix" would revert, so every
+  // caption writer below drops it for its own image.
+  const dropFixUndo = (id: string) => setFixUndo((u) => (u?.imageId === id ? null : u));
+
+  // The dataset-level reads a saved caption changes.
+  const invalidateCaptionReads = (datasetId: string | undefined) => {
+    qc.invalidateQueries({ queryKey: ["images", datasetId] });
+    qc.invalidateQueries({ queryKey: ["dataset", datasetId] });
+    qc.invalidateQueries({ queryKey: ["dataset-stats", datasetId] });
+    qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
+    qc.invalidateQueries({ queryKey: ["score-values", datasetId] });
+    qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
+  };
+
   // Every id below comes from the mutation's variables, captured at click time —
   // see the `draft` comment above for why the render's `imageId` is wrong here.
   const saveMutation = useMutation({
@@ -1238,12 +1270,8 @@ export default function ImageDetailPage() {
       captionsApi.update(v.id, { caption_text: v.text, caption_style: v.style }),
     onSuccess: (result, v) => {
       settleCaptionWrite(v.id, v.text, result);
-      qc.invalidateQueries({ queryKey: ["images", v.datasetId] });
-      qc.invalidateQueries({ queryKey: ["dataset", v.datasetId] });
-      qc.invalidateQueries({ queryKey: ["dataset-stats", v.datasetId] });
-      qc.invalidateQueries({ queryKey: ["tag-stats", v.datasetId] });
-      qc.invalidateQueries({ queryKey: ["score-values", v.datasetId] });
-      qc.invalidateQueries({ queryKey: ["tag-cooccurrence", v.datasetId] });
+      dropFixUndo(v.id);
+      invalidateCaptionReads(v.datasetId);
       toast.success("Saved");
     },
     onError: () => toast.error("Save failed"),
@@ -1274,6 +1302,7 @@ export default function ImageDetailPage() {
           .update(id, { caption_text: t, caption_style: style })
           .then((result) => {
             settleCaptionWrite(id, t, result);
+            dropFixUndo(id);
             qc.invalidateQueries({ queryKey: ["images", dsId] });
             toast.success("Caption applied");
           });
@@ -1294,6 +1323,7 @@ export default function ImageDetailPage() {
       // Drop the draft that was merged (so the refetch shows the result), but not
       // typing that continued during the request, nor a draft on another image.
       setDraft((d) => (d?.imageId === v.id && d.text === v.text ? null : d));
+      dropFixUndo(v.id);
       qc.invalidateQueries({ queryKey: ["caption", v.id] });
       qc.invalidateQueries({ queryKey: ["images", v.datasetId] });
       qc.invalidateQueries({ queryKey: ["dataset-stats", v.datasetId] });
@@ -1470,12 +1500,53 @@ export default function ImageDetailPage() {
       }),
     onSuccess: (data, v) => {
       if (data.job_id) {
+        dropFixUndo(v.imageId);
         setAiJob({ jobId: data.job_id, imageId: v.imageId, datasetId: v.datasetId });
       } else {
         toast("Caption already exists — generation skipped");
       }
     },
     onError: () => toast.error("Failed to start captioning"),
+  });
+
+  // Fix mode (#105). Every value travels in the variables, captured at click time, for
+  // the same reason as `saveMutation`. A dirty draft is saved first, as merge-tags does:
+  // the backend fills `{previous_caption}` from the *stored* caption, and the model must
+  // see the text the user sees.
+  const fixMutation = useMutation({
+    mutationFn: async (v: {
+      imageId: string; datasetId: string; text: string; style: string; dirty: boolean;
+      model: string; note: string; targetWidth: number | null; targetHeight: number | null;
+    }) => {
+      if (v.dirty) {
+        const saved = await captionsApi.update(v.imageId, { caption_text: v.text, caption_style: v.style });
+        settleCaptionWrite(v.imageId, v.text, saved);
+        invalidateCaptionReads(v.datasetId);
+      }
+      return captioningApi.run({
+        dataset_id: v.datasetId,
+        image_ids: [v.imageId],
+        model: v.model,
+        style: v.style || "detailed",
+        overwrite: true,
+        // Spelled out although `delimiter_mode: "overwrite"` already skips the tag merge:
+        // a fix replaces the caption, so the old tags never come back in.
+        append_tags: false,
+        delimiter_mode: "overwrite",
+        custom_prompt: buildFixPrompt(v.note),
+        ...(v.targetWidth && v.targetHeight ? { target_width: v.targetWidth, target_height: v.targetHeight } : {}),
+      });
+    },
+    onSuccess: (data, v) => {
+      if (data.job_id) {
+        dropFixUndo(v.imageId);
+        setAiJob({ jobId: data.job_id, imageId: v.imageId, datasetId: v.datasetId, undoText: v.text });
+      } else {
+        toast.error("Nothing to fix — the image was not found");
+      }
+    },
+    // The detail names the step that failed: a refused save or a refused run.
+    onError: (err: unknown) => toast.error(apiErrorDetail(err, "Failed to start the fix")),
   });
 
   /** Open the crop tool with a fresh box, seeded when its `<img>` loads. */
@@ -1600,6 +1671,13 @@ export default function ImageDetailPage() {
   // Scoped to the job's own image: on a neighbour the panel is idle.
   const aiJobHere = !!aiJob && aiJob.imageId === imageId;
   const aiRunning = aiJobHere && aiJobProgress?.status === "running";
+  // One AI caption job at a time, on any image, from the POST's success to a terminal
+  // status (`pending` and a not-yet-seen job included), as upscale and LUT below: a
+  // second click would replace `aiJob`, and the first job's completion would then never
+  // refresh its caption or arm Undo fix.
+  const aiBusy = !!aiJob && !TERMINAL_JOB_STATUSES.has(aiJobProgress?.status ?? "");
+  // Named by the job's kind, not the mode on screen, which the user can switch mid-job.
+  const aiRunningLabel = aiRunning ? (aiJob!.undoText !== undefined ? "Fixing…" : "Generating…") : null;
   // Upscale and LUT hold Run from the POST's success to a terminal status,
   // `pending` and a not-yet-seen job included: one queued behind another job
   // would otherwise let a second click start a second run on the same image.
@@ -2514,6 +2592,18 @@ export default function ImageDetailPage() {
             <Save size={14} /> Save
           </button>
 
+          {/* After a Fix lands: put the replaced caption back into the editor, unsaved,
+              so keeping the fix or the original stays the user's Save. */}
+          {fixUndo && fixUndo.imageId === imageId && captionText !== fixUndo.text && (
+            <button
+              className="btn-ghost btn-sm w-full flex items-center justify-center gap-2"
+              onClick={() => setDraft({ imageId: fixUndo.imageId, text: fixUndo.text })}
+              title="Put the caption from before the fix back in the box. It is not saved until you press Save."
+            >
+              <RotateCcw size={14} /> Undo fix
+            </button>
+          )}
+
           <button
             className="btn-ghost btn-sm w-full flex items-center justify-center gap-2"
             onClick={() => mergeTagsMutation.mutate({ id: imageId!, datasetId: datasetId!, text: captionText, style: captionStyle, dirty: captionDirty })}
@@ -2537,6 +2627,20 @@ export default function ImageDetailPage() {
 
             {showAi && (
               <div className="mt-3 space-y-3">
+                {/* Mode: a fresh caption, or the current one corrected (#105) */}
+                <div className="flex gap-1.5" role="group" aria-label="AI caption mode">
+                  {(["generate", "fix"] as const).map((m) => (
+                    <button
+                      key={m}
+                      className={`btn btn-sm flex-1 ${aiMode === m ? "btn-primary" : "btn-secondary"}`}
+                      aria-pressed={aiMode === m}
+                      onClick={() => setAiMode(m)}
+                    >
+                      {m === "generate" ? "Generate new" : "Fix current"}
+                    </button>
+                  ))}
+                </div>
+
                 {/* Model picker */}
                 <div className="space-y-1.5">
                   <label className="label">Model</label>
@@ -2657,7 +2761,7 @@ export default function ImageDetailPage() {
                 </div>
 
                 {/* WD14 threshold / style picker / custom prompt */}
-                {aiModel && aiModel.startsWith("wd14:") && (
+                {aiMode === "generate" && aiModel && aiModel.startsWith("wd14:") && (
                   <div>
                     <label className="label">Tag Threshold</label>
                     <div className="flex items-center gap-2">
@@ -2673,7 +2777,7 @@ export default function ImageDetailPage() {
                 )}
 
                 {/* Style picker */}
-                {aiModel && !aiModel.startsWith("wd14:") && aiStyles.length > 0 && (
+                {aiMode === "generate" && aiModel && !aiModel.startsWith("wd14:") && aiStyles.length > 0 && (
                   <div>
                     <label className="label">Style</label>
                     <div className="flex flex-wrap gap-1.5">
@@ -2690,8 +2794,9 @@ export default function ImageDetailPage() {
                   </div>
                 )}
 
-                {/* Custom prompt */}
-                {aiModel && !aiModel.startsWith("wd14:") && (
+                {/* Custom prompt — only for the models that read one; Florence-2 and
+                    PaliGemma-2 ignore it (`takesPrompt`). */}
+                {aiMode === "generate" && takesPrompt(aiModel) && (
                   <div>
                     <label className="label">Custom Prompt (optional)</label>
                     <textarea
@@ -2704,31 +2809,53 @@ export default function ImageDetailPage() {
                           : "Override the default prompt for this style…"
                       }
                     />
+                    <p className="text-xs text-gray-500 mt-1">
+                      <span className="mono">{"{previous_caption}"}</span> inserts the saved caption, not
+                      unsaved edits. To correct a caption, use Fix current.
+                    </p>
                   </div>
                 )}
 
-                {aiModel && !aiModel.startsWith("wd14:") && (
-                  <>
-                    <PromptPresetManager
-                      currentModel={aiModel}
-                      currentStyle={aiStyle}
-                      currentPrompt={aiCustomPrompt}
-                      onLoad={(p) => {
-                        setAiModel(p.model);
-                        setAiStyle(p.style);
-                        setAiCustomPrompt(p.prompt);
-                      }}
-                    />
-
-                    <ResolutionPicker
-                      targetWidth={aiTargetWidth}
-                      targetHeight={aiTargetHeight}
-                      onChange={(w, h) => { setAiTargetWidth(w); setAiTargetHeight(h); }}
-                    />
-                  </>
+                {aiMode === "generate" && aiModel && !aiModel.startsWith("wd14:") && (
+                  <PromptPresetManager
+                    currentModel={aiModel}
+                    currentStyle={aiStyle}
+                    currentPrompt={aiCustomPrompt}
+                    onLoad={(p) => {
+                      setAiModel(p.model);
+                      setAiStyle(p.style);
+                      setAiCustomPrompt(p.prompt);
+                    }}
+                  />
                 )}
 
-                {aiModel && (
+                {/* Fix mode: what is wrong with the caption */}
+                {aiMode === "fix" && (
+                  <div>
+                    <label className="label" htmlFor="fix-note">What's wrong with the caption?</label>
+                    <textarea
+                      id="fix-note"
+                      className="input h-20 resize-none text-xs"
+                      value={fixNote}
+                      onChange={e => setFixNote(e.target.value)}
+                      placeholder="e.g. The broken glass is their reflection in a cracked mirror."
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      The model gets the image, the caption in the box above and this note, and
+                      rewrites the caption. Unsaved edits are saved first.
+                    </p>
+                  </div>
+                )}
+
+                {aiModel && !aiModel.startsWith("wd14:") && (aiMode === "generate" || takesPrompt(aiModel)) && (
+                  <ResolutionPicker
+                    targetWidth={aiTargetWidth}
+                    targetHeight={aiTargetHeight}
+                    onChange={(w, h) => { setAiTargetWidth(w); setAiTargetHeight(h); }}
+                  />
+                )}
+
+                {aiMode === "generate" && aiModel && (
                   <DelimiterControls
                     mode={aiDelimiterMode}
                     delimiterParts={aiDelimiterParts}
@@ -2762,14 +2889,48 @@ export default function ImageDetailPage() {
                   </p>
                 )}
 
-                <button
-                  className="btn-primary w-full flex items-center justify-center gap-2"
-                  onClick={() => aiMutation.mutate({ imageId: imageId!, datasetId: datasetId! })}
-                  disabled={!aiModel || aiModelBlocked || aiMutation.isPending || aiRunning}
-                >
-                  <Sparkles size={14} />
-                  {aiRunning ? "Generating…" : "Generate Caption"}
-                </button>
+                {aiMode === "fix" && aiModel && !aiModelBlocked && !takesPrompt(aiModel) && (
+                  <p className="text-xs text-yellow-400">
+                    Fixing needs a model that reads a prompt: an Ollama model, an LLM provider or
+                    JoyCaption.
+                  </p>
+                )}
+                {aiMode === "fix" && !captionText.trim() && (
+                  <p className="text-xs text-gray-500">There is no caption to fix yet. Generate one first.</p>
+                )}
+
+                {aiMode === "generate" ? (
+                  <button
+                    className="btn-primary w-full flex items-center justify-center gap-2"
+                    onClick={() => aiMutation.mutate({ imageId: imageId!, datasetId: datasetId! })}
+                    disabled={!aiModel || aiModelBlocked || aiMutation.isPending || fixMutation.isPending || aiBusy}
+                  >
+                    <Sparkles size={14} />
+                    {aiRunningLabel ?? "Generate Caption"}
+                  </button>
+                ) : (
+                  <button
+                    className="btn-primary w-full flex items-center justify-center gap-2"
+                    onClick={() => fixMutation.mutate({
+                      imageId: imageId!,
+                      datasetId: datasetId!,
+                      text: captionText,
+                      style: captionStyle,
+                      dirty: captionDirty,
+                      model: resolveModelId(aiModel, aiProviderModel),
+                      note: fixNote,
+                      targetWidth: aiTargetWidth,
+                      targetHeight: aiTargetHeight,
+                    })}
+                    disabled={
+                      !takesPrompt(aiModel) || !fixNote.trim() || !captionText.trim()
+                      || fixMutation.isPending || aiMutation.isPending || aiBusy
+                    }
+                  >
+                    <Sparkles size={14} />
+                    {aiRunningLabel ?? "Fix Caption"}
+                  </button>
+                )}
               </div>
             )}
           </div>

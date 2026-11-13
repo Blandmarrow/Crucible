@@ -91,7 +91,9 @@ a tab would skip the routed-page checklist in `docs/dev/panes-routing.md` and `P
   one parser, `customResizeValue`, so a blank or out-of-range value (one a recipe or the
   Export page's form carries in) shows and is sent as the 1024 default, never as a 422.
 - **"Fill from the Captioning page"** copies that page's saved workflow
-  (`appDataApi.getCaptioningWorkflow`), except its scope, which a run does not have.
+  (`appDataApi.getCaptioningWorkflow`), except its scope, which a run does not have. Its
+  step-1 `usePreviousCaption` toggle has no field on the run form, so the fill bakes it
+  into `customPrompt` through `withPreviousCaption`, as the page itself sends it.
   **"Fill from the Export page"** copies the Export page's browser-stored workflow and this
   dataset's filters; their shapes and defaults moved to `constants/exportWorkflow.ts` so
   the Runs page can read them without importing `ExportPage`. Both are optional: the form

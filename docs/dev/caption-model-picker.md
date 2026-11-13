@@ -1,6 +1,6 @@
 # The captioning model picker
 
-This file covers which models a captioning picker offers and which ids a caption request accepts: the registry's `kind`/`description` fields, the `GET /captioning/models` filter, the `_caption_backend` validator that turns an unknown id into a 422, the four surfaces that render the one query, and the two frontend predicates over a model id. Where `kind` is declared per model is `docs/dev/model-registry.md`; what a job does once its model passes is `docs/dev/captioning.md`; the `openai_compat:` providers the list includes are `docs/dev/llm-providers.md`.
+This file covers which models a captioning picker offers and which ids a caption request accepts: the registry's `kind`/`description` fields, the `GET /captioning/models` filter, the `_caption_backend` validator that turns an unknown id into a 422, the four surfaces that render the one query, and the frontend predicates over a model id (`captionBackend` and the `takesPrompt` built on it). Where `kind` is declared per model is `docs/dev/model-registry.md`; what a job does once its model passes is `docs/dev/captioning.md`; the `openai_compat:` providers the list includes are `docs/dev/llm-providers.md`.
 
 ## The registry owns what a model is
 
@@ -19,6 +19,8 @@ Each entry of `model_manager.list_models()` carries a `kind` (`"caption"` / `"sc
 ## Two predicates over a model id, deliberately not the same one
 
 `captionBackend` in `frontend/src/constants/captionModels.ts` hand-mirrors `_caption_backend` — the same six prefixes in the same order — and answers *will the validator 422 this*. The Run / Start Captioning / Generate Caption buttons on `CaptioningPage`, `SelectionToolbar` and `ImageDetailPage` are disabled on it, naming the offending step: a pipeline is one request, so a stale step 3 stops step 1 from running and the error names no step. Membership in the offered list (`captionModelOptions`, lifted into that same file from `SettingsPage`) is the *other* predicate and never blocks — it produces an informational note only, for the reason above. Reusing `modelType` (`constants/captionStyles.ts`) for either is the trap: it returns null for the perfectly runnable `wd14:` and `openai_compat:`, which have no `STYLE_LABELS` vocabulary, so gating on it disables the two most-used backends. `test_captioning_model_registry.py` parses `captionBackend` out of the TypeScript and evaluates it against the real function over every registry id, every wd14 id and the runtime-constructed forms; `frontend/e2e/captioning-run-gate.spec.ts` covers the gate itself, its wd14 negative control being the regression test for that trap.
+
+A third, narrower predicate is built **on** `captionBackend`: `takesPrompt` (same file) is true for `joycaption_`, `ollama:` and `openai_compat:`, the backends whose `caption_image` takes `custom_prompt`. It gates what would otherwise be a silent no-op of the same kind: a custom prompt box, an "Include … caption" toggle or `ImageDetailPage`'s Fix mode offered for Florence-2, PaliGemma-2 or WD14, which ignore the prompt. It must not be built on `modelType` either, for the reason above: `openai_compat:` has no style vocabulary but is the most-used prompt-taking backend.
 
 ## The three pickers are deliberately not one component
 

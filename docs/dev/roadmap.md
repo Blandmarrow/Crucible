@@ -31,18 +31,17 @@ restates its stages.
    linking the record that holds the full text.
 5. **Landed**: one line per finished milestone or handoff record.
 
-## Next session (updated 2026-11-13, CLIP fix built)
+## Next session (updated 2026-11-13, CLIP fix merged)
 
-1. **The CLIP QuickGELU fix is built on `fix/clip-quickgelu`**
-   ([decision 17](decisions/17-clip-quickgelu-fix.md)), with every gate green and the
-   migration run end to end. Open: the label seen in a browser, then the PR. After merging,
-   start the app to run the migration, then re-embed, re-check watermarks and re-score LAION
-   from the Quality page.
-2. **Then M7 Stage 3** (see Now), which waits on nothing.
+1. **M7 Stage 3 is next** (see Now). It waits on nothing.
+2. **The CLIP QuickGELU fix is merged** (PR #154,
+   [decision 17](decisions/17-clip-quickgelu-fix.md)). Left for the user, on their own
+   install: start it with `manage start` to run the migration, which backs the database up
+   first, then re-embed, re-check watermarks and re-score LAION from the Quality page.
 3. **`docs/scoring.md` is over budget** (2,621 of 2,500). Its seam is re-recorded in
    [pending-splits.md](pending-splits.md); split it first in the next session that edits it.
 4. M4 stays held, with its merge checklist under Waiting. The previous block is in
-   [roadmap-archive/handoff-2026-11-13.md](roadmap-archive/handoff-2026-11-13.md).
+   [roadmap-archive/handoff-2026-11-13.md](roadmap-archive/handoff-2026-11-13.md#next-session-updated-2026-11-13-clip-fix-built).
 
 ## Now
 
@@ -69,9 +68,11 @@ Stage 2 there (DINOv3) is not built, by
   [decision 17](decisions/17-clip-quickgelu-fix.md)): one builder with QuickGELU, and a
   migration that clears old vectors and watermark results and re-labels old LAION scores.
   Measured shift: `docs/dev/quality/style-evaluation.md` § The CLIP QuickGELU fix.
-- [ ] Merge `fix/clip-quickgelu`. The migration and the re-score flow were run end to end on
-  a throwaway instance on 2026-11-13 (decision 17 § How it's verified). Not yet seen in a
-  browser: the Quality page's "LAION (old build — re-score)" label.
+- [x] Merge `fix/clip-quickgelu`: PR #154, 2026-11-13. The migration and the re-score flow
+  were run end to end on a throwaway instance (decision 17 § How it's verified). After the
+  merge, the real migration over seeded old-build rows was run on another throwaway
+  instance, and the "LAION (old build — re-score)" label was seen in a headless browser on
+  the Quality page's coverage line and the Stats page's Aesthetic tile, with no page errors.
 - [ ] Stage 3: dense features for prompt-free subject masks. Untested; separate from style
   scoring.
 

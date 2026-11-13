@@ -55,7 +55,7 @@ it, or remove it.**
 
 ### Fix
 
-`fix/pipeline-uncaptioned-scope` (2026-11-14):
+PR #160 (2026-11-14):
 
 - **`CaptionPipelineRequest.overwrite`** (default `true`) decides the scope once, by
   `/run`'s rule, with step 1's `delimiter_mode` standing in for the request's: `false`

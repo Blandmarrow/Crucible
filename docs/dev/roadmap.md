@@ -31,20 +31,16 @@ restates its stages.
    linking the record that holds the full text.
 5. **Landed**: one line per finished milestone or handoff record.
 
-## Next session (updated 2026-11-14, pipeline scope fix built)
+## Next session (updated 2026-11-14, pipeline scope fix merged)
 
-1. **The pipeline scope fix is built** on `fix/pipeline-uncaptioned-scope`
-   ([PM-038](postmortems/PM-038-pipeline-scope-field-nothing-read.md)): open its PR and
-   merge.
-2. **A second bug, found by that fix's review**, under Later: *Selected* with nothing
-   selected recaptions the whole dataset. Same class of harm as PM-038; it wants the
-   user's call on whether it goes before Tier 2.
-3. **M11 goes on with Tier 2** (see Now): #9, #16, then #19. #48 waits on a question to its
+1. **M11 goes on with Tier 2** (see Now): #9, #16, then #19. #48 waits on a question to its
    reporter, and #19 on the user picking a light palette. M7's Stage 3 waits behind M11,
    under Waiting.
-4. M4 stays held, with its merge checklist under Waiting. The closed item of the previous
-   block, the pipeline bug's triage, is in
-   [roadmap-archive/handoff-2026-11-14.md](roadmap-archive/handoff-2026-11-14.md#next-session-updated-2026-11-13-105-merged).
+2. **The empty-selection bug**, under Later: *Selected* with nothing selected recaptions
+   the whole dataset. The user chose on 2026-11-14 to fix it later, not ahead of Tier 2.
+3. M4 stays held, with its merge checklist under Waiting. The closed items of the previous
+   blocks, the pipeline bug's triage and its fix (PR #160), are in
+   [roadmap-archive/handoff-2026-11-14.md](roadmap-archive/handoff-2026-11-14.md).
 
 ## Now
 
@@ -238,7 +234,8 @@ Each line links the record that holds the full text.
   widen to every image (`if body.image_ids:`), with `overwrite` on. Run is not blocked at a
   count of 0. The likely fix is a run-blocked reason for `scope === "selected"` with no
   selection here; the detect run on the same page sends `[...selectedIds]` and wants the
-  same check. Found by the review of PM-038's fix (2026-11-14).
+  same check. Found by the review of PM-038's fix (2026-11-14); the user chose the same day
+  to fix it later, as its own change.
 - Face similarity (issue #90), researched 2026-11-13 and parked by the user. The pick is
   YuNet to find faces and SFace to compare them. Both are built into OpenCV, so there is no
   new dependency, and their weights are MIT and Apache-2.0. InsightFace was rejected because
@@ -293,6 +290,7 @@ Each line links the record that holds the full text.
   "Porting the unmerged branches" section, moved out on 2026-11-13 when this file was given
   fixed sections. Record:
   [roadmap-archive/handoff-2026-11-13.md](roadmap-archive/handoff-2026-11-13.md).
-- **Handoff notes, 14 November 2026**: the pipeline scope bug's Next session item and Later
-  line, closed by its fix ([PM-038](postmortems/PM-038-pipeline-scope-field-nothing-read.md)).
+- **Handoff notes, 14 November 2026**: the pipeline scope bug's Next session items and
+  Later line, closed by its fix, PR #160
+  ([PM-038](postmortems/PM-038-pipeline-scope-field-nothing-read.md)).
   Record: [roadmap-archive/handoff-2026-11-14.md](roadmap-archive/handoff-2026-11-14.md).

@@ -966,7 +966,10 @@ class PipelineStep(BaseModel):
     model: str
     style: str = "detailed"
     custom_prompt: str = ""
-    overwrite: bool = True
+    # No `overwrite` here: which images a pipeline takes is decided once, by
+    # `CaptionPipelineRequest.overwrite`. A per-step copy existed that nothing read, and
+    # the page filled it differently from /run's, so Uncaptioned only recaptioned
+    # everything (PM-038). An old client that still sends it is ignored, not refused.
     append_tags: bool = False
     strip_refusals: bool = True
     strip_thinking: bool = False
@@ -993,6 +996,11 @@ class CaptionPipelineRequest(BaseModel):
     image_ids: list[str] | None = None
     subfolder: str | None = None
     steps: list[PipelineStep]
+    # /run's rule, with step 1's `delimiter_mode` standing in for the request's: False
+    # with an overwriting step 1 takes only images whose caption is empty; an append or
+    # prepend step 1 needs the captioned ones, so it takes every image. True by default
+    # so a caller that omits it keeps the old take-everything behaviour.
+    overwrite: bool = True
     save_backup: bool = False
     rename_on_caption: bool = False
     min_aesthetic_score: float | None = None
@@ -1041,6 +1049,9 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
     # With `image_ids`, the id filter is applied per chunk below.
     if not body.image_ids and body.subfolder is not None:
         query = query.where(Image.subfolder == normalize_subfolder(body.subfolder))
+    # See `CaptionPipelineRequest.overwrite`; the same test as /run's start query.
+    if not body.overwrite and body.steps[0].delimiter_mode == "overwrite":
+        query = query.where(Image.caption_text == "")
     if body.min_aesthetic_score is not None:
         query = query.where(Image.aesthetic_score >= body.min_aesthetic_score)
     for clause in flag_exclusions(body.exclude_flags):

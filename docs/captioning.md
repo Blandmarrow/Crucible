@@ -95,11 +95,13 @@ Controls how a new caption is merged with an existing one:
 
 The **delimiter** is the separator string inserted between the two parts when appending or prepending (default `", "`). Merge only runs when the image already has a non-empty caption; images with no prior caption always receive just the new text regardless of mode.
 
-Note: Overwrite mode with *Uncaptioned only* scope skips already-captioned images; Append and Prepend always process all images in scope.
+Note: Overwrite mode with *Uncaptioned only* scope skips already-captioned images; Append and Prepend always process all images in scope. This holds for single-model runs and pipelines alike; in a pipeline, the first step's mode decides.
 
 ## Scope and filters
 
-Available on the Captioning page and in the selection toolbar caption modal:
+Available on the Captioning page. The gallery's **Caption** action has none of them: it
+captions exactly the selected images, captioned or not, and its delimiter mode decides
+whether a new caption replaces or joins the old one.
 
 - **Scope** — All images, Uncaptioned only, or Selected images
 - **Minimum aesthetic score** — skip images below this score (requires aesthetic scoring to have been run first)
@@ -112,7 +114,8 @@ Chain two or more captioning steps that run in sequence as a single job:
 
 - Each step has its own model, style, custom prompt, and delimiter settings
 - Use `{previous_caption}` in a step's custom prompt to inject the prior step's output into the next model — enables iterative refinement (e.g. WD14 tags as input to an Ollama narrative prompt). In the first step it is the caption the image already has: see [Building on the current caption](#building-on-the-current-caption)
-- Triggered via the **+ Add Step** button on the Captioning page; also available from the selection toolbar caption modal
+- Triggered via the **+ Add Step** button on the Captioning page (the gallery's Caption action runs one model only)
+- Uses the same scope and filters as a single-model run
 - Runs as a background job with the same queue and progress display as a single-model run
 
 ## Building on the current caption

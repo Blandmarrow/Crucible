@@ -513,7 +513,6 @@ function CaptioningForm({ saved }: { saved: Partial<CaptioningWorkflow> | null }
       model: resolvedModel,
       style: isWd14 ? "tags" : style,
       custom_prompt: step1Prompt,
-      overwrite: scope === "all",
       append_tags: true,
       strip_refusals: stripRefusals,
       strip_thinking: stripThinking,
@@ -537,7 +536,6 @@ function CaptioningForm({ saved }: { saved: Partial<CaptioningWorkflow> | null }
       model: stepModel,
       style: isStepWd14 ? "tags" : s.style,
       custom_prompt,
-      overwrite: true,
       append_tags: false,
       strip_refusals: s.stripRefusals,
       strip_thinking: s.stripThinking,
@@ -583,6 +581,11 @@ function CaptioningForm({ saved }: { saved: Partial<CaptioningWorkflow> | null }
         return captioningApi.pipeline({
           dataset_id: datasetId!,
           steps,
+          // The same scope rule as the single-step `/run` below: Selected and All
+          // recaption, Uncaptioned does not. Step 1 used to carry `scope === "all"`,
+          // which nothing read; read as-is it would have skipped captioned *selected*
+          // images (PM-038).
+          overwrite: scope !== "uncaptioned",
           image_ids: scope === "selected" ? selectedIdsForDataset : undefined,
           subfolder: scope !== "selected" ? activeSubfolder : undefined,
           // No save_backup / rename_on_caption: the pipeline does not support

@@ -583,37 +583,37 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
         )}
         <div className="w-px h-4 bg-gray-600" />
 
-        <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => setShowBulkEdit(true)}>
+        <button className="btn-secondary btn-sm flex items-center gap-1.5" onClick={() => setShowBulkEdit(true)}>
           <Pencil size={14} /> Edit
         </button>
         <button
-          className="btn-ghost btn-sm flex items-center gap-1.5"
+          className="btn-secondary btn-sm flex items-center gap-1.5"
           onClick={() => mergeTagsMutation.mutate()}
           disabled={mergeTagsMutation.isPending}
           title="Drop redundant tags (e.g. 'tail' when 'long tail' is present)"
         >
           <Combine size={14} /> Merge tags
         </button>
-        <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => setShowUpscale(true)}>
+        <button className="btn-secondary btn-sm flex items-center gap-1.5" onClick={() => setShowUpscale(true)}>
           <Maximize2 size={14} /> Upscale
         </button>
-        <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => setShowLut(true)}>
+        <button className="btn-secondary btn-sm flex items-center gap-1.5" onClick={() => setShowLut(true)}>
           <Palette size={14} /> LUT
         </button>
-        <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => setShowCaption(true)}>
+        <button className="btn-secondary btn-sm flex items-center gap-1.5" onClick={() => setShowCaption(true)}>
           <Sparkles size={14} /> Caption
         </button>
-        <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => setShowScore(true)}>
+        <button className="btn-secondary btn-sm flex items-center gap-1.5" onClick={() => setShowScore(true)}>
           <Star size={14} /> Score
         </button>
-        <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => setShowDetect(true)}>
+        <button className="btn-secondary btn-sm flex items-center gap-1.5" onClick={() => setShowDetect(true)}>
           <ScanSearch size={14} /> Detect
         </button>
-        <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => setShowCropDetect(true)} title="Crop to detected subjects">
+        <button className="btn-secondary btn-sm flex items-center gap-1.5" onClick={() => setShowCropDetect(true)} title="Crop to detected subjects">
           <Crop size={14} /> Crop
         </button>
         <button
-          className="btn-ghost btn-sm flex items-center gap-1.5"
+          className="btn-secondary btn-sm flex items-center gap-1.5"
           onClick={() => setShowInpaint(true)}
           title="Paint detected regions out of the selected images (watermark removal)"
         >
@@ -625,40 +625,40 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
             the selections that matter. The preview endpoint does the honest
             accounting instead. */}
         <button
-          className="btn-ghost btn-sm flex items-center gap-1.5"
+          className="btn-secondary btn-sm flex items-center gap-1.5"
           onClick={() => setShowReextract(true)}
           title="Re-cut video frames from their source at full resolution"
         >
           <Scissors size={14} /> Re-extract
         </button>
         <button
-          className="btn-ghost btn-sm flex items-center gap-1.5"
+          className="btn-secondary btn-sm flex items-center gap-1.5"
           onClick={() => setShowThumbnails(true)}
           title="Re-cut the preview thumbnails for the selected images"
         >
           <RefreshCw size={14} /> Thumbnails
         </button>
-        <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => { setShowMoveSubfolder(true); setMoveSubfolderTarget(""); }}>
+        <button className="btn-secondary btn-sm flex items-center gap-1.5" onClick={() => { setShowMoveSubfolder(true); setMoveSubfolderTarget(""); }}>
           <FolderInput size={14} /> Move to
         </button>
         <button
-          className="btn-ghost btn-sm flex items-center gap-1.5"
+          className="btn-secondary btn-sm flex items-center gap-1.5"
           onClick={() => setShowLabels(true)}
           title="Add or remove labels across the selection"
         >
           <Tags size={14} /> Labels
         </button>
         <button
-          className="btn-ghost btn-sm flex items-center gap-1.5"
+          className="btn-secondary btn-sm flex items-center gap-1.5"
           onClick={() => setShowProvenance(true)}
           title="Set source, URL, license and attribution"
         >
           <ScrollText size={14} /> Set source/license
         </button>
-        <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => setShowMoveDataset(true)}>
+        <button className="btn-secondary btn-sm flex items-center gap-1.5" onClick={() => setShowMoveDataset(true)}>
           <ArrowRightFromLine size={14} /> Move to Dataset
         </button>
-        <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => setShowCopyDataset(true)}>
+        <button className="btn-secondary btn-sm flex items-center gap-1.5" onClick={() => setShowCopyDataset(true)}>
           <Copy size={14} /> Copy to Dataset
         </button>
         <button className="btn-danger btn-sm flex items-center gap-1.5" onClick={() => setShowDeleteConfirm(true)}>

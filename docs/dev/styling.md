@@ -8,7 +8,7 @@ Tailwind CSS v3 with a dark theme. Color tokens are CSS custom properties define
 
 | Class | Purpose |
 |---|---|
-| `.btn` + variants — both compound (`.btn.primary`, `.btn.ghost`, `.btn.danger`, `.btn.sm`) and hyphenated (`.btn-primary`, `.btn-secondary`, `.btn-ghost`, `.btn-danger`, `.btn-sm`) forms are defined; the hyphenated forms are the more common outside the comfy components | Button variants |
+| `.btn` + variants — both compound (`.btn.primary`, `.btn.ghost`, `.btn.danger`, `.btn.sm`) and hyphenated (`.btn-primary`, `.btn-secondary`, `.btn-ghost`, `.btn-danger`, `.btn-sm`) forms are defined; the hyphenated forms are the more common outside the comfy components. **A hyphenated colour variant is named in the variant rule itself** (`.btn.primary, .btn-primary { … }`), never reached through `@apply btn primary`: Tailwind can only rewrite a compound selector into another compound one, so from 2026-05 to 2026-11 a lone `btn-primary`/`btn-ghost`/`btn-danger` rendered as the grey base. The legacy `@apply btn` block sits *above* the variants, whose rules it ties on specificity. `.btn-sm` still goes through `@apply btn sm`, so a lone `btn-sm` keeps the 30px base height unless `.btn` is also on the element | Button variants |
 | `.link-btn` | Action that reads as a link inside a sentence — inherits `font: inherit` rather than being a `.btn` variant, so it sits on the embedding line's baseline. The gallery's select-all-matching offer |
 | `.input`, `.select`, `.checkbox` | Form controls |
 | `.panel`, `.panel-h`, `.panel-b` | Card container with header/body sections |

@@ -111,9 +111,33 @@ Available on the Captioning page and in the selection toolbar caption modal:
 Chain two or more captioning steps that run in sequence as a single job:
 
 - Each step has its own model, style, custom prompt, and delimiter settings
-- Use `{previous_caption}` in a step's custom prompt to inject the prior step's output into the next model — enables iterative refinement (e.g. WD14 tags as input to an Ollama narrative prompt)
+- Use `{previous_caption}` in a step's custom prompt to inject the prior step's output into the next model — enables iterative refinement (e.g. WD14 tags as input to an Ollama narrative prompt). In the first step it is the caption the image already has: see [Building on the current caption](#building-on-the-current-caption)
 - Triggered via the **+ Add Step** button on the Captioning page; also available from the selection toolbar caption modal
 - Runs as a background job with the same queue and progress display as a single-model run
+
+## Building on the current caption
+
+A model that reads a prompt can be shown the caption an image already has, and asked to
+improve it rather than start again. That works with Ollama, any OpenAI-compatible
+provider and JoyCaption. Florence-2, PaliGemma-2 and WD14 ignore prompts, so the options
+below do not appear for them.
+
+- **In any custom prompt**, `{previous_caption}` is replaced with the image's current
+  caption. An image with no caption gets an empty string.
+- **On the Captioning page**, the first step's **Include current caption** box adds it to
+  the prompt for you. With the prompt box empty, it asks the model to improve the
+  caption. It is greyed out for *Uncaptioned only* with **Overwrite**, since every image
+  in that scope has nothing to include. Later steps have **Include previous caption**,
+  which passes on the step before's output instead.
+- A job uses each caption as it is when the job **starts**. If you queue a job behind
+  another one that rewrites the same images, it builds on that job's results.
+- **On an image's detail page**, open **Generate with AI** and pick **Fix current**. Choose
+  a model, say what is wrong ("the broken glass is their reflection in a cracked mirror")
+  and press **Fix Caption**. The model sees the image, the caption and your note, and
+  rewrites the caption, keeping what was right. Unsaved edits in the caption box are saved
+  first, so the model works from what you see. When the fix lands, **Undo fix** puts the old
+  caption back in the box; press **Save** to keep it. If the model fails or returns nothing,
+  you are told so and the caption is left as it was.
 
 ## Job queuing
 

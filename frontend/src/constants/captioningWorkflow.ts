@@ -29,6 +29,8 @@ export interface CaptioningWorkflow {
   providerModelInput: string;
   style: string;
   customPrompt: string;
+  /** Step 1's "Include current caption" (#105); later steps carry their own. */
+  usePreviousCaption: boolean;
   wd14Threshold: number;
   targetWidth: number | null;
   targetHeight: number | null;
@@ -54,6 +56,7 @@ export const CAPTIONING_WORKFLOW_DEFAULTS: CaptioningWorkflow = {
   providerModelInput: "",
   style: "detailed",
   customPrompt: "",
+  usePreviousCaption: false,
   wd14Threshold: 0.35,
   targetWidth: null,
   targetHeight: null,

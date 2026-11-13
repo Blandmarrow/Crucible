@@ -323,6 +323,19 @@ class CaptionJobRequest(BaseModel):
 
 _TAG_STYLES = frozenset({"tags", "booru", "danbooru", "e621", "rule34", "booru_like"})
 
+PREVIOUS_CAPTION = "{previous_caption}"
+
+
+def _resolve_prompt(template: str, previous: str) -> str:
+    """Fill `{previous_caption}` in a custom prompt with the image's caption.
+
+    The one rule both `/run` and every `/pipeline` step use: the placeholder becomes
+    the caption the image held when the job (or step) took its snapshot, and `""`
+    for an uncaptioned image. Only the prompt-taking backends (JoyCaption, Ollama,
+    OpenAI-compatible) receive the result; the others ignore custom prompts.
+    """
+    return template.replace(PREVIOUS_CAPTION, previous)
+
 
 def _backup_sidecar(image_path: str) -> None:
     """Copy an image's caption sidecar to `.txt.bak` before it is overwritten.
@@ -609,6 +622,8 @@ async def start_caption_job(
 
             async def _call(item):
                 img_id, file_path, img_filename, img_subfolder, existing_caption = item
+                # The caption as the job's start query read it — see `_resolve_prompt`.
+                resolved_prompt = _resolve_prompt(body.custom_prompt, existing_caption)
                 if is_florence:
                     from backend.ml.florence_captioner import caption_image as _fi
                     return await _fi(file_path, florence_entry, body.style,
@@ -620,11 +635,11 @@ async def start_caption_job(
                 elif is_joycaption:
                     from backend.ml.joycaption_captioner import caption_image as _ji
                     return await _ji(file_path, joycaption_entry, body.style,
-                                        custom_prompt=body.custom_prompt,
+                                        custom_prompt=resolved_prompt,
                                         target_w=body.target_width, target_h=body.target_height)
                 elif is_ollama:
                     return await ollama_captioner.caption_image(
-                        file_path, ollama_model_name, body.style, body.custom_prompt,
+                        file_path, ollama_model_name, body.style, resolved_prompt,
                         body.target_width, body.target_height,
                         client=remote,
                     )
@@ -636,7 +651,7 @@ async def start_caption_job(
                         api_key=openai_provider.api_key,
                         model_name=openai_model_name,
                         style=body.style,
-                        custom_prompt=body.custom_prompt,
+                        custom_prompt=resolved_prompt,
                         max_px=openai_provider.max_image_px,
                         max_tokens=openai_provider.max_tokens,
                         timeout_s=openai_provider.timeout_s,
@@ -655,9 +670,28 @@ async def start_caption_job(
                     # per-image failure with a traceback rather than a green empty job.
                     raise RuntimeError(f"No captioning backend for model '{body.model}'")
 
+            # The captions as they are now, not as the request read them: the queue runs
+            # one job at a time, so a job queued behind another caption job (a dataset-wide
+            # run, then a Fix on one of its images) would otherwise refine and merge text
+            # that job has since replaced, and overwrite its output. Re-read only when the
+            # caption is used — the `{previous_caption}` placeholder or an append/prepend
+            # merge — the same condition as `/pipeline`'s per-step `prev_captions` load.
+            items = image_data
+            if PREVIOUS_CAPTION in body.custom_prompt or body.delimiter_mode != "overwrite":
+                current: dict[str, str] = {}
+                async with AsyncSessionLocal() as _cs:
+                    for chunk in chunked([r[0] for r in image_data]):
+                        current.update({
+                            row.id: (row.caption_text or "")
+                            for row in await _cs.execute(
+                                select(Image.id, Image.caption_text).where(Image.id.in_(chunk))
+                            )
+                        })
+                items = [(*r[:4], current.get(r[0], r[4])) for r in image_data]
+
             # Stop sends no new request; the ones in flight are still saved and
             # counted below, and the job ends cancelled after the loop.
-            calls = InOrderCalls(image_data, _call, bound, stop=lambda: job_queue.cancel_requested(job_id))
+            calls = InOrderCalls(items, _call, bound, stop=lambda: job_queue.cancel_requested(job_id))
             try:
                 async with AsyncSessionLocal() as session, calls:
                     async for i, item, call_result, call_exc in calls:
@@ -1169,10 +1203,12 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
                 )
                 model_label = f"WD14 ({wd14_variant})"
 
-            # Load current captions from DB for {previous_caption} substitution and/or delimiter merge
+            # Load current captions from DB for {previous_caption} substitution and/or
+            # delimiter merge. On step 0 that is the caption the image already had, so a
+            # first step can refine it (#105); on later steps, the previous step's output.
             prev_captions: dict[str, str] = {}
             needs_current = (
-                (step_idx > 0 and "{previous_caption}" in step.custom_prompt)
+                PREVIOUS_CAPTION in step.custom_prompt
                 or step.delimiter_mode != "overwrite"
             )
             if needs_current:
@@ -1203,7 +1239,7 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
                     # From this step's snapshot, so a request sent ahead of the
                     # images before it reads the same previous caption.
                     prev_caption = prev_captions.get(img_id, "")
-                    resolved_prompt = step.custom_prompt.replace("{previous_caption}", prev_caption)
+                    resolved_prompt = _resolve_prompt(step.custom_prompt, prev_caption)
                     if is_florence:
                         from backend.ml.florence_captioner import caption_image as _fi
                         return await _fi(file_path, florence_entry, step.style, step.target_width, step.target_height)

@@ -31,18 +31,15 @@ restates its stages.
    linking the record that holds the full text.
 5. **Landed**: one line per finished milestone or handoff record.
 
-## Next session (updated 2026-11-13, enhancement issues ordered first)
+## Next session (updated 2026-11-13, #24 built)
 
-1. **M11 is next** (see Now): the open enhancement issues, which the user ordered ahead of
-   everything else. Start with #24, the smallest. #48 waits on a question to its reporter,
-   and #19 on the user picking a light palette. M7's Stage 3 waits behind M11, under
-   Waiting.
-2. **The CLIP QuickGELU fix is merged** (PR #154,
-   [decision 17](decisions/17-clip-quickgelu-fix.md)). Left for the user, on their own
-   install: start it with `manage start` to run the migration, which backs the database up
-   first, then re-embed, re-check watermarks and re-score LAION from the Quality page.
-3. M4 stays held, with its merge checklist under Waiting. The previous block's closed item is
-   in [roadmap-archive/handoff-2026-11-13.md](roadmap-archive/handoff-2026-11-13.md#next-session-updated-2026-11-13-crop-box-fix-merged).
+1. **#24's clear is built** on `feat/clear-captions-24`, every gate green; it waits on the
+   user's go-ahead to commit and open the PR, which says "Fixes #24".
+2. **M11 continues** (see Now) with #105. #48 waits on a question to its reporter, and #19
+   on the user picking a light palette. M7's Stage 3 waits behind M11, under Waiting.
+3. M4 stays held, with its merge checklist under Waiting. The previous block's closed item,
+   the CLIP fix's follow-up on the user's install (now done), is in
+   [roadmap-archive/handoff-2026-11-13.md](roadmap-archive/handoff-2026-11-13.md#next-session-updated-2026-11-13-enhancement-issues-ordered-first).
 
 ## Now
 
@@ -57,9 +54,10 @@ plan folder and are expanded here before any code. The tiers are the order.
 
 Tier 1, small:
 
-- [ ] #24 Remove captions: a `clear` operation for caption bulk edit. Today's `remove`
-  (`BulkEditRequest` in `backend/schemas/caption.py`) strips a piece of text, not the whole
-  caption. To decide: whether a cleared caption empties its `.txt` sidecar or deletes it.
+- [x] #24 Remove captions: a `clear` operation for caption bulk edit, built 2026-11-13 on
+  `feat/clear-captions-24`, PR not yet opened. The user chose to delete a cleared caption's
+  `.txt`, and to make that the rule for every path that empties a caption
+  (`docs/dev/image-import.md` § Caption sidecars).
 - [ ] #105 Re-caption with the existing caption: `/pipeline` fills `{previous_caption}` only
   when `step_idx > 0` (`backend/routers/captioning.py`). Lift that, then add a "fix this
   caption" box on the detail page that sends the current caption plus a correction note.

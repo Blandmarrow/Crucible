@@ -31,19 +31,17 @@ restates its stages.
    linking the record that holds the full text.
 5. **Landed**: one line per finished milestone or handoff record.
 
-## Next session (updated 2026-11-13, crop box fix in progress)
+## Next session (updated 2026-11-13, crop box fix merged)
 
-1. **Issue #91, the crop box** (`fix/crop-box-91`): the detail page's crop tool moves from
-   `react-easy-crop` (pan-and-zoom, "Free" secretly 4:3) to `react-image-crop`, a box you
-   drag and resize. Detail: `docs/dev/image-detail.md` § The crop box. Its commit and PR
-   say "Fixes #91", so the merge closes the issue. Then **M7 Stage 3** (see Now), which
-   waits on nothing.
+1. **M7 Stage 3 is next** (see Now). It waits on nothing. Issue #91's crop box fix merged
+   as PR #156 and closed the issue; one gap is left open, EXIF orientation in a PNG or WebP
+   (`docs/dev/image-detail.md` § The crop box).
 2. **The CLIP QuickGELU fix is merged** (PR #154,
    [decision 17](decisions/17-clip-quickgelu-fix.md)). Left for the user, on their own
    install: start it with `manage start` to run the migration, which backs the database up
    first, then re-embed, re-check watermarks and re-score LAION from the Quality page.
 3. M4 stays held, with its merge checklist under Waiting. The previous block's closed item is
-   in [roadmap-archive/handoff-2026-11-13.md](roadmap-archive/handoff-2026-11-13.md#next-session-updated-2026-11-13-scoring-doc-split).
+   in [roadmap-archive/handoff-2026-11-13.md](roadmap-archive/handoff-2026-11-13.md#next-session-updated-2026-11-13-crop-box-fix-in-progress).
 
 ## Now
 
@@ -169,6 +167,10 @@ Each line links the record that holds the full text.
   `openai/clip-vit-large-patch14`, but open_clip loads it from
   `timm/vit_large_patch14_clip_224.openai`. Only the "Downloading…" progress message is
   affected. Found while planning the CLIP fix (2026-11-13).
+- The detail page's crop box takes its frame from the browser's `naturalWidth`. An EXIF
+  orientation tag in a PNG or WebP, which Pillow honours, is not confirmed to be applied
+  by every browser; one that ignores it would crop the wrong region
+  (`docs/dev/image-detail.md` § The crop box, PR #156).
 
 ## Landed
 

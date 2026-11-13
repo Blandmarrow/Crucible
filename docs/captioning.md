@@ -81,7 +81,7 @@ emptied.
 
 This is the one quality flag scoring never sets. It shows up beside the scoring flags in
 the dataset flag counts, the gallery filters and the **Exclude quality flags** option below
-→ [details](scoring.md#quality-flags)
+→ [details](reading-scores.md#quality-flags)
 
 ## Delimiter mode
 

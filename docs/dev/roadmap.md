@@ -31,17 +31,17 @@ restates its stages.
    linking the record that holds the full text.
 5. **Landed**: one line per finished milestone or handoff record.
 
-## Next session (updated 2026-11-13, CLIP fix merged)
+## Next session (updated 2026-11-13, scoring doc split)
 
 1. **M7 Stage 3 is next** (see Now). It waits on nothing.
 2. **The CLIP QuickGELU fix is merged** (PR #154,
    [decision 17](decisions/17-clip-quickgelu-fix.md)). Left for the user, on their own
    install: start it with `manage start` to run the migration, which backs the database up
    first, then re-embed, re-check watermarks and re-score LAION from the Quality page.
-3. **`docs/scoring.md` is over budget** (2,621 of 2,500). Its seam is re-recorded in
-   [pending-splits.md](pending-splits.md); split it first in the next session that edits it.
-4. M4 stays held, with its merge checklist under Waiting. The previous block is in
-   [roadmap-archive/handoff-2026-11-13.md](roadmap-archive/handoff-2026-11-13.md#next-session-updated-2026-11-13-clip-fix-built).
+3. **`docs/scoring.md` is split** on `docs/split-scoring`: § Quality flags, § Stale scores
+   and § Choosing the aesthetic model moved to `docs/reading-scores.md`. Merge its PR.
+4. M4 stays held, with its merge checklist under Waiting. The previous block's closed item is
+   in [roadmap-archive/handoff-2026-11-13.md](roadmap-archive/handoff-2026-11-13.md#next-session-updated-2026-11-13-clip-fix-merged).
 
 ## Now
 
@@ -161,8 +161,8 @@ Each line links the record that holds the full text.
   ([throughput-plan/README.md § T6](throughput-plan/README.md#t6--fetch-model-weights-off-the-gpu-thread-parked)),
   and the plan's untimed
   [open questions](throughput-plan/README.md#open-questions-for-later).
-- Two docs seams are queued in [pending-splits.md](pending-splits.md); `docs/scoring.md`'s is
-  now over budget (see Next session).
+- One docs seam is queued in [pending-splits.md](pending-splits.md), `README.md`'s
+  § Features deletion.
 - `model_manager._load_aesthetic_sync`'s first-run check looks for CLIP in
   `openai/clip-vit-large-patch14`, but open_clip loads it from
   `timm/vit_large_patch14_clip_224.openai`. Only the "Downloading…" progress message is

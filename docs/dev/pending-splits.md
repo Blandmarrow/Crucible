@@ -51,31 +51,16 @@ staleness sweep while still recording the seam.
 
 ## Queue
 
-## docs/scoring.md
-
-- **Moves:** § Quality flags (~160 words), § Stale scores (~320) **and** § Choosing the
-  aesthetic model with its § After the CLIP fix subsection (~600). The file tripped the
-  budget on 2026-11-13 at 2,621 words, when § After the CLIP fix (~200) landed on
-  `fix/clip-quickgelu`. The first two sections alone would leave ~2,140 (86%), so the
-  aesthetic-model section goes too, leaving roughly 1,550 (62%). Re-measure first.
-- **New file:** docs/reading-scores.md, "Reading your scores": which flags the scores set,
-  when they go stale, and why two aesthetic models' numbers are not comparable. This is the
-  third reading-side subject the old entry was waiting for.
-- **Why here:** the § Style similarity seam was executed on 2026-10-29 into
-  `docs/style-similarity.md`, leaving 1,940 of 2,500 words, over the ~1,500 target.
-  Everything still here is one workflow end to end: running a scoring run, what each scorer
-  produces and choosing the aesthetic model are about *producing* scores, and the two
-  sections named above are about *reading* them — the flags those scores set, and when they
-  go stale. That is the line if the file trips again.
-- **Watch for:** `scoring.md#stale-scores` is linked from `docs/export.md` and
-  `docs/style-similarity.md` (the dimmed meter), and `scoring.md#quality-flags` from
-  `docs/captioning.md`; both are user-doc markdown links, so a move FAILs the checker
-  until they are repointed. `scoring.md#after-the-clip-fix-november-2026` is linked from
-  `docs/style-similarity.md`, and `scoring.md#choosing-the-aesthetic-model` from
-  `docs/export.md` and `docs/statistics.md`. Grep `scoring.md#` across `docs/` before
-  moving. Do
-  **not** take `### VRAM after a run` as the seam: it is six lines and belongs exactly where
-  it is, under § Running a scoring run.
+`docs/scoring.md` → `docs/reading-scores.md` was executed on 2026-11-13 on
+`docs/split-scoring`, the session after § After the CLIP fix tripped it at 2,621 words, and
+the seam **held as recorded**. Re-measured, the three sections were 238 (Quality flags), 428
+(Stale scores) and 591 (Choosing the aesthetic model with After the CLIP fix) words, not the
+~1,080 the entry estimated, and they moved word for word with their headings unchanged, so
+every anchor kept its slug. That left 1,378 (scoring) and 1,336 (reading-scores), 55% and
+53%. The entry's Watch-for was right except that it missed `docs/duplicates.md`, which links
+`#choosing-the-aesthetic-model` too, and `docs/dev/quality/scores-stale.md`'s "Users see"
+pointer, which the checker cannot tell is now aimed at the wrong half. Being a user doc, the
+new file needed no Map row, only a README Docs-table row and a place in `docs/features.md`.
 
 Five splits were executed on 2026-11-12 on `docs/split-queue-2026-11-12`, ahead of M10 T5.
 `docs/dev/quality/scoring.md` → `docs/dev/quality/scoring-job.md` held as recorded (1,749 +

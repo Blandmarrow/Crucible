@@ -7,7 +7,8 @@ import { matchPath } from "react-router";
 import { useUiPrefsStore } from "../store/uiPrefsStore";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ChevronLeft, ChevronRight, Save, Crop, AlertTriangle, Copy, Sparkles, ChevronDown, ChevronUp, Type, Eye, EyeOff, ScanSearch, Pencil, Maximize2, Palette, CheckSquare, Square, Crosshair, Combine, Focus, BoxSelect, Eraser } from "lucide-react";
-import Cropper from "react-easy-crop";
+import ReactCrop, { type PercentCrop } from "react-image-crop";
+import "react-image-crop/dist/ReactCrop.css";
 import toast from "react-hot-toast";
 import { apiErrorDetail, isNotFound } from "../utils/apiError";
 import { imagesApi } from "../api/images";
@@ -40,7 +41,9 @@ import CropToDetectionForm from "../components/crop/CropToDetectionForm";
 import InpaintForm from "../components/inpaint/InpaintForm";
 import ReextractFramesModal from "../components/video/ReextractFramesModal";
 import DetectionsPanel from "../components/detection/DetectionsPanel";
-import { detectionCropPrefill } from "../utils/detectionCrop";
+import { detectionCropPrefill, type CropArea } from "../utils/detectionCrop";
+import { percentToPixels, pixelsToPercent, reshapeToAspect, seedCrop } from "../utils/cropRect";
+import NumberField from "../components/common/NumberField";
 import { invalidateDetectionQueries } from "../utils/detectionQueries";
 import type { CaptionData, Detection, ImageDetail } from "../types";
 import { injectNavId, navIdsParams, navPageParams, readNavContext, removeNavId, serverPageContext, writeNavContext, type GalleryNavContext } from "../utils/galleryNav";
@@ -69,8 +72,6 @@ function formatSize(bytes: number | null) {
   if (!bytes) return "—";
   return bytes < 1_048_576 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1_048_576).toFixed(1)} MB`;
 }
-
-interface CropArea { x: number; y: number; width: number; height: number; }
 
 /** The twelve per-layer DINOv2 cosines, on a **fixed 0–1 axis**.
  *
@@ -275,10 +276,19 @@ export default function ImageDetailPage() {
   const [captionDragActive, setCaptionDragActive] = useState(false);
   const [cropMode, setCropMode] = useState(false);
   const [cropReplace, setCropReplace] = useState(false);
-  const [crop, setCrop] = useState({ x: 0, y: 0 });
-  const [zoom, setZoom] = useState(1);
+  // The crop box, in percent of the image so it keeps its place when the pane
+  // resizes. The pixel rect sent to the server is derived from it and the image's
+  // natural size, read in the crop `<img>`'s onLoad (EXIF orientation applied by
+  // the browser, the same frame the backend crops in after `exif_transpose`).
+  // The size carries the image it was read from: after an arrow-key move the
+  // old size must not turn the box into a rect for the new image. Tagging it,
+  // rather than clearing it in the [imageId] effect, cannot race a cached
+  // image's load event that lands before that effect runs.
+  const [cropPct, setCropPct] = useState<PercentCrop | undefined>(undefined);
+  const [cropNaturalFor, setCropNatural] = useState<{ w: number; h: number; imageId?: string } | null>(null);
+  const cropNatural = cropNaturalFor && cropNaturalFor.imageId === imageId ? cropNaturalFor : null;
   const [aspect, setAspect] = useState<number | undefined>(undefined);
-  const [croppedArea, setCroppedArea] = useState<CropArea | null>(null);
+  const croppedArea = cropPct && cropNatural ? percentToPixels(cropPct, cropNatural.w, cropNatural.h) : null;
   const [outputWidth, setOutputWidth] = useState("");
   const [outputHeight, setOutputHeight] = useState("");
   // Crop + upscale (atomic)
@@ -340,13 +350,11 @@ export default function ImageDetailPage() {
   const [manualJobId, setManualJobId] = useState<string | null>(null);
   const [refineTarget, setRefineTarget] = useState<Detection | null>(null);
   const [refineJobId, setRefineJobId] = useState<string | null>(null);
-  // Crop prefill (union of detections) — seeds react-easy-crop on fresh mount
-  const [cropInitialArea, setCropInitialArea] = useState<CropArea | null>(null);
-  // Bumped whenever the crop tool should re-read initialCroppedAreaPixels; used
-  // as the Cropper's key to force a remount (react-easy-crop only reads the
-  // initial area on mount). A counter, not a JSON key, so the *same* prefill
-  // applied twice (e.g. Crop-from-Detections clicked again) still remounts.
-  const [cropSeed, setCropSeed] = useState(0);
+  // A Crop from Detections prefill waiting for the crop `<img>` to load, which
+  // is when the natural size it needs is known. Once the size is known the
+  // prefill is applied straight to `cropPct` instead, so clicking it again with
+  // the tool already open still lands (that `<img>` does not reload).
+  const [cropPending, setCropPending] = useState<PercentCrop | null>(null);
 
   // AI captioning state
   const [showAi, setShowAi] = useState(false);
@@ -687,7 +695,9 @@ export default function ImageDetailPage() {
     setDrawRect(null);
     setPendingBox(null);
     setRefineTarget(null);
-    setCropInitialArea(null);
+    // An open crop tool reseeds from the next image's onLoad; until then the
+    // size is tagged with the previous image, so there is no rect to save.
+    setCropPending(null);
     // An upscale or LUT started on the previous image must not close the tool
     // or navigate away from this one when it finishes.
     upscaleGenRef.current += 1;
@@ -720,6 +730,10 @@ export default function ImageDetailPage() {
         toggle(imageId, datasetId ?? "");
         return;
       }
+      // An arrow key something on the page already used is not a page turn: the
+      // crop box nudges itself with the arrows and calls preventDefault, but does
+      // not stop the event reaching this window listener.
+      if (e.defaultPrevented) return;
       if (e.key === "ArrowLeft" && prevId) goTo(prevId);
       if (e.key === "ArrowRight" && nextId) goTo(nextId);
     };
@@ -1464,14 +1478,96 @@ export default function ImageDetailPage() {
     onError: () => toast.error("Failed to start captioning"),
   });
 
-  const resetCrop = useCallback(() => {
-    setZoom(1);
-    setCrop({ x: 0, y: 0 });
+  /** Open the crop tool with a fresh box, seeded when its `<img>` loads. */
+  const openCrop = (pending: PercentCrop | null = null) => {
+    setCropPct(undefined);
+    setCropNatural(null);
+    setCropPending(pending);
+    setUpscaleMode(false);
+    setLutMode(false);
+    enterMode(null);
+    setCropMode(true);
+  };
+
+  const onCropImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    const w = e.currentTarget.naturalWidth;
+    const h = e.currentTarget.naturalHeight;
+    if (!w || !h) return;
+    // The src carries `updated_at`, so any change to the row (a caption job
+    // finishing, a refetch) reloads the same picture. Keep the user's box then;
+    // only a new image or a new size gets a fresh one.
+    if (cropPct && !cropPending && cropNatural && cropNatural.w === w && cropNatural.h === h) return;
+    setCropNatural({ w, h, imageId });
+    setCropPct(seedCrop(w, h, cropPending, effectiveAspect));
+    setCropPending(null);
+  };
+
+  /** Reshape the box for an aspect change; Free (undefined) keeps it as it is. */
+  const reshapeCrop = (nextAspect: number | undefined) => {
+    if (!nextAspect || nextAspect === effectiveAspect || !cropNatural || !croppedArea) return;
+    const { w, h } = cropNatural;
+    setCropPct(pixelsToPercent(reshapeToAspect(croppedArea, nextAspect, w, h), w, h));
+  };
+
+  /**
+   * Reshape for the Resize-to fields, which change the aspect once per
+   * keystroke: typing H "1", "10", "102", "1024" passes through extreme shapes,
+   * and reshaping each from the last would shrink the box to a sliver (the fit
+   * step cuts the area). So every keystroke reshapes from the box as it was
+   * when the field got focus, and a shape that goes back to Free restores it.
+   */
+  const resizeBaseRef = useRef<CropArea | null>(null);
+
+  // The crop stage's height, measured: the image must fit under a toolbar and a
+  // Box row whose heights vary (both wrap), or the bottom handles fall off the
+  // pane. A callback ref, since the stage unmounts while an image loads.
+  const [cropStageH, setCropStageH] = useState(0);
+  const cropStageObs = useRef<ResizeObserver | null>(null);
+  const cropStageRef = useCallback((el: HTMLDivElement | null) => {
+    cropStageObs.current?.disconnect();
+    cropStageObs.current = null;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setCropStageH(el.clientHeight));
+    ro.observe(el);
+    cropStageObs.current = ro;
   }, []);
 
-  const onCropComplete = useCallback((_: unknown, croppedPixels: CropArea) => {
-    setCroppedArea(croppedPixels);
-  }, []);
+  // 16 = the stage's padding, top and bottom; the fallback covers the first
+  // frame, before the observer has measured.
+  const cropMaxH = cropStageH > 16 ? cropStageH - 16 : "calc(100vh - 200px)";
+  const reshapeFromBase = (nextAspect: number | undefined) => {
+    const base = resizeBaseRef.current ?? croppedArea;
+    if (!cropNatural || !base) return;
+    const { w, h } = cropNatural;
+    setCropPct(pixelsToPercent(nextAspect ? reshapeToAspect(base, nextAspect, w, h) : base, w, h));
+  };
+
+  /** Set one side of the box from its number field. With an aspect locked the
+   *  other side follows; the clamp keeps both inside the image. */
+  const setCropSide = (side: "x" | "y" | "width" | "height", n: number) => {
+    if (!cropNatural || !croppedArea) return;
+    const { w, h } = cropNatural;
+    const next = { ...croppedArea, [side]: n };
+    if (effectiveAspect && side === "width") next.height = Math.max(1, Math.round(n / effectiveAspect));
+    if (effectiveAspect && side === "height") next.width = Math.max(1, Math.round(n * effectiveAspect));
+    setCropPct(pixelsToPercent(next, w, h));
+  };
+
+  /** The largest value a side's field accepts, given where the box sits now. */
+  const cropSideMax = (side: "x" | "y" | "width" | "height"): number => {
+    if (!cropNatural || !croppedArea) return 1;
+    const { w, h } = cropNatural;
+    const { x, y, width, height } = croppedArea;
+    if (side === "x") return w - width;
+    if (side === "y") return h - height;
+    const maxW = w - x;
+    const maxH = h - y;
+    if (!effectiveAspect) return side === "width" ? maxW : maxH;
+    // Locked: the other side must fit too.
+    return side === "width"
+      ? Math.max(1, Math.min(maxW, Math.floor(maxH * effectiveAspect)))
+      : Math.max(1, Math.min(maxH, Math.floor(maxW / effectiveAspect)));
+  };
 
   if (imageError && !image) {
     return (
@@ -1521,13 +1617,14 @@ export default function ImageDetailPage() {
       toast("No visible detections to crop to");
       return;
     }
-    enterMode(null);
-    setCropInitialArea(prefill);
-    setCropSeed((s) => s + 1);
-    setUpscaleMode(false);
-    setLutMode(false);
-    resetCrop();
-    setCropMode(true);
+    // In percent of the frame the prefill was computed in, so it maps onto the
+    // loaded image's natural size whatever that turns out to be.
+    const pct = pixelsToPercent(prefill, image.width!, image.height!);
+    if (cropMode && cropNatural) {
+      setCropPct(seedCrop(cropNatural.w, cropNatural.h, pct, effectiveAspect));
+    } else {
+      openCrop(pct);
+    }
   };
 
   return (
@@ -1636,12 +1733,7 @@ export default function ImageDetailPage() {
           )}
           <button
             className={`btn-sm flex items-center gap-1.5 ${cropMode ? "btn-primary" : "btn-ghost"}`}
-            onClick={() => {
-              setCropMode((v) => {
-                if (!v) { resetCrop(); setUpscaleMode(false); setLutMode(false); setCropInitialArea(null); setCropSeed((s) => s + 1); enterMode(null); }
-                return !v;
-              });
-            }}
+            onClick={() => (cropMode ? setCropMode(false) : openCrop())}
           >
             <Crop size={14} /> {cropMode ? "Cancel Crop" : "Crop"}
           </button>
@@ -1684,50 +1776,18 @@ export default function ImageDetailPage() {
                 value={aspect ?? ""}
                 disabled={owNum > 0 && ohNum > 0}
                 title={(owNum > 0 && ohNum > 0) ? "Aspect ratio set by W×H" : undefined}
-                onChange={(e) => { setAspect(e.target.value ? Number(e.target.value) : undefined); resetCrop(); }}
+                aria-label="Crop aspect ratio"
+                onChange={(e) => {
+                  const next = e.target.value ? Number(e.target.value) : undefined;
+                  setAspect(next);
+                  reshapeCrop(next);
+                }}
               >
                 <option value="">Free</option>
                 {ASPECT_PRESETS.map(({ label, value }) => (
                   <option key={label} value={value}>{label}</option>
                 ))}
               </select>
-              <input
-                type="range"
-                min={1}
-                max={10}
-                step={0.05}
-                value={zoom}
-                onChange={(e) => setZoom(Number(e.target.value))}
-                title={`Zoom ${zoom.toFixed(2)}×`}
-                style={{ width: 80, accentColor: "var(--accent)" }}
-              />
-              <input
-                type="number"
-                min="1"
-                className="input"
-                style={{ width: 68 }}
-                placeholder="W px"
-                value={outputWidth}
-                onChange={(e) => {
-                  const newW = e.target.value;
-                  setOutputWidth(newW);
-                  if (parseInt(newW) > 0 && ohNum > 0) resetCrop();
-                }}
-              />
-              <span style={{ color: "var(--fg-mute)", fontSize: 13 }}>×</span>
-              <input
-                type="number"
-                min="1"
-                className="input"
-                style={{ width: 68 }}
-                placeholder="H px"
-                value={outputHeight}
-                onChange={(e) => {
-                  const newH = e.target.value;
-                  setOutputHeight(newH);
-                  if (owNum > 0 && parseInt(newH) > 0) resetCrop();
-                }}
-              />
               <label className="flex items-center gap-1.5 text-sm cursor-pointer select-none">
                 <input
                   type="checkbox"
@@ -1932,19 +1992,101 @@ export default function ImageDetailPage() {
           )}
         </div>
 
+        {cropMode && (
+          // The box in source pixels, editable, and the optional output size.
+          // Its own row: the toolbar above is already full when crop + upscale
+          // is open.
+          <div
+            className="px-3 py-2 border-b border-gray-700/50 flex items-center gap-2 flex-wrap"
+            style={{ fontSize: 13, color: "var(--fg-mute)" }}
+          >
+            <span>Box</span>
+            {(["x", "y", "width", "height"] as const).map((side) => (
+              <label key={side} className="flex items-center gap-1">
+                {side === "width" ? "W" : side === "height" ? "H" : side.toUpperCase()}
+                <NumberField
+                  className="input"
+                  style={{ width: 76 }}
+                  aria-label={`Crop ${side === "width" ? "w" : side === "height" ? "h" : side}`}
+                  min={side === "x" || side === "y" ? 0 : 1}
+                  max={cropSideMax(side)}
+                  disabled={!croppedArea}
+                  value={croppedArea?.[side] ?? 0}
+                  clamp={(n) => Math.min(Math.max(Math.round(n), side === "x" || side === "y" ? 0 : 1), cropSideMax(side))}
+                  onCommit={(n) => setCropSide(side, n)}
+                />
+              </label>
+            ))}
+            {cropNatural && (
+              <span title="The image's full size">of {cropNatural.w}×{cropNatural.h}</span>
+            )}
+            <span style={{ borderLeft: "1px solid var(--line)", height: 18, margin: "0 4px" }} />
+            <span title="Resize the cropped image to this size. Fill in both to lock the box to that shape.">
+              Resize to
+            </span>
+            <input
+              type="number"
+              min="1"
+              className="input"
+              style={{ width: 68 }}
+              placeholder="W px"
+              aria-label="Resize crop to width"
+              value={outputWidth}
+              onFocus={() => { resizeBaseRef.current = croppedArea; }}
+              onChange={(e) => {
+                const newW = e.target.value;
+                setOutputWidth(newW);
+                const w = parseInt(newW);
+                reshapeFromBase(w > 0 && ohNum > 0 ? w / ohNum : aspect);
+              }}
+            />
+            <span>×</span>
+            <input
+              type="number"
+              min="1"
+              className="input"
+              style={{ width: 68 }}
+              placeholder="H px"
+              aria-label="Resize crop to height"
+              value={outputHeight}
+              onFocus={() => { resizeBaseRef.current = croppedArea; }}
+              onChange={(e) => {
+                const newH = e.target.value;
+                setOutputHeight(newH);
+                const h = parseInt(newH);
+                reshapeFromBase(owNum > 0 && h > 0 ? owNum / h : aspect);
+              }}
+            />
+          </div>
+        )}
+
         <div className="flex-1 relative bg-black/40">
           {cropMode ? (
-            <Cropper
-              key={cropSeed}
-              image={imagesApi.fileUrlVersioned(imageId!, image.updated_at)}
-              crop={crop}
-              zoom={zoom}
-              aspect={effectiveAspect}
-              initialCroppedAreaPixels={cropInitialArea ?? undefined}
-              onCropChange={setCrop}
-              onZoomChange={setZoom}
-              onCropComplete={onCropComplete}
-            />
+            <div
+              ref={cropStageRef}
+              style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", padding: 8 }}
+            >
+              <ReactCrop
+                crop={cropPct}
+                onChange={(_, pct) => setCropPct(pct)}
+                aspect={effectiveAspect}
+                keepSelection
+                ruleOfThirds
+                minWidth={8}
+                minHeight={8}
+                style={{
+                  maxHeight: cropMaxH,
+                  "--rc-focus-color": "var(--accent)",
+                } as React.CSSProperties}
+              >
+                <img
+                  src={imagesApi.fileUrlVersioned(imageId!, image.updated_at)}
+                  alt={image.filename}
+                  onLoad={onCropImageLoad}
+                  style={{ display: "block", maxWidth: "100%", maxHeight: cropMaxH }}
+                />
+              </ReactCrop>
+            </div>
           ) : (
             <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
               <div style={{ position: "relative", maxWidth: "100%", maxHeight: "100%", lineHeight: 0 }}>

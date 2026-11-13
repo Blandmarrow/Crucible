@@ -31,9 +31,13 @@ restates its stages.
    linking the record that holds the full text.
 5. **Landed**: one line per finished milestone or handoff record.
 
-## Next session (updated 2026-11-13, scoring doc split merged)
+## Next session (updated 2026-11-13, crop box fix in progress)
 
-1. **M7 Stage 3 is next** (see Now). It waits on nothing.
+1. **Issue #91, the crop box** (`fix/crop-box-91`): the detail page's crop tool moves from
+   `react-easy-crop` (pan-and-zoom, "Free" secretly 4:3) to `react-image-crop`, a box you
+   drag and resize. Detail: `docs/dev/image-detail.md` § The crop box. Its commit and PR
+   say "Fixes #91", so the merge closes the issue. Then **M7 Stage 3** (see Now), which
+   waits on nothing.
 2. **The CLIP QuickGELU fix is merged** (PR #154,
    [decision 17](decisions/17-clip-quickgelu-fix.md)). Left for the user, on their own
    install: start it with `manage start` to run the migration, which backs the database up

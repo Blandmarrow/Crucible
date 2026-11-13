@@ -76,7 +76,7 @@ The DETECTIONS panel lists every detection as an editable row so you can fix a b
 - **Merge** — tick the checkboxes on two or more rows and click **Merge N → {label}** to combine them into one detection (the merged box covers all of them, and their masks are unioned); the result takes the first-selected row's label
 - **Draw a box by hand** — the **Draw Box** toolbar button lets you drag a rectangle on the image, type a label, and add it as a detection. Tick **Refine with SAM** to have SAM 2 turn the box into a precise mask (GPU host only); without it the plain box is stored. Draw mode stays active so you can annotate several boxes in a row. Press Esc to exit.
 - **Refine a mask** — the **Refine** button on any masked detection lets you click foreground points (left-click) and background points (right-click) to correct the mask, then **Apply** re-segments it with SAM 2 (GPU host only)
-- **Crop from Detections** — seeds the crop tool with a box around the currently-visible detections (padded), ready to adjust and confirm
+- **Crop from Detections** — opens the crop tool with its box around the currently-visible detections (padded), ready to drag, resize and confirm. If an aspect preset is picked, the box grows to that shape where the image has room, rather than cutting into the subject. The crop tool itself is in [editing.md](editing.md#crop)
 
 Hand-drawn, refined, and merged detections are tagged as `manual` so they're never wiped by an automatic re-run.
 

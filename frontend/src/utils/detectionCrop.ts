@@ -6,8 +6,8 @@ export interface CropArea { x: number; y: number; width: number; height: number;
  * Compute a pixel-space crop rect from the union of visible detection bboxes,
  * padded by `paddingPct` percent of the union's own extent per side and clamped
  * to the image. Returns null when no visible detection has a usable bbox. No
- * aspect-ratio snapping — react-easy-crop's aspect prop handles that
- * interactively once seeded.
+ * aspect-ratio snapping: the detail page's crop tool seeds its box with this
+ * rect and leaves the shape to the user.
  */
 export function detectionCropPrefill(
   dets: Detection[],

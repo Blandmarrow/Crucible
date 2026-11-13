@@ -84,17 +84,30 @@
   .btn:active { transform: translateY(0.5px); }
   .btn:disabled { opacity: .5; cursor: not-allowed; pointer-events: none; }
 
-  .btn.primary {
+  /* Legacy names: the `.btn` base only. Each variant below names its legacy
+     class itself rather than being reached through `@apply btn primary`: the
+     variant rules are compound (`.btn.primary`), and Tailwind can only rewrite a
+     compound selector into another compound one (`.btn.btn-primary`,
+     `.btn-primary.primary`), so a lone `className="btn-primary"` got the grey
+     base and never its colour. This block must stay above the variants — its
+     base rules tie them on specificity, and the later rule wins. */
+  .btn-primary { @apply btn; }
+  .btn-secondary { @apply btn; }
+  .btn-ghost { @apply btn; }
+  .btn-danger { @apply btn; }
+  .btn-sm { @apply btn sm; }
+
+  .btn.primary, .btn-primary {
     background: var(--accent); border-color: var(--accent); color: #03130d;
     box-shadow: 0 1px 0 rgba(255,255,255,.2) inset, 0 1px 0 rgba(0,0,0,.4);
   }
-  .btn.primary:hover { background: var(--accent-2); border-color: var(--accent-2); }
+  .btn.primary:hover, .btn-primary:hover { background: var(--accent-2); border-color: var(--accent-2); }
 
-  .btn.ghost { background: transparent; border-color: transparent; color: var(--fg-mute); }
-  .btn.ghost:hover { background: var(--surface-2); color: var(--fg); }
+  .btn.ghost, .btn-ghost { background: transparent; border-color: transparent; color: var(--fg-mute); }
+  .btn.ghost:hover, .btn-ghost:hover { background: var(--surface-2); color: var(--fg); }
 
-  .btn.danger { color: var(--bad); }
-  .btn.danger:hover { background: var(--bad-bg); border-color: var(--bad); }
+  .btn.danger, .btn-danger { color: var(--bad); }
+  .btn.danger:hover, .btn-danger:hover { background: var(--bad-bg); border-color: var(--bad); }
 
   .btn.sm { height: 24px; padding: 0 8px; font-size: 11.5px; }
 
@@ -109,13 +122,6 @@
   }
   .link-btn:hover { color: var(--accent-2); }
   .link-btn:disabled { opacity: .5; cursor: not-allowed; text-decoration: none; }
-
-  /* Legacy */
-  .btn-primary { @apply btn primary; }
-  .btn-secondary { @apply btn; }
-  .btn-ghost { @apply btn ghost; }
-  .btn-danger { @apply btn danger; }
-  .btn-sm { @apply btn sm; }
 
   /* ── Inputs ── */
   .input {

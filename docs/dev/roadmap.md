@@ -31,16 +31,16 @@ restates its stages.
    linking the record that holds the full text.
 5. **Landed**: one line per finished milestone or handoff record.
 
-## Next session (updated 2026-11-13, #105 built)
+## Next session (updated 2026-11-13, #105 merged)
 
-1. **#105 is built** on `feat/recaption-105` (see Now): open its PR, merge, tick the box.
-   Then M11 goes on with Tier 2. #48 waits on a question to its reporter, and #19 on the
-   user picking a light palette. M7's Stage 3 waits behind M11, under Waiting.
+1. **M11 goes on with Tier 2** (see Now): #9, #16, then #19. #48 waits on a question to its
+   reporter, and #19 on the user picking a light palette. M7's Stage 3 waits behind M11,
+   under Waiting.
 2. **A bug found while building #105**, under Later: a pipeline run ignores the
    *Uncaptioned only* scope. It wants the user's call on whether it jumps the M11 queue.
-3. M4 stays held, with its merge checklist under Waiting. The closed item of an earlier
-   block, #24's PR and the button-colour fix, is in
-   [roadmap-archive/handoff-2026-11-13.md](roadmap-archive/handoff-2026-11-13.md#next-session-updated-2026-11-13-24-built).
+3. M4 stays held, with its merge checklist under Waiting. The closed item of the previous
+   block, #105's PR, is in
+   [roadmap-archive/handoff-2026-11-13.md](roadmap-archive/handoff-2026-11-13.md#next-session-updated-2026-11-13-105-built).
 
 ## Now
 
@@ -59,8 +59,8 @@ Tier 1, small:
   PR #157, which closed the issue. The user chose to delete a cleared caption's
   `.txt`, and to make that the rule for every path that empties a caption
   (`docs/dev/image-import.md` § Caption sidecars).
-- [ ] #105 Re-caption with the existing caption: built 2026-11-13 on `feat/recaption-105`,
-  PR not yet open. `{previous_caption}` now works on every pipeline step and on `/run`, the
+- [x] #105 Re-caption with the existing caption: merged 2026-11-13 as PR #159, which closed
+  the issue. `{previous_caption}` now works on every pipeline step and on `/run`, the
   detail page's AI panel has a Fix current mode, and the Captioning page's step 1 has an
   "Include current caption" toggle (`docs/dev/captioning.md` § The `{previous_caption}`
   placeholder).

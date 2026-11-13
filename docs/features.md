@@ -37,7 +37,7 @@ The order images travel through the app:
 | Gallery, image detail | [gallery.md](gallery.md) · [subfolders.md](subfolders.md) |
 | Videos strip, video detail | [video.md](video.md) · [video-extraction.md](video-extraction.md) · [video-reextract.md](video-reextract.md) |
 | Captioning | [captioning.md](captioning.md) |
-| Score images | [scoring.md](scoring.md) · [style-similarity.md](style-similarity.md) · [duplicates.md](duplicates.md) |
+| Score images | [scoring.md](scoring.md) · [reading-scores.md](reading-scores.md) · [style-similarity.md](style-similarity.md) · [duplicates.md](duplicates.md) |
 | Stats | [statistics.md](statistics.md) |
 | Bulk Edit | [editing.md](editing.md) · [detection.md](detection.md) |
 | Consolidate Tags | [tag-consolidation.md](tag-consolidation.md) |

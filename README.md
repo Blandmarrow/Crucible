@@ -320,6 +320,7 @@ Start at the [feature index](docs/features.md), or jump straight to a topic:
 | Repeating a run | [docs/repeating-runs.md](docs/repeating-runs.md) |
 | AI Captioning | [docs/captioning.md](docs/captioning.md) |
 | Quality Scoring | [docs/scoring.md](docs/scoring.md) |
+| Reading Your Scores — flags, stale scores, the aesthetic model | [docs/reading-scores.md](docs/reading-scores.md) |
 | Style Similarity | [docs/style-similarity.md](docs/style-similarity.md) |
 | Duplicate Resolution | [docs/duplicates.md](docs/duplicates.md) |
 | Object Detection | [docs/detection.md](docs/detection.md) |

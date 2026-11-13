@@ -4,7 +4,7 @@ This file covers the three paths that bring images and captions in from a folder
 
 ## Caption sidecars
 
-Captions are persisted *out* to `{stem}.txt` sidecars (`caption_service._write_txt_sidecar`) and read *in* via `utils.read_caption_sidecar(image_path) -> str | None`. Three import paths feed captions/images in from disk; all overwrite existing captions and stamp `captioned_by="import"` — folder import, rescan/sync and standalone caption import, each below.
+Captions are persisted *out* to `{stem}.txt` sidecars (`caption_service._write_txt_sidecar`) and read *in* via `utils.read_caption_sidecar(image_path) -> str | None`. **An empty caption has no sidecar**: given blank text the writer deletes the `.txt` instead of writing an empty file, so every caller — a single-image blank, a bulk `clear`, a `remove` or `find_replace` that empties a caption, tag consolidation, caption import — follows one rule, the one restore's `version_service._sync_caption_sidecar` already kept. The reader returns `None` for a missing file and an empty one alike, so a rescan cannot tell them apart and never brings a cleared caption back. Three import paths feed captions/images in from disk; all overwrite existing captions and stamp `captioned_by="import"` — folder import, rescan/sync and standalone caption import, each below.
 
 ## Folder import
 

@@ -928,7 +928,8 @@ def read_caption_sidecar(image_path: Path | str) -> str | None:
     """Read the .txt caption sidecar next to an image (symmetric with _write_txt_sidecar).
 
     Returns the stripped text of {stem}.txt sitting beside image_path if it exists and is
-    non-empty, else None. Use everywhere a sidecar is read (import, rescan, caption import);
+    non-empty, else None — an empty caption has no sidecar, and the writer deletes it rather
+    than leave an empty file. Use everywhere a sidecar is read (import, rescan, caption import);
     never inline the .with_suffix(".txt") logic.
     """
     txt = Path(image_path).with_suffix(".txt")

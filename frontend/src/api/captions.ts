@@ -2,7 +2,8 @@ import client from "./client";
 import type { CaptionData, TagStat } from "../types";
 
 export interface BulkEditRequest {
-  operation: "prepend" | "append" | "remove" | "find_replace";
+  operation: "prepend" | "append" | "remove" | "find_replace" | "clear";
+  /** Ignored by "clear". */
   text: string;
   replacement?: string;
   use_regex?: boolean;

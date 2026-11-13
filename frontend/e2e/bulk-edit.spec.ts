@@ -35,6 +35,36 @@ test('bulk find & replace across the dataset', async ({ page, request }) => {
   }
 })
 
+// Clear (issue #24): empties every caption in scope after a confirm, and the
+// image left uncaptioned is counted as skipped, not updated.
+test('bulk clear captions across the dataset', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `e2e-bulk-clear-${Date.now()}`)
+  const a = await uploadViaApi(request, ds.id, 'a.png')
+  await uploadViaApi(request, ds.id, 'b.png')
+  const list = await (await request.get('/api/v1/images/', { params: { dataset_id: ds.id } })).json()
+  const img = list.find((i: { filename: string }) => i.filename === a)
+  const put = await request.put(`/api/v1/captions/image/${img.id}`, { data: { caption_text: 'cat, dog' } })
+  expect(put.status()).toBe(200)
+
+  await page.goto(`/datasets/${ds.id}/bulk-edit`)
+  await page.getByRole('button', { name: 'Clear', exact: true }).click()
+  await page.getByRole('button', { name: 'Apply', exact: true }).click()
+
+  // Nothing is sent until the confirm.
+  const confirm = page.getByRole('dialog', { name: 'Clear captions?' })
+  await expect(confirm).toBeVisible()
+  const before = await (await request.get(`/api/v1/captions/image/${img.id}`)).json()
+  expect(before.caption_text).toBe('cat, dog')
+  await confirm.getByRole('button', { name: 'Clear captions' }).click()
+
+  await expect(page.getByText('1 updated')).toBeVisible()
+  await expect(page.getByText('1 skipped')).toBeVisible()
+  for (const row of list) {
+    const cap = await (await request.get(`/api/v1/captions/image/${row.id}`)).json()
+    expect(cap.caption_text).toBe('')
+  }
+})
+
 // An invalid regex used to come back as a 200 `{affected: 0}`: the toolbar's
 // modal closed, the selection was cleared and the toast said "No captions
 // matched", the same response a valid pattern that matched nothing gets

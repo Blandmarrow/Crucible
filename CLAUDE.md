@@ -200,7 +200,7 @@ substantial edit.
 | `docs/dev/llm-providers.md` | Working on the `/providers` router, an OpenAI-compatible provider, `openai_compat_captioner.py`, the Settings LLM Providers tab or `ModelPicker` — `from_orm_row`'s hand-kept field list, `finish_reason` logging, `max_retries=0` | ~1100 |
 | `docs/dev/export.md` | Working on `ExportPage` or `export_service.py` — the filter table and preview | ~2700 |
 | `docs/dev/export-licensing.md` | Working on `CREDITS.md`/`licenses.csv` or an export license filter | ~1325 |
-| `docs/dev/bulk-ops.md` | Working on `BulkEditPage` or a `bulk-*` metadata endpoint — Renumber's two-phase rename | ~2300 |
+| `docs/dev/bulk-ops.md` | Working on `BulkEditPage` or a `bulk-*` metadata endpoint — Renumber's two-phase rename | ~2500 |
 | `docs/dev/bulk-image-jobs.md` | Working on batch resize/crop, the thumbnail rebuild, or any replace-mode crop's detection remap — stage/flush/swap/commit, `remap_detection_geometry` and polygon clipping, the repair's `updated_at` bump | ~2000 |
 | `docs/dev/detection-crop.md` | Working on Crop to Subject — `POST /detection/crop`, `CropToDetectionForm` or the `crop_to_detection` job — `detection_crop_rect`, `dest_subfolder` | ~1000 |
 | `docs/dev/inpaint.md` | Working on watermark removal — `POST /inpaint/run`, `InpaintForm` or the `batch_inpaint` job — `_dilate`, the stored-form `contained_path` gate | ~1400 |

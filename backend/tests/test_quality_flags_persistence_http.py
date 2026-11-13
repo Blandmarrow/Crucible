@@ -77,7 +77,7 @@ def test_empty_caption_clears_ai_artifact_flag_persistently(tmp_path):
                 assert row.quality_flags.get("has_ai_artifacts") is False
                 # An unrelated flag is untouched.
                 assert row.quality_flags.get("is_noisy") is True
-                sidecar = Path(row.file_path).with_suffix(".txt")
-                assert sidecar.read_text(encoding="utf-8") == ""
+                # An empty caption has no sidecar: blanking deletes the .txt.
+                assert not Path(row.file_path).with_suffix(".txt").exists()
 
     run(scenario())

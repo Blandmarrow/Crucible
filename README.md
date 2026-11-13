@@ -64,7 +64,7 @@ Every step from raw images to a training-ready export, in order:
 - **Remove watermarks** — paint detected regions out of the image with LaMa inpainting, instead of cropping them off; run a `watermark` detection pass first, then remove. The first run downloads a ~196 MB model → [details](docs/editing.md#watermark-removal)
 
 ### Editing & processing
-- **Batch edit** captions, crops, and renames across any selection → [details](docs/editing.md)
+- **Batch edit** captions, crops, and renames across any selection, or clear every caption in a dataset, subfolder or selection → [details](docs/editing.md)
 - **Consolidate tags** — merge semantically similar tags or phrases (e.g. `car` / `automobile`) dataset-wide with a preview, and drop redundant wording (`tail` when `long tail` is present) per-image or across a selection; works on booru tags and natural-language captions alike → [details](docs/tag-consolidation.md)
 - **Process** images with ML upscaling — including 1× restoration models (denoise, deblur, JPEG-artifact removal) — LUT color grading, and LaMa watermark removal → [details](docs/editing.md#image-processing)
 - **Regenerate thumbnails** across a dataset or a selection, for when an upscale, LUT, crop or frame re-extraction leaves gallery previews out of date → [details](docs/editing.md#batch-operations)

@@ -25,7 +25,7 @@ import pytest
 
 from backend.models.image import Image
 from backend.services import caption_service
-from backend.tests.conftest import API, api_env, png_bytes, run, upload_image
+from backend.tests.conftest import API, api_env, png_bytes, run, upload_image, wait_for_job
 
 
 async def _caption(env, image_id: str, text: str) -> None:
@@ -236,5 +236,114 @@ def test_bulk_edit_regex_timeout_408(tmp_path, monkeypatch):
 
             assert await _db_caption(env, a["id"]) == "a" * 20_000 + "b"
             assert _sidecar(env, a, ds).read_bytes() == before_a
+
+    run(scenario())
+
+
+# ---- clear (issue #24) and the empty-caption sidecar rule ------------------------
+#
+# An empty caption has no sidecar: `_write_txt_sidecar` deletes the `.txt` rather than
+# writing an empty file, so `clear` and every edit that empties a caption remove it.
+
+
+async def _row(env, image_id: str) -> Image:
+    async with env.Session() as db:
+        return await db.get(Image, image_id)
+
+
+async def _row_sidecar(env, image_id: str) -> Path:
+    """The sidecar beside the row's stored file — subfolder-aware, unlike `_sidecar`."""
+    return Path((await _row(env, image_id)).file_path).with_suffix(".txt")
+
+
+async def _bulk(env, dataset_id: str, **body) -> dict:
+    r = await env.client.post(f"{API}/captions/dataset/{dataset_id}/bulk-edit", json=body)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_clear_empties_captions_and_deletes_sidecars(tmp_path):
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            a = await upload_image(env, ds["id"], "a.png", png_bytes((1, 1, 1)))
+            b = await upload_image(env, ds["id"], "b.png", png_bytes((2, 2, 2)))
+            empty = await upload_image(env, ds["id"], "c.png", png_bytes((3, 3, 3)))
+            await _caption(env, a["id"], "a red hat")
+            await _caption(env, b["id"], "green shoes")
+            async with env.Session() as db:
+                row = await db.get(Image, a["id"])
+                row.quality_flags = {"has_ai_artifacts": True, "is_noisy": True}
+                await db.commit()
+            assert (await env.client.get(f"{API}/datasets/{ds['id']}")).json()["captioned_count"] == 2
+
+            # No `text`: clear takes none, and the schema defaults it.
+            assert await _bulk(env, ds["id"], operation="clear") == {"affected": 2, "skipped": 1}
+
+            for img in (a, b):
+                row = await _row(env, img["id"])
+                assert row.caption_text == ""  # never NULL: the captioned count is != ""
+                assert (row.caption_style, row.captioned_by, row.captioned_at) == ("", "", None)
+                assert not (await _row_sidecar(env, img["id"])).exists()
+            flags = (await _row(env, a["id"])).quality_flags
+            assert flags["has_ai_artifacts"] is False and flags["is_noisy"] is True
+            assert (await _row(env, empty["id"])).caption_text == ""
+            assert (await env.client.get(f"{API}/datasets/{ds['id']}")).json()["captioned_count"] == 0
+
+            # Rescan finds no sidecar, so nothing brings the old captions back.
+            r = await env.client.post(f"{API}/datasets/{ds['id']}/rescan", json={"import_captions": True})
+            assert r.status_code == 200, r.text
+            job = await wait_for_job(env, r.json()["job_id"])
+            assert job["status"] == "completed", job
+            assert await _db_caption(env, a["id"]) == ""
+
+    run(scenario())
+
+
+def test_clear_honours_ids_subfolder_and_flag_exclusions(tmp_path):
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            root = await upload_image(env, ds["id"], "root.png", png_bytes((1, 1, 1)))
+            sub = await upload_image(env, ds["id"], "sub.png", png_bytes((2, 2, 2)), subfolder="s")
+            flagged = await upload_image(env, ds["id"], "flag.png", png_bytes((3, 3, 3)), subfolder="s")
+            picked = await upload_image(env, ds["id"], "pick.png", png_bytes((4, 4, 4)))
+            for img in (root, sub, flagged, picked):
+                await _caption(env, img["id"], "keep me")
+            async with env.Session() as db:
+                row = await db.get(Image, flagged["id"])
+                row.quality_flags = {"is_blurry": True}
+                await db.commit()
+
+            # Subfolder scope, minus a flagged image.
+            res = await _bulk(env, ds["id"], operation="clear", subfolder="s", quality_flags=["is_blurry"])
+            assert res == {"affected": 1, "skipped": 0}
+            assert await _db_caption(env, sub["id"]) == ""
+            assert await _db_caption(env, flagged["id"]) == "keep me"
+            assert await _db_caption(env, root["id"]) == "keep me"
+
+            # An id list wins over the subfolder.
+            res = await _bulk(env, ds["id"], operation="clear", image_ids=[picked["id"]], subfolder="s")
+            assert res == {"affected": 1, "skipped": 0}
+            assert await _db_caption(env, picked["id"]) == ""
+            assert await _db_caption(env, root["id"]) == "keep me"
+            assert (await _row_sidecar(env, root["id"])).read_text(encoding="utf-8") == "keep me"
+            assert not (await _row_sidecar(env, picked["id"])).exists()
+
+    run(scenario())
+
+
+def test_an_edit_that_empties_a_caption_deletes_its_sidecar(tmp_path):
+    """The rule is the writer's, not clear's: `remove` that leaves nothing deletes the `.txt`."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            a = await upload_image(env, ds["id"], "a.png", png_bytes((1, 1, 1)))
+            await _caption(env, a["id"], "solo")
+            assert (await _row_sidecar(env, a["id"])).exists()
+
+            assert await _bulk(env, ds["id"], operation="remove", text="solo") == {"affected": 1, "skipped": 0}
+            assert await _db_caption(env, a["id"]) == ""
+            assert not (await _row_sidecar(env, a["id"])).exists()
 
     run(scenario())

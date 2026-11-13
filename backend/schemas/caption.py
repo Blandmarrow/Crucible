@@ -16,8 +16,8 @@ class FindReplaceRequest(BaseModel):
 
 
 class BulkEditRequest(BaseModel):
-    operation: Literal["prepend", "append", "remove", "find_replace"]
-    text: str
+    operation: Literal["prepend", "append", "remove", "find_replace", "clear"]
+    text: str = ""  # unused by "clear"
     replacement: str = ""
     use_regex: bool = False
     image_ids: list[str] | None = None

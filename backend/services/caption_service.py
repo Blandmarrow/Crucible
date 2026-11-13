@@ -156,7 +156,21 @@ async def bulk_edit_captions(
     for img in images:
         old_text = img.caption_text or ""
 
-        if operation == "prepend":
+        if operation == "clear":
+            if not old_text:
+                skipped += 1
+                continue
+            # Back to the never-captioned defaults (models/image.py). "" and never
+            # NULL: the captioned count is `caption_text != ""`.
+            img.caption_text = ""
+            img.caption_style = ""
+            img.captioned_by = ""
+            img.captioned_at = None
+            _maybe_clear_ai_artifact(img, "")
+            sidecars.append((img.file_path, ""))  # deletes the .txt
+            affected += 1
+            continue
+        elif operation == "prepend":
             new_text = (text + " " + old_text).strip() if old_text else text
         elif operation == "append":
             new_text = (old_text + " " + text).strip() if old_text else text
@@ -279,10 +293,23 @@ async def get_tag_stats(db: AsyncSession, dataset_id: str, subfolder: str | None
 
 
 def _write_txt_sidecar(image_path: str, text: str) -> None:
+    """Make ``{stem}.txt`` beside the image hold ``text``. An empty caption has no sidecar.
+
+    A blank or whitespace-only ``text`` deletes the sidecar rather than writing an
+    empty file, the same rule as restore's ``version_service._sync_caption_sidecar``.
+    ``utils.read_caption_sidecar`` reads a missing file and an empty one alike, so
+    nothing that reads captions back from disk can tell the difference. A plain
+    unlink, not ``utils.unlink_retrying``: no route streams a sidecar, so nothing in
+    the app holds one open. Raises ``OSError`` either way, so a batch caller still
+    fails before its commit.
+    """
     from pathlib import Path
     txt_path = Path(image_path).with_suffix(".txt")
     try:
-        txt_path.write_text(text, encoding="utf-8")
+        if text.strip():
+            txt_path.write_text(text, encoding="utf-8")
+        else:
+            txt_path.unlink(missing_ok=True)
     except OSError as exc:
         logger.error("Failed to write caption sidecar %s: %s", txt_path, exc)
         raise

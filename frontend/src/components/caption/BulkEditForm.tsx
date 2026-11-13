@@ -4,8 +4,19 @@ import toast from "react-hot-toast";
 import { captionsApi, type BulkEditRequest } from "../../api/captions";
 import { FLAG_OPTIONS } from "../../constants/flags";
 import { apiErrorDetail } from "../../utils/apiError";
+import ConfirmDialog from "../common/ConfirmDialog";
 
 type Operation = BulkEditRequest["operation"];
+
+const OPERATIONS: Operation[] = ["prepend", "append", "remove", "find_replace", "clear"];
+
+const OP_LABEL: Record<Operation, string> = {
+  prepend: "Prepend",
+  append: "Append",
+  remove: "Remove",
+  find_replace: "Find & Replace",
+  clear: "Clear",
+};
 
 interface Props {
   datasetId: string;
@@ -26,6 +37,8 @@ export default function BulkEditForm({ datasetId, imageIds, qualityFlags, subfol
   const [useRegex, setUseRegex] = useState(false);
   const [internalFlags, setInternalFlags] = useState<Set<string>>(new Set());
   const [result, setResult] = useState<{ affected: number; skipped: number } | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const isClear = operation === "clear";
 
   const activeFlags = qualityFlags ?? [...internalFlags];
 
@@ -38,19 +51,22 @@ export default function BulkEditForm({ datasetId, imageIds, qualityFlags, subfol
   };
 
   const mutation = useMutation({
-    mutationFn: () => {
+    // The operation travels as the mutation's variable, so `onSuccess` reports the one
+    // that was sent even if the user switches buttons while the request is in flight.
+    mutationFn: (op: Operation) => {
       const req: BulkEditRequest = {
-        operation,
-        text,
-        replacement: operation === "find_replace" ? replacement : "",
-        use_regex: useRegex,
+        operation: op,
+        text: op === "clear" ? "" : text,
+        replacement: op === "find_replace" ? replacement : "",
+        use_regex: op === "clear" ? false : useRegex,
         image_ids: imageIds,
         quality_flags: activeFlags.length > 0 ? activeFlags : undefined,
         subfolder,
       };
       return captionsApi.bulkEdit(datasetId, req);
     },
-    onSuccess: (data) => {
+    onSuccess: (data, op) => {
+      const cleared = op === "clear";
       qc.invalidateQueries({ queryKey: ["images", datasetId] });
       qc.invalidateQueries({ queryKey: ["dataset-stats", datasetId] });
       qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
@@ -63,10 +79,11 @@ export default function BulkEditForm({ datasetId, imageIds, qualityFlags, subfol
       qc.invalidateQueries({ queryKey: ["image"] });
       setResult(data);
       onSuccess?.(data.affected, data.skipped);
+      const plural = data.affected !== 1 ? "s" : "";
       if (data.affected === 0) {
-        toast("No captions matched — nothing was changed");
+        toast(cleared ? "No captions to clear — nothing was changed" : "No captions matched — nothing was changed");
       } else {
-        toast.success(`Updated ${data.affected} caption${data.affected !== 1 ? "s" : ""}`);
+        toast.success(cleared ? `Cleared ${data.affected} caption${plural}` : `Updated ${data.affected} caption${plural}`);
       }
     },
     // The server's reason, not a fixed string: an invalid regex is a 400 reading
@@ -77,11 +94,13 @@ export default function BulkEditForm({ datasetId, imageIds, qualityFlags, subfol
     onError: (err) => toast.error(apiErrorDetail(err, "Bulk edit failed")),
   });
 
-  const canSubmit = !disabled && !mutation.isPending && text.trim().length > 0;
+  const canSubmit = !disabled && !mutation.isPending && (isClear || text.trim().length > 0);
 
   const scopeLabel = imageIds != null
     ? `${imageIds.length} selected image${imageIds.length !== 1 ? "s" : ""}`
-    : "all images in dataset";
+    : subfolder
+      ? `all images in subfolder "${subfolder}"`
+      : "all images in dataset";
 
   return (
     <div className="space-y-4">
@@ -89,17 +108,23 @@ export default function BulkEditForm({ datasetId, imageIds, qualityFlags, subfol
       <div>
         <label className="label">Operation</label>
         <div className="flex gap-1.5 flex-wrap">
-          {(["prepend", "append", "remove", "find_replace"] as Operation[]).map(op => (
+          {OPERATIONS.map(op => (
             <button
               key={op}
               className={`btn btn-sm ${operation === op ? "btn-primary" : "btn-secondary"}`}
               onClick={() => { setOperation(op); setResult(null); }}
             >
-              {op === "find_replace" ? "Find & Replace" : op.charAt(0).toUpperCase() + op.slice(1)}
+              {OP_LABEL[op]}
             </button>
           ))}
         </div>
       </div>
+
+      {isClear && (
+        <p className="text-sm text-gray-400">
+          Empties every caption in scope and deletes its <code>.txt</code> file.
+        </p>
+      )}
 
       {/* Text inputs */}
       {(operation === "prepend" || operation === "append") && (
@@ -209,13 +234,28 @@ export default function BulkEditForm({ datasetId, imageIds, qualityFlags, subfol
           </button>
         )}
         <button
-          className="btn-primary"
-          onClick={() => mutation.mutate()}
+          className={isClear ? "btn-danger" : "btn-primary"}
+          onClick={() => (isClear ? setConfirmClear(true) : mutation.mutate(operation))}
           disabled={!canSubmit}
         >
           {mutation.isPending ? "Applying…" : "Apply"}
         </button>
       </div>
+
+      {confirmClear && (
+        <ConfirmDialog
+          title="Clear captions?"
+          message={
+            `This empties the captions of ${scopeLabel}` +
+            `${activeFlags.length > 0 ? ", excluding flagged images" : ""}, and deletes their .txt files. ` +
+            "It can't be undone unless a snapshot holds them."
+          }
+          confirmLabel="Clear captions"
+          danger
+          onCancel={() => setConfirmClear(false)}
+          onConfirm={() => { setConfirmClear(false); mutation.mutate("clear"); }}
+        />
+      )}
     </div>
   );
 }

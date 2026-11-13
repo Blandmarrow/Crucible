@@ -42,6 +42,27 @@ Calls queue one behind another. A job's per-image loop loses nothing, and an HTT
 
 **A lazy import moves the failure from import time to call time, and the callers' guards did not follow.** `memory_allocated_bytes()` and `memory_reserved_mb()` document `cpu → 0`, and every caller wraps the *import* — `try: from backend.ml.device import memory_reserved_mb as _vram_mb / except Exception: _vram_mb = lambda: 0` (both captioning loops, three sites in `routers/detection.py`) — but that guard catches nothing on a torch-free install, because importing the *function* succeeds and only the call raises `ModuleNotFoundError`. Both reporters therefore keep `import torch` **and** the `get_device()` call inside their own `try`, so the documented 0 covers "no accelerator" and "no torch" alike. It stayed invisible until `test_caption_empty_guard.py` became the first CI-runnable test to drive a caption job through its VRAM sampling; the repo venv has torch, so only a torch-free venv reproduces it (`docs/dev/video/tests.md` § cv2 in CI describes the same class for cv2). `get_device()` itself still raises on purpose — a caller that genuinely needs a device cannot be handed a fallback.
 
+### One CLIP builder
+
+**OpenAI's CLIP ViT-L/14 is built only by `aesthetic_scorer.build_clip_vit_l14()`**, which
+`model_manager._load_aesthetic_sync` and every script that must match the app's stored vectors
+call (`dino_embed_offline.py`, `style_crossed_probe.py`). That one model serves the LAION
+aesthetic score, the watermark check, `clip_embedding` and `POST /quality/embed-references`.
+
+The weights were trained with QuickGELU, but open_clip's plain `"ViT-L-14"` config uses
+`nn.GELU`, and the app ran that way until 2026-11-13. The builder passes
+`force_quick_gelu=True`, which loads the same checkpoint file on every open_clip version
+`requirements.txt` allows. It then walks the model's modules and raises unless it finds
+QuickGELU and no GELU, so a future open_clip that ignored the flag fails at load rather than
+quietly writing wrong vectors. Its `quick_gelu=False` switch rebuilds the old model for
+`scripts/clip_build_delta.py` alone.
+
+`backend/tests/test_clip_build_guard.py` enforces this with an AST walk: no open_clip model
+is built outside the builder, the builder passes `force_quick_gelu`, and no other caller asks
+for the old build. The build itself is checked only by hand, since CI has no torch. What the
+fix changed, and how the stored values were cleared or re-labelled, is in
+[decision 17](decisions/17-clip-quickgelu-fix.md).
+
 ### Timing a GPU path
 
 `backend/scripts/bench_score_decode.py` splits each GPU scoring check's time per image into decode, preprocess, the copy to the card and the forward pass, and simulates what preparing images ahead of the GPU thread would gain. No gate runs torch, so it is run by hand on a real card; its module docstring is the manual. It times **instrumented twins** of the scorers' `*_sync` functions, which since T5 compose each scorer's `prepare_*` and `infer_*` halves, and before timing it checks each twin bit for bit against the real function: the tensors into and out of every model, the autocast state, and the returned value. **Change a scorer's per-image steps and its twin there must change too**, or the next run aborts at that check. Its torch-free parts are covered by `backend/tests/test_bench_score_decode_smoke.py`. M10's T4 used it (`docs/dev/throughput-plan/README.md` § T4).

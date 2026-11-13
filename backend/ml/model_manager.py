@@ -497,9 +497,8 @@ class ModelManager:
         dataset_id: str | None = None,
     ) -> ModelEntry:
         import torch
-        import open_clip
         from backend.config import settings
-        from backend.ml.aesthetic_scorer import AestheticMLP, download_weights
+        from backend.ml.aesthetic_scorer import AestheticMLP, build_clip_vit_l14, download_weights
 
         logger.info("Loading aesthetic predictor...")
 
@@ -528,9 +527,7 @@ class ModelManager:
         clip_model = None
         mlp = None
         try:
-            clip_model, _, preprocess = open_clip.create_model_and_transforms(
-                "ViT-L-14", pretrained="openai"
-            )
+            clip_model, preprocess = build_clip_vit_l14()
             clip_model = clip_model.to(_device.get_device()).eval()
 
             if not weights_path.exists():

@@ -104,6 +104,28 @@ Nothing forces you to re-score, but a mixed dataset weakens anything that reads 
 - **Export** warns. The [Export](export.md) preview reports the split, and — if you are filtering on a minimum aesthetic score — that one threshold is being applied to both scales at once.
 - **Statistics** shows the split under the Aesthetic tile in Score coverage, and the aesthetic histogram there mixes both scales into one distribution.
 
+### After the CLIP fix (November 2026)
+
+Until November 2026, Crucible built the CLIP model with a slightly wrong setting: the wrong
+activation function, the small math step inside each layer. CLIP feeds the LAION score,
+watermark detection and style embeddings, so all three were a little off. On a test library,
+8% of watermark flags flipped and LAION scores moved by up to a point. The update that fixes
+it changes your stored results once, when you start Crucible after updating:
+
+- **Style embeddings (CLIP) are removed.** Re-make them with **Score what's missing** and
+  **Style embeddings** ticked before you run a CLIP or CLIP + DINOv2 style comparison.
+- **Watermark scores and their `has_watermark` flags are removed** from every image the
+  watermark check had scored. Re-run them with **Score what's missing** and **Watermark**
+  ticked. Flags set by a [detection scan](detection.md#locating-watermarks) are kept.
+- **LAION scores are kept but re-labelled "LAION (old build — re-score)".** Select LAION in
+  the picker and press **Re-score N with LAION** to bring them onto the fixed model. That
+  button re-scores every image scored by a different model, so in a dataset that also holds
+  V2.5 scores it re-scores those with LAION too.
+
+The same change applies inside your saved [versions](versioning.md), so restoring an older
+snapshot never brings the old results back. Crucible copies the database to `backups/` first,
+and the startup log says how many results it changed.
+
 ## Quality flags
 
 Quality flags are set automatically when metrics cross thresholds (all configurable in [Settings](settings.md)):

@@ -510,6 +510,36 @@ def test_only_mismatched_selects_rows_another_model_scored(tmp_path):
     run(scenario())
 
 
+def test_old_build_laion_scores_are_offered_for_rescoring(tmp_path):
+    """Decision 17: migration f3a8d1c6b9e2 re-labels LAION scores made by the
+    plain-GELU CLIP build as `laion_gelu`. Nothing in the app special-cases that
+    marker: it is simply another model's, so the coverage line names it and the
+    *Re-score N with LAION* offer picks it up — and a re-score writes `laion` back."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            old = await upload_image(env, ds["id"], "old.png", png_bytes())
+            new = await upload_image(env, ds["id"], "new.png", png_bytes((9, 9, 9)))
+            await _score(env, old["id"], 6.0, "laion_gelu")
+            await _score(env, new["id"], 6.5, "laion")
+
+            cov = (await env.client.get(f"{API}/quality/aesthetic-coverage/{ds['id']}")).json()
+            assert cov == {"scored": 2, "unscored": 0, "by_model": {"laion": 1, "laion_gelu": 1}}
+
+            r = await env.client.post(f"{API}/quality/score", json={
+                "dataset_id": ds["id"], "run_aesthetic": True, "run_technical": False,
+                "aesthetic_model": "laion", "only_mismatched": True,
+            })
+            assert r.status_code == 200, r.text
+            assert r.json()["total"] == 1
+            await wait_for_job(env, r.json()["job_id"], timeout=60)
+
+            cov = (await env.client.get(f"{API}/quality/aesthetic-coverage/{ds['id']}")).json()
+            assert cov["by_model"] == {"laion": 2}
+
+    run(scenario())
+
+
 def test_only_mismatched_on_a_uniform_dataset_matches_nothing(tmp_path):
     """`{"job_id": None}` rather than a job over zero images — the ordinary
     answer once a dataset has been brought onto one model, and what the button's

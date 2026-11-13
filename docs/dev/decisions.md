@@ -142,3 +142,11 @@ default 1 and at most 16, in both caption loops. A crash can leave up to N calls
 paid-call cap's count. **Leaning** on counting every started request when a job fails or
 is hard-cancelled. Full record:
 [decisions/16-concurrent-caption-requests.md](decisions/16-concurrent-caption-requests.md).
+
+## 17. CLIP is built with QuickGELU, and its old outputs are cleared or re-labelled
+
+**Decided** (2026-11-13, by the user): CLIP ViT-L/14 is built with QuickGELU through one
+builder. A migration clears every old-build CLIP vector and CLIP watermark result, snapshots
+included, and re-labels old LAION scores `laion_gelu` so the existing re-score offer picks
+them up. Measured on 1,033 images: vector cosine 0.944, and 8% of watermark flags flipped.
+Full record: [decisions/17-clip-quickgelu-fix.md](decisions/17-clip-quickgelu-fix.md).

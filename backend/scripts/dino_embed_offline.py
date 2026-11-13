@@ -166,16 +166,19 @@ def extract(model, processor, paths: list[str], device, batch: int) -> tuple[np.
 def extract_clip(paths: list[str], device, batch: int) -> np.ndarray:
     """CLIP ViT-L-14 image features, mirroring ``aesthetic_scorer.extract_clip_embedding_sync``.
 
+    Built through ``aesthetic_scorer.build_clip_vit_l14``, the app's own builder, so the
+    vectors here match what the app stores (QuickGELU since the 2026-11 fix).
+
     The shipped default for style matching is CLIP, so leaving it out of a comparison run
     would rank the rivals against each other and not against the thing in use. There are no
     per-layer blobs here: the app stores only the final image feature, and CLIP's
     intermediate blocks are not what ``dino_layer_embeddings`` means.
     """
-    import open_clip
     import torch
+    from backend.ml.aesthetic_scorer import build_clip_vit_l14
     from backend.ml.image_utils import open_rgb
 
-    model, _, preprocess = open_clip.create_model_and_transforms("ViT-L-14", pretrained="openai")
+    model, preprocess = build_clip_vit_l14()
     model = model.to(device).eval()
 
     out: list[np.ndarray] = []
@@ -234,6 +237,13 @@ def verify_against_db(ids: list[str], cls: np.ndarray, rows: list[dict], column:
               "expected unless --model is the one that produced it. Re-run against that model: "
               "anything below 0.999 THERE means this harness disagrees with dino_scorer's "
               "preprocessing, and every number downstream measures the harness, not the model.")
+        if column == "clip_embedding":
+            # Same checkpoint, different activation: a CLIP vector stored before the
+            # QuickGELU fix came from the plain-GELU build, which reads close to 1 but
+            # below the bar. The fix's migration cleared those, so one surviving means
+            # the database has not been migrated.
+            print("  → for clip_embedding, a reading just under 0.999 usually means the stored "
+                  "vectors predate the QuickGELU fix (plain-GELU build). Re-embed them in the app.")
 
 
 # --------------------------------------------------------------------------- driver

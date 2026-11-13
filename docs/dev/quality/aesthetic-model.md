@@ -22,6 +22,24 @@ established by migration `a5e1b7c3d9f0`, which backfills `'laion'` onto every ex
 
 No Enum and no CHECK constraint: a future learned head writes `head:{uuid}` into this column, so the value set is open. Every frontend consumer therefore renders an unrecognised marker verbatim rather than swallowing it — `frontend/src/constants/aestheticModels.ts` is the one place the two known markers are named, shared by the picker, the duplicates refusal, the export advisory and the Stats breakdown.
 
+## The old-build marker, `laion_gelu`
+
+LAION scores written before the CLIP QuickGELU fix came from a CLIP built with the wrong
+activation. Migration `f3a8d1c6b9e2` re-labelled every `laion` marker to `laion_gelu`, in
+`images` and in `version_image_states`
+([decision 17](../decisions/17-clip-quickgelu-fix.md); the measured shift is in
+`docs/dev/quality/style-evaluation.md` § The CLIP QuickGELU fix).
+
+No scorer writes `laion_gelu`, and nothing in the backend names it: it is simply another
+model's marker. So the coverage line counts it, *Re-score N with LAION* picks it up through
+`only_mismatched`, and the duplicates refusal and export advisory treat a mix of `laion` and
+`laion_gelu` as two scales, which they are. The request Literal stays `"laion" | "v2_5"`.
+`aestheticModels.ts` gives it a readable label through `LEGACY_MARKER_LABELS`, kept out of the
+picker.
+
+One known limit: *Re-score N with LAION* counts every marker that differs from the selected
+model, so in a dataset holding V2.5 scores as well, it re-scores those with LAION too.
+
 ## The two destructive consumers differ, on purpose
 
 - **Duplicate resolution refuses.** `DupGroupMeta.mixedModels` is true when a group's scored members carry more than one marker; per-group *Keep best* is then disabled with a title naming the models found, and a small producer label renders under each thumbnail's score chip so the refusal explains itself outside a tooltip. `rankForKeepBest` itself stays untouched — it is a pure, null-safe sort and is correct *within* one scale; the refusal belongs at the caller, where the unscored refusal already lives. **The bulk bar skips mixed groups rather than disabling itself**, counted separately as `skippedMixed` beside `skipped` and stated in the confirm dialog: killing the whole bar because 1 of 300 groups is mixed pushes users to resolve by hand in the gallery. *Keep first* reads no score and is untouched.

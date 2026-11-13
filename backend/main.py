@@ -18,8 +18,6 @@ os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
 # torchao: no Triton on Windows — expected, no runtime effect
 warnings.filterwarnings("ignore", message=".*Detected no triton.*")
-# open_clip: ViT-L-14 weights trained with QuickGELU; no effect on inference output
-warnings.filterwarnings("ignore", category=UserWarning, message=".*QuickGELU activation.*")
 # sam3 imports the deprecated timm.models.layers path; third-party, nothing to fix here.
 # NOTE: sam3's other import-time warning ("CUDA is not available ... Disabling
 # autocast") is deliberately NOT filtered - it is the clearest signal that the venv

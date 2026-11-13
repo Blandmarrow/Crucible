@@ -31,15 +31,13 @@ restates its stages.
    linking the record that holds the full text.
 5. **Landed**: one line per finished milestone or handoff record.
 
-## Next session (updated 2026-11-13, #24 built)
+## Next session (updated 2026-11-13, #24 and the button fix merged)
 
-1. **#24's clear is built** on `feat/clear-captions-24`, every gate green; it waits on the
-   user's go-ahead to commit and open the PR, which says "Fixes #24".
-2. **M11 continues** (see Now) with #105. #48 waits on a question to its reporter, and #19
+1. **M11 continues** (see Now) with #105. #48 waits on a question to its reporter, and #19
    on the user picking a light palette. M7's Stage 3 waits behind M11, under Waiting.
-3. M4 stays held, with its merge checklist under Waiting. The previous block's closed item,
-   the CLIP fix's follow-up on the user's install (now done), is in
-   [roadmap-archive/handoff-2026-11-13.md](roadmap-archive/handoff-2026-11-13.md#next-session-updated-2026-11-13-enhancement-issues-ordered-first).
+2. M4 stays held, with its merge checklist under Waiting. The previous block's closed item,
+   #24's PR and the button-colour fix found alongside it, is in
+   [roadmap-archive/handoff-2026-11-13.md](roadmap-archive/handoff-2026-11-13.md#next-session-updated-2026-11-13-24-built).
 
 ## Now
 
@@ -54,8 +52,8 @@ plan folder and are expanded here before any code. The tiers are the order.
 
 Tier 1, small:
 
-- [x] #24 Remove captions: a `clear` operation for caption bulk edit, built 2026-11-13 on
-  `feat/clear-captions-24`, PR not yet opened. The user chose to delete a cleared caption's
+- [x] #24 Remove captions: a `clear` operation for caption bulk edit, merged 2026-11-13 as
+  PR #157, which closed the issue. The user chose to delete a cleared caption's
   `.txt`, and to make that the rule for every path that empties a caption
   (`docs/dev/image-import.md` § Caption sidecars).
 - [ ] #105 Re-caption with the existing caption: `/pipeline` fills `{previous_caption}` only

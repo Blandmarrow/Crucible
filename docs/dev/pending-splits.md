@@ -14,6 +14,11 @@ of the next session that would append to that file.
 Nothing here is ever a reason to compress prose to get back under budget. See the
 `doc-maintenance` skill, § Splitting an oversized doc.
 
+**Before the next split that adds a Map row:** CLAUDE.md is at ~99% of its budget (noted
+2026-11-12), so that split needs a hub or a budget call first. Re-measure each queued seam
+before executing it, and check both halves land under 60% of budget: two of the five seams
+split on 2026-11-12 had to be re-cut on execution.
+
 ## How entries work
 
 The heading is the file's repo-relative path, exactly as `scripts/check_docs.py` prints

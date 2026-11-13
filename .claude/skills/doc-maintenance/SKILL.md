@@ -40,8 +40,12 @@ it records, not as a separate chore:
   work, like the drift check. It owns order and dependencies only: link the topic file for
   the *what* and the decision for the *why*. When a milestone completes, expand the next one
   into tasks, and shrink the finished one to a one-line "Landed" entry linking a record in
-  `docs/dev/roadmap-archive/` — archive eagerly, as soon as only follow-ups remain. Update
-  the dated "Next session" block before you stop. A feature with its own design plan keeps
+  `docs/dev/roadmap-archive/` — archive eagerly, as soon as only follow-ups remain, and
+  move any open box to Waiting or Later. Its sections are fixed, in order: Next session,
+  Now, Waiting, Later, Landed (the file's header says what each holds). Before you stop,
+  **replace** the dated "Next session" block rather than adding to it: at most five items
+  and about 250 words. A closed item moves word for word to a handoff record in
+  `roadmap-archive/`; an open one moves to the section that fits it. A feature with its own design plan keeps
   it in a transient folder (`TRANSIENT_DIRS` in `scripts/check_docs.py`, like
   `docs/dev/rating-plan/`); the roadmap names it and never restates its stages.
 - **Decisions go in the log (`docs/dev/decisions.md`).** A new direction gets a stub there

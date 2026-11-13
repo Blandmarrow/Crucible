@@ -1,7 +1,8 @@
 # Structural cleanup plan: four bugs, then targeted consolidation
 
-From an architecture review on 2026-10-31, at commit c6ce4af. Order and progress are in
-[roadmap.md](../roadmap.md) § M8. This is a recommendation the owner asked to have tracked, not
+From an architecture review on 2026-10-31, at commit c6ce4af. Progress is in
+[m8-structural-cleanup.md](../roadmap-archive/m8-structural-cleanup.md), and the open stages
+wait under [roadmap.md](../roadmap.md) § Waiting. This is a recommendation the owner asked to have tracked, not
 a ruling, so nothing here has an entry in the decision log yet. Line numbers are from that
 commit and will drift, so find code by the function named beside them.
 

@@ -101,6 +101,9 @@ test.describe('Fix current caption', () => {
   test('a fix whose one image fails says so, and offers no undo', async ({ page, request }) => {
     // The real job this time: the provider's URL refuses the connection, so the job ends
     // `completed` with `failed_count: 1` — the shape a timeout or a refusal takes (PM-023).
+    // How it fails depends on the machine (a refused connection here; an empty caption on
+    // CI, whose e2e install has no `openai` package), so the toast expected is whatever
+    // the job recorded: its `failure_summary`, or the page's fallback when it has none.
     const { ds, imageId } = await seed(request)
     await page.goto(`/datasets/${ds.id}/gallery`)
     await page.getByTestId('gallery-tile').first().click()
@@ -110,9 +113,19 @@ test.describe('Fix current caption', () => {
     await page.getByRole('button', { name: 'Fix current' }).click()
     await page.getByText(providerName, { exact: true }).click()
     await page.getByLabel("What's wrong with the caption?").fill('it is a mirror')
+    const started = page.waitForResponse((r) => r.url().endsWith('/captioning/run') && r.request().method() === 'POST')
     await page.getByRole('button', { name: 'Fix Caption' }).click()
+    const jobId: string = (await (await started).json()).job_id
 
-    await expect(page.getByText('The fix failed', { exact: true })).toBeVisible({ timeout: 30_000 })
+    let job: { status: string; result_data?: { failed_count?: number; failure_summary?: string | null } } = { status: '' }
+    await expect.poll(async () => {
+      job = await (await request.get(`/api/v1/jobs/${jobId}`)).json()
+      return job.status
+    }, { timeout: 30_000 }).toBe('completed')
+    expect(job.result_data?.failed_count).toBe(1)
+
+    const expected = job.result_data?.failure_summary || 'The fix failed'
+    await expect(page.getByText(expected, { exact: true })).toBeVisible({ timeout: 15_000 })
     await expect(page.getByText('Caption fixed', { exact: true })).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Undo fix' })).toHaveCount(0)
     await expect(page.getByPlaceholder(BOX, { exact: false })).toHaveValue('a figure beside broken glass')

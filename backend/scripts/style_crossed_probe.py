@@ -433,7 +433,8 @@ def cmd_pools(args) -> None:
         import open_clip
         import torch
         from backend.ml import device as _device
-        model, _, _ = open_clip.create_model_and_transforms("ViT-L-14", pretrained="openai")
+        from backend.ml.aesthetic_scorer import build_clip_vit_l14
+        model, _ = build_clip_vit_l14()
         model = model.to(_device.get_device()).eval()
         tokenizer = open_clip.get_tokenizer("ViT-L-14")
         with torch.no_grad():

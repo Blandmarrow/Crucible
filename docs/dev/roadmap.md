@@ -31,14 +31,17 @@ restates its stages.
    linking the record that holds the full text.
 5. **Landed**: one line per finished milestone or handoff record.
 
-## Next session (updated 2026-11-13)
+## Next session (updated 2026-11-13, CLIP fix built)
 
-1. **M7 is next**: the CLIP QuickGELU plan or Stage 3 (see Now). Neither waits on anything.
-2. **M4 stays held** until the user decides to ship it. Its merge checklist, and the work
-   that waits on it, are under Waiting.
-3. Open findings and parked designs with no milestone yet are under Later.
-4. This file was given fixed sections on 2026-11-13. The Next session block it replaced, and
-   the old "Porting the unmerged branches" section, are in
+1. **The CLIP QuickGELU fix is built on `fix/clip-quickgelu`**
+   ([decision 17](decisions/17-clip-quickgelu-fix.md)), with every gate green and the
+   migration run end to end. Open: the label seen in a browser, then the PR. After merging,
+   start the app to run the migration, then re-embed, re-check watermarks and re-score LAION
+   from the Quality page.
+2. **Then M7 Stage 3** (see Now), which waits on nothing.
+3. **`docs/scoring.md` is over budget** (2,621 of 2,500). Its seam is re-recorded in
+   [pending-splits.md](pending-splits.md); split it first in the next session that edits it.
+4. M4 stays held, with its merge checklist under Waiting. The previous block is in
    [roadmap-archive/handoff-2026-11-13.md](roadmap-archive/handoff-2026-11-13.md).
 
 ## Now
@@ -62,10 +65,13 @@ Stage 2 there (DINOv3) is not built, by
 - [x] Stage 2b: stop the layer labels asserting things nobody measured
   (`DINO_LAYER_LABELS`). Merged 2026-11-08 as PR #119. Detail:
   [style-embedding-plan/README.md § Stage 2b](style-embedding-plan/README.md#stage-2b--stop-the-layer-labels-asserting-things-nobody-measured).
-- [ ] Plan the CLIP QuickGELU fix. `model_manager` builds CLIP with GELU, but the weights
-  expect QuickGELU. It touches every stored `clip_embedding` and the aesthetic scorer's
-  input, so old and new vectors must never mix. The finding:
-  `docs/dev/quality/style-evaluation.md` § Kaloscope, CSD and PE-Core.
+- [x] Plan and build the CLIP QuickGELU fix (2026-11-13, `fix/clip-quickgelu`,
+  [decision 17](decisions/17-clip-quickgelu-fix.md)): one builder with QuickGELU, and a
+  migration that clears old vectors and watermark results and re-labels old LAION scores.
+  Measured shift: `docs/dev/quality/style-evaluation.md` § The CLIP QuickGELU fix.
+- [ ] Merge `fix/clip-quickgelu`. The migration and the re-score flow were run end to end on
+  a throwaway instance on 2026-11-13 (decision 17 § How it's verified). Not yet seen in a
+  browser: the Quality page's "LAION (old build — re-score)" label.
 - [ ] Stage 3: dense features for prompt-free subject masks. Untested; separate from style
   scoring.
 
@@ -96,6 +102,9 @@ to date. Open rulings go in the decision log as they are made.
      [scale-plan/README.md § Interaction with the other milestones](scale-plan/README.md#interaction-with-the-other-milestones).
   4. Check every path added to `main` since the branch was cut. A clean port only
      reconciles lines that clash, and a missed mirror or rebuild path fails silently.
+     Since the CLIP fix, the unrebased branch builds CLIP the old way: never run it on a
+     database migrated past `f3a8d1c6b9e2`, or it writes old-build vectors and `laion`
+     scores again ([decision 17](decisions/17-clip-quickgelu-fix.md)).
   5. Port its doc changes by hand into `main`'s layout: decision 4 (rating keys and old
      snapshots, unaffected; `main`'s next new decision is 17), the rebuilt
      `rating-plan/README.md`, and its ticks onto this file's sections.
@@ -151,7 +160,12 @@ Each line links the record that holds the full text.
   ([throughput-plan/README.md § T6](throughput-plan/README.md#t6--fetch-model-weights-off-the-gpu-thread-parked)),
   and the plan's untimed
   [open questions](throughput-plan/README.md#open-questions-for-later).
-- Two docs seams are queued in [pending-splits.md](pending-splits.md), neither over budget.
+- Two docs seams are queued in [pending-splits.md](pending-splits.md); `docs/scoring.md`'s is
+  now over budget (see Next session).
+- `model_manager._load_aesthetic_sync`'s first-run check looks for CLIP in
+  `openai/clip-vit-large-patch14`, but open_clip loads it from
+  `timm/vit_large_patch14_clip_224.openai`. Only the "Downloading…" progress message is
+  affected. Found while planning the CLIP fix (2026-11-13).
 
 ## Landed
 

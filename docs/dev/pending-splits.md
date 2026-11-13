@@ -53,10 +53,14 @@ staleness sweep while still recording the seam.
 
 ## docs/scoring.md
 
-- **Moves:** § Quality flags (162 words) and § Stale scores (320) — only if the file grows
-  past budget again; it is under budget now
-- **New file:** none chosen. A ~500-word page is thin, so the likelier home is a
-  "Reading your scores" page if a third scoring-adjacent subject arrives to join them
+- **Moves:** § Quality flags (~160 words), § Stale scores (~320) **and** § Choosing the
+  aesthetic model with its § After the CLIP fix subsection (~600). The file tripped the
+  budget on 2026-11-13 at 2,621 words, when § After the CLIP fix (~200) landed on
+  `fix/clip-quickgelu`. The first two sections alone would leave ~2,140 (86%), so the
+  aesthetic-model section goes too, leaving roughly 1,550 (62%). Re-measure first.
+- **New file:** docs/reading-scores.md, "Reading your scores": which flags the scores set,
+  when they go stale, and why two aesthetic models' numbers are not comparable. This is the
+  third reading-side subject the old entry was waiting for.
 - **Why here:** the § Style similarity seam was executed on 2026-10-29 into
   `docs/style-similarity.md`, leaving 1,940 of 2,500 words, over the ~1,500 target.
   Everything still here is one workflow end to end: running a scoring run, what each scorer
@@ -66,8 +70,12 @@ staleness sweep while still recording the seam.
 - **Watch for:** `scoring.md#stale-scores` is linked from `docs/export.md` and
   `docs/style-similarity.md` (the dimmed meter), and `scoring.md#quality-flags` from
   `docs/captioning.md`; both are user-doc markdown links, so a move FAILs the checker
-  until they are repointed. Do **not** take `### VRAM after a run` as the seam: it is six
-  lines and belongs exactly where it is, under § Running a scoring run.
+  until they are repointed. `scoring.md#after-the-clip-fix-november-2026` is linked from
+  `docs/style-similarity.md`, and `scoring.md#choosing-the-aesthetic-model` from
+  `docs/export.md` and `docs/statistics.md`. Grep `scoring.md#` across `docs/` before
+  moving. Do
+  **not** take `### VRAM after a run` as the seam: it is six lines and belongs exactly where
+  it is, under § Running a scoring run.
 
 Five splits were executed on 2026-11-12 on `docs/split-queue-2026-11-12`, ahead of M10 T5.
 `docs/dev/quality/scoring.md` → `docs/dev/quality/scoring-job.md` held as recorded (1,749 +

@@ -37,9 +37,22 @@ export const AESTHETIC_MODELS: AestheticModelDef[] = [
   },
 ];
 
+/** Markers no scorer writes any more, kept so stored scores still read sensibly.
+ *  Never offered in the picker.
+ *
+ *  `laion_gelu`: LAION scores from before the CLIP QuickGELU fix, when the app
+ *  built CLIP with the wrong activation. A migration re-labelled every `laion`
+ *  score to this, so the coverage line's "Re-score N with LAION" offer picks them
+ *  up (decision 17). */
+const LEGACY_MARKER_LABELS: Record<string, string> = {
+  laion_gelu: "LAION (old build — re-score)",
+};
+
 /** How a stored marker reads on screen. An unknown marker renders verbatim
  *  rather than being swallowed, so a mixed-model warning can always name what it
  *  found. */
 export function aestheticModelLabel(marker: string): string {
-  return AESTHETIC_MODELS.find((m) => m.value === marker)?.label ?? marker;
+  return (
+    AESTHETIC_MODELS.find((m) => m.value === marker)?.label ?? LEGACY_MARKER_LABELS[marker] ?? marker
+  );
 }

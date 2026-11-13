@@ -138,10 +138,37 @@ discriminator, residency. The records are on branch `exp/style-media` (pushed, n
 in docs/dev/roadmap/style-model-runs/README.md and docs/dev/roadmap/style-media-runs/README.md,
 with the pre-registrations, raw tables and an Opus review each.
 
-**A side finding: the app builds CLIP with plain GELU**, while its weights expect QuickGELU. A
-correct build scored about +0.015 higher on both drawn-art sets. Fixing it changes every
-stored `clip_embedding` and the aesthetic scorer's input, so old and new vectors must never
-mix; it is its own roadmap item, not part of the layer change.
+A side finding of these runs was that the app built CLIP with plain GELU; see the next
+section.
+
+### The CLIP QuickGELU fix
+
+Until 2026-11-13 the app built OpenAI's CLIP ViT-L/14 with plain GELU, while its weights were
+trained with QuickGELU. The cause was open_clip's `"ViT-L-14"` config, and the warning about
+it was muted with a filter that did not even match. In the runs above, a correct build scored
+about +0.015 AUC higher on both drawn-art sets.
+
+`backend/scripts/clip_build_delta.py` then scored all 1,033 images in the dev library
+(`test2`, `test3`, `Set1`) under both builds, through the app's own `infer_*` functions:
+
+| Old build vs fixed build | All | `test3` (illustrators, 200) | `test2` (804) |
+|---|---|---|---|
+| CLIP vector cosine, mean / min | 0.944 / 0.837 | 0.917 / 0.837 | 0.950 / 0.863 |
+| LAION score, mean / max \|Δ\| | 0.17 / 0.96 | 0.28 / 0.96 | 0.15 / 0.73 |
+| LAION Spearman ρ | 0.82 | 0.82 | 0.85 |
+| LAION mean shift (new − old) | +0.08 | +0.27 | +0.03 |
+| Watermark score, mean / max \|Δ\| | 0.10 / 0.61 | 0.11 / 0.52 | 0.10 / 0.61 |
+| `has_watermark` flips at 0.6 | 83 (+57 / −26) | 19 | 63 |
+
+The change is far from rounding noise, so the fix clears the old vectors and watermark results
+and re-labels the old LAION scores `laion_gelu`
+([decision 17](../decisions/17-clip-quickgelu-fix.md)). Every CLIP build, scripts included, now
+goes through `aesthetic_scorer.build_clip_vit_l14` (`docs/dev/ml-models.md` § One CLIP
+builder).
+
+Style results measured before the fix (the tables above and `style_gate.py`'s report) used the
+old build's vectors. A re-run needs the vectors re-embedded first. The `--verify` step of
+`dino_embed_offline.py` reads a little under 0.999 against vectors stored before the fix.
 
 ### How to test the next candidate
 

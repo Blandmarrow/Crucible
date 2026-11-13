@@ -43,6 +43,42 @@ def download_weights(dest: Path) -> None:
     logger.info("Aesthetic predictor weights saved to %s", dest)
 
 
+def build_clip_vit_l14(*, quick_gelu: bool = True):
+    """Build OpenAI's CLIP ViT-L/14 the way its weights were trained: the one place
+    the app (and every script that must match its stored vectors) builds it.
+
+    OpenAI trained these weights with QuickGELU. open_clip's plain `"ViT-L-14"`
+    config uses `nn.GELU`, so `create_model_and_transforms("ViT-L-14",
+    pretrained="openai")` silently runs the wrong activation in every layer of
+    both towers. `force_quick_gelu=True` fixes that on every open_clip version
+    `requirements.txt` allows, and loads the same checkpoint file.
+
+    The build is then checked, not trusted: a future open_clip that ignored the
+    flag would otherwise reintroduce the mismatch with nothing to show for it.
+
+    `quick_gelu=False` rebuilds the old, wrong model. It exists only for
+    `scripts/clip_build_delta.py`, which measures what the fix changed; nothing
+    in the app may pass it.
+
+    Returns `(model, preprocess)` on the CPU in eval mode; the caller moves it.
+    """
+    import open_clip
+
+    model, _, preprocess = open_clip.create_model_and_transforms(
+        "ViT-L-14", pretrained="openai", force_quick_gelu=quick_gelu,
+    )
+    kinds = {type(m).__name__ for m in model.modules()}
+    if quick_gelu and ("QuickGELU" not in kinds or "GELU" in kinds):
+        raise RuntimeError(
+            "open_clip built CLIP ViT-L/14 without QuickGELU despite force_quick_gelu=True; "
+            "its weights expect QuickGELU, so every CLIP embedding, LAION score and "
+            "watermark score would be wrong. Check the installed open_clip_torch version."
+        )
+    if not quick_gelu and "QuickGELU" in kinds:
+        raise RuntimeError("expected the plain-GELU CLIP build, but open_clip used QuickGELU")
+    return model.eval(), preprocess
+
+
 # ── Each check in two halves (M10 T5) ───────────────────────────────────────────
 #
 # `prepare_*` is the CPU half and runs on the default pool, a few images ahead

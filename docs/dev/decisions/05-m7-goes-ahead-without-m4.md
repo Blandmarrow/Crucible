@@ -5,7 +5,8 @@
 - **Date:** 2026-11-02.
 - **Status:** **Decided** (2026-11-02, by the user).
 - **Decision:** M7 (style embedding) no longer waits for M4 (the rating feature) to merge.
-  The port order in [roadmap.md](../roadmap.md) § Porting the unmerged branches stops being
+  The port order in the roadmap's § Porting the unmerged branches (now in
+  [handoff-2026-11-13.md](../roadmap-archive/handoff-2026-11-13.md)) stops being
   binding for M7, and work on it starts with the DINOv3 question. Number 4 is skipped
   because decision 4 already exists on the held `feat/m4-rating-port` branch.
 - **Rationale:** the user is not sure the other unmerged branches will ever be merged, so

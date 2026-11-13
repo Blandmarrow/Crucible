@@ -1,7 +1,8 @@
 # App-stored prompts plan: moving saved prompts out of the browser
 
-Designed and approved on 2026-10-30, with implementation starting the same day. Order and
-progress are in [roadmap.md](../roadmap.md) § M5; the ruling is
+Designed and approved on 2026-10-30, with implementation starting the same day. Progress is
+in [m5-app-stored-prompts.md](../roadmap-archive/m5-app-stored-prompts.md), and the open
+cleanup waits under [roadmap.md](../roadmap.md) § Waiting; the ruling is
 [decision 3](../decisions/03-app-stored-prompts.md).
 
 **Lifecycle**: this file is transient. As each stage lands, move its durable rationale into the

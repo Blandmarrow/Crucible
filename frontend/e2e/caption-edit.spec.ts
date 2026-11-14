@@ -29,7 +29,7 @@ test('edit a caption, save, and it survives a reload', async ({ page, request })
 // Arrowing to a neighbour whose `["caption", id]` query is already cached changes
 // `imageId` and `captionData` in one render; the editor used to carry the unsaved
 // draft onto it, and Save then wrote it to the wrong image. See
-// docs/dev/image-detail.md § ImageDetailPage caption panel.
+// docs/dev/caption-editor.md § ImageDetailPage caption panel.
 
 /** Two images, `01_a.png` and `02_b.png`, captioned ORIG-A / ORIG-B. */
 async function seed(request: APIRequestContext, variant: string) {

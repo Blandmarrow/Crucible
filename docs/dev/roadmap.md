@@ -84,7 +84,7 @@ unsaved draft.
 - [x] #45 Other images' captions: merged 2026-11-14 as PR #163, which closes the issue. An
   *Other captions* section in the detail page's caption panel, ranked by shared tags,
   detected objects, the stored CLIP vector or recency, inside the current dataset only (the
-  user's ruling of 2026-11-14) (`docs/dev/image-detail.md` § Other captions panel).
+  user's ruling of 2026-11-14) (`docs/dev/caption-editor.md` § Other captions panel).
 - [ ] #50 Check for a better tag: post counts and aliases through the booru routes
   (`/search` and `/autocomplete` in `backend/routers/booru.py`). Overlaps
   `TagConsolidatePage`. Run only on a button press, since it sends the caption's tags to

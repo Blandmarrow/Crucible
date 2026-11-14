@@ -31,16 +31,16 @@ restates its stages.
    linking the record that holds the full text.
 5. **Landed**: one line per finished milestone or handoff record.
 
-## Next session (updated 2026-11-14, #52 built)
+## Next session (updated 2026-11-15, #52 merged)
 
-1. **#52 Synonyms is built** on `feat/m11-synonyms` (see Now): commit, open its PR, tick the
-   PR number on the branch, and merge once CI is green and the user agrees. A real
-   install on a throwaway instance passed on 2026-11-14 (5 s, 24 MB).
+1. **M11 Tier 3 is done** (#45, #50, #52). What remains of M11 is #48, waiting on its
+   reporter, and Tier 4's two design-first items, #130 and #129, each of which starts with
+   a design pass rather than code.
 2. **CLAUDE.md is 2 words over budget.** Its seam, two Map hubs, waits on the user's call
    between a hub and a budget raise (`docs/dev/pending-splits.md`).
-3. After #52, M11 has #48 (waiting on its reporter) and Tier 4's two design-first items.
-   M4 stays held, with its merge checklist under Waiting. The closed items of the
+3. M4 stays held, with its merge checklist under Waiting. The closed items of the
    previous blocks are in
+   [roadmap-archive/handoff-2026-11-15.md](roadmap-archive/handoff-2026-11-15.md) and
    [roadmap-archive/handoff-2026-11-14.md](roadmap-archive/handoff-2026-11-14.md).
 
 ## Now
@@ -95,7 +95,7 @@ unsaved draft.
   PR moves the Booru page's Safebooru search to danbooru.donmai.us with a User-Agent, after
   safebooru.donmai.us answered every API request with a 403 (`docs/dev/caption-editor.md`
   § Check tags).
-- [ ] #52 Synonyms: **built 2026-11-14 on `feat/m11-synonyms`, PR to open.** An offline
+- [x] #52 Synonyms: merged 2026-11-15 as PR #165, which closes the issue. An offline
   WordNet lookup (`docs/dev/dictionary.md`), a Settings toggle, and a card under the
   caption box (`docs/dev/caption-editor.md` § Synonym card), the user's choice over a
   popover at the word, 2026-11-14. The install runs outside the job queue and irregular
@@ -331,3 +331,5 @@ Each line links the record that holds the full text.
   ([PM-038](postmortems/PM-038-pipeline-scope-field-nothing-read.md)), and the
   empty-selection bug's, closed by PR #161.
   Record: [roadmap-archive/handoff-2026-11-14.md](roadmap-archive/handoff-2026-11-14.md).
+- **Handoff notes, 15 November 2026**: #52's Next session item, closed when it merged as
+  PR #165. Record: [roadmap-archive/handoff-2026-11-15.md](roadmap-archive/handoff-2026-11-15.md).

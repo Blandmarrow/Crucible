@@ -38,6 +38,7 @@ Preferences that take effect immediately (browser-local unless noted):
 - Default-focused button in destructive confirmation dialogs: *Cancel* (safe default) or *Confirm* (faster workflows)
 - Branch snapshot behavior: *Ask* (shows a prompt before checkout or branch creation, letting you choose whether to create a snapshot) or *Auto* (always creates snapshots without prompting)
 - **Auto-rescan dataset on open** (off by default) — when enabled, opening a dataset gallery scans its folder on disk for new images and `.txt` captions added outside the app. Unlike the settings above, this is a **server-side** preference (persisted per-install, shared across browsers)
+- **Synonym suggestions** (off by default) — selecting a word in the image detail view's caption editor shows other words for it, grouped by meaning. Turning it on downloads an English dictionary once (Open English WordNet 2025, about 10 MB, converted to a 24 MB file in the app's `data/dictionary/` folder); a progress line shows under the toggle, and after that it works offline. The toggle belongs to this browser, but the dictionary is installed once for the whole app. **Remove** deletes the dictionary; turning the toggle on again downloads it again. The dictionary's licence and credits are in [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)
 
 ## Quality Thresholds
 

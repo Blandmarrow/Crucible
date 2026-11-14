@@ -81,6 +81,22 @@ def _no_real_llm_server(monkeypatch):
     monkeypatch.setattr(openai_compat_captioner, "make_client", lambda *a, **k: RefusingOpenAIClient())
 
 
+@pytest.fixture(autouse=True)
+def _no_real_download(monkeypatch):
+    """Keep every pinned download (`backend/downloads.py`) off the network.
+
+    `downloads._open` is the one call that fetches the LaMa weights and the WordNet
+    dictionary; here it fails as a refused connection would. A test that wants bytes
+    patches `downloads._open` itself (see `test_dictionary.py`'s `serve`).
+    """
+    from backend import downloads
+
+    def _refuse(url, timeout):
+        raise ConnectionRefusedError(f"no network in tests: {url}")
+
+    monkeypatch.setattr(downloads, "_open", _refuse)
+
+
 class RefusingOpenAIClient:
     """An `AsyncOpenAI` stand-in whose every chat request fails as a refused
     connection would. See `_no_real_llm_server`."""

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { usePaneDatasetId, usePaneImageId } from "../hooks/usePaneDatasetId";
 import { usePaneNavigate } from "../hooks/usePaneNavigate";
 import { usePaneContext } from "../contexts/PaneContext";
@@ -31,7 +31,10 @@ import LabelsPanel from "../components/image/LabelsPanel";
 import ProvenancePanel from "../components/image/ProvenancePanel";
 import OtherCaptionsPanel from "../components/caption/OtherCaptionsPanel";
 import CheckTagsPanel from "../components/caption/CheckTagsPanel";
+import SynonymCard from "../components/caption/SynonymCard";
 import { looksLikeTags } from "../utils/captionTags";
+import { selectedWord, type WordSpan } from "../utils/captionWords";
+import { keepScroll } from "../utils/keepScroll";
 import StyleMatchPanel from "../components/image/StyleMatchPanel";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import ModelPicker from "../components/providers/ModelPicker";
@@ -865,6 +868,21 @@ export default function ImageDetailPage() {
   const captionText = captionDirty ? draft!.text : (captionData?.caption_text ?? "");
   const captionStyle = captionData?.caption_style ?? "";   // persisted unchanged; no picker
 
+  // The synonym card's selection (#52), stamped with its image like the draft. `word`
+  // is what the user selected, which the card looks up; `span` is where the current
+  // word sits, which a swap moves. It is live only while the caption still holds
+  // `span.text` there, so an AI result or a navigation closes the card with no effect.
+  const synonymsEnabled = useUiPrefsStore((s) => s.synonymsEnabled);
+  const [synSel, setSynSel] = useState<{ imageId: string; span: WordSpan; word: string } | null>(null);
+  const syn =
+    synonymsEnabled &&
+    synSel &&
+    synSel.imageId === imageId &&
+    captionText.slice(synSel.span.start, synSel.span.end) === synSel.span.text
+      ? synSel
+      : null;
+  const closeSynonyms = useCallback(() => setSynSel(null), []);
+
   // Leaving an image discards its unsaved draft (as it always has). Tidiness
   // only: `captionDirty` already ignores a draft stamped with another id.
   useEffect(() => {
@@ -1149,11 +1167,17 @@ export default function ImageDetailPage() {
     }
   }, [cropUpscaleJobProgress?.status, cropUpscaleJobId, datasetId, imageId, cropReplace, qc, paneGo]);
 
-  useEffect(() => {
+  // Auto-size the caption box. Measuring needs `height: auto` for a moment, which lays
+  // the page out shorter: a panel scrolled near its bottom had its scroll clamped there,
+  // and the caption jumped on every keystroke and synonym swap. `keepScroll` puts every
+  // scrolled ancestor back, and it runs before paint (a layout effect).
+  useLayoutEffect(() => {
     const el = captionRef.current;
     if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${el.scrollHeight}px`;
+    keepScroll(el, () => {
+      el.style.height = "auto";
+      el.style.height = `${el.scrollHeight}px`;
+    });
   }, [captionText, imageId, image?.id]);
 
   const renameMutation = useMutation({
@@ -2573,7 +2597,28 @@ export default function ImageDetailPage() {
                   : {}),
               }}
               value={captionText}
-              onChange={(e) => setDraft({ imageId: imageId!, text: e.target.value })}
+              onChange={(e) => {
+                setDraft({ imageId: imageId!, text: e.target.value });
+                setSynSel(null); // typing closes the synonym card
+              }}
+              onSelect={(e) => {
+                if (!synonymsEnabled) return;
+                const el = e.currentTarget;
+                const span = selectedWord(el.value, el.selectionStart, el.selectionEnd);
+                // Only a new word replaces the card; a collapsed caret leaves it alone.
+                // A double-click's first press collapses the old selection, and closing
+                // the card there made the panel shorter between the two clicks: scrolled
+                // near the bottom, the scroll clamped and the second click hit another word.
+                if (span) setSynSel({ imageId: imageId!, span, word: span.text });
+              }}
+              onKeyDown={(e) => {
+                // The page's window listener leaves a text field's Escape alone, so
+                // this one closes the card and nothing else.
+                if (e.key === "Escape" && syn) {
+                  e.preventDefault();
+                  setSynSel(null);
+                }
+              }}
               onDragOver={(e) => {
                 if (Array.from(e.dataTransfer.items || []).some((it) => it.kind === "file")) {
                   e.preventDefault();
@@ -2584,6 +2629,36 @@ export default function ImageDetailPage() {
               onDrop={handleCaptionFileDrop}
               placeholder="Natural language description... (or drop a .txt file here)"
             />
+            {syn && (
+              <SynonymCard
+                key={`synonyms-${image.id}`}
+                span={syn.span}
+                word={syn.word}
+                captionText={captionText}
+                onSwap={(text, span) => {
+                  // The card stays, on the same list, pointed at the word now in the box:
+                  // closing it shrank the panel and the scroll clamped (as between the two
+                  // presses of a double-click), and re-pointing the span is what stops a
+                  // second swap garbling "blond" → "blonde" into "blondee".
+                  setDraft({ imageId: imageId!, text });
+                  setSynSel((s) => (s ? { ...s, span } : s));
+                  // After React has written the new value, which moves the caret to the
+                  // end. `preventScroll`: focusing must not scroll the panel either.
+                  requestAnimationFrame(() => {
+                    const el = captionRef.current;
+                    if (!el) return;
+                    // setSelectionRange scrolls the caret into view; the word is
+                    // already where the user clicked it, so the panel stays put.
+                    keepScroll(el, () => {
+                      el.focus({ preventScroll: true });
+                      el.setSelectionRange(span.end, span.end);
+                    });
+                  });
+                }}
+                onClose={closeSynonyms}
+                textareaRef={captionRef}
+              />
+            )}
           </div>
 
           <button

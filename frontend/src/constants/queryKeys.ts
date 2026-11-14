@@ -157,3 +157,13 @@ export const DECLARED_CATEGORIES_QUERY_KEY = ["app-data", "categories"];
 export const similarCaptionsScope = (datasetId: string | undefined) => ["similar-captions", datasetId] as const;
 export const similarCaptionsKey = (datasetId: string, imageId: string, by: string) =>
   ["similar-captions", datasetId, imageId, by] as const;
+
+/**
+ * The offline synonym dictionary (#52). The status is server-wide and changes when an
+ * install finishes or the dictionary is removed; a lookup's answer depends only on the
+ * installed edition, so `dictionaryScope` (every key below) is what an install or a
+ * removal invalidates.
+ */
+export const dictionaryScope = ["dictionary"] as const;
+export const DICTIONARY_STATUS_KEY = ["dictionary", "status"] as const;
+export const synonymsKey = (word: string) => ["dictionary", "synonyms", word] as const;

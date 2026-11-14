@@ -29,6 +29,7 @@ import DirPickerModal from "../components/common/DirPickerModal";
 import ModelPicker from "../components/providers/ModelPicker";
 import LabelsPanel from "../components/settings/LabelsPanel";
 import SecretField from "../components/settings/SecretField";
+import SynonymsSetting from "../components/settings/SynonymsSetting";
 
 const DEFAULTS: Thresholds = {
   blur_threshold: 100,
@@ -949,6 +950,8 @@ export default function SettingsPage() {
                 </div>
               </label>
             </div>
+
+            <SynonymsSetting />
           </div>
         </div>
       )}

@@ -51,7 +51,7 @@ Every step from raw images to a training-ready export, in order:
 
 ### Captioning
 - **Caption** images in batch using local ML models (Florence-2, PaliGemma-2, JoyCaption, WD14, Ollama) or any OpenAI-compatible API — or drag a `.txt` file onto an image to set its caption → [details](docs/captioning.md)
-- **Caption by hand** with help from the rest of the dataset — the image detail view's **Other captions** section shows how images that share its tags, detected objects or look were captioned, with one-click copy and a button that adds the tags yours lacks, and **Check tags on Danbooru** flags renamed, rare or unknown tags with a one-click replacement → [details](docs/gallery.md#browsing-images)
+- **Caption by hand** with help from the rest of the dataset — the image detail view's **Other captions** section shows how images that share its tags, detected objects or look were captioned, with one-click copy and a button that adds the tags yours lacks, **Check tags on Danbooru** flags renamed, rare or unknown tags with a one-click replacement, and **Synonym suggestions** (off by default, turned on in Settings) show other words for a selected word, grouped by meaning with short definitions, from an offline English dictionary → [details](docs/gallery.md#browsing-images)
 
 ### Quality & curation
 - **Score** every image across aesthetic, technical, watermark, NSFW, and style similarity metrics — aesthetic scoring offers a choice of two models (LAION over CLIP, or Aesthetic Predictor V2.5 over SigLIP), and records which one produced each score. Scores save as a run goes, so **Score what's missing** finishes a run that stopped partway. Style similarity ranks a dataset against reference images, reading DINOv2 at a middle layer by default, and reads as a **percentile** on every gallery card and on the image detail page, since the raw cosine's scale depends on which embedding model, layer and blend produced it → [details](docs/scoring.md) · [style similarity](docs/style-similarity.md)
@@ -297,6 +297,8 @@ Browsing by IP address or by this computer's own name (`mypc`, `mypc.local`) wor
 **Backend:** Python · FastAPI · SQLAlchemy (async) · SQLite · Alembic · Pillow · OpenCV · PyTorch · Transformers · OpenCLIP · sentence-transformers · spandrel
 
 **Frontend:** React 19 · TypeScript · Vite · TanStack Query · Zustand · Tailwind CSS
+
+**Data:** synonym suggestions use [Open English WordNet](https://en-word.net/) (CC BY 4.0), derived from Princeton WordNet, downloaded when you turn the feature on. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ---
 

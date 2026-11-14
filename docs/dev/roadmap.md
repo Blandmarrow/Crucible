@@ -31,13 +31,16 @@ restates its stages.
    linking the record that holds the full text.
 5. **Landed**: one line per finished milestone or handoff record.
 
-## Next session (updated 2026-11-14, #50 merged)
+## Next session (updated 2026-11-14, #52 built)
 
-1. **#52 Synonyms comes next**, the last of Tier 3, adding to `docs/dev/caption-editor.md`.
-   #48 waits on a question to its reporter, and M7's Stage 3 waits behind M11, under
-   Waiting.
-2. M4 stays held, with its merge checklist under Waiting. The closed items of the previous
-   blocks, the two scope bugs and their fixes (PRs #160 and #161), are in
+1. **#52 Synonyms is built** on `feat/m11-synonyms` (see Now): commit, open its PR, tick the
+   PR number on the branch, and merge once CI is green and the user agrees. A real
+   install on a throwaway instance passed on 2026-11-14 (5 s, 24 MB).
+2. **CLAUDE.md is 2 words over budget.** Its seam, two Map hubs, waits on the user's call
+   between a hub and a budget raise (`docs/dev/pending-splits.md`).
+3. After #52, M11 has #48 (waiting on its reporter) and Tier 4's two design-first items.
+   M4 stays held, with its merge checklist under Waiting. The closed items of the
+   previous blocks are in
    [roadmap-archive/handoff-2026-11-14.md](roadmap-archive/handoff-2026-11-14.md).
 
 ## Now
@@ -92,8 +95,11 @@ unsaved draft.
   PR moves the Booru page's Safebooru search to danbooru.donmai.us with a User-Agent, after
   safebooru.donmai.us answered every API request with a 403 (`docs/dev/caption-editor.md`
   § Check tags).
-- [ ] #52 Synonyms: an offline WordNet lookup, a Settings toggle, and a card under the
-  caption box (the user's choice over a popover at the word, 2026-11-14). Licence checked
+- [ ] #52 Synonyms: **built 2026-11-14 on `feat/m11-synonyms`, PR to open.** An offline
+  WordNet lookup (`docs/dev/dictionary.md`), a Settings toggle, and a card under the
+  caption box (`docs/dev/caption-editor.md` § Synonym card), the user's choice over a
+  popover at the word, 2026-11-14. The install runs outside the job queue and irregular
+  forms come from WordNet's own lists (decision 18). Licence checked
   2026-11-14: Open English WordNet 2025, core edition, which is CC BY 4.0 on top of the
   Princeton WordNet licence. Both allow any use. Credit both projects, keep Princeton's
   notice and disclaimer with every copy, note our conversion, and never use Princeton's

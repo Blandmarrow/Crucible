@@ -53,7 +53,8 @@ from backend.utils import FileInUseError
 from backend.services.secrets_service import sync_env
 
 sync_env(None)
-from backend.routers import app_data, booru, captions, captioning, comfy, datasets, detection, export, filesystem, images, inpaint, jobs, labels, lut, models, providers, quality, run_recipes, runs, settings as settings_router, system, tag_consolidation, upscaling, versioning, videos
+from backend.services import dictionary_service
+from backend.routers import app_data, booru, captions, captioning, comfy, datasets, detection, dictionary, export, filesystem, images, inpaint, jobs, labels, lut, models, providers, quality, run_recipes, runs, settings as settings_router, system, tag_consolidation, upscaling, versioning, videos
 from backend.workers.job_queue import job_queue, mark_interrupted_jobs, sweep_old_jobs
 
 
@@ -75,6 +76,9 @@ async def lifespan(app: FastAPI):
     await _reconcile_interrupted_runs()
     await _sweep_old_jobs()
     await _sweep_orphan_dataset_folders()
+    # A dictionary install the last process did not finish left a .part or .tmp
+    # behind; neither is ever trusted, so they just go (docs/dev/dictionary.md).
+    dictionary_service.sweep_leftovers()
     await job_queue.start()
     # Integrity check + rotating backup: seconds of disk I/O on a large database, and
     # nothing requested by the user waits on it. Fire and forget, after the app is
@@ -82,6 +86,7 @@ async def lifespan(app: FastAPI):
     # mid-run (asyncio only holds a weak one).
     _background_tasks.add(asyncio.create_task(_startup_db_maintenance()))
     yield
+    await dictionary_service.shutdown()
     await job_queue.stop()
 
 
@@ -240,6 +245,7 @@ app.include_router(captioning.router, prefix=PREFIX)
 app.include_router(quality.router, prefix=PREFIX)
 app.include_router(models.router, prefix=PREFIX)
 app.include_router(booru.router, prefix=PREFIX)
+app.include_router(dictionary.router, prefix=PREFIX)
 app.include_router(export.router, prefix=PREFIX)
 app.include_router(jobs.router, prefix=PREFIX)
 app.include_router(system.router, prefix=PREFIX)

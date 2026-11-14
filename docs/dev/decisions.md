@@ -150,3 +150,11 @@ builder. A migration clears every old-build CLIP vector and CLIP watermark resul
 included, and re-labels old LAION scores `laion_gelu` so the existing re-score offer picks
 them up. Measured on 1,033 images: vector cosine 0.944, and 8% of watermark flags flipped.
 Full record: [decisions/17-clip-quickgelu-fix.md](decisions/17-clip-quickgelu-fix.md).
+
+## 18. The synonym dictionary installs outside the job queue, from WordNet's own data
+
+**Decided** (2026-11-14, by the user): turning on Synonym suggestions starts the dictionary
+download at once as its own task, which Settings polls, rather than a queued job that could
+wait behind a long run. Irregular word forms come from WordNet's own lists, which the JSON
+release already carries as each entry's `form`, so one pinned download serves both. Full
+record: [decisions/18-synonym-dictionary-install.md](decisions/18-synonym-dictionary-install.md).

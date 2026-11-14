@@ -62,7 +62,7 @@ function PartialFailureLine({ job }: { job: Job }) {
 function StatusBadge({ status }: { status: Job["status"] }) {
   const styles: Record<string, { color: string; label: string }> = {
     pending:   { color: "var(--fg-mute)",  label: "pending" },
-    running:   { color: "var(--accent)",   label: "running" },
+    running:   { color: "var(--accent-text)",   label: "running" },
     completed: { color: "var(--good)",      label: "done" },
     failed:    { color: "var(--bad)",      label: "failed" },
     cancelled: { color: "var(--fg-dim)",   label: "cancelled" },

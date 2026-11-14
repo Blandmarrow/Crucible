@@ -233,7 +233,7 @@ export default function VideoDetailPage() {
     <div className="flex h-full">
       {/* Left: player */}
       <div className="flex-1 flex flex-col min-w-0">
-        <div className="p-3 border-b border-gray-700/50 flex items-center gap-3">
+        <div className="p-3 border-b border-line flex items-center gap-3">
           <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => paneBack({ page: "gallery", datasetId: datasetId ?? "" })}>
             <ArrowLeft size={14} /> Back
           </button>
@@ -243,7 +243,7 @@ export default function VideoDetailPage() {
               <button className="btn-ghost btn-sm p-1" onClick={() => prevId && goTo(prevId)} disabled={!prevId} title="Previous video (←)">
                 <ChevronLeft size={16} />
               </button>
-              <span className="text-xs text-gray-500 tabular-nums w-16 text-center">
+              <span className="text-xs text-fg-dim tabular-nums w-16 text-center">
                 {currentIndex + 1} / {siblings?.length ?? 0}
               </span>
               <button className="btn-ghost btn-sm p-1" onClick={() => nextId && goTo(nextId)} disabled={!nextId} title="Next video (→)">
@@ -252,7 +252,7 @@ export default function VideoDetailPage() {
             </div>
           )}
 
-          <span className="text-sm text-gray-400 truncate">{video.filename}</span>
+          <span className="text-sm text-fg-mute truncate">{video.filename}</span>
         </div>
 
         <div className="flex-1 min-h-0 flex items-center justify-center p-4" style={{ background: "var(--surface-0)" }}>
@@ -294,18 +294,18 @@ export default function VideoDetailPage() {
       </div>
 
       {/* Right: metadata panel */}
-      <div className="w-80 bg-surface-card border-l border-gray-700/50 flex flex-col overflow-y-auto">
-        <div className="p-4 border-b border-gray-700/50 space-y-2">
-          <h3 className="font-medium text-sm text-gray-300 uppercase tracking-wide">Video Info</h3>
+      <div className="w-80 bg-surface-card border-l border-line flex flex-col overflow-y-auto">
+        <div className="p-4 border-b border-line space-y-2">
+          <h3 className="font-medium text-sm text-fg uppercase tracking-wide">Video Info</h3>
           <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
-            <span className="text-gray-500">Dimensions</span>
+            <span className="text-fg-dim">Dimensions</span>
             <span>{video.width && video.height ? `${video.width}×${video.height}` : "—"}</span>
-            <span className="text-gray-500">Duration</span>
+            <span className="text-fg-dim">Duration</span>
             {/* null is *unknown*, never 0:00 — see utils/duration.ts. */}
             <span>{formatDuration(video.duration_ms)}</span>
-            <span className="text-gray-500">FPS</span>
+            <span className="text-fg-dim">FPS</span>
             <span>{video.fps ? video.fps.toFixed(2) : "—"}</span>
-            <span className="text-gray-500">Codec</span>
+            <span className="text-fg-dim">Codec</span>
             <span>{video.codec_label || "—"}</span>
             {/* Predicted from the stored codec/container, so it shows *before*
                 anyone presses play — the overlay only appears once the element
@@ -316,9 +316,9 @@ export default function VideoDetailPage() {
                 {playbackHint}
               </span>
             )}
-            <span className="text-gray-500">Size</span>
+            <span className="text-fg-dim">Size</span>
             <span>{formatSize(video.file_size_bytes)}</span>
-            <span className="text-gray-500">Filename</span>
+            <span className="text-fg-dim">Filename</span>
             <span className="min-w-0">
               {renameMode ? (
                 <span className="flex items-center gap-1">
@@ -357,21 +357,21 @@ export default function VideoDetailPage() {
 
         {/* Provenance, read-only. A video inherits the dataset default at ingest;
             folder import is where it gets set. */}
-        <div className="p-4 border-b border-gray-700/50 space-y-2">
-          <h3 className="font-medium text-sm text-gray-300 uppercase tracking-wide">Provenance</h3>
+        <div className="p-4 border-b border-line space-y-2">
+          <h3 className="font-medium text-sm text-fg uppercase tracking-wide">Provenance</h3>
           <div className="flex items-center gap-2">
             <LicenseBadge value={provenance.license} />
           </div>
           {provenance.source_name && (
-            <div className="text-xs text-gray-400 break-words">{provenance.source_name}</div>
+            <div className="text-xs text-fg-mute break-words">{provenance.source_name}</div>
           )}
           {sourceUrl && (
-            <a href={sourceUrl} target="_blank" rel="noreferrer noopener" className="text-xs text-blue-400 break-all">
+            <a href={sourceUrl} target="_blank" rel="noreferrer noopener" className="text-xs text-info break-all">
               {sourceUrl}
             </a>
           )}
           {provenance.attribution && (
-            <div className="text-xs text-gray-500 break-words">{provenance.attribution}</div>
+            <div className="text-xs text-fg-dim break-words">{provenance.attribution}</div>
           )}
         </div>
 
@@ -379,8 +379,8 @@ export default function VideoDetailPage() {
             panel implies something failed. Each row deep-links the gallery at
             that subfolder via the pane view's `subfolder` field. */}
         {(framesSummary?.total ?? 0) > 0 && (
-          <div className="p-4 border-b border-gray-700/50 space-y-2">
-            <h3 className="font-medium text-sm text-gray-300 uppercase tracking-wide">Extracted frames</h3>
+          <div className="p-4 border-b border-line space-y-2">
+            <h3 className="font-medium text-sm text-fg uppercase tracking-wide">Extracted frames</h3>
             <div className="space-y-1">
               {/* The lineage filter, above the per-subfolder rows. The two answer
                   different questions: a subfolder row is "where did this extraction

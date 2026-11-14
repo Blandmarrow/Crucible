@@ -462,7 +462,7 @@ export default function ComfyRowsTable({
                   className="icon-btn"
                   style={{
                     fontSize: 11, padding: 0, width: 16, height: 16, lineHeight: 1, flexShrink: 0,
-                    color: expandPrompts ? "var(--accent)" : undefined,
+                    color: expandPrompts ? "var(--accent-text)" : undefined,
                   }}
                   title={expandPrompts ? "Collapse prompts to one line" : "Expand all prompts to full text"}
                   onClick={() => setExpandPrompts((v) => !v)}
@@ -532,7 +532,7 @@ export default function ComfyRowsTable({
                     >
                       {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
                     </button>
-                    <Folder size={13} style={{ flexShrink: 0, color: item.path ? "var(--accent)" : "var(--fg-mute)" }} />
+                    <Folder size={13} style={{ flexShrink: 0, color: item.path ? "var(--accent-text)" : "var(--fg-mute)" }} />
                     <span className="mono" style={{ fontWeight: 500 }}>{label}</span>
                     <span style={{ color: "var(--fg-mute)", fontSize: 11.5 }}>{groupSummary(item.rows)}</span>
                     {item.rows.some((r) => r.blueprint_linked) && <span className="comfy-pill">from blueprint</span>}

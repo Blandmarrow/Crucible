@@ -385,13 +385,13 @@ export default function WorkflowPinPanel({ plan, onSave, saving }: Props) {
           </div>
 
           {!hasSaveNode && outputNodeIds.length === 0 && (
-            <p style={{ color: "var(--warn, #d97706)", fontSize: 12, marginTop: 6 }}>
+            <p style={{ color: "var(--warn)", fontSize: 12, marginTop: 6 }}>
               ⚠ No Save node found — runs will fail because nothing produces output images. Add a
               SaveImage node in ComfyUI, or select your PreviewImage under “Import images from”.
             </p>
           )}
           {missingOutputNodes.length > 0 && (
-            <p style={{ color: "var(--warn, #d97706)", fontSize: 12, marginTop: 6 }}>
+            <p style={{ color: "var(--warn)", fontSize: 12, marginTop: 6 }}>
               ⚠ Selected output node{missingOutputNodes.length > 1 ? "s" : ""} {missingOutputNodes.map((i) => `#${i}`).join(", ")} no
               longer exist{missingOutputNodes.length > 1 ? "" : "s"} in this workflow — review the workflow or the selection above.
             </p>
@@ -429,7 +429,7 @@ export default function WorkflowPinPanel({ plan, onSave, saving }: Props) {
                   }}>
                     <span style={chipStyle}>{workflow ? nodeLabel(workflow, nodeId) : `#${nodeId}`}</span>
                     {workflow && !(nodeId in workflow) && (
-                      <span style={{ color: "var(--warn, #d97706)", fontSize: 11 }}>not in workflow</span>
+                      <span style={{ color: "var(--warn)", fontSize: 11 }}>not in workflow</span>
                     )}
                     <div style={{ flex: 1 }} />
                     <button className="btn ghost sm" style={{ fontSize: 11, padding: "0 8px" }} onClick={() => unpinNode(nodeId)}>

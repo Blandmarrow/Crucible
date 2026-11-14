@@ -22,6 +22,7 @@ import { CAPTIONING_WORKFLOW_PATH } from "../api/appData";
 import { writeToServer } from "../utils/serverWriter";
 import { SORT_OPTIONS } from "../constants/galleryOptions";
 import RadioGroup from "../components/common/RadioGroup";
+import { getThemePref, setThemePref, type ThemePref } from "../utils/theme";
 import NumberField from "../components/common/NumberField";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import DirPickerModal from "../components/common/DirPickerModal";
@@ -122,6 +123,7 @@ const FIELDS: ThresholdField[] = [
 export default function SettingsPage() {
   const qc = useQueryClient();
   const [form, setForm] = useState<Thresholds>(DEFAULTS);
+  const [themePref, setThemePrefState] = useState<ThemePref>(getThemePref);
   const [confirmDefault, setConfirmDefault] = useState<"cancel" | "confirm">(
     () => (localStorage.getItem(CONFIRM_DEFAULT_KEY) === "confirm" ? "confirm" : "cancel")
   );
@@ -421,7 +423,7 @@ export default function SettingsPage() {
                   help={
                     <>
                       Needed to download gated models such as PaliGemma-2. Create one at{" "}
-                      <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>
+                      <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noreferrer" style={{ color: "var(--accent-text)" }}>
                         huggingface.co/settings/tokens
                       </a>
                       . A change applies to the next model download — a download already running keeps the old token.
@@ -890,6 +892,24 @@ export default function SettingsPage() {
         <div className="panel">
           <div className="panel-b" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             <div>
+              <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 10 }}>Appearance</div>
+              <RadioGroup
+                name="theme"
+                options={[
+                  { value: "dark", label: "Dark", desc: "The default." },
+                  { value: "light", label: "Light", desc: "A low-glare grey, so the page does not compete with your images." },
+                  { value: "system", label: "Match system", desc: "Follows your computer's light or dark setting, and switches when it does." },
+                ]}
+                value={themePref}
+                onChange={(v) => {
+                  setThemePrefState(v as ThemePref);
+                  setThemePref(v as ThemePref);
+                  toast.success("Preference saved");
+                }}
+              />
+            </div>
+
+            <div>
               <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 10 }}>Delete confirmation default button</div>
               <RadioGroup
                 name="confirm_default"
@@ -1108,9 +1128,9 @@ export default function SettingsPage() {
               <div style={{ fontWeight: 500, color: "var(--fg)", marginBottom: 4, fontSize: 12 }}>Quick setup</div>
               <div><strong style={{ color: "var(--fg)" }}>LM Studio</strong> — open the Local Server tab, start the server, use <code style={{ fontSize: 11 }}>http://localhost:1234/v1</code> — no API key needed</div>
               <div><strong style={{ color: "var(--fg)" }}>llama.cpp</strong> — run <code style={{ fontSize: 11 }}>llama-server -m model.gguf --port 8080</code>, use <code style={{ fontSize: 11 }}>http://localhost:8080/v1</code> — no API key needed</div>
-              <div><strong style={{ color: "var(--fg)" }}>Gemini</strong> — get a free API key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>aistudio.google.com</a>, use <code style={{ fontSize: 11 }}>https://generativelanguage.googleapis.com/v1beta/openai</code></div>
-              <div><strong style={{ color: "var(--fg)" }}>OpenAI</strong> — get an API key at <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>platform.openai.com/api-keys</a>, use <code style={{ fontSize: 11 }}>https://api.openai.com/v1</code></div>
-              <div><strong style={{ color: "var(--fg)" }}>Groq</strong> — get a free API key at <a href="https://console.groq.com/keys" target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>console.groq.com/keys</a>, use <code style={{ fontSize: 11 }}>https://api.groq.com/openai/v1</code></div>
+              <div><strong style={{ color: "var(--fg)" }}>Gemini</strong> — get a free API key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer" style={{ color: "var(--accent-text)" }}>aistudio.google.com</a>, use <code style={{ fontSize: 11 }}>https://generativelanguage.googleapis.com/v1beta/openai</code></div>
+              <div><strong style={{ color: "var(--fg)" }}>OpenAI</strong> — get an API key at <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer" style={{ color: "var(--accent-text)" }}>platform.openai.com/api-keys</a>, use <code style={{ fontSize: 11 }}>https://api.openai.com/v1</code></div>
+              <div><strong style={{ color: "var(--fg)" }}>Groq</strong> — get a free API key at <a href="https://console.groq.com/keys" target="_blank" rel="noreferrer" style={{ color: "var(--accent-text)" }}>console.groq.com/keys</a>, use <code style={{ fontSize: 11 }}>https://api.groq.com/openai/v1</code></div>
             </div>
 
             {providers.length === 0 && !showProviderForm && (

@@ -154,7 +154,7 @@ export default function SidebarVersionPanel({ datasetId, branches, activeBranch,
                         </span>
                         {isCurrent ? (
                           <span style={{
-                            fontSize: 10, color: "var(--accent)", flexShrink: 0,
+                            fontSize: 10, color: "var(--accent-text)", flexShrink: 0,
                             fontFamily: "Geist Mono, monospace",
                           }}>
                             Now
@@ -179,7 +179,7 @@ export default function SidebarVersionPanel({ datasetId, branches, activeBranch,
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <Link
                 to={`/datasets/${datasetId}/versions`}
-                style={{ fontSize: 11, color: "var(--accent)", textDecoration: "none" }}
+                style={{ fontSize: 11, color: "var(--accent-text)", textDecoration: "none" }}
                 onClick={() => setExpanded(false)}
               >
                 View all →

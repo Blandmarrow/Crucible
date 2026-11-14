@@ -50,7 +50,7 @@ export default function ConfirmDialog({ title, message, onConfirm, onCancel, con
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" {...overlayProps}>
       <div className="card p-6 w-full max-w-sm space-y-4" {...panelProps}>
         <h3 className="font-semibold text-lg">{title}</h3>
-        <p className="text-gray-400 text-sm">{message}</p>
+        <p className="text-fg-mute text-sm">{message}</p>
         <div className="flex gap-3 justify-end">
           <button ref={cancelRef} className="btn-ghost" onClick={onCancel}>Cancel</button>
           <button ref={confirmRef} className={danger ? "btn-danger" : "btn-primary"} onClick={onConfirm}>

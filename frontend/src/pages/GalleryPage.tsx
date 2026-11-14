@@ -1519,7 +1519,7 @@ export default function GalleryPage() {
               flex: 1, minWidth: 0, padding: "5px 4px",
               border: "none", cursor: "pointer", textAlign: "left",
               background: "transparent",
-              color: isActive ? "var(--accent)" : "var(--fg)",
+              color: isActive ? "var(--accent-text)" : "var(--fg)",
               fontSize: 12.5, fontWeight: isActive ? 600 : 400,
             }}
           >
@@ -1803,7 +1803,7 @@ export default function GalleryPage() {
                           style={{
                             padding: "2px 7px", fontSize: 11.5, borderRadius: "var(--r)", cursor: "pointer",
                             background: labelMatch === m ? "var(--accent)" : "var(--surface-2)",
-                            color: labelMatch === m ? "#fff" : "var(--fg-mute)",
+                            color: labelMatch === m ? "var(--on-accent)" : "var(--fg-mute)",
                             border: "1px solid var(--line)",
                           }}
                         >
@@ -1826,7 +1826,7 @@ export default function GalleryPage() {
                     style={{
                       padding: "2px 8px", borderRadius: "var(--r)", fontSize: 12, cursor: "pointer",
                       background: labelMissing ? "var(--accent)" : "var(--surface-2)",
-                      color: labelMissing ? "#fff" : "var(--fg-mute)",
+                      color: labelMissing ? "var(--on-accent)" : "var(--fg-mute)",
                       border: "1px solid var(--line)", whiteSpace: "nowrap",
                     }}
                   >
@@ -1988,7 +1988,7 @@ export default function GalleryPage() {
                 style={{
                   position: "absolute", top: "calc(100% + 4px)", right: 0, zIndex: 1000,
                   background: "var(--surface-2)", border: "1px solid var(--line-2)",
-                  borderRadius: "var(--r)", boxShadow: "0 8px 24px rgba(0,0,0,.4)",
+                  borderRadius: "var(--r)", boxShadow: "var(--shadow-lg)",
                   minWidth: 210, padding: "4px 0", whiteSpace: "nowrap",
                 }}
               >
@@ -2202,7 +2202,7 @@ export default function GalleryPage() {
                 width: "100%", padding: "5px 8px", borderRadius: "var(--r)",
                 border: "none", cursor: "pointer", textAlign: "left",
                 background: activeSubfolder === undefined ? "var(--surface-3)" : "transparent",
-                color: activeSubfolder === undefined ? "var(--accent)" : "var(--fg)",
+                color: activeSubfolder === undefined ? "var(--accent-text)" : "var(--fg)",
                 fontSize: 12.5, fontWeight: activeSubfolder === undefined ? 600 : 400,
               }}
             >
@@ -2231,7 +2231,7 @@ export default function GalleryPage() {
                     flex: 1, minWidth: 0, padding: "5px 4px 5px 8px",
                     border: "none", cursor: "pointer", textAlign: "left",
                     background: "transparent",
-                    color: isRootActive ? "var(--accent)" : "var(--fg)",
+                    color: isRootActive ? "var(--accent-text)" : "var(--fg)",
                     fontSize: 12.5, fontWeight: isRootActive ? 600 : 400, fontStyle: "italic",
                   }}
                 >
@@ -2409,7 +2409,7 @@ export default function GalleryPage() {
                 <span style={{
                   position: "absolute", top: -8, right: -8, zIndex: 2,
                   padding: "2px 8px", borderRadius: 999,
-                  background: "var(--accent)", color: "#03130d",
+                  background: "var(--accent)", color: "var(--on-accent)",
                   fontSize: 11, fontWeight: 600, fontFamily: '"Geist Mono", monospace',
                 }}>
                   {activeDragCount} images
@@ -2421,7 +2421,7 @@ export default function GalleryPage() {
                   transform: "translate(-50%, -50%)", maxWidth: "94%",
                   display: "flex", alignItems: "center", gap: 6,
                   padding: "6px 11px", borderRadius: 999,
-                  background: "var(--accent)", color: "#03130d",
+                  background: "var(--accent)", color: "var(--on-accent)",
                   fontSize: 12, fontWeight: 600,
                   boxShadow: "0 6px 18px -6px rgba(0,0,0,.7)",
                 }}>

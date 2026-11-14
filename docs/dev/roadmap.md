@@ -31,11 +31,11 @@ restates its stages.
    linking the record that holds the full text.
 5. **Landed**: one line per finished milestone or handoff record.
 
-## Next session (updated 2026-11-14, empty-selection fix merged)
+## Next session (updated 2026-11-14, light mode merged)
 
-1. **M11 goes on with Tier 2** (see Now): #9, #16, then #19. #48 waits on a question to its
-   reporter, and #19 on the user picking a light palette. M7's Stage 3 waits behind M11,
-   under Waiting.
+1. **M11 goes on with Tier 3** (see Now): #45, #50 and #52, one batch. Tier 2 is closed:
+   #19, light mode, merged as PR #162, and the user parked #9 and #16 (under Later). #48
+   waits on a question to its reporter. M7's Stage 3 waits behind M11, under Waiting.
 2. M4 stays held, with its merge checklist under Waiting. The closed items of the previous
    blocks, the two scope bugs and their fixes (PRs #160 and #161), are in
    [roadmap-archive/handoff-2026-11-14.md](roadmap-archive/handoff-2026-11-14.md).
@@ -45,7 +45,8 @@ restates its stages.
 ### M11 — Open enhancement issues
 
 Ordered first by the user on 2026-11-13, ahead of M7's Stage 3 (now under Waiting). It holds
-every open GitHub issue labelled `enhancement` except #90, which stays parked under Later.
+every open GitHub issue labelled `enhancement` except #90, #9 and #16, which stay parked
+under Later.
 Each issue holds the *what*; a box adds only the code pointer found when the issues were
 reviewed. Gate: each box ships with its user docs (`README.md` and the matching
 `docs/*.md`), on its own branch unless it says otherwise. The two design-first items get a
@@ -69,17 +70,11 @@ Tier 1, small:
 
 Tier 2, medium:
 
-- [ ] #9 Duplicates across datasets: a read-only report job. The `phash` scan
-  (`find_duplicates_sync` in `backend/ml/technical_scorer.py`) already scales; the duplicate
-  flag stays per dataset and the report writes none (CLAUDE.md § Key invariants, PM-022).
-- [ ] #16 Keyboard navigation: the file browser first (arrows, Enter, Backspace). Only
-  `ContextMenu` handles arrow keys today. The rest of the app is a separate box, added once
-  this lands.
-- [ ] #19 Light mode: a second set of the colour tokens on `:root` in
-  `frontend/src/index.css`, a setting to switch, then the hard-coded colours moved onto
-  tokens: about 160 hex or rgba values in `.tsx` files and about 200 fixed gray, white or
-  black classes in 15 files, plus the shadows and the brand mark (`scripts/check_mark.py`).
-  Waits on the user picking a light palette. The token conversion suits `delegate-to-loop`.
+- [x] #19 Light mode: merged 2026-11-14 as PR #162, which closes the issue. The user picked
+  "Studio grey" from five drafts that day, with a Dark / Light / Match system choice in
+  Settings → UI Behavior, dark the default. A second token block under
+  `:root[data-theme="light"]`, set before first paint, plus `--accent-text` and
+  `--on-accent`; about 60 files swept onto tokens (`docs/dev/styling.md` § Two themes).
 
 Tier 3, captioning helpers, one batch:
 
@@ -233,6 +228,29 @@ Each line links the record that holds the full text.
   caller's own frontend is the only guard; `services/image_scope.py`, detection, inpaint,
   upscale and LUT read `[]` as nothing. The user chose on 2026-11-14 to fix only the
   Captioning page's empty *Selected* scope (PR #161) and leave the routes as they are.
+- No check stops a new fixed Tailwind palette class (`text-gray-500`, `border-gray-700`…) or
+  a hard-coded UI colour from coming back, and each one is wrong in light mode. A grep-based
+  guard in CI would hold the line (`docs/dev/styling.md` § Two themes). Found in the
+  light-mode change, 2026-11-14.
+- `bg-accent/10`, the tint on a selected model row in `ImageDetailPage` and
+  `SelectionToolbar` (ten uses), generates no CSS: Tailwind 3 cannot apply an opacity
+  modifier to a colour defined as a bare `var()`. It was already the case on `main`; the fix
+  is `color-mix` or an `<alpha-value>` colour definition. Found 2026-11-14.
+- Duplicates across datasets (issue #9), taken out of M11 and parked by the user on
+  2026-11-14. The shape found when it was reviewed: a read-only report job. The `phash` scan
+  (`find_duplicates_sync` in `backend/ml/technical_scorer.py`) already scales; the duplicate
+  flag stays per dataset and the report writes none (CLAUDE.md § Key invariants, PM-022).
+- Keyboard navigation (issue #16), taken out of M11 and parked by the user on 2026-11-14
+  after a scope estimate for the whole app. Today there is almost no focus ring (one
+  `:focus-visible` rule), about 46 clickable `div`s in 13 files that Tab cannot reach
+  (gallery cards hold buttons, so they need `tabIndex` and a role, not `<button>`), and about
+  15 window `keydown` listeners whose text-field guards are spelled four ways (one helper
+  exists, `frontend/src/utils/keyboard.ts`). The phases proposed: a focus ring and one shared
+  guard; the file browser (arrows, Enter, Backspace); the clickable `div`s; gallery grid
+  arrows, the risky one (clashes with the detail page's arrows, the crop nudge,
+  `VideoStrip`, `ComfyPage`'s capture listener, and every key needing the active-pane check);
+  page shortcuts and a `?` help screen. Each phase adds Playwright key tests, since none
+  exist.
 - Face similarity (issue #90), researched 2026-11-13 and parked by the user. The pick is
   YuNet to find faces and SFace to compare them. Both are built into OpenCV, so there is no
   new dependency, and their weights are MIT and Apache-2.0. InsightFace was rejected because

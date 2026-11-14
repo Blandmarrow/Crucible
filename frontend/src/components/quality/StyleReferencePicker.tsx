@@ -72,11 +72,11 @@ export default function StyleReferencePicker({
     <div className="space-y-3">
       {/* Dataset images */}
       <div>
-        <p className="text-xs text-gray-500 mb-1.5">From dataset</p>
+        <p className="text-xs text-fg-dim mb-1.5">From dataset</p>
         {isLoading ? (
-          <div className="text-xs text-gray-500 py-1">Loading images…</div>
+          <div className="text-xs text-fg-dim py-1">Loading images…</div>
         ) : allImages.length === 0 ? (
-          <div className="text-xs text-gray-500 py-1">No images in dataset.</div>
+          <div className="text-xs text-fg-dim py-1">No images in dataset.</div>
         ) : (
           <>
             <div className="grid grid-cols-6 gap-1.5 max-h-48 overflow-y-auto pr-1">
@@ -92,7 +92,7 @@ export default function StyleReferencePicker({
                       "relative w-full aspect-square rounded overflow-hidden border-2 transition-all",
                       selected
                         ? "border-accent"
-                        : "border-transparent hover:border-gray-500"
+                        : "border-transparent hover:border-line-2"
                     )}
                   >
                     <img
@@ -127,9 +127,9 @@ export default function StyleReferencePicker({
 
       {/* Local file references */}
       <div>
-        <p className="text-xs text-gray-500 mb-1.5">
+        <p className="text-xs text-fg-dim mb-1.5">
           From local files{" "}
-          <span className="text-gray-600">— embedded on-the-fly, no pre-computation needed</span>
+          <span className="text-fg-soft">— embedded on-the-fly, no pre-computation needed</span>
         </p>
         {externalFiles.length > 0 && (
           <div className="grid grid-cols-6 gap-1.5 mb-2">
@@ -180,7 +180,7 @@ export default function StyleReferencePicker({
       </div>
 
       {/* Summary */}
-      <p className="text-xs text-gray-500">
+      <p className="text-xs text-fg-dim">
         {totalSelected > 0
           ? `${totalSelected} reference image${totalSelected !== 1 ? "s" : ""} selected` +
             (selectedIds.size > 0 && externalFiles.length > 0

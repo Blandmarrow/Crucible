@@ -143,7 +143,7 @@ export default function BulkEditPage() {
           `.tabs` wraps now, and next to two rows of tabs the button floated
           against nothing. */}
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
-        <Pencil size={18} style={{ color: "var(--accent)" }} />
+        <Pencil size={18} style={{ color: "var(--accent-text)" }} />
         <h2 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>Bulk Edit</h2>
         <div style={{ flex: 1 }} />
         <button className="btn ghost sm" onClick={handleResetToDefaults} title="Clear remembered configuration and revert to defaults">

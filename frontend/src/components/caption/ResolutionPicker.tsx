@@ -102,7 +102,7 @@ export default function ResolutionPicker({ targetWidth, targetHeight, onChange }
         </select>
 
         {showAR && (
-          <span className="text-xs text-gray-500 shrink-0">
+          <span className="text-xs text-fg-dim shrink-0">
             {aspectLabel(targetWidth!, targetHeight!)}
           </span>
         )}
@@ -120,7 +120,7 @@ export default function ResolutionPicker({ targetWidth, targetHeight, onChange }
             onChange={handleCustomW}
             placeholder="W"
           />
-          <span className="text-gray-500 text-sm">×</span>
+          <span className="text-fg-dim text-sm">×</span>
           <input
             type="number"
             className="input w-24 text-center"
@@ -132,7 +132,7 @@ export default function ResolutionPicker({ targetWidth, targetHeight, onChange }
             placeholder="H"
           />
           {customW > 0 && customH > 0 && (
-            <span className="text-xs text-gray-500">
+            <span className="text-xs text-fg-dim">
               {aspectLabel(customW, customH)}
             </span>
           )}
@@ -140,7 +140,7 @@ export default function ResolutionPicker({ targetWidth, targetHeight, onChange }
       )}
 
       {(targetWidth || targetHeight) && (
-        <p className="text-xs text-gray-500">
+        <p className="text-xs text-fg-dim">
           Images will be center-cropped to this aspect ratio before captioning.
         </p>
       )}

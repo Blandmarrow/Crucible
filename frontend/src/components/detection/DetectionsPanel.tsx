@@ -5,13 +5,7 @@ import toast from "react-hot-toast";
 import { detectionApi } from "../../api/detection";
 import { invalidateDetectionQueries } from "../../utils/detectionQueries";
 import type { Detection } from "../../types";
-
-const BBOX_COLORS = ["#f87171","#fb923c","#facc15","#4ade80","#34d399","#22d3ee","#818cf8","#c084fc","#f472b6","#94a3b8"];
-function labelColor(label: string): string {
-  let h = 0;
-  for (let i = 0; i < label.length; i++) h = (h * 31 + label.charCodeAt(i)) & 0xffffffff;
-  return BBOX_COLORS[Math.abs(h) % BBOX_COLORS.length];
-}
+import { labelColor } from "../../constants/detectionColors";
 
 interface Props {
   imageId: string;

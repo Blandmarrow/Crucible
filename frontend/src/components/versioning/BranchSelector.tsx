@@ -291,7 +291,7 @@ export default function BranchSelector({ datasetId, branches, activeBranchId, cu
         <div style={{
           position: "fixed", bottom: 24, right: 24, zIndex: 250,
           width: 280, background: "var(--surface-2)", border: "1px solid var(--line)",
-          borderRadius: "var(--r)", padding: "12px 14px", boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
+          borderRadius: "var(--r)", padding: "12px 14px", boxShadow: "var(--shadow-lg)",
         }}>
           <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 8, color: "var(--fg)" }}>
             Switching branch…

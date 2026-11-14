@@ -241,7 +241,7 @@ export default function TagConsolidatePage() {
   });
 
   if (!datasetId) {
-    return <div className="p-6 text-gray-400">Select a dataset to consolidate tags.</div>;
+    return <div className="p-6 text-fg-mute">Select a dataset to consolidate tags.</div>;
   }
 
   const previewCount = subsumePreview.data?.affected ?? 0;
@@ -251,7 +251,7 @@ export default function TagConsolidatePage() {
     <div className="p-6 space-y-5 max-w-4xl">
       <div>
         <h2 className="text-lg font-medium">Consolidate Tags</h2>
-        <p className="text-sm text-gray-400">
+        <p className="text-sm text-fg-mute">
           Reduce redundant and synonymous wording across captions. Works on comma-separated
           segments — individual tags for booru-style captions, or whole phrases/sentences for
           natural-language captions.
@@ -273,7 +273,7 @@ export default function TagConsolidatePage() {
       {/* Quick cleanup (subsumption) */}
       <div className="card p-4 space-y-2">
         <h3 className="font-medium">Quick cleanup</h3>
-        <p className="text-sm text-gray-400">
+        <p className="text-sm text-fg-mute">
           Remove redundant tags or repeated phrases within each caption — drops <span className="mono">tail</span> when{" "}
           <span className="mono">long tail</span> is present, and collapses exact duplicates. Deterministic, no model.
         </p>
@@ -281,7 +281,7 @@ export default function TagConsolidatePage() {
           <button className="btn-primary" onClick={runSubsume} disabled={subsuming || previewCount === 0}>
             {subsuming ? "Cleaning…" : "Run cleanup"}
           </button>
-          <span className="text-xs text-gray-400">
+          <span className="text-xs text-fg-mute">
             {subsumePreview.isLoading
               ? "Checking…"
               : `${previewCount.toLocaleString()} of ${previewTotal.toLocaleString()} captions affected`}
@@ -292,7 +292,7 @@ export default function TagConsolidatePage() {
       {/* Find synonyms (semantic) */}
       <div className="card p-4 space-y-3">
         <h3 className="font-medium">Find synonyms</h3>
-        <p className="text-sm text-gray-400">
+        <p className="text-sm text-fg-mute">
           Cluster semantically similar tags or phrases (e.g. <span className="mono">car</span> /{" "}
           <span className="mono">automobile</span>) and merge each to one canonical form. The embedding
           model handles natural-language captions too, not just booru tags.
@@ -303,13 +303,13 @@ export default function TagConsolidatePage() {
             type="range" min={0.5} max={1} step={0.01} value={threshold}
             onChange={(e) => setThreshold(parseFloat(e.target.value))} className="w-full"
           />
-          <p className="text-xs text-gray-500">Higher = stricter (fewer, tighter clusters). 0.85 is a good start.</p>
+          <p className="text-xs text-fg-dim">Higher = stricter (fewer, tighter clusters). 0.85 is a good start.</p>
         </div>
         <div className="flex items-center gap-3">
           <button className="btn-primary" onClick={runAnalyze} disabled={analyzing}>
             {analyzing ? `Analyzing… ${analyzeJob?.percent?.toFixed(0) ?? 0}%` : "Analyze"}
           </button>
-          {analyzing && <span className="text-xs text-gray-400">{analyzeJob?.message}</span>}
+          {analyzing && <span className="text-xs text-fg-mute">{analyzeJob?.message}</span>}
         </div>
       </div>
 
@@ -317,7 +317,7 @@ export default function TagConsolidatePage() {
       {summary && clusters && (
         <div className="space-y-3">
           <div className="flex items-center gap-2 flex-wrap sticky top-0 bg-[var(--bg)] py-2 z-10">
-            <span className="text-sm text-gray-400">
+            <span className="text-sm text-fg-mute">
               {clusters.length} cluster{clusters.length !== 1 ? "s" : ""} · {summary.vocab_size} tags
               {summary.truncated && " (truncated)"}
             </span>
@@ -339,7 +339,7 @@ export default function TagConsolidatePage() {
           </div>
 
           {clusters.length === 0 && (
-            <p className="text-sm text-gray-500">No similar-tag clusters found at this threshold.</p>
+            <p className="text-sm text-fg-dim">No similar-tag clusters found at this threshold.</p>
           )}
 
           {displayed.length > 0 && (
@@ -367,16 +367,16 @@ export default function TagConsolidatePage() {
                           onChange={(e) => patchCluster(c.id, { accepted: e.target.checked })}
                           title="Accept this merge"
                         />
-                        <button className="text-gray-400 hover:text-gray-200" onClick={() => toggleExpand(c.id)}>
+                        <button className="text-fg-mute hover:text-fg" onClick={() => toggleExpand(c.id)}>
                           {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                         </button>
                         <span className="font-medium">{c.canonical}</span>
-                        <span className="text-gray-500">←</span>
-                        <span className="text-gray-400 truncate flex-1" title={others.map((v) => v.tag).join(", ")}>
+                        <span className="text-fg-dim">←</span>
+                        <span className="text-fg-mute truncate flex-1" title={others.map((v) => v.tag).join(", ")}>
                           {others.map((v) => v.tag).join(", ")}
                         </span>
-                        <span className="text-xs text-gray-500 whitespace-nowrap">{impact} uses</span>
-                        <span className="text-xs text-gray-500 whitespace-nowrap" title="Minimum pairwise similarity">
+                        <span className="text-xs text-fg-dim whitespace-nowrap">{impact} uses</span>
+                        <span className="text-xs text-fg-dim whitespace-nowrap" title="Minimum pairwise similarity">
                           sim {c.minSim.toFixed(2)}
                         </span>
                       </div>

@@ -28,7 +28,7 @@ function CopyButton({ text }: { text: string }) {
   };
   return (
     <button onClick={copy} className="icon-btn" title="Copy to clipboard" style={{ width: 20, height: 20 }}>
-      {copied ? <Check size={12} className="text-green-400" /> : <Copy size={12} />}
+      {copied ? <Check size={12} className="text-accent-text" /> : <Copy size={12} />}
     </button>
   );
 }
@@ -40,12 +40,12 @@ export default function GenerationMetadata({ metadata }: Props) {
   const hasStructured = metadata.prompt || metadata.steps || metadata.model || metadata.seed !== undefined;
 
   return (
-    <div className="border-t border-gray-700/50 mt-2 pt-2">
+    <div className="border-t border-line mt-2 pt-2">
       <button
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-1.5 w-full text-left text-xs font-medium text-gray-300 uppercase tracking-wide hover:text-white transition-colors"
+        className="flex items-center gap-1.5 w-full text-left text-xs font-medium text-fg uppercase tracking-wide hover:text-fg-strong transition-colors"
       >
-        <Cpu size={12} className="text-accent" />
+        <Cpu size={12} className="text-accent-text" />
         GENERATION METADATA
         <span className="ml-auto">
           {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
@@ -61,11 +61,11 @@ export default function GenerationMetadata({ metadata }: Props) {
           {/* Prompt */}
           {metadata.prompt && (
             <div>
-              <div className="flex items-center gap-1 text-gray-500 mb-1">
+              <div className="flex items-center gap-1 text-fg-dim mb-1">
                 Prompt
                 <CopyButton text={metadata.prompt} />
               </div>
-              <p className="text-gray-200 leading-relaxed bg-surface-2 rounded p-2 whitespace-pre-wrap break-words">
+              <p className="text-fg leading-relaxed bg-surface-2 rounded p-2 whitespace-pre-wrap break-words">
                 {metadata.prompt}
               </p>
             </div>
@@ -74,11 +74,11 @@ export default function GenerationMetadata({ metadata }: Props) {
           {/* Negative prompt */}
           {metadata.negative_prompt && (
             <div>
-              <div className="flex items-center gap-1 text-gray-500 mb-1">
+              <div className="flex items-center gap-1 text-fg-dim mb-1">
                 Negative Prompt
                 <CopyButton text={metadata.negative_prompt} />
               </div>
-              <p className="text-gray-400 leading-relaxed bg-surface-2 rounded p-2 whitespace-pre-wrap break-words">
+              <p className="text-fg-mute leading-relaxed bg-surface-2 rounded p-2 whitespace-pre-wrap break-words">
                 {metadata.negative_prompt}
               </p>
             </div>
@@ -89,43 +89,43 @@ export default function GenerationMetadata({ metadata }: Props) {
             <div className="grid grid-cols-2 gap-x-3 gap-y-1">
               {metadata.model && (
                 <>
-                  <span className="text-gray-500">Model</span>
+                  <span className="text-fg-dim">Model</span>
                   <span className="truncate" title={metadata.model}>{metadata.model}</span>
                 </>
               )}
               {metadata.sampler && (
                 <>
-                  <span className="text-gray-500">Sampler</span>
+                  <span className="text-fg-dim">Sampler</span>
                   <span>{metadata.sampler}</span>
                 </>
               )}
               {metadata.steps !== undefined && (
                 <>
-                  <span className="text-gray-500">Steps</span>
+                  <span className="text-fg-dim">Steps</span>
                   <span>{metadata.steps}</span>
                 </>
               )}
               {metadata.cfg_scale !== undefined && (
                 <>
-                  <span className="text-gray-500">CFG Scale</span>
+                  <span className="text-fg-dim">CFG Scale</span>
                   <span>{metadata.cfg_scale}</span>
                 </>
               )}
               {metadata.seed !== undefined && (
                 <>
-                  <span className="text-gray-500">Seed</span>
+                  <span className="text-fg-dim">Seed</span>
                   <span className="font-mono">{metadata.seed}</span>
                 </>
               )}
               {metadata.size && (
                 <>
-                  <span className="text-gray-500">Gen Size</span>
+                  <span className="text-fg-dim">Gen Size</span>
                   <span>{metadata.size}</span>
                 </>
               )}
               {metadata.vae && (
                 <>
-                  <span className="text-gray-500">VAE</span>
+                  <span className="text-fg-dim">VAE</span>
                   <span className="truncate" title={metadata.vae}>{metadata.vae}</span>
                 </>
               )}
@@ -137,13 +137,13 @@ export default function GenerationMetadata({ metadata }: Props) {
             <div>
               <button
                 onClick={() => setWorkflowOpen(!workflowOpen)}
-                className="flex items-center gap-1 text-gray-500 hover:text-gray-300 transition-colors"
+                className="flex items-center gap-1 text-fg-dim hover:text-fg transition-colors"
               >
                 {workflowOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
                 Raw Workflow JSON
               </button>
               {workflowOpen && (
-                <pre className="mt-1 text-gray-400 bg-surface-2 rounded p-2 overflow-auto max-h-48 text-xs leading-relaxed">
+                <pre className="mt-1 text-fg-mute bg-surface-2 rounded p-2 overflow-auto max-h-48 text-xs leading-relaxed">
                   {JSON.stringify(metadata.comfyui_workflow, null, 2)}
                 </pre>
               )}
@@ -153,11 +153,11 @@ export default function GenerationMetadata({ metadata }: Props) {
           {/* Fallback raw text */}
           {!hasStructured && !metadata.comfyui_workflow && metadata.raw && (
             <div>
-              <div className="flex items-center gap-1 text-gray-500 mb-1">
+              <div className="flex items-center gap-1 text-fg-dim mb-1">
                 Raw Parameters
                 <CopyButton text={metadata.raw} />
               </div>
-              <pre className="text-gray-400 bg-surface-2 rounded p-2 overflow-auto max-h-48 whitespace-pre-wrap break-words">
+              <pre className="text-fg-mute bg-surface-2 rounded p-2 overflow-auto max-h-48 whitespace-pre-wrap break-words">
                 {metadata.raw}
               </pre>
             </div>

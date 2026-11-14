@@ -15,6 +15,8 @@
     --fg-mute: #9aa6a3;
     --fg-dim: #5e6a68;
     --fg-soft: #404a48;
+    /* A step past --fg, for a hover that brightens text already at --fg. */
+    --fg-strong: #ffffff;
 
     --accent: #10b981;
     --accent-2: #34d399;
@@ -38,8 +40,67 @@
     --r-lg: 10px;
     --r-xl: 14px;
 
+    /* Green used as *text* (links, active items, "good" labels). The same as
+       --accent in dark; light mode needs a darker green, since #10b981 on a
+       light surface is only 2.5:1. Use --accent for fills, this for text. */
+    --accent-text: var(--accent);
+    --accent-text-2: var(--accent-2); /* its hover shade */
+    /* Text and marks drawn on an --accent fill (the primary button, a checked
+       box). Near-black in both themes: the fill stays bright emerald. */
+    --on-accent: #03130d;
+    /* The legacy .badge-orange hue, a fourth status colour beside warn. */
+    --orange: #e07a3a;
+    /* Inset highlight on the primary button. */
+    --btn-primary-shadow: 0 1px 0 rgba(255,255,255,.2) inset, 0 1px 0 rgba(0,0,0,.4);
+
     --shadow-sm: 0 1px 0 rgba(255,255,255,.02) inset, 0 1px 2px rgba(0,0,0,.4);
     --shadow-lg: 0 24px 60px -20px rgba(0,0,0,.7), 0 1px 0 rgba(255,255,255,.03) inset;
+
+    color-scheme: dark;
+  }
+
+  /* Light mode, "Studio grey" (issue #19): a low-glare mid-light neutral, so
+     nothing on the page competes with the images. Set by `data-theme` on <html>,
+     which the inline script in index.html writes before first paint and
+     utils/theme.ts keeps current. "System" resolves to a concrete value there,
+     so no media query is needed here. Only colour tokens change; radii and the
+     rest are shared. */
+  :root[data-theme="light"] {
+    --bg: #d5d8d7;
+    --surface-1: #e3e5e4;
+    --surface-2: #eceeed;
+    --surface-3: #d6d9d8;
+    --line:  #c6cac8;
+    --line-2: #adb3b0;
+    --fg: #141817;
+    --fg-mute: #40474a;
+    --fg-dim: #5f6866;
+    --fg-soft: #7c8482;
+    --fg-strong: #000000;
+
+    --accent: #10b981;
+    --accent-2: #0ea472;
+    --accent-deep: #b9e3d1;
+    --accent-dim: #8fc7ae;
+    --accent-glow: rgba(16,185,129,.28);
+    --accent-text: #03664a;
+    --accent-text-2: #024a36;
+
+    --warn: #7d4c09;
+    --warn-bg: #eadcc0;
+    --bad:  #9a301c;
+    --bad-bg: #ecd3cb;
+    --info: #1a5087;
+    --info-bg: #cfdbe6;
+    --good: #03664a;
+    --good-bg: rgba(4,120,87,.14);
+    --orange: #8f4310;
+
+    --btn-primary-shadow: 0 1px 0 rgba(255,255,255,.3) inset, 0 1px 1px rgba(0,0,0,.12);
+    --shadow-sm: 0 1px 2px rgba(0,0,0,.10);
+    --shadow-lg: 0 18px 40px -16px rgba(0,0,0,.28), 0 2px 6px rgba(0,0,0,.08);
+
+    color-scheme: light;
   }
 
   *, *::before, *::after { box-sizing: border-box; }
@@ -98,8 +159,8 @@
   .btn-sm { @apply btn sm; }
 
   .btn.primary, .btn-primary {
-    background: var(--accent); border-color: var(--accent); color: #03130d;
-    box-shadow: 0 1px 0 rgba(255,255,255,.2) inset, 0 1px 0 rgba(0,0,0,.4);
+    background: var(--accent); border-color: var(--accent); color: var(--on-accent);
+    box-shadow: var(--btn-primary-shadow);
   }
   .btn.primary:hover, .btn-primary:hover { background: var(--accent-2); border-color: var(--accent-2); }
 
@@ -117,10 +178,10 @@
      on the text baseline of whatever line it is embedded in. */
   .link-btn {
     background: none; border: none; padding: 0;
-    font: inherit; color: var(--accent); cursor: pointer;
+    font: inherit; color: var(--accent-text); cursor: pointer;
     text-decoration: underline; text-underline-offset: 2px;
   }
-  .link-btn:hover { color: var(--accent-2); }
+  .link-btn:hover { color: var(--accent-text-2); }
   .link-btn:disabled { opacity: .5; cursor: not-allowed; text-decoration: none; }
 
   /* ── Inputs ── */
@@ -186,7 +247,7 @@
     content: "";
     width: 8px; height: 2px;
     border-radius: 1px;
-    background: #030d09;
+    background: var(--on-accent);
   }
 
   .label { font-size: 11px; color: var(--fg-mute); display: block; margin-bottom: 6px; letter-spacing: .04em; }
@@ -308,22 +369,52 @@
     line-height: 1.4;
   }
   .badge.dot::before { content:""; width:5px;height:5px;border-radius:50%;background:var(--fg-dim); }
-  .badge.good { color:var(--good); border-color:rgba(16,185,129,.3); background:var(--good-bg); }
+  .badge.good { color:var(--good); border-color:color-mix(in srgb, var(--good) 30%, transparent); background:var(--good-bg); }
   .badge.good.dot::before { background:var(--good); }
-  .badge.warn { color:var(--warn); border-color:rgba(210,154,58,.3); background:var(--warn-bg); }
+  .badge.warn { color:var(--warn); border-color:color-mix(in srgb, var(--warn) 30%, transparent); background:var(--warn-bg); }
   .badge.warn.dot::before { background:var(--warn); }
-  .badge.bad  { color:var(--bad);  border-color:rgba(214,98,74,.3);  background:var(--bad-bg); }
+  .badge.bad  { color:var(--bad);  border-color:color-mix(in srgb, var(--bad) 30%, transparent);  background:var(--bad-bg); }
   .badge.bad.dot::before  { background:var(--bad); }
-  .badge.info { color:var(--info); border-color:rgba(79,147,214,.3); background:var(--info-bg); }
+  .badge.info { color:var(--info); border-color:color-mix(in srgb, var(--info) 30%, transparent); background:var(--info-bg); }
   .badge.info.dot::before { background:var(--info); }
   .badge.solid { background:var(--surface-3); border-color:var(--line-2); color:var(--fg); }
+
+  /* ── Drawn on an image ──
+     A dark chip over a thumbnail or video keeps its dark background in both
+     themes, so the tokens read inside it must keep their dark values too:
+     light mode's near-black --fg or deep --good would vanish on it. Put this on
+     the overlay's container; in dark mode it changes nothing. */
+  .on-media {
+    --fg: #e6edec; --fg-mute: #9aa6a3; --fg-dim: #5e6a68; --line-2: #28333b;
+    --surface-2: #11161a; --surface-3: #161c21;
+    --accent-text: #10b981; --good: #10b981; --warn: #d29a3a; --bad: #d6624a; --info: #4f93d6;
+  }
+
+  /* ── License badges ──
+     The colour half of LicenseBadge, named per license family in
+     constants/licenses.ts. Dark keeps the Tailwind 600/300 pairs these replaced;
+     light swaps in deep 800 shades, since a 300 text tint vanishes on grey. */
+  .lic-good    { background: rgb(22 163 74 / .3);   color: #86efac; }
+  .lic-info    { background: rgb(37 99 235 / .3);   color: #93c5fd; }
+  .lic-warn    { background: rgb(217 119 6 / .3);   color: #fcd34d; }
+  .lic-bad     { background: rgb(220 38 38 / .3);   color: #fca5a5; }
+  .lic-synth   { background: rgb(147 51 234 / .3);  color: #d8b4fe; }
+  .lic-neutral { background: rgb(75 85 99 / .3);    color: #d1d5db; }
+  .lic-none    { background: rgb(55 65 81 / .4);    color: #9ca3af; }
+  [data-theme="light"] .lic-good    { background: rgb(22 163 74 / .18);  color: #166534; }
+  [data-theme="light"] .lic-info    { background: rgb(37 99 235 / .15);  color: #1e40af; }
+  [data-theme="light"] .lic-warn    { background: rgb(217 119 6 / .2);   color: #92400e; }
+  [data-theme="light"] .lic-bad     { background: rgb(220 38 38 / .15);  color: #991b1b; }
+  [data-theme="light"] .lic-synth   { background: rgb(147 51 234 / .15); color: #6b21a8; }
+  [data-theme="light"] .lic-neutral { background: rgb(75 85 99 / .15);   color: #374151; }
+  [data-theme="light"] .lic-none    { background: rgb(75 85 99 / .12);   color: #4b5563; }
 
   /* Legacy badge aliases */
   .badge-green  { @apply badge good; }
   .badge-yellow { @apply badge warn; }
   .badge-red    { @apply badge bad; }
   .badge-blue   { @apply badge info; }
-  .badge-orange { color:#e07a3a; border-color:rgba(224,122,58,.3); background:rgba(224,122,58,.1);
+  .badge-orange { color:var(--orange); border-color:color-mix(in srgb, var(--orange) 30%, transparent); background:color-mix(in srgb, var(--orange) 10%, transparent);
                   display:inline-flex;align-items:center;gap:5px;padding:2px 7px;border-radius:999px;
                   font-size:10.5px;font-weight:500;border-width:1px;line-height:1.4; }
   .badge-gray   { @apply badge solid; }
@@ -353,8 +444,8 @@
   }
   @keyframes ppulse {
     0%   { box-shadow: 0 0 0 0 var(--accent-glow); }
-    70%  { box-shadow: 0 0 0 6px rgba(16,185,129,0); }
-    100% { box-shadow: 0 0 0 0 rgba(16,185,129,0); }
+    70%  { box-shadow: 0 0 0 6px transparent; }
+    100% { box-shadow: 0 0 0 0 transparent; }
   }
   /* Newly created dataset — box-shadow so nothing reflows mid-animation */
   @keyframes ds-flash {
@@ -575,13 +666,13 @@
   .subfolder-row .subfolder-copy-btn { opacity: 0; transition: opacity .1s, color .1s; }
   .subfolder-row:hover .subfolder-move-btn,
   .subfolder-row:hover .subfolder-copy-btn { opacity: 1; }
-  .subfolder-move-btn:hover { color: var(--accent) !important; }
+  .subfolder-move-btn:hover { color: var(--accent-text) !important; }
   .subfolder-copy-btn:hover { color: var(--info) !important; }
 
   .subfolder-add-child-btn {
     flex-shrink: 0; width: 16px; height: 16px; padding: 0;
     border: none; cursor: pointer; border-radius: var(--r);
-    background: transparent; color: var(--accent);
+    background: transparent; color: var(--accent-text);
     font-size: 14px; line-height: 1; display: flex; align-items: center; justify-content: center;
     opacity: 0; transition: opacity .1s;
   }

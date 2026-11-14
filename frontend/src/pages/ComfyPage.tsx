@@ -1143,7 +1143,7 @@ export default function ComfyPage() {
             <div style={{
               display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px", fontSize: 12,
               borderRadius: 999, background: "var(--surface-3)", border: "1px solid var(--accent)",
-              boxShadow: "0 8px 24px rgba(0,0,0,.35)", whiteSpace: "nowrap", pointerEvents: "none",
+              boxShadow: "var(--shadow-lg)", whiteSpace: "nowrap", pointerEvents: "none",
             }}>
               <span style={{ fontWeight: 600 }}>{dragNoun}</span>
               {overLabel && <span style={{ color: "var(--fg-mute)" }}>→ {overLabel}</span>}

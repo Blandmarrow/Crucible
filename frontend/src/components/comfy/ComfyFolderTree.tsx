@@ -93,7 +93,7 @@ export default function ComfyFolderTree({
             title={node.path}
             onClick={() => onSelect(node.path)}
           >
-            <Folder size={13} style={{ flexShrink: 0, color: "var(--accent)" }} />
+            <Folder size={13} style={{ flexShrink: 0, color: "var(--accent-text)" }} />
             <span className="comfy-rail-label">{node.label}</span>
             {locked && (
               <Lock size={11} style={{ flexShrink: 0, color: "var(--fg-mute)" }} aria-label="From the blueprint" role="img" />

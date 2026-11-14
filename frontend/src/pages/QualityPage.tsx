@@ -1227,7 +1227,7 @@ export default function QualityPage() {
                     <div
                       style={{
                         marginBottom: 8, padding: "6px 9px", borderRadius: "var(--r-sm)",
-                        background: "rgba(210,154,58,.10)", border: "1px solid rgba(210,154,58,.35)",
+                        background: "color-mix(in srgb, var(--warn) 10%, transparent)", border: "1px solid color-mix(in srgb, var(--warn) 35%, transparent)",
                         fontSize: 11.5, color: "var(--warn)",
                       }}
                     >

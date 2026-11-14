@@ -118,7 +118,7 @@ export default function RestoreConfirmModal({ datasetId, version, onClose, onSuc
 
           <div style={{
             fontSize: 12, color: "var(--warn)",
-            background: "rgba(255,152,0,0.1)", border: "1px solid rgba(255,152,0,0.3)",
+            background: "color-mix(in srgb, var(--warn) 10%, transparent)", border: "1px solid color-mix(in srgb, var(--warn) 30%, transparent)",
             borderRadius: "var(--r)", padding: "8px 10px",
           }}>
             Files can only be restored if they were backed up to the object store. Files modified

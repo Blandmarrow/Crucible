@@ -73,6 +73,7 @@ rather than in an effect so the swatch never paints the old colour for a frame.
 ## UI Behavior tab
 
 Immediate-save preferences:
+- **Appearance** (`dark` / `light` / `system`, default dark). Stored under `THEME_KEY` through `utils/theme.ts::setThemePref`, which also applies it at once, so the page changes with no reload. See `docs/dev/styling.md` § Two themes.
 - Delete-confirmation default button (`cancel` / `confirm`). Stored under `CONFIRM_DEFAULT_KEY`. Read by `ConfirmDialog` on every mount when `danger=true` and no `defaultFocus` prop is provided.
 - Branch snapshot behavior (`ask` / `auto`). Stored under `BRANCH_SNAPSHOT_KEY`. When `"ask"`, `BranchSelector` shows an inline prompt before checkout or branch creation letting the user choose whether to create a snapshot. When `"auto"`, snapshots are always created without prompting.
 - **Auto-rescan dataset on open** (`auto_rescan_on_open`, default off). Unlike the two above, this is a *server-side* setting persisted on the `ThresholdSettings` row (not localStorage), but the toggle still saves immediately via `mutation.mutate({ auto_rescan_on_open })` rather than the page-level Save button. When on, opening a dataset gallery fires `POST /datasets/{id}/rescan` once per dataset open (`GalleryPage`, gated by the `settingsApi.getThresholds` query). See `docs/dev/image-import.md` § Folder rescan / sync.

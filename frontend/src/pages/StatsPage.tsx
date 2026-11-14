@@ -776,7 +776,7 @@ function BucketPanel({
                     </button>
 
                     {confirmDeleteId === img.id ? (
-                      <div style={{ position: "absolute", inset: 0, borderRadius: "var(--r)", background: "rgba(0,0,0,.85)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, zIndex: 10 }}>
+                      <div className="on-media" style={{ position: "absolute", inset: 0, borderRadius: "var(--r)", background: "rgba(0,0,0,.85)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, zIndex: 10 }}>
                         <span style={{ fontSize: 11, color: "var(--bad)", fontWeight: 500 }}>Remove?</span>
                         <div style={{ display: "flex", gap: 4 }}>
                           <button onClick={(e) => { e.stopPropagation(); handleDelete(img.id); }} className="btn sm danger" style={{ fontSize: 11 }}>Yes</button>
@@ -842,11 +842,11 @@ function CooccurrenceHeatmap({ tags, matrix }: { tags: string[]; matrix: number[
               const val = matrix[i][j];
               const isDiag = i === j;
               const opacity = isDiag ? 0.25 : val / maxOff;
-              const bg = isDiag ? "rgba(16,185,129,0.35)" : `rgba(79,147,214,${Math.min(opacity, 1).toFixed(2)})`;
+              const bg = isDiag ? "color-mix(in srgb, var(--accent) 35%, transparent)" : `color-mix(in srgb, var(--info) ${(Math.min(opacity, 1) * 100).toFixed(0)}%, transparent)`;
               return (
                 <div
                   key={colTag}
-                  style={{ width: CELL, minWidth: CELL, height: CELL, background: bg, border: "1px solid rgba(255,255,255,.04)", cursor: "default", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, color: val > 0 ? "rgba(255,255,255,.6)" : "transparent" }}
+                  style={{ width: CELL, minWidth: CELL, height: CELL, background: bg, border: "1px solid var(--line)", cursor: "default", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, color: val > 0 ? "color-mix(in srgb, var(--fg) 60%, transparent)" : "transparent" }}
                   onMouseMove={(e) => setTooltip({ x: e.clientX, y: e.clientY, text: isDiag ? `${rowTag}: ${val} images` : `${rowTag} + ${colTag}: ${val} images` })}
                   onMouseLeave={() => setTooltip(null)}
                 >
@@ -1126,7 +1126,7 @@ function HistPanelBody({ title, subtitle, entries, onBarClick, rawValues, defaul
           <div style={{ fontSize: 12, fontWeight: 500, color: "var(--fg-mute)", display: "flex", alignItems: "center", gap: 5 }}>
             {title}
             {usingCustom && (
-              <span style={{ fontSize: 9.5, padding: "1px 5px", borderRadius: "var(--r)", background: "var(--accent)", color: "#fff", fontWeight: 600, letterSpacing: ".02em" }}>
+              <span style={{ fontSize: 9.5, padding: "1px 5px", borderRadius: "var(--r)", background: "var(--accent)", color: "var(--on-accent)", fontWeight: 600, letterSpacing: ".02em" }}>
                 custom
               </span>
             )}

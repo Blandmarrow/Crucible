@@ -57,7 +57,7 @@ export default function PaneHeader({ paneId, view, isOnly }: Props) {
         flexShrink: 0, userSelect: "none",
       }}
     >
-      <Layers size={12} style={{ color: "var(--accent)", flexShrink: 0 }} />
+      <Layers size={12} style={{ color: "var(--accent-text)", flexShrink: 0 }} />
 
       {/* Page selector */}
       <select

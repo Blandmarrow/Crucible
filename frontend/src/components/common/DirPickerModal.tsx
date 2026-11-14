@@ -185,7 +185,7 @@ export default function DirPickerModal({ initialPath = "", title = "Select outpu
             entries.map((e) => (
               <button key={e.path} onClick={() => navigate(e.path)} style={rowStyle(e.path === selectedPath)}>
                 {e.path === selectedPath
-                  ? <FolderOpen size={15} style={{ color: "var(--accent)", flexShrink: 0 }} />
+                  ? <FolderOpen size={15} style={{ color: "var(--accent-text)", flexShrink: 0 }} />
                   : <Folder size={15} style={{ opacity: 0.6, flexShrink: 0 }} />
                 }
                 <span style={{ fontSize: 13 }}>{e.name}</span>

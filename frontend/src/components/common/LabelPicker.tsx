@@ -179,7 +179,7 @@ export default function LabelPicker({
               position: "absolute", top: "calc(100% + 4px)", zIndex: 1000,
               ...(align === "right" ? { right: 0 } : { left: 0 }),
               background: "var(--surface-2)", border: "1px solid var(--line-2)",
-              borderRadius: "var(--r)", boxShadow: "0 8px 24px rgba(0,0,0,.4)",
+              borderRadius: "var(--r)", boxShadow: "var(--shadow-lg)",
               padding: 8, width: panelWidth,
             }}
           >

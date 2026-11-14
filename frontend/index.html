@@ -7,6 +7,23 @@
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="theme-color" content="#07090b" />
+    <script>
+      // Set the theme before first paint, so a light-mode user never sees a
+      // dark flash. src/utils/theme.ts holds the same logic for later changes;
+      // the key is THEME_KEY in src/constants/storage.ts. Anything unreadable
+      // falls back to dark, the default.
+      (function () {
+        try {
+          var pref = localStorage.getItem("crucible-theme");
+          var light = pref === "light" ||
+            (pref === "system" && window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches);
+          document.documentElement.dataset.theme = light ? "light" : "dark";
+          if (light) document.querySelector('meta[name="theme-color"]').setAttribute("content", "#d5d8d7");
+        } catch (e) {
+          document.documentElement.dataset.theme = "dark";
+        }
+      })();
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Crucible</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />

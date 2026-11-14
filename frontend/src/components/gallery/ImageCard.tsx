@@ -185,7 +185,7 @@ function ImageCardInner({ image, onShowGenMeta, onSelect, isDraggable, isActiveD
             this condition or a card whose only marker is the stale bit renders
             an empty cluster. */}
         {(isDuplicate || isBlurry || hasWatermark || isUniform || isNsfw || hasAiArtifacts || gateRejected || image.scores_stale) && (
-          <div style={{ position: "absolute", top: 8, right: 8, zIndex: 3, display: "flex", gap: 4 }}>
+          <div className="on-media" style={{ position: "absolute", top: 8, right: 8, zIndex: 3, display: "flex", gap: 4 }}>
             {isNsfw && (
               <span title="NSFW" style={{ width: 18, height: 18, borderRadius: 4, background: "rgba(7,9,11,.7)", backdropFilter: "blur(4px)", display: "grid", placeContent: "center", border: "1px solid var(--line-2)", color: "var(--bad)" }}>
                 <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><path d="M2 2l12 12M6.5 6.5A3.5 3.5 0 0 0 4.5 9.5M9.5 9.5A3.5 3.5 0 0 0 11.5 6.5M3 4C1.5 5.5 1 7 1 8s.5 2.5 2 4M13 4c1.5 1.5 2 3 2 4s-.5 2.5-2 4"/></svg>
@@ -230,7 +230,7 @@ function ImageCardInner({ image, onShowGenMeta, onSelect, isDraggable, isActiveD
         )}
 
         {/* Aesthetic score badge */}
-        <div style={{ position: "absolute", bottom: 8, right: 8, zIndex: 3 }}>
+        <div className="on-media" style={{ position: "absolute", bottom: 8, right: 8, zIndex: 3 }}>
           <span style={{
             padding: "2px 7px", borderRadius: 4,
             font: '600 11px "Geist Mono", monospace',
@@ -262,6 +262,7 @@ function ImageCardInner({ image, onShowGenMeta, onSelect, isDraggable, isActiveD
             data-testid="style-meter"
             data-style-percentile={String(Math.round(stylePct))}
             title={styleMatchTitle({ percentile: stylePct, score: image.style_similarity_score, distribution: styleDist, stale: image.scores_stale })}
+            className="on-media"
             style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 4, zIndex: 2, background: "rgba(7,9,11,.55)" }}
           >
             <div style={{
@@ -309,7 +310,7 @@ function ImageCardInner({ image, onShowGenMeta, onSelect, isDraggable, isActiveD
             <button
               className="icon-btn"
               title="View generation info"
-              style={{ width: 18, height: 18, flexShrink: 0, color: "var(--accent)" }}
+              style={{ width: 18, height: 18, flexShrink: 0, color: "var(--accent-text)" }}
               onClick={(e) => { e.stopPropagation(); onShowGenMeta(image); }}
             >
               <Cpu size={11} />

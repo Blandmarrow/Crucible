@@ -384,6 +384,7 @@ function VideoCard({
         </div>
 
         <span
+          className="on-media"
           style={{
             position: "absolute", right: 4, bottom: 4,
             background: "rgba(7,9,11,.78)", color: "var(--fg)",

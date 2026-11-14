@@ -30,6 +30,8 @@ import GenerationMetadata from "../components/image/GenerationMetadata";
 import LabelsPanel from "../components/image/LabelsPanel";
 import ProvenancePanel from "../components/image/ProvenancePanel";
 import OtherCaptionsPanel from "../components/caption/OtherCaptionsPanel";
+import CheckTagsPanel from "../components/caption/CheckTagsPanel";
+import { looksLikeTags } from "../utils/captionTags";
 import StyleMatchPanel from "../components/image/StyleMatchPanel";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import ModelPicker from "../components/providers/ModelPicker";
@@ -2612,6 +2614,16 @@ export default function ImageDetailPage() {
           >
             <Combine size={14} /> Merge redundant tags
           </button>
+
+          {/* Tag captions only: a prose caption's comma parts are not tags. */}
+          {looksLikeTags(captionText) && (
+            <CheckTagsPanel
+              // Prefixed: OtherCaptionsPanel is a sibling keyed on the bare id.
+              key={`check-tags-${image.id}`}
+              captionText={captionText}
+              onSetDraft={(text) => setDraft({ imageId: imageId!, text })}
+            />
+          )}
 
           <OtherCaptionsPanel
             key={image.id}

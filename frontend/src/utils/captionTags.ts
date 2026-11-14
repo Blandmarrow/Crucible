@@ -49,3 +49,23 @@ export function appendTags(current: string, tags: string[]): string {
   if (!add) return current;
   return base ? `${base}, ${add}` : add;
 }
+
+/**
+ * Swap one tag in a caption for a Danbooru tag name, or null when the tag is no longer there.
+ *
+ * Found by its text, not its position, so it is safe after other edits; the first exact
+ * match wins, then the first `normTag` match. The name is written in the caption's style:
+ * underscores only if the original part used them, and parens escaped (`\(`) if the
+ * caption escapes them. The part's surrounding whitespace is kept.
+ */
+export function replaceTag(caption: string, original: string, name: string): string | null {
+  const parts = caption.split(",");
+  let i = parts.findIndex((p) => p.trim() === original);
+  if (i < 0) i = parts.findIndex((p) => normTag(p) === normTag(original) && normTag(p) !== "");
+  if (i < 0) return null;
+  const raw = parts[i];
+  let word = raw.includes("_") ? name : name.replace(/_/g, " ");
+  if (/\\[()]/.test(caption)) word = word.replace(/(?<!\\)([()])/g, "\\$1");
+  parts[i] = raw.match(/^\s*/)![0] + word + raw.match(/\s*$/)![0];
+  return parts.join(",");
+}

@@ -328,6 +328,27 @@ export interface BooruTag {
   source: string;
 }
 
+/** One caption part's Danbooru check (`POST /booru/check`, #50). */
+export type TagCheckStatus = "ok" | "alias" | "rare" | "missing";
+
+export interface TagCheckResult {
+  /** The caption part as written, which Replace looks for. */
+  input: string;
+  /** The part as a Danbooru tag name. */
+  name: string;
+  status: TagCheckStatus;
+  count: number;
+  category: string | null;
+  /** The alias target, or the close tag with the most posts. */
+  suggestion: { name: string; count: number } | null;
+}
+
+export interface TagCheckResponse {
+  results: TagCheckResult[];
+  /** False when some suggestions could not be fetched or were not tried. */
+  suggestions_complete: boolean;
+}
+
 /** A source video. Videos are not Images: separate table, separate folder
  *  (`{dataset}/videos/`), separate stats. Frames extracted from a video become
  *  ordinary Image rows. */

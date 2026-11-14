@@ -224,6 +224,25 @@ The six entries previously recorded here were executed on 2026-07-31: `bulk-ops.
 `detection-inference.md`, `statistics.md`'s misfiled `GET /images/` filter table → `image-filters.md`, and CLAUDE.md § Shared
 utilities → `docs/dev/shared-utilities.md`.
 
+## docs/dev/image-detail.md
+
+- **Moves:** § ImageDetailPage caption panel (1,106 words) and § Other captions panel (427),
+  with their headings unchanged so every `§` pointer keeps its text
+- **New file:** docs/dev/caption-editor.md, the detail page's caption editor. No user doc
+  mirrors it: the user-facing text is the detail-view bullet in `docs/gallery.md`
+- **Why here:** everything else in the file is pixels and metadata (crop, selection, labels,
+  provenance, style match, generation metadata). The caption panel is an editor with its
+  own rules, the image-keyed draft, the async writers, Fix mode and Other captions, and
+  M11's next two PRs, #50 Check tags and #52 Synonyms, both land in it. Recorded
+  2026-11-14 on `feat/m11-other-captions`, which took the file to 3,571 of 3,500 words;
+  leaves about 2,040 (58%) behind and about 1,530 (44%) in the new file, before #50 adds
+  to it
+- **Watch for:** `docs/dev/captioning.md` and `docs/dev/job-invalidation.md` cite
+  § ImageDetailPage caption panel, and `docs/dev/persistence.md`'s `OTHER_CAPTIONS_KEY` row
+  cites § Other captions panel; all three need the new path. The new file needs a Map row,
+  and CLAUDE.md is at ~99% of its budget (see the note at the top), so plan room for it
+  first. Split it at the start of #50's branch, before that PR appends to it
+
 ## README.md
 
 - **Moves:** § Features in full — the eight `###` capability groups under it (~1,150 words),

@@ -531,3 +531,26 @@ export interface OllamaModel {
   name: string;
   size_mb: number;
 }
+
+/** The four ways the detail page's "Other captions" section ranks a dataset's other captions. */
+export type SimilarCaptionsBy = "tags" | "objects" | "clip" | "recent";
+
+export interface SimilarCaptionItem {
+  id: string;
+  filename: string;
+  subfolder: string;
+  updated_at: string;
+  /** When the caption was last written; null if never recorded. */
+  captioned_at: string | null;
+  caption_text: string;
+  score: number;
+  /** Terms shared with the query image, as spelled here. Empty for clip and recent. */
+  shared: string[];
+}
+
+export interface SimilarCaptionsOut {
+  by: SimilarCaptionsBy;
+  available: boolean;
+  reason: string | null;
+  items: SimilarCaptionItem[];
+}

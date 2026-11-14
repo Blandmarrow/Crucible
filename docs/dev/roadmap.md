@@ -31,12 +31,15 @@ restates its stages.
    linking the record that holds the full text.
 5. **Landed**: one line per finished milestone or handoff record.
 
-## Next session (updated 2026-11-14, light mode merged)
+## Next session (updated 2026-11-14, #45 built)
 
-1. **M11 goes on with Tier 3** (see Now): #45, #50 and #52, one batch. Tier 2 is closed:
-   #19, light mode, merged as PR #162, and the user parked #9 and #16 (under Later). #48
-   waits on a question to its reporter. M7's Stage 3 waits behind M11, under Waiting.
-2. M4 stays held, with its merge checklist under Waiting. The closed items of the previous
+1. **#45 Other captions is built** on `feat/m11-other-captions` (see Now): merge its PR
+   once CI is green and the user agrees.
+2. **#50 Check tags comes next**, then #52, three PRs in all. Open #50's branch by splitting
+   `docs/dev/image-detail.md` along the seam in
+   [pending-splits.md](pending-splits.md), since both PRs add to its caption panel. #48
+   waits on a question to its reporter, and M7's Stage 3 waits behind M11, under Waiting.
+3. M4 stays held, with its merge checklist under Waiting. The closed items of the previous
    blocks, the two scope bugs and their fixes (PRs #160 and #161), are in
    [roadmap-archive/handoff-2026-11-14.md](roadmap-archive/handoff-2026-11-14.md).
 
@@ -76,15 +79,28 @@ Tier 2, medium:
   `:root[data-theme="light"]`, set before first paint, plus `--accent-text` and
   `--on-accent`; about 60 files swept onto tokens (`docs/dev/styling.md` § Two themes).
 
-Tier 3, captioning helpers, one batch:
+Tier 3, captioning helpers, one batch: three PRs in this order, by the user's choice of
+2026-11-14. Each helper sits in the detail page's caption panel and changes only the
+unsaved draft.
 
 - [ ] #45 Other images' captions: a similar-images panel on the detail page, ranked by
-  shared tags first and by the stored CLIP or DINO vectors later.
+  shared tags, detected objects, the stored CLIP vector or recency. The user ruled on
+  2026-11-14 that it looks inside the current dataset only. Branch
+  `feat/m11-other-captions`.
 - [ ] #50 Check for a better tag: post counts and aliases through the booru routes
   (`/search` and `/autocomplete` in `backend/routers/booru.py`). Overlaps
-  `TagConsolidatePage`.
-- [ ] #52 Synonyms: an offline WordNet lookup, a Settings toggle, and a popover in the
-  caption editor. Check WordNet's licence before adding it.
+  `TagConsolidatePage`. Run only on a button press, since it sends the caption's tags to
+  Danbooru. The user's rule for "rare" (2026-11-14): under 100 posts, with a close tag
+  holding at least 100 times more. A booru failure must read as unreachable, not as every
+  tag "not found": `booru_service` turns every error into an empty list today.
+- [ ] #52 Synonyms: an offline WordNet lookup, a Settings toggle, and a card under the
+  caption box (the user's choice over a popover at the word, 2026-11-14). Licence checked
+  2026-11-14: Open English WordNet 2025, core edition, which is CC BY 4.0 on top of the
+  Princeton WordNet licence. Both allow any use. Credit both projects, keep Princeton's
+  notice and disclaimer with every copy, note our conversion, and never use Princeton's
+  name in advertising. The app downloads the official JSON zip (about 10 MB) with a pinned
+  hash and converts it locally, so the repo carries none of the data. Skip the "2025+"
+  edition, whose proper nouns come from Wikidata.
 
 Tier 4, design first:
 

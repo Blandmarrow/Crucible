@@ -31,17 +31,13 @@ restates its stages.
    linking the record that holds the full text.
 5. **Landed**: one line per finished milestone or handoff record.
 
-## Next session (updated 2026-11-14, empty-selection fix built)
+## Next session (updated 2026-11-14, empty-selection fix merged)
 
-1. **The empty-selection fix is built** on `fix/caption-empty-selection`: the Captioning
-   page blocks Run and Run Detection while *Selected* has nothing selected
-   (`docs/dev/captioning.md` § Captioning post-processing). Frontend only, by the user's
-   call; the server's widening of `[]` stays, under Later. Open its PR and merge.
-2. **M11 goes on with Tier 2** (see Now): #9, #16, then #19. #48 waits on a question to its
+1. **M11 goes on with Tier 2** (see Now): #9, #16, then #19. #48 waits on a question to its
    reporter, and #19 on the user picking a light palette. M7's Stage 3 waits behind M11,
    under Waiting.
-3. M4 stays held, with its merge checklist under Waiting. The closed items of the previous
-   blocks, the two scope bugs' triage and the pipeline fix (PR #160), are in
+2. M4 stays held, with its merge checklist under Waiting. The closed items of the previous
+   blocks, the two scope bugs and their fixes (PRs #160 and #161), are in
    [roadmap-archive/handoff-2026-11-14.md](roadmap-archive/handoff-2026-11-14.md).
 
 ## Now
@@ -236,8 +232,7 @@ Each line links the record that holds the full text.
   docstrings warn of it and `backend/tests/test_caption_start_scope.py` pins it, so each
   caller's own frontend is the only guard; `services/image_scope.py`, detection, inpaint,
   upscale and LUT read `[]` as nothing. The user chose on 2026-11-14 to fix only the
-  Captioning page's empty *Selected* scope (`fix/caption-empty-selection`) and leave the
-  routes as they are.
+  Captioning page's empty *Selected* scope (PR #161) and leave the routes as they are.
 - Face similarity (issue #90), researched 2026-11-13 and parked by the user. The pick is
   YuNet to find faces and SFace to compare them. Both are built into OpenCV, so there is no
   new dependency, and their weights are MIT and Apache-2.0. InsightFace was rejected because
@@ -294,5 +289,6 @@ Each line links the record that holds the full text.
   [roadmap-archive/handoff-2026-11-13.md](roadmap-archive/handoff-2026-11-13.md).
 - **Handoff notes, 14 November 2026**: the pipeline scope bug's Next session items and
   Later line, closed by its fix, PR #160
-  ([PM-038](postmortems/PM-038-pipeline-scope-field-nothing-read.md)).
+  ([PM-038](postmortems/PM-038-pipeline-scope-field-nothing-read.md)), and the
+  empty-selection bug's, closed by PR #161.
   Record: [roadmap-archive/handoff-2026-11-14.md](roadmap-archive/handoff-2026-11-14.md).

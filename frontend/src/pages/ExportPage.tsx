@@ -993,7 +993,7 @@ export default function ExportPage() {
                     <div
                       style={{
                         marginBottom: 14, padding: "9px 12px", borderRadius: "var(--r)",
-                        background: "rgba(210,154,58,.10)", border: "1px solid rgba(210,154,58,.35)",
+                        background: "color-mix(in srgb, var(--warn) 10%, transparent)", border: "1px solid color-mix(in srgb, var(--warn) 35%, transparent)",
                         fontSize: 12, color: "var(--warn)",
                       }}
                     >
@@ -1021,7 +1021,7 @@ export default function ExportPage() {
                     <div
                       style={{
                         marginBottom: 14, padding: "9px 12px", borderRadius: "var(--r)",
-                        background: "rgba(210,154,58,.10)", border: "1px solid rgba(210,154,58,.35)",
+                        background: "color-mix(in srgb, var(--warn) 10%, transparent)", border: "1px solid color-mix(in srgb, var(--warn) 35%, transparent)",
                         fontSize: 12, color: "var(--warn)",
                       }}
                     >
@@ -1055,7 +1055,7 @@ export default function ExportPage() {
                     <div
                       style={{
                         marginBottom: 14, padding: "9px 12px", borderRadius: "var(--r)",
-                        background: "rgba(210,154,58,.10)", border: "1px solid rgba(210,154,58,.35)",
+                        background: "color-mix(in srgb, var(--warn) 10%, transparent)", border: "1px solid color-mix(in srgb, var(--warn) 35%, transparent)",
                         fontSize: 12, color: "var(--warn)",
                       }}
                     >
@@ -1098,7 +1098,7 @@ export default function ExportPage() {
                     <div
                       style={{
                         marginBottom: 14, padding: "9px 12px", borderRadius: "var(--r)",
-                        background: "rgba(210,154,58,.10)", border: "1px solid rgba(210,154,58,.35)",
+                        background: "color-mix(in srgb, var(--warn) 10%, transparent)", border: "1px solid color-mix(in srgb, var(--warn) 35%, transparent)",
                         fontSize: 12, color: "var(--warn)",
                       }}
                     >

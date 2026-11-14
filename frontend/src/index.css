@@ -376,6 +376,36 @@
   .badge.info.dot::before { background:var(--info); }
   .badge.solid { background:var(--surface-3); border-color:var(--line-2); color:var(--fg); }
 
+  /* ── Drawn on an image ──
+     A dark chip over a thumbnail or video keeps its dark background in both
+     themes, so the tokens read inside it must keep their dark values too:
+     light mode's near-black --fg or deep --good would vanish on it. Put this on
+     the overlay's container; in dark mode it changes nothing. */
+  .on-media {
+    --fg: #e6edec; --fg-mute: #9aa6a3; --fg-dim: #5e6a68; --line-2: #28333b;
+    --surface-2: #11161a; --surface-3: #161c21;
+    --accent-text: #10b981; --good: #10b981; --warn: #d29a3a; --bad: #d6624a; --info: #4f93d6;
+  }
+
+  /* ── License badges ──
+     The colour half of LicenseBadge, named per license family in
+     constants/licenses.ts. Dark keeps the Tailwind 600/300 pairs these replaced;
+     light swaps in deep 800 shades, since a 300 text tint vanishes on grey. */
+  .lic-good    { background: rgb(22 163 74 / .3);   color: #86efac; }
+  .lic-info    { background: rgb(37 99 235 / .3);   color: #93c5fd; }
+  .lic-warn    { background: rgb(217 119 6 / .3);   color: #fcd34d; }
+  .lic-bad     { background: rgb(220 38 38 / .3);   color: #fca5a5; }
+  .lic-synth   { background: rgb(147 51 234 / .3);  color: #d8b4fe; }
+  .lic-neutral { background: rgb(75 85 99 / .3);    color: #d1d5db; }
+  .lic-none    { background: rgb(55 65 81 / .4);    color: #9ca3af; }
+  [data-theme="light"] .lic-good    { background: rgb(22 163 74 / .18);  color: #166534; }
+  [data-theme="light"] .lic-info    { background: rgb(37 99 235 / .15);  color: #1e40af; }
+  [data-theme="light"] .lic-warn    { background: rgb(217 119 6 / .2);   color: #92400e; }
+  [data-theme="light"] .lic-bad     { background: rgb(220 38 38 / .15);  color: #991b1b; }
+  [data-theme="light"] .lic-synth   { background: rgb(147 51 234 / .15); color: #6b21a8; }
+  [data-theme="light"] .lic-neutral { background: rgb(75 85 99 / .15);   color: #374151; }
+  [data-theme="light"] .lic-none    { background: rgb(75 85 99 / .12);   color: #4b5563; }
+
   /* Legacy badge aliases */
   .badge-green  { @apply badge good; }
   .badge-yellow { @apply badge warn; }

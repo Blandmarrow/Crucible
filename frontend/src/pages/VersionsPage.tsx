@@ -41,7 +41,7 @@ function VersionCard({
     <div style={{
       display: "flex", alignItems: "flex-start", gap: 12, padding: "12px 16px",
       borderBottom: "1px solid var(--line)",
-      background: version.is_pinned ? "rgba(16,185,129,.04)" : undefined,
+      background: version.is_pinned ? "color-mix(in srgb, var(--accent) 4%, transparent)" : undefined,
     }}>
       <div style={{
         width: 10, height: 10, borderRadius: "50%", marginTop: 4, flexShrink: 0,
@@ -69,7 +69,7 @@ function VersionCard({
         <button
           className="icon-btn"
           title={version.is_pinned ? "Unpin" : "Pin"}
-          style={{ color: version.is_pinned ? "var(--accent)" : undefined }}
+          style={{ color: version.is_pinned ? "var(--accent-text)" : undefined }}
           onClick={() => onTogglePin(version, !version.is_pinned)}
         >
           <Pin size={14} />

@@ -164,7 +164,7 @@ function ImportModal({ folderPath, datasets, onClose }: { folderPath: string; da
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <div style={{ background: "var(--surface-2)", border: "1px solid var(--line-2)", borderRadius: 10, padding: 24, width: 400, boxShadow: "0 20px 60px rgba(0,0,0,.5)" }}>
+      <div style={{ background: "var(--surface-2)", border: "1px solid var(--line-2)", borderRadius: 10, padding: 24, width: 400, boxShadow: "var(--shadow-lg)" }}>
         <h3 style={{ fontWeight: 600, marginBottom: 16, fontSize: 15 }}>Import into Dataset</h3>
         <p style={{ fontSize: 12, color: "var(--fg-mute)", marginBottom: 12, wordBreak: "break-all" }}>{folderPath}</p>
         <label style={{ fontSize: 12, color: "var(--fg-mute)", display: "block", marginBottom: 6 }}>Target dataset</label>
@@ -198,7 +198,7 @@ function MkdirModal({ parent, onClose, onCreated }: { parent: string; onClose: (
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <div style={{ background: "var(--surface-2)", border: "1px solid var(--line-2)", borderRadius: 10, padding: 24, width: 360, boxShadow: "0 20px 60px rgba(0,0,0,.5)" }}>
+      <div style={{ background: "var(--surface-2)", border: "1px solid var(--line-2)", borderRadius: 10, padding: 24, width: 360, boxShadow: "var(--shadow-lg)" }}>
         <h3 style={{ fontWeight: 600, marginBottom: 16, fontSize: 15 }}>New Folder</h3>
         <input
           className="input"
@@ -235,7 +235,7 @@ function DeleteConfirm({ entry, onClose, onDeleted }: { entry: FsEntry; onClose:
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <div style={{ background: "var(--surface-2)", border: "1px solid var(--line-2)", borderRadius: 10, padding: 24, width: 380, boxShadow: "0 20px 60px rgba(0,0,0,.5)" }}>
+      <div style={{ background: "var(--surface-2)", border: "1px solid var(--line-2)", borderRadius: 10, padding: 24, width: 380, boxShadow: "var(--shadow-lg)" }}>
         <h3 style={{ fontWeight: 600, marginBottom: 8, fontSize: 15 }}>Delete "{entry.name}"?</h3>
         <p style={{ fontSize: 13, color: "var(--fg-mute)", marginBottom: 20 }}>
           {entry.type === "dir" ? "This will permanently delete the folder and all its contents." : "This will permanently delete the file."}
@@ -527,7 +527,7 @@ export default function FileBrowserPage() {
                   onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.background = "transparent"; }}
                 >
                   <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-                    <span style={{ flexShrink: 0, color: entry.type === "dir" ? "var(--accent)" : entry.media_kind ? "var(--info)" : "var(--fg-dim)" }}>
+                    <span style={{ flexShrink: 0, color: entry.type === "dir" ? "var(--accent-text)" : entry.media_kind ? "var(--info)" : "var(--fg-dim)" }}>
                       {entry.type === "dir"
                         ? (isSelected ? <FolderOpen size={15} /> : <Folder size={15} />)
                         : entry.media_kind === "image" ? <ImageIcon size={15} />

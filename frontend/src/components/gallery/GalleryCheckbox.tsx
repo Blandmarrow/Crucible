@@ -28,7 +28,7 @@ export default function GalleryCheckbox({ size, selected }: Props) {
     }}>
       {selected && (
         <svg viewBox="0 0 12 10" width={Math.round(size / 2)} height={Math.round(size / 2)} fill="none">
-          <path d="M1 5l3 4L11 1" stroke="#03130d" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M1 5l3 4L11 1" stroke="var(--on-accent)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       )}
     </div>

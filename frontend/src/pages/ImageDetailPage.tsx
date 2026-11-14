@@ -54,6 +54,7 @@ import { imagesCountKey, invalidateDatasetContentScope } from "../constants/quer
 import { TERMINAL_JOB_STATUSES } from "../constants/jobs";
 import type { ImageFilterParams } from "../api/images";
 import { useStyleDistribution } from "../hooks/useStyleDistribution";
+import { labelColor } from "../constants/detectionColors";
 
 
 function resolveModelId(base: string, providerModel: string): string {
@@ -61,12 +62,6 @@ function resolveModelId(base: string, providerModel: string): string {
   return base;
 }
 
-const BBOX_COLORS = ["#f87171","#fb923c","#facc15","#4ade80","#34d399","#22d3ee","#818cf8","#c084fc","#f472b6","#94a3b8"];
-function labelColor(label: string): string {
-  let h = 0;
-  for (let i = 0; i < label.length; i++) h = (h * 31 + label.charCodeAt(i)) & 0xffffffff;
-  return BBOX_COLORS[Math.abs(h) % BBOX_COLORS.length];
-}
 
 function formatSize(bytes: number | null) {
   if (!bytes) return "—";
@@ -879,10 +874,10 @@ export default function ImageDetailPage() {
     const trimmed = captionText.trim();
     const words = trimmed ? trimmed.split(/\s+/).length : 0;
     const tokenColor =
-      tokens === null ? "text-gray-500"
-      : tokens >= 77 ? "text-red-400"
-      : tokens >= 70 ? "text-yellow-400"
-      : "text-gray-500";
+      tokens === null ? "text-fg-dim"
+      : tokens >= 77 ? "text-bad"
+      : tokens >= 70 ? "text-warn"
+      : "text-fg-dim";
     return { words, tokens, tokenColor };
   }, [captionText, tokens]);
 
@@ -1659,7 +1654,7 @@ export default function ImageDetailPage() {
   }
 
   if (imageLoading || !image) {
-    return <div className="p-8 text-gray-500">Loading...</div>;
+    return <div className="p-8 text-fg-dim">Loading...</div>;
   }
 
   const isDuplicate = image.quality_flags?.is_duplicate as boolean | undefined;
@@ -1709,7 +1704,7 @@ export default function ImageDetailPage() {
     <div className="flex h-full">
       {/* Left: image */}
       <div className="flex-1 flex flex-col min-w-0">
-        <div className="p-3 border-b border-gray-700/50 flex items-center gap-3">
+        <div className="p-3 border-b border-line flex items-center gap-3">
           <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => paneBack({ page: "gallery", datasetId: datasetId ?? "" })}>
             <ArrowLeft size={14} /> Back
           </button>
@@ -1731,7 +1726,7 @@ export default function ImageDetailPage() {
                   a duplicate reads as a bug. `min-w` + `nowrap` rather than the
                   old fixed `w-20`, so the `p.N` badge cannot wrap. */}
               <span
-                className="text-xs text-gray-500 tabular-nums min-w-[5rem] whitespace-nowrap text-center"
+                className="text-xs text-fg-dim tabular-nums min-w-[5rem] whitespace-nowrap text-center"
                 title={
                   navTotal !== undefined && navTotal > navCtx.ids.length
                     ? `Image ${currentIndex + 1} of ${navCtx.ids.length} on this page · ${navTotal} match the current filters`
@@ -1740,9 +1735,9 @@ export default function ImageDetailPage() {
               >
                 {currentIndex + 1} / {navCtx.ids.length}
                 {navTotal !== undefined && navTotal > navCtx.ids.length && (
-                  <span className="ml-1 text-gray-600">· {navTotal}</span>
+                  <span className="ml-1 text-fg-dim">· {navTotal}</span>
                 )}
-                {navCtx.page > 1 && <span className="ml-1 text-gray-600">p.{navCtx.page}</span>}
+                {navCtx.page > 1 && <span className="ml-1 text-fg-dim">p.{navCtx.page}</span>}
               </span>
               <button
                 className="btn-ghost btn-sm p-1"
@@ -1755,7 +1750,7 @@ export default function ImageDetailPage() {
             </div>
           )}
 
-          <span className="text-sm text-gray-400 truncate">{image.filename}</span>
+          <span className="text-sm text-fg-mute truncate">{image.filename}</span>
           <div className="flex-1" />
           <button
             className={`btn-sm flex items-center gap-1.5 ${isImageSelected ? "btn-primary" : "btn-ghost"}`}
@@ -2075,7 +2070,7 @@ export default function ImageDetailPage() {
           // Its own row: the toolbar above is already full when crop + upscale
           // is open.
           <div
-            className="px-3 py-2 border-b border-gray-700/50 flex items-center gap-2 flex-wrap"
+            className="px-3 py-2 border-b border-line flex items-center gap-2 flex-wrap"
             style={{ fontSize: 13, color: "var(--fg-mute)" }}
           >
             <span>Box</span>
@@ -2301,18 +2296,18 @@ export default function ImageDetailPage() {
       </div>
 
       {/* Right: metadata + caption panel */}
-      <div className="w-80 bg-surface-card border-l border-gray-700/50 flex flex-col overflow-y-auto">
+      <div className="w-80 bg-surface-card border-l border-line flex flex-col overflow-y-auto">
         {/* Meta */}
-        <div className="p-4 border-b border-gray-700/50 space-y-2">
-          <h3 className="font-medium text-sm text-gray-300 uppercase tracking-wide">Image Info</h3>
+        <div className="p-4 border-b border-line space-y-2">
+          <h3 className="font-medium text-sm text-fg uppercase tracking-wide">Image Info</h3>
           <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
-            <span className="text-gray-500">Dimensions</span>
+            <span className="text-fg-dim">Dimensions</span>
             <span>{image.width}×{image.height}</span>
-            <span className="text-gray-500">Size</span>
+            <span className="text-fg-dim">Size</span>
             <span>{formatSize(image.file_size_bytes)}</span>
-            <span className="text-gray-500">Format</span>
+            <span className="text-fg-dim">Format</span>
             <span>{image.format}</span>
-            <span className="text-gray-500">Filename</span>
+            <span className="text-fg-dim">Filename</span>
             <span className="min-w-0">
               {renameMode ? (
                 <span className="flex items-center gap-1">
@@ -2349,57 +2344,57 @@ export default function ImageDetailPage() {
             </span>
             {image.aesthetic_score !== null && (
               <>
-                <span className="text-gray-500">Aesthetic</span>
-                <span className={image.aesthetic_score >= 6 ? "text-green-400" : image.aesthetic_score >= 4 ? "text-yellow-400" : "text-red-400"}>
+                <span className="text-fg-dim">Aesthetic</span>
+                <span className={image.aesthetic_score >= 6 ? "text-accent-text" : image.aesthetic_score >= 4 ? "text-warn" : "text-bad"}>
                   {image.aesthetic_score?.toFixed(2)}/10
                 </span>
               </>
             )}
             {image.blur_score !== null && (
               <>
-                <span className="text-gray-500">Blur score</span>
+                <span className="text-fg-dim">Blur score</span>
                 <span>{image.blur_score?.toFixed(1)}</span>
               </>
             )}
             {image.uniformity_score !== null && image.uniformity_score !== undefined && (
               <>
-                <span className="text-gray-500">Uniformity</span>
-                <span className={isUniform ? "text-orange-400" : ""}>
+                <span className="text-fg-dim">Uniformity</span>
+                <span className={isUniform ? "text-warn" : ""}>
                   {image.uniformity_score.toFixed(1)}{isUniform ? " (flat)" : ""}
                 </span>
               </>
             )}
             {image.watermark_score !== null && image.watermark_score !== undefined && (
               <>
-                <span className="text-gray-500">Watermark</span>
-                <span className={hasWatermark ? "text-blue-400" : "text-gray-300"}>
+                <span className="text-fg-dim">Watermark</span>
+                <span className={hasWatermark ? "text-info" : "text-fg"}>
                   {(image.watermark_score * 100).toFixed(0)}%
                 </span>
               </>
             )}
             {image.nsfw_score !== null && image.nsfw_score !== undefined && (
               <>
-                <span className="text-gray-500">NSFW</span>
-                <span className={isNsfw ? "text-red-400" : "text-gray-300"}>
+                <span className="text-fg-dim">NSFW</span>
+                <span className={isNsfw ? "text-bad" : "text-fg"}>
                   {(image.nsfw_score * 100).toFixed(0)}%{isNsfw ? " ⚠" : ""}
                 </span>
               </>
             )}
             {image.color_score !== null && image.color_score !== undefined && (
               <>
-                <span className="text-gray-500">Colorfulness</span>
+                <span className="text-fg-dim">Colorfulness</span>
                 <span>{image.color_score.toFixed(1)}</span>
               </>
             )}
             {image.saturation_score !== null && image.saturation_score !== undefined && (
               <>
-                <span className="text-gray-500">Saturation</span>
+                <span className="text-fg-dim">Saturation</span>
                 <span>{(image.saturation_score * 100).toFixed(0)}%</span>
               </>
             )}
             {image.luminance_score !== null && image.luminance_score !== undefined && (
               <>
-                <span className="text-gray-500">Brightness</span>
+                <span className="text-fg-dim">Brightness</span>
                 <span>{(image.luminance_score * 100).toFixed(0)}%</span>
               </>
             )}
@@ -2422,7 +2417,7 @@ export default function ImageDetailPage() {
           {/* Frame lineage. Without it, a frame moved out of its extraction
               subfolder can no longer say where it came from. */}
           {image.source_video_id && (
-            <div className="text-xs text-gray-500 flex items-center gap-1 flex-wrap mt-1">
+            <div className="text-xs text-fg-dim flex items-center gap-1 flex-wrap mt-1">
               <span>From</span>
               <button
                 className="btn-ghost btn-sm"
@@ -2552,7 +2547,7 @@ export default function ImageDetailPage() {
 
         {/* Caption */}
         <div className="p-4 flex-1 space-y-3">
-          <h3 className="font-medium text-sm text-gray-300 uppercase tracking-wide">Caption</h3>
+          <h3 className="font-medium text-sm text-fg uppercase tracking-wide">Caption</h3>
 
           <div>
             <div className="flex items-center justify-between mb-1">
@@ -2614,13 +2609,13 @@ export default function ImageDetailPage() {
           </button>
 
           {/* AI Generate section */}
-          <div className="border-t border-gray-700/50 pt-3">
+          <div className="border-t border-line pt-3">
             <button
-              className="flex items-center justify-between w-full text-sm font-medium text-gray-300 hover:text-white transition-colors"
+              className="flex items-center justify-between w-full text-sm font-medium text-fg hover:text-fg transition-colors"
               onClick={() => setShowAi((v) => !v)}
             >
               <span className="flex items-center gap-2">
-                <Sparkles size={14} className="text-accent" /> Generate with AI
+                <Sparkles size={14} className="text-accent-text" /> Generate with AI
               </span>
               {showAi ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
             </button>
@@ -2644,29 +2639,29 @@ export default function ImageDetailPage() {
                 {/* Model picker */}
                 <div className="space-y-1.5">
                   <label className="label">Model</label>
-                  {!modelsData && <p className="text-xs text-gray-500">Loading models…</p>}
+                  {!modelsData && <p className="text-xs text-fg-dim">Loading models…</p>}
                   {localModels.map(m => (
                     <div
                       key={m.id}
                       title={m.description}
                       className={`flex items-center gap-2 p-2 rounded border cursor-pointer text-xs transition-colors ${
-                        aiModel === m.id ? "border-accent bg-accent/10" : "border-gray-700 hover:border-gray-500"
+                        aiModel === m.id ? "border-accent bg-accent/10" : "border-line hover:border-line-2"
                       }`}
                       onClick={() => { setAiModel(m.id); setAiStyle("detailed"); setAiProviderModel(""); }}
                     >
                       <div className="flex-1 font-medium">{m.name}</div>
-                      <span className="text-gray-500">{m.vram_mb / 1024}GB</span>
+                      <span className="text-fg-dim">{m.vram_mb / 1024}GB</span>
                       {m.loaded && <span className="badge-green">Loaded</span>}
                     </div>
                   ))}
                   {ollamaModels.length > 0 && (
                     <>
-                      <p className="text-xs text-gray-500 pt-1">Ollama</p>
+                      <p className="text-xs text-fg-dim pt-1">Ollama</p>
                       {ollamaModels.map(m => (
                         <div
                           key={m.id}
                           className={`flex items-center gap-2 p-2 rounded border cursor-pointer text-xs transition-colors ${
-                            aiModel === m.id ? "border-accent bg-accent/10" : "border-gray-700 hover:border-gray-500"
+                            aiModel === m.id ? "border-accent bg-accent/10" : "border-line hover:border-line-2"
                           }`}
                           onClick={() => { setAiModel(m.id); setAiStyle("detailed"); setAiProviderModel(""); }}
                         >
@@ -2677,13 +2672,13 @@ export default function ImageDetailPage() {
                   )}
                   {wd14Models.length > 0 && (
                     <>
-                      <p className="text-xs text-gray-500 pt-1">Tagger</p>
+                      <p className="text-xs text-fg-dim pt-1">Tagger</p>
                       {wd14Models.map(m => (
                         <div
                           key={m.id}
                           title={m.description}
                           className={`flex items-center gap-2 p-2 rounded border cursor-pointer text-xs transition-colors ${
-                            aiModel === m.id ? "border-accent bg-accent/10" : "border-gray-700 hover:border-gray-500"
+                            aiModel === m.id ? "border-accent bg-accent/10" : "border-line hover:border-line-2"
                           }`}
                           onClick={() => { setAiModel(m.id); setAiStyle("detailed"); setAiProviderModel(""); }}
                         >
@@ -2694,7 +2689,7 @@ export default function ImageDetailPage() {
                   )}
                   {providers.filter(p => !p.is_remote).length > 0 && (
                     <>
-                      <p className="text-xs text-gray-500 pt-1">Local Providers</p>
+                      <p className="text-xs text-fg-dim pt-1">Local Providers</p>
                       {providers.filter(p => !p.is_remote).map(p => {
                         const baseId = `openai_compat:${p.id}`;
                         const isSelected = aiModel.startsWith(baseId);
@@ -2702,12 +2697,12 @@ export default function ImageDetailPage() {
                           <div key={p.id}>
                             <div
                               className={`flex items-center gap-2 p-2 rounded border cursor-pointer text-xs transition-colors ${
-                                isSelected ? "border-accent bg-accent/10" : "border-gray-700 hover:border-gray-500"
+                                isSelected ? "border-accent bg-accent/10" : "border-line hover:border-line-2"
                               }`}
                               onClick={() => { setAiModel(baseId); setAiProviderModel(p.default_model); }}
                             >
                               <div className="flex-1 font-medium">{p.name}</div>
-                              <span className="text-gray-500 truncate max-w-[100px]">{p.base_url}</span>
+                              <span className="text-fg-dim truncate max-w-[100px]">{p.base_url}</span>
                             </div>
                             {isSelected && (
                               <div className="mt-1 ml-2" onClick={e => e.stopPropagation()}>
@@ -2727,7 +2722,7 @@ export default function ImageDetailPage() {
                   )}
                   {providers.filter(p => p.is_remote).length > 0 && (
                     <>
-                      <p className="text-xs text-gray-500 pt-1">Cloud Providers</p>
+                      <p className="text-xs text-fg-dim pt-1">Cloud Providers</p>
                       {providers.filter(p => p.is_remote).map(p => {
                         const baseId = `openai_compat:${p.id}`;
                         const isSelected = aiModel.startsWith(baseId);
@@ -2735,12 +2730,12 @@ export default function ImageDetailPage() {
                           <div key={p.id}>
                             <div
                               className={`flex items-center gap-2 p-2 rounded border cursor-pointer text-xs transition-colors ${
-                                isSelected ? "border-accent bg-accent/10" : "border-gray-700 hover:border-gray-500"
+                                isSelected ? "border-accent bg-accent/10" : "border-line hover:border-line-2"
                               }`}
                               onClick={() => { setAiModel(baseId); setAiProviderModel(p.default_model); }}
                             >
                               <div className="flex-1 font-medium">{p.name}</div>
-                              <span className="text-gray-500 truncate max-w-[100px]">{p.base_url}</span>
+                              <span className="text-fg-dim truncate max-w-[100px]">{p.base_url}</span>
                             </div>
                             {isSelected && (
                               <div className="mt-1 ml-2" onClick={e => e.stopPropagation()}>
@@ -2771,7 +2766,7 @@ export default function ImageDetailPage() {
                         onChange={e => setAiWd14Threshold(Number(e.target.value))}
                         className="flex-1"
                       />
-                      <span className="text-xs text-gray-400 w-8 text-right">{aiWd14Threshold.toFixed(2)}</span>
+                      <span className="text-xs text-fg-mute w-8 text-right">{aiWd14Threshold.toFixed(2)}</span>
                     </div>
                   </div>
                 )}
@@ -2809,7 +2804,7 @@ export default function ImageDetailPage() {
                           : "Override the default prompt for this style…"
                       }
                     />
-                    <p className="text-xs text-gray-500 mt-1">
+                    <p className="text-xs text-fg-dim mt-1">
                       <span className="mono">{"{previous_caption}"}</span> inserts the saved caption, not
                       unsaved edits. To correct a caption, use Fix current.
                     </p>
@@ -2840,7 +2835,7 @@ export default function ImageDetailPage() {
                       onChange={e => setFixNote(e.target.value)}
                       placeholder="e.g. The broken glass is their reflection in a cracked mirror."
                     />
-                    <p className="text-xs text-gray-500 mt-1">
+                    <p className="text-xs text-fg-dim mt-1">
                       The model gets the image, the caption in the box above and this note, and
                       rewrites the caption. Unsaved edits are saved first.
                     </p>
@@ -2866,37 +2861,37 @@ export default function ImageDetailPage() {
                 {/* Progress */}
                 {aiJobHere && aiJobProgress && (
                   <div className="space-y-1">
-                    <div className="bg-gray-700 rounded-full h-1.5">
+                    <div className="bg-line-2 rounded-full h-1.5">
                       <div
                         className="bg-accent h-1.5 rounded-full transition-all"
                         style={{ width: `${aiJobProgress.percent ?? 0}%` }}
                       />
                     </div>
-                    <p className="text-xs text-gray-500">{aiJobProgress.message || "Generating…"}</p>
+                    <p className="text-xs text-fg-dim">{aiJobProgress.message || "Generating…"}</p>
                   </div>
                 )}
 
                 {aiModelBlocked && (
-                  <p className="text-xs text-red-400">
+                  <p className="text-xs text-bad">
                     “{aiModel}” is not a captioning model — captioning cannot run while it is
                     selected. A saved preset can carry one in; pick a model above.
                   </p>
                 )}
                 {aiModelUnlisted && (
-                  <p className="text-xs text-yellow-400">
+                  <p className="text-xs text-warn">
                     “{aiModel}” is not in the current model list — the service may be offline, or
                     the model may have been removed.
                   </p>
                 )}
 
                 {aiMode === "fix" && aiModel && !aiModelBlocked && !takesPrompt(aiModel) && (
-                  <p className="text-xs text-yellow-400">
+                  <p className="text-xs text-warn">
                     Fixing needs a model that reads a prompt: an Ollama model, an LLM provider or
                     JoyCaption.
                   </p>
                 )}
                 {aiMode === "fix" && !captionText.trim() && (
-                  <p className="text-xs text-gray-500">There is no caption to fix yet. Generate one first.</p>
+                  <p className="text-xs text-fg-dim">There is no caption to fix yet. Generate one first.</p>
                 )}
 
                 {aiMode === "generate" ? (
@@ -2989,7 +2984,7 @@ export default function ImageDetailPage() {
                   onChange={(e) => setDetectMinProb(parseFloat(e.target.value))}
                   style={{ width: "100%" }}
                 />
-                <p className="text-xs text-gray-500">Only body-part regions above this confidence score are stored.</p>
+                <p className="text-xs text-fg-dim">Only body-part regions above this confidence score are stored.</p>
               </div>
             )}
 
@@ -3023,13 +3018,13 @@ export default function ImageDetailPage() {
                       onChange={(e) => setDetectPrompt(e.target.value)}
                       autoFocus
                     />
-                    <p className="text-xs text-gray-500">Grounding DINO will locate matching regions; SAM2 will produce precise masks. Separate multiple phrases with commas.</p>
+                    <p className="text-xs text-fg-dim">Grounding DINO will locate matching regions; SAM2 will produce precise masks. Separate multiple phrases with commas.</p>
                   </div>
                 )}
                 {detectTask === "points" && (
-                  <p className="text-xs text-gray-500">
+                  <p className="text-xs text-fg-dim">
                     Close this dialog, use the <strong>SAM Points</strong> toolbar button to place foreground points (left-click) and background points (right-click), then open this dialog again to run.
-                    {samPoints.length > 0 && <span className="text-green-400"> {samPoints.length} point(s) placed.</span>}
+                    {samPoints.length > 0 && <span className="text-accent-text"> {samPoints.length} point(s) placed.</span>}
                   </p>
                 )}
               </div>
@@ -3045,7 +3040,7 @@ export default function ImageDetailPage() {
                   onChange={(e) => setDetectPrompt(e.target.value)}
                   autoFocus
                 />
-                <p className="text-xs text-gray-500">SAM 3 finds and masks every instance of each phrase in one pass. Separate multiple phrases with commas.</p>
+                <p className="text-xs text-fg-dim">SAM 3 finds and masks every instance of each phrase in one pass. Separate multiple phrases with commas.</p>
               </div>
             )}
 
@@ -3083,7 +3078,7 @@ export default function ImageDetailPage() {
                       onChange={(e) => setDetectPrompt(e.target.value)}
                       autoFocus={!captionText}
                     />
-                    <p className="text-xs text-gray-500">
+                    <p className="text-xs text-fg-dim">
                       Florence-2 will draw boxes around the phrases from this caption.
                     </p>
                   </div>

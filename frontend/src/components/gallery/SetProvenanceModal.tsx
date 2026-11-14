@@ -37,7 +37,7 @@ const TEXT_FIELDS = [
 ] as const;
 
 const BlankSetHint = () => (
-  <p className="text-[10px] text-amber-400">
+  <p className="text-[10px] text-warn">
     Choose a value, or switch to <strong>Inherit</strong> to clear this field.
   </p>
 );
@@ -60,7 +60,7 @@ function ModeToggle({
           type="button"
           aria-pressed={mode === m}
           onClick={() => onSelect(m)}
-          className={`px-1.5 py-0.5 rounded ${mode === m ? "bg-accent text-white" : "bg-surface-2 text-gray-400 hover:text-gray-200"}`}
+          className={`px-1.5 py-0.5 rounded ${mode === m ? "bg-accent text-on-accent" : "bg-surface-2 text-fg-mute hover:text-fg"}`}
           title={MODE_TITLE[m]}
           data-field={field}
         >
@@ -158,7 +158,7 @@ export default function SetProvenanceModal({
           </div>
         ))}
 
-        <p className="text-xs text-gray-500">
+        <p className="text-xs text-fg-dim">
           <strong>Keep</strong> leaves the field untouched. <strong>Inherit</strong> clears it so
           the image follows its dataset's default — editing that default then updates every
           non-overridden image.

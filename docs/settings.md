@@ -34,6 +34,7 @@ as soon as that service is back.
 
 Preferences that take effect immediately (browser-local unless noted):
 
+- **Appearance**: *Dark* (the default), *Light*, or *Match system*. Light is a low-glare grey, chosen so the page does not compete with your images; the thumbnail overlays and the image viewer keep their dark chips, since those sit on the pictures. *Match system* follows your computer's light or dark setting and switches when it does. The choice belongs to this browser, so another browser or computer keeps its own
 - Default-focused button in destructive confirmation dialogs: *Cancel* (safe default) or *Confirm* (faster workflows)
 - Branch snapshot behavior: *Ask* (shows a prompt before checkout or branch creation, letting you choose whether to create a snapshot) or *Auto* (always creates snapshots without prompting)
 - **Auto-rescan dataset on open** (off by default) — when enabled, opening a dataset gallery scans its folder on disk for new images and `.txt` captions added outside the app. Unlike the settings above, this is a **server-side** preference (persisted per-install, shared across browsers)

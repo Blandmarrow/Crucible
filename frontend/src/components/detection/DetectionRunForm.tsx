@@ -187,7 +187,7 @@ export default function DetectionRunForm({ datasetId, imageIds, subfolder, quali
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
               />
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-fg-dim">
                 {model === "sam2" || model === "sam3"
                   ? "Every instance of each phrase gets a segmentation mask. Separate multiple phrases with commas."
                   : "Florence-2 will draw boxes around the phrases from this caption."}
@@ -195,7 +195,7 @@ export default function DetectionRunForm({ datasetId, imageIds, subfolder, quali
             </>
           )}
           {useCaptions && (
-            <p className="text-xs text-gray-500">Images without a caption will be skipped.</p>
+            <p className="text-xs text-fg-dim">Images without a caption will be skipped.</p>
           )}
         </div>
       )}

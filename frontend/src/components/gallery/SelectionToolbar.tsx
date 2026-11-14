@@ -567,7 +567,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
           it can never cover either. It also centres on the pane rather than on
           the window, which is the split-view behaviour anyone would expect. */}
       <div className="sticky bottom-6 z-40 mx-auto mt-6 w-fit card flex items-center gap-3 px-4 py-3 shadow-xl">
-        <span className="text-sm font-medium text-accent">{count} selected</span>
+        <span className="text-sm font-medium text-accent-text">{count} selected</span>
         {datasetGroups.length > 0 && (
           <div className="flex items-center gap-1">
             {datasetGroups.map(({ id, name, count: cnt, isCurrent }) => (
@@ -581,7 +581,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
             ))}
           </div>
         )}
-        <div className="w-px h-4 bg-gray-600" />
+        <div className="w-px h-4 bg-line-2" />
 
         <button className="btn-secondary btn-sm flex items-center gap-1.5" onClick={() => setShowBulkEdit(true)}>
           <Pencil size={14} /> Edit
@@ -685,64 +685,64 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
           <div className="space-y-2">
             <label className="label">Model</label>
             {!modelsData && (
-              <p className="text-sm text-gray-500">Loading models…</p>
+              <p className="text-sm text-fg-dim">Loading models…</p>
             )}
             {localModels.map(m => (
               <div
                 key={m.id}
                 className={`flex items-center gap-3 p-2.5 rounded border cursor-pointer transition-colors text-sm ${
-                  captionModel === m.id ? "border-accent bg-accent/10" : "border-gray-700 hover:border-gray-500"
+                  captionModel === m.id ? "border-accent bg-accent/10" : "border-line hover:border-line-2"
                 }`}
                 onClick={() => { setCaptionModel(m.id); setCaptionStyle("detailed"); setCaptionProviderModel(""); }}
               >
                 <div className="flex-1 min-w-0">
                   <div>{m.name}</div>
-                  <div className="text-xs text-gray-500">{m.description}</div>
+                  <div className="text-xs text-fg-dim">{m.description}</div>
                 </div>
-                <span className="text-xs text-gray-500">{m.vram_mb / 1024}GB</span>
+                <span className="text-xs text-fg-dim">{m.vram_mb / 1024}GB</span>
                 {m.loaded && <span className="badge-green">Loaded</span>}
               </div>
             ))}
             {ollamaModels.length > 0 && (
               <>
-                <p className="text-xs text-gray-500 pt-1">Ollama</p>
+                <p className="text-xs text-fg-dim pt-1">Ollama</p>
                 {ollamaModels.map(m => (
                   <div
                     key={m.id}
                     className={`flex items-center gap-3 p-2.5 rounded border cursor-pointer transition-colors text-sm ${
-                      captionModel === m.id ? "border-accent bg-accent/10" : "border-gray-700 hover:border-gray-500"
+                      captionModel === m.id ? "border-accent bg-accent/10" : "border-line hover:border-line-2"
                     }`}
                     onClick={() => { setCaptionModel(m.id); setCaptionStyle("detailed"); setCaptionProviderModel(""); }}
                   >
                     <div className="flex-1">{m.name}</div>
-                    {m.size_mb > 0 && <span className="text-xs text-gray-500">{(m.size_mb / 1024).toFixed(1)}GB</span>}
+                    {m.size_mb > 0 && <span className="text-xs text-fg-dim">{(m.size_mb / 1024).toFixed(1)}GB</span>}
                   </div>
                 ))}
               </>
             )}
             {wd14Models.length > 0 && (
               <>
-                <p className="text-xs text-gray-500 pt-1">Tagger</p>
+                <p className="text-xs text-fg-dim pt-1">Tagger</p>
                 {wd14Models.map(m => (
                   <div
                     key={m.id}
                     className={`flex items-center gap-3 p-2.5 rounded border cursor-pointer transition-colors text-sm ${
-                      captionModel === m.id ? "border-accent bg-accent/10" : "border-gray-700 hover:border-gray-500"
+                      captionModel === m.id ? "border-accent bg-accent/10" : "border-line hover:border-line-2"
                     }`}
                     onClick={() => { setCaptionModel(m.id); setCaptionStyle("detailed"); setCaptionProviderModel(""); }}
                   >
                     <div className="flex-1 min-w-0">
                       <div>{m.name}</div>
-                      <div className="text-xs text-gray-500">{m.description}</div>
+                      <div className="text-xs text-fg-dim">{m.description}</div>
                     </div>
-                    {m.ram_mb > 0 && <span className="text-xs text-gray-500">{(m.ram_mb / 1024).toFixed(1)} GB</span>}
+                    {m.ram_mb > 0 && <span className="text-xs text-fg-dim">{(m.ram_mb / 1024).toFixed(1)} GB</span>}
                   </div>
                 ))}
               </>
             )}
             {providers.filter(p => !p.is_remote).length > 0 && (
               <>
-                <p className="text-xs text-gray-500 pt-1">Local Providers</p>
+                <p className="text-xs text-fg-dim pt-1">Local Providers</p>
                 {providers.filter(p => !p.is_remote).map(p => {
                   const baseId = `openai_compat:${p.id}`;
                   const isSelected = captionModel.startsWith(baseId);
@@ -750,12 +750,12 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
                     <div key={p.id}>
                       <div
                         className={`flex items-center gap-3 p-2.5 rounded border cursor-pointer transition-colors text-sm ${
-                          isSelected ? "border-accent bg-accent/10" : "border-gray-700 hover:border-gray-500"
+                          isSelected ? "border-accent bg-accent/10" : "border-line hover:border-line-2"
                         }`}
                         onClick={() => { setCaptionModel(baseId); setCaptionProviderModel(p.default_model); }}
                       >
                         <div className="flex-1">{p.name}</div>
-                        <span className="text-xs text-gray-500 truncate max-w-[120px]">{p.base_url}</span>
+                        <span className="text-xs text-fg-dim truncate max-w-[120px]">{p.base_url}</span>
                       </div>
                       {isSelected && (
                         <div className="mt-1 ml-2" onClick={e => e.stopPropagation()}>
@@ -775,7 +775,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
             )}
             {providers.filter(p => p.is_remote).length > 0 && (
               <>
-                <p className="text-xs text-gray-500 pt-1">Cloud Providers</p>
+                <p className="text-xs text-fg-dim pt-1">Cloud Providers</p>
                 {providers.filter(p => p.is_remote).map(p => {
                   const baseId = `openai_compat:${p.id}`;
                   const isSelected = captionModel.startsWith(baseId);
@@ -783,12 +783,12 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
                     <div key={p.id}>
                       <div
                         className={`flex items-center gap-3 p-2.5 rounded border cursor-pointer transition-colors text-sm ${
-                          isSelected ? "border-accent bg-accent/10" : "border-gray-700 hover:border-gray-500"
+                          isSelected ? "border-accent bg-accent/10" : "border-line hover:border-line-2"
                         }`}
                         onClick={() => { setCaptionModel(baseId); setCaptionProviderModel(p.default_model); }}
                       >
                         <div className="flex-1">{p.name}</div>
-                        <span className="text-xs text-gray-500 truncate max-w-[120px]">{p.base_url}</span>
+                        <span className="text-xs text-fg-dim truncate max-w-[120px]">{p.base_url}</span>
                       </div>
                       {isSelected && (
                         <div className="mt-1 ml-2" onClick={e => e.stopPropagation()}>
@@ -820,7 +820,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
                       onChange={e => setCaptionWd14Threshold(Number(e.target.value))}
                       className="flex-1"
                     />
-                    <span className="text-xs text-gray-400 w-8 text-right">{captionWd14Threshold.toFixed(2)}</span>
+                    <span className="text-xs text-fg-mute w-8 text-right">{captionWd14Threshold.toFixed(2)}</span>
                   </div>
                 </div>
               ) : (
@@ -884,13 +884,13 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
           )}
 
           {captionBlocked && (
-            <p className="text-xs text-red-400">
+            <p className="text-xs text-bad">
               “{captionModel}” is not a captioning model — captioning cannot run while it is selected.
               A saved preset can carry one in; pick a model above.
             </p>
           )}
           {captionUnlisted && (
-            <p className="text-xs text-yellow-400">
+            <p className="text-xs text-warn">
               “{captionModel}” is not in the current model list — the service may be offline, or the
               model may have been removed.
             </p>
@@ -1117,7 +1117,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
                 onChange={(e) => setDetectMinProb(Number(e.target.value))}
                 className="w-full"
               />
-              <p className="text-xs text-gray-500">Only body-part regions above this confidence score are stored.</p>
+              <p className="text-xs text-fg-dim">Only body-part regions above this confidence score are stored.</p>
             </div>
           )}
 
@@ -1159,7 +1159,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
                     onChange={(e) => setDetectPrompt(e.target.value)}
                     autoFocus
                   />
-                  <p className="text-xs text-gray-500">
+                  <p className="text-xs text-fg-dim">
                     {detectModel === "sam2" || detectModel === "sam3"
                       ? "Every instance of each phrase gets a segmentation mask. Separate multiple phrases with commas."
                       : "Florence-2 will draw boxes around the phrases from this caption."}
@@ -1167,7 +1167,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
                 </>
               )}
               {detectUseCaptions && (
-                <p className="text-xs text-gray-500">
+                <p className="text-xs text-fg-dim">
                   Images without a caption will be skipped.
                 </p>
               )}

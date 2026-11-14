@@ -526,7 +526,8 @@ export default function DatasetsPage() {
       : { width: 22, height: 22 };
     return (
       <div
-        className="ds-row-actions"
+        // On a card the buttons sit over the preview strip, on dark chips.
+        className={variant === "card" ? "ds-row-actions on-media" : "ds-row-actions"}
         style={variant === "card"
           ? { position: "absolute", top: 10, right: 10, display: "flex", gap: 4, opacity: 0, transition: "opacity .15s", zIndex: 2 }
           : { display: "flex", gap: 2, opacity: 0, transition: "opacity .15s", flexShrink: 0, marginLeft: 4 }}
@@ -631,7 +632,7 @@ export default function DatasetsPage() {
             <div style={{
               background: "var(--surface-2)", border: "1px solid var(--accent)",
               borderRadius: "var(--r)", padding: "6px 14px",
-              color: "var(--accent)", fontSize: 13, fontWeight: 600,
+              color: "var(--accent-text)", fontSize: 13, fontWeight: 600,
               display: "flex", alignItems: "center", gap: 6,
             }}>
               <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
@@ -687,7 +688,7 @@ export default function DatasetsPage() {
             ].map(({ k, v, accent }) => (
               <div key={k} style={{ background: "var(--surface-2)", border: "1px solid var(--line)", borderRadius: "var(--r)", padding: "8px 10px" }}>
                 <div style={{ color: "var(--fg-dim)", fontSize: 10.5, letterSpacing: ".04em", textTransform: "uppercase" }}>{k}</div>
-                <div style={{ color: accent ? "var(--accent)" : "var(--fg)", fontSize: accent ? 16 : 14, fontWeight: 600, marginTop: 2, fontFeatureSettings: '"tnum"' }}>{v}</div>
+                <div style={{ color: accent ? "var(--accent-text)" : "var(--fg)", fontSize: accent ? 16 : 14, fontWeight: 600, marginTop: 2, fontFeatureSettings: '"tnum"' }}>{v}</div>
               </div>
             ))}
           </div>
@@ -747,7 +748,7 @@ export default function DatasetsPage() {
           <div style={{
             position: "absolute", inset: 0, zIndex: 10, pointerEvents: "none",
             background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center",
-            color: "var(--accent)", fontSize: 12, fontWeight: 600,
+            color: "var(--accent-text)", fontSize: 12, fontWeight: 600,
           }}>
             Drop to upload
           </div>
@@ -787,7 +788,7 @@ export default function DatasetsPage() {
           {/* Same hidden-at-zero rule as the card footer; both renderers change
               together or the two views disagree about the same dataset. */}
           {ds.video_count > 0 && <span>{ds.video_count.toLocaleString()} vid</span>}
-          <span style={{ color: "var(--accent)" }}>{pct}%</span>
+          <span style={{ color: "var(--accent-text)" }}>{pct}%</span>
           <span>{formatSize(ds.total_size_bytes)}</span>
         </span>
 
@@ -960,7 +961,7 @@ export default function DatasetsPage() {
           <div style={{
             height: 68, border: `2px dashed ${isDropTarget ? "var(--accent)" : "var(--line)"}`,
             borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center",
-            color: isDropTarget ? "var(--accent)" : "var(--fg-mute)", fontSize: 13,
+            color: isDropTarget ? "var(--accent-text)" : "var(--fg-mute)", fontSize: 13,
             transition: "border-color .1s, color .1s",
           }}>
             {isDropTarget ? "Release to move here" : "Empty — drag datasets here"}
@@ -1016,7 +1017,7 @@ export default function DatasetsPage() {
           // transparent border rather than none, so the drop highlight doesn't shift the row
           border: `1px solid ${isDrop ? "var(--accent)" : "transparent"}`,
           background: isDrop ? "var(--accent-glow)" : isActive ? "var(--surface-3)" : "transparent",
-          color: isActive ? "var(--accent)" : "var(--fg)",
+          color: isActive ? "var(--accent-text)" : "var(--fg)",
           fontSize: 12.5, fontWeight: isActive ? 600 : 400,
           fontStyle: key === UNCATEGORIZED ? "italic" : undefined,
         }}
@@ -1155,7 +1156,7 @@ export default function DatasetsPage() {
                 style={{
                   width: 26, height: 24,
                   background: density === m ? "var(--surface-3)" : "transparent",
-                  color: density === m ? "var(--accent)" : "var(--fg-mute)",
+                  color: density === m ? "var(--accent-text)" : "var(--fg-mute)",
                 }}
               >
                 {m === "grid" ? (

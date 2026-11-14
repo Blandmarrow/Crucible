@@ -92,12 +92,12 @@ export default function ProvenancePanel({ image }: Props) {
   );
 
   return (
-    <div className="border-t border-gray-700/50 mt-2 pt-2">
+    <div className="border-t border-line mt-2 pt-2">
       <button
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-1.5 w-full text-left text-xs font-medium text-gray-300 uppercase tracking-wide hover:text-white transition-colors"
+        className="flex items-center gap-1.5 w-full text-left text-xs font-medium text-fg uppercase tracking-wide hover:text-fg transition-colors"
       >
-        <ScrollText size={12} className="text-accent" />
+        <ScrollText size={12} className="text-accent-text" />
         SOURCE &amp; LICENSE
         <span className="ml-auto">{open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}</span>
       </button>
@@ -109,7 +109,7 @@ export default function ProvenancePanel({ image }: Props) {
               <div className="flex items-center gap-2">
                 <LicenseBadge value={resolved?.license ?? image.license} />
                 {inherited.has("license") && (
-                  <span className="text-gray-500 text-[10px]" title="No license set on this image; showing the dataset default">
+                  <span className="text-fg-dim text-[10px]" title="No license set on this image; showing the dataset default">
                     inherited from dataset
                   </span>
                 )}
@@ -129,9 +129,9 @@ export default function ProvenancePanel({ image }: Props) {
                   if (!value) return null;
                   return (
                     <div key={key} className="contents">
-                      <span className="text-gray-500">
+                      <span className="text-fg-dim">
                         {label}
-                        {inherited.has(key) && <span className="text-gray-600"> (inherited)</span>}
+                        {inherited.has(key) && <span className="text-fg-dim"> (inherited)</span>}
                       </span>
                       {/* A source URL is scraped/EXIF data — only http(s) becomes
                           a link, anything else renders as inert text. */}
@@ -140,7 +140,7 @@ export default function ProvenancePanel({ image }: Props) {
                           href={safeExternalUrl(value)}
                           target="_blank"
                           rel="noreferrer noopener"
-                          className="text-accent hover:underline truncate flex items-center gap-1"
+                          className="text-accent-text hover:underline truncate flex items-center gap-1"
                           title={value}
                         >
                           <span className="truncate">{value}</span>
@@ -158,7 +158,7 @@ export default function ProvenancePanel({ image }: Props) {
                   license/source_name alone and so printed "No source recorded"
                   directly above a populated Attribution or URL row. */}
               {!hasAnyProvenance && (
-                <p className="text-gray-500">
+                <p className="text-fg-dim">
                   No source recorded. Set a dataset default, or edit this image.
                 </p>
               )}
@@ -168,7 +168,7 @@ export default function ProvenancePanel({ image }: Props) {
           {editing && (
             <div className="space-y-2">
               <label className="block">
-                <span className="text-gray-500">License</span>
+                <span className="text-fg-dim">License</span>
                 <LicenseSelect
                   value={draft.license}
                   onChange={(license) => setDraft({ ...draft, license })}
@@ -180,7 +180,7 @@ export default function ProvenancePanel({ image }: Props) {
               </label>
               {FIELDS.map(({ key, label }) => (
                 <label key={key} className="block">
-                  <span className="text-gray-500">{label}</span>
+                  <span className="text-fg-dim">{label}</span>
                   <input
                     value={draft[key]}
                     onChange={(e) => setDraft({ ...draft, [key]: e.target.value })}
@@ -189,11 +189,11 @@ export default function ProvenancePanel({ image }: Props) {
                   />
                 </label>
               ))}
-              <p className="text-gray-500 text-[10px]">
+              <p className="text-fg-dim text-[10px]">
                 Leave a field empty to inherit the dataset default.
               </p>
               {blankOther && (
-                <p className="text-amber-400/90 text-[10px]">
+                <p className="text-warn text-[10px]">
                   Type the license name, or pick “Inherit from dataset” to clear it.
                 </p>
               )}
@@ -216,7 +216,7 @@ export default function ProvenancePanel({ image }: Props) {
             <div>
               <button
                 onClick={() => setMetaOpen(!metaOpen)}
-                className="flex items-center gap-1 text-gray-500 hover:text-gray-300 transition-colors"
+                className="flex items-center gap-1 text-fg-dim hover:text-fg transition-colors"
               >
                 {metaOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
                 Scrape metadata
@@ -225,8 +225,8 @@ export default function ProvenancePanel({ image }: Props) {
                 <div className="mt-1 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 bg-surface-2 rounded p-2 max-h-48 overflow-auto">
                   {Object.entries(sourceMeta).map(([k, v]) => (
                     <div key={k} className="contents">
-                      <span className="text-gray-500 truncate" title={k}>{k}</span>
-                      <span className="text-gray-300 break-words">
+                      <span className="text-fg-dim truncate" title={k}>{k}</span>
+                      <span className="text-fg break-words">
                         {typeof v === "object" ? JSON.stringify(v) : String(v)}
                       </span>
                     </div>

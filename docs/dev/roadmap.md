@@ -31,12 +31,12 @@ restates its stages.
    linking the record that holds the full text.
 5. **Landed**: one line per finished milestone or handoff record.
 
-## Next session (updated 2026-11-14, empty-selection fix merged)
+## Next session (updated 2026-11-14, light mode built)
 
-1. **M11 goes on with Tier 3** (see Now), unless the user has picked a light palette for
-   #19, the one Tier 2 item left. The user parked #9 and #16 on 2026-11-14 (under Later).
-   #48 waits on a question to its reporter. M7's Stage 3 waits behind M11,
-   under Waiting.
+1. **Light mode (#19) is on `feat/light-mode`**, awaiting the user's look and merge. After it,
+   M11 goes on with Tier 3 (see Now). The user parked #9 and #16 on 2026-11-14 (under
+   Later). #48 waits on a question to its reporter. M7's Stage 3 waits behind M11, under
+   Waiting.
 2. M4 stays held, with its merge checklist under Waiting. The closed items of the previous
    blocks, the two scope bugs and their fixes (PRs #160 and #161), are in
    [roadmap-archive/handoff-2026-11-14.md](roadmap-archive/handoff-2026-11-14.md).
@@ -71,11 +71,11 @@ Tier 1, small:
 
 Tier 2, medium:
 
-- [ ] #19 Light mode: a second set of the colour tokens on `:root` in
-  `frontend/src/index.css`, a setting to switch, then the hard-coded colours moved onto
-  tokens: about 160 hex or rgba values in `.tsx` files and about 200 fixed gray, white or
-  black classes in 15 files, plus the shadows and the brand mark (`scripts/check_mark.py`).
-  Waits on the user picking a light palette. The token conversion suits `delegate-to-loop`.
+- [x] #19 Light mode: built on `feat/light-mode`. The user picked "Studio grey" from five
+  drafts on 2026-11-14, with a Dark / Light / Match system choice in Settings → UI Behavior,
+  dark the default. A second token block under `:root[data-theme="light"]`, set before first
+  paint, plus `--accent-text` and `--on-accent`; about 60 files swept onto tokens
+  (`docs/dev/styling.md` § Two themes).
 
 Tier 3, captioning helpers, one batch:
 
@@ -229,6 +229,14 @@ Each line links the record that holds the full text.
   caller's own frontend is the only guard; `services/image_scope.py`, detection, inpaint,
   upscale and LUT read `[]` as nothing. The user chose on 2026-11-14 to fix only the
   Captioning page's empty *Selected* scope (PR #161) and leave the routes as they are.
+- No check stops a new fixed Tailwind palette class (`text-gray-500`, `border-gray-700`…) or
+  a hard-coded UI colour from coming back, and each one is wrong in light mode. A grep-based
+  guard in CI would hold the line (`docs/dev/styling.md` § Two themes). Found in the
+  light-mode change, 2026-11-14.
+- `bg-accent/10`, the tint on a selected model row in `ImageDetailPage` and
+  `SelectionToolbar` (ten uses), generates no CSS: Tailwind 3 cannot apply an opacity
+  modifier to a colour defined as a bare `var()`. It was already the case on `main`; the fix
+  is `color-mix` or an `<alpha-value>` colour definition. Found 2026-11-14.
 - Duplicates across datasets (issue #9), taken out of M11 and parked by the user on
   2026-11-14. The shape found when it was reviewed: a read-only report job. The `phash` scan
   (`find_duplicates_sync` in `backend/ml/technical_scorer.py`) already scales; the duplicate

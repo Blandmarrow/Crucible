@@ -100,7 +100,7 @@ function ColorSwatchButton({
           style={{
             position: "absolute", top: "calc(100% + 4px)", right: 0, zIndex: 1000,
             background: "var(--surface-2)", border: "1px solid var(--line-2)",
-            borderRadius: "var(--r)", boxShadow: "0 8px 24px rgba(0,0,0,.4)",
+            borderRadius: "var(--r)", boxShadow: "var(--shadow-lg)",
             padding: 8, display: "flex", flexDirection: "column", gap: 8,
           }}
         >

@@ -58,14 +58,14 @@ export default function SyncCanvasModal({ snapshot, droppedPins, onApply, onClos
             </p>
           )}
           {isBridge && snapshot.age_seconds != null && snapshot.age_seconds > STALE_AGE_S && (
-            <p style={{ color: "var(--warn, #d97706)", fontSize: 12, margin: 0 }}>
+            <p style={{ color: "var(--warn)", fontSize: 12, margin: 0 }}>
               ⚠ This snapshot is {formatAge(snapshot.age_seconds).replace(" ago", "")} old — is the ComfyUI browser tab still open?
             </p>
           )}
 
           {droppedPins.length > 0 && (
-            <div style={{ border: "1px solid var(--warn, #d97706)", borderRadius: "var(--r)", padding: "8px 10px", fontSize: 12 }}>
-              <p style={{ color: "var(--warn, #d97706)", margin: "0 0 4px" }}>
+            <div style={{ border: "1px solid var(--warn)", borderRadius: "var(--r)", padding: "8px 10px", fontSize: 12 }}>
+              <p style={{ color: "var(--warn)", margin: "0 0 4px" }}>
                 ⚠ {droppedPins.length} pinned parameter{droppedPins.length > 1 ? "s" : ""} no longer
                 resolve{droppedPins.length > 1 ? "" : "s"} in the new workflow (node removed or bypassed)
                 and will be removed:

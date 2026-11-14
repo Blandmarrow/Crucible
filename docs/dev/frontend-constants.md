@@ -47,6 +47,13 @@ Ollama and OpenAI-compat have no entry, so the style picker is hidden for them. 
 
 `frontend/src/constants/detectionModels.ts` — the detection model registry `DetectionRunForm`, `SelectionToolbar` and `ImageDetailPage` pick from (its three importers; `DetectionsPanel` renders existing detections and picks no model), plus `detectionModelFamily`; see `docs/dev/detection.md`.
 
+## `constants/detectionColors.ts`
+
+`frontend/src/constants/detectionColors.ts` — `BBOX_COLORS` and `labelColor(label)`, the stable
+per-label colour shared by the detection overlay (`ImageDetailPage`) and the label chips
+(`DetectionsPanel`), so a box and its chip always match. It was two hand-kept copies until the
+light-mode change. The same in both themes (`docs/dev/styling.md` § Two themes).
+
 ## `constants/queryKeys.ts`
 
 `frontend/src/constants/queryKeys.ts` — `invalidateProvenanceScope(qc)`, the single list of query keys a provenance write invalidates (`datasets`, `dataset`, `images`, `image`, `dataset-stats`, `export-preview`, `bucket-images`, `licenses-in-use` — the last because a provenance write can introduce a free-text license the pickers must offer immediately; see `hooks/useCustomLicenses`). `["dataset", id]` (used by `Sidebar`, `TopBar`, `GalleryPage`, `CaptioningPage`) is listed separately from `["datasets"]` — TanStack matches by prefix, so the list key does not cover the single-dataset key, and `DatasetOut` carries all four provenance defaults. Provenance resolves at read time, so one write changes several unrelated views at once, and split view means they are often mounted together — every provenance writer calls this instead of listing keys inline. `EditDatasetDialog.renameMutation` (`components/datasets/`, the Edit-dataset modal, which PATCHes the provenance defaults alongside name/description/category), `SelectionToolbar.provenanceMutation` and `ProvenancePanel.save` are its three callers.

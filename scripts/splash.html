@@ -7,19 +7,40 @@
      substitution still lands). Do not name a placeholder anywhere else in this
      file: the substitution is a plain replace-all and would fill that in too.
      Colours are the index.css tokens, written out because this page loads no
-     app CSS. -->
+     app CSS. It is served on the app's own origin, so it reads the app's
+     theme choice (THEME_KEY in frontend/src/constants/storage.ts) the same way
+     frontend/index.html does. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Starting Crucible…</title>
 <link rel="icon" href="/favicon.svg">
+<script>
+  (function () {
+    try {
+      var pref = localStorage.getItem("crucible-theme");
+      var light = pref === "light" ||
+        (pref === "system" && window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches);
+      document.documentElement.dataset.theme = light ? "light" : "dark";
+    } catch (e) {}
+  })();
+</script>
 <style>
   :root {
     --bg: #07090b; --surface-1: #0d1013; --line: #1d252b;
     --fg: #e6edec; --fg-mute: #9aa6a3; --fg-dim: #5e6a68;
     --accent: #10b981;
   }
+  :root[data-theme="light"] {
+    --bg: #d5d8d7; --surface-1: #e3e5e4; --line: #c6cac8;
+    --fg: #141817; --fg-mute: #40474a; --fg-dim: #5f6866;
+  }
+  /* The mark's fills come verbatim from the design source. On a light page its
+     dark "unlit" cells would outweigh the green C, so recolour them here
+     (a CSS fill beats the fill attribute) rather than editing the markup. */
+  :root[data-theme="light"] svg [fill="#0f6e4e"] { fill: #8fc7ae; }
+  :root[data-theme="light"] svg [fill="#34d399"] { fill: #0ea472; }
   html, body { height: 100%; margin: 0; }
   body {
     background: var(--bg); color: var(--fg);

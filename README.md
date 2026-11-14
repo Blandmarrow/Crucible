@@ -81,6 +81,7 @@ Every step from raw images to a training-ready export, in order:
 - **Browse** your filesystem, preview generation metadata, and import directly into datasets → [details](docs/file-browser.md)
 - **Look up** booru tags to build tag vocabularies for your training subjects → [details](docs/workspace.md#booru-tag-lookup)
 - **Logs** — review job history (status, duration, errors) and captured JS runtime errors; a persistent overlay auto-surfaces errors without navigating away → [details](docs/workspace.md#logs)
+- **Light or dark** — a low-glare grey light mode beside the default dark one, or follow your computer's setting → [details](docs/settings.md#ui-behavior)
 - **Keyboard-drivable dialogs** — Esc closes, Tab cycles within the dialog, focus returns where it came from, and screen readers announce them as dialogs → [details](docs/workspace.md#dialogs)
 - **Automatic database backups** — launching integrity-checks the database and keeps the five most recent timestamped copies beside it, at most one per 15 minutes → [details](docs/server.md#database-backups)
 

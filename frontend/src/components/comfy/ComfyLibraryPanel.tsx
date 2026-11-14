@@ -487,7 +487,7 @@ export function LibraryCategoryRow({ node, open, onToggle, onMenu }: {
         {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
       </button>
       <button {...handle?.props} ref={handle?.attach} className="comfy-rail-node" title={node.path} onClick={onToggle}>
-        <Folder size={13} style={{ flexShrink: 0, color: "var(--accent)" }} />
+        <Folder size={13} style={{ flexShrink: 0, color: "var(--accent-text)" }} />
         <span className="comfy-rail-label">{node.label}</span>
         <span className="comfy-rail-count mono">{node.totalCount}</span>
       </button>

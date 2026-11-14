@@ -40,12 +40,12 @@ export default function ProvenanceFields({ value, onChange, defaultOpen, note, c
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-200 transition-colors"
+        className="flex items-center gap-1 text-xs text-fg-mute hover:text-fg transition-colors"
       >
         {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
         Source &amp; license
         {!open && hasAny && (
-          <span className="ml-1 text-gray-500">
+          <span className="ml-1 text-fg-dim">
             ({[licenseInfo(value.license).label, value.source_name].filter(Boolean).join(" · ")})
           </span>
         )}
@@ -53,7 +53,7 @@ export default function ProvenanceFields({ value, onChange, defaultOpen, note, c
 
       {open && (
         <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 8 }}>
-          {note && <p className="text-xs text-gray-500">{note}</p>}
+          {note && <p className="text-xs text-fg-dim">{note}</p>}
           <div>
             <label className="label" htmlFor={`${uid}-license`}>License</label>
             <LicenseSelect

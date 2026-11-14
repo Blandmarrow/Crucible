@@ -121,7 +121,7 @@ export default function BulkEditForm({ datasetId, imageIds, qualityFlags, subfol
       </div>
 
       {isClear && (
-        <p className="text-sm text-gray-400">
+        <p className="text-sm text-fg-mute">
           Empties every caption in scope and deletes its <code>.txt</code> file.
         </p>
       )}
@@ -205,7 +205,7 @@ export default function BulkEditForm({ datasetId, imageIds, qualityFlags, subfol
             ))}
           </div>
           {internalFlags.size > 0 && (
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-xs text-fg-dim mt-1">
               Will skip images flagged as: {[...internalFlags].map(f => FLAG_OPTIONS.find(o => o.key === f)?.label).join(" or ")}
             </p>
           )}
@@ -213,8 +213,8 @@ export default function BulkEditForm({ datasetId, imageIds, qualityFlags, subfol
       )}
 
       {/* Scope info */}
-      <p className="text-xs text-gray-500">
-        Scope: <span className="text-gray-400">{scopeLabel}</span>
+      <p className="text-xs text-fg-dim">
+        Scope: <span className="text-fg-mute">{scopeLabel}</span>
         {activeFlags.length > 0 && ", excluding flagged images"}
       </p>
 

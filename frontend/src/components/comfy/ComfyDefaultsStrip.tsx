@@ -63,7 +63,7 @@ export default function ComfyDefaultsStrip({ plan, disabled, onSavePins }: Props
           <span className="mono" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {displayValue(plan, p)}
           </span>
-          <span style={{ color: "var(--accent, var(--fg-mute))" }}>✎</span>
+          <span style={{ color: "var(--accent-text)" }}>✎</span>
         </button>
       ))}
 

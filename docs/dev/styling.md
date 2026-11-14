@@ -4,7 +4,7 @@ This file covers the frontend's visual layer plus the shared dialog layer: CSS c
 
 ### Design tokens and component classes
 
-Tailwind CSS v3 with a dark theme. Color tokens are CSS custom properties defined in `index.css` (`:root { --bg, --surface-1/2/3, --accent, --line, --fg, --warn, --bad, --info }`) and aliased in `tailwind.config.js` so they can be used as Tailwind classes. Geist/Geist Mono fonts are loaded via Google Fonts in `index.html`. Reusable component classes are defined in `frontend/src/index.css` under `@layer components`:
+Tailwind CSS v3 with two themes, dark (the default) and light (§ Two themes below). Color tokens are CSS custom properties defined in `index.css` (`:root { --bg, --surface-1/2/3, --accent, --line, --fg, --warn, --bad, --info }`) and aliased in `tailwind.config.js` so they can be used as Tailwind classes. Geist/Geist Mono fonts are loaded via Google Fonts in `index.html`. Reusable component classes are defined in `frontend/src/index.css` under `@layer components`:
 
 | Class | Purpose |
 |---|---|
@@ -26,6 +26,49 @@ Tailwind CSS v3 with a dark theme. Color tokens are CSS custom properties define
 | `.dialog-bg`, `.dialog` | Fixed full-screen dimmer (z-index 60) + centered modal panel (max-width 420px). Used by the Datasets page's modals (`components/datasets/`); `ConfirmDialog` predates these and uses its own Tailwind utilities instead |
 | `.ds-flash` | 2s accent `box-shadow` pulse marking a newly created dataset (`box-shadow`, not `border`, so nothing reflows) |
 
+### Two themes
+
+Light mode ("Studio grey", issue #19) is a second set of colour tokens under
+`:root[data-theme="light"]` in `index.css`; bare `:root` keeps the dark values, so a page with
+no `data-theme` is dark. Only colour tokens change. The user picks Dark, Light or Match system
+in Settings → UI Behavior, stored under `THEME_KEY` (`docs/dev/persistence.md`).
+
+- **The theme is set before first paint** by a blocking inline `<script>` in
+  `frontend/index.html`, which reads the key, resolves "system" through `matchMedia` and writes
+  a concrete `data-theme` plus `<meta name="theme-color">`. `utils/theme.ts` holds the same
+  logic for later changes (`setThemePref`, `applyTheme`), and `watchTheme()`, installed in
+  `main.tsx`, follows the OS setting while the choice is "system" and a change made in another
+  tab. The inline script spells the key `"crucible-theme"` itself, since it runs before any
+  module, so renaming `THEME_KEY` means editing both. `scripts/splash.html` carries a third
+  copy, with fill overrides that recolour the mark's cells for a light page without touching
+  the substituted markup. e2e: `settings.spec.ts` (applies at once, survives a reload, follows
+  the OS, set before parsing ends).
+- **Green as text is its own token.** `--accent` is a fill colour, and bright emerald on a light
+  surface is 2.5:1. Text, links and icons drawn in green use `--accent-text` (Tailwind
+  `text-accent-text`; hover shade `--accent-text-2`), which equals `--accent` in dark. Keep
+  `--accent` for fills, borders, rings and bars.
+- **`--on-accent`** is text or a mark drawn on an `--accent` fill (the primary button, a checked
+  box); near-black in both themes. `--good` is likewise dark green in light mode.
+- **No fixed Tailwind palette classes for UI** (`text-gray-500`, `border-gray-700`,
+  `text-red-400`, `hover:text-white`…): they ignore the theme. Use the token classes (`text-fg`,
+  `text-fg-mute`, `text-fg-dim`, `border-line`, `text-bad`, `text-warn`, `text-info`). Tints
+  are `color-mix(in srgb, var(--warn) 10%, transparent)`, not a hard-coded `rgba`, and popover
+  shadows use `--shadow-lg`.
+- **What stays the same in both themes, on purpose:** modal backdrops (`.dialog-bg`,
+  `bg-black/60`, `rgba(0,0,0,.55)`), and everything drawn *over an image or video* — the dark
+  chips on gallery thumbnails, the detection overlay, the crop matte, the lightbox buttons —
+  plus user label colours and `BBOX_COLORS`. A dark scrim reads on either page, and an overlay
+  answers to the image under it, not to the page.
+- **`.on-media`** goes on the container of such an overlay. It pins the text, status and
+  surface tokens to their dark values, so a chip that reads `var(--fg)` or `var(--good)` on
+  its fixed dark background stays legible in light mode; in dark mode it changes nothing.
+  Missing it is the failure this change hit twice (the video duration chip and the gallery
+  score chip went dark on dark). Don't put it around anything that opens a menu or popover in
+  place, which would inherit the dark tokens on a light panel.
+- **License badges** take a `lic-*` class from `constants/licenses.ts`'s `badge` field, defined
+  in `index.css` with a light-mode override each. A colour carried in a `.ts` constant is
+  invisible to a `.tsx`-only search, which is how they were missed by the first sweep.
+
 ### The brand mark
 
 **`CrucibleMark`** (`frontend/src/components/common/CrucibleMark.tsx`) — the brand mark: a 5×5 contact sheet that curates down to a C. Props: `size` (px, default 22), `animated`, `className`, `label`. Renders 25 rounded rects on a 64-unit viewBox; the `KEPT` set is the C, `BRIGHT` the four `--accent-2` cells, everything else the dropped grid at `--accent-dim`. Used at 22px in the Sidebar brand and 132px (animated) in the TopBar restart overlay. The **component** is token-driven — no hardcoded hex — so palette changes carry through automatically; both current callsites are decorative so the mark defaults to `aria-hidden`, and a callsite that stands alone should pass `label` to get `role="img"` + `aria-label`. The **app icon is not token-driven**: `frontend/public/favicon.svg` (a copy of `docs/images/crucible-icon.svg`) and the favicon/apple-touch PNGs hardcode the palette, because a standalone icon file is never in the document's CSS scope. On a palette change these must be re-exported by the designer and re-copied into `frontend/public/` — the CSS token change alone will not touch them.
@@ -38,7 +81,7 @@ The launcher's startup splash is the one copy that is **not** a transcription: `
 
 `animated` attaches the `.cm-keep-a/b` and `.cm-drop-a/b` classes whose keyframes live in `index.css`. One 9.2s cycle: the grid flickers as if sampling, non-C cells shrink to dots and return, then vanish, leaving the C. The A/B split is a checkerboard (`(indexOf(x) + indexOf(y)) % 2`) so neighbouring cells fire on offset timelines. A `prefers-reduced-motion: reduce` block resolves the mark to its static form rather than freezing it mid-cycle.
 
-**`--accent-dim` (`#0f6e4e`)** exists specifically for the mark's unresolved grid cells. It is *not* interchangeable with `--accent-deep` (`#064e3b`): at `--accent-deep` the dropped cells are dark enough that the C is already legible on frame one, which spoils the animation's reveal. Static cells use `--accent-dim` at `opacity .09` — the value the animation resolves to, and a near-exact match for `--accent-deep` once composited on `--bg`, which is why the static mark looks right either way and the difference only shows in motion.
+**`--accent-dim` (`#0f6e4e`; `#8fc7ae` in light mode, where the unlit cells must be *lighter* than the C to recede)** exists specifically for the mark's unresolved grid cells. It is *not* interchangeable with `--accent-deep` (`#064e3b`): at `--accent-deep` the dropped cells are dark enough that the C is already legible on frame one, which spoils the animation's reveal. Static cells use `--accent-dim` at `opacity .09` — the value the animation resolves to, and a near-exact match for `--accent-deep` once composited on `--bg`, which is why the static mark looks right either way and the difference only shows in motion.
 
 ### ConfirmDialog
 

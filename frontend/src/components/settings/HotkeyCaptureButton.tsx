@@ -90,7 +90,7 @@ export default function HotkeyCaptureButton({ value, onChange, ownerOf, disabled
         </button>
       )}
       {conflict && (
-        <span style={{ fontSize: 11.5, color: "var(--danger, #f87171)" }}>
+        <span style={{ fontSize: 11.5, color: "var(--bad)" }}>
           Used by “{conflict}”
         </span>
       )}

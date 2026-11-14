@@ -25,47 +25,47 @@ export default function PromptPresetManager({ currentModel, currentStyle, curren
   }
 
   return (
-    <div className="border border-gray-700 rounded">
+    <div className="border border-line rounded">
       <button
         type="button"
-        className="flex items-center justify-between w-full px-3 py-2 text-sm text-gray-300 hover:text-white transition-colors"
+        className="flex items-center justify-between w-full px-3 py-2 text-sm text-fg hover:text-fg transition-colors"
         onClick={() => setOpen((v) => !v)}
       >
         <span className="flex items-center gap-2">
           <BookOpen size={13} /> Presets
           {presets.length > 0 && (
-            <span className="text-xs text-gray-500">({presets.length})</span>
+            <span className="text-xs text-fg-dim">({presets.length})</span>
           )}
         </span>
         {open ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
       </button>
 
       {open && (
-        <div className="border-t border-gray-700 p-3 space-y-3">
+        <div className="border-t border-line p-3 space-y-3">
           {/* Saved presets list */}
           {presets.length === 0 ? (
-            <p className="text-xs text-gray-500">{emptyMessage}</p>
+            <p className="text-xs text-fg-dim">{emptyMessage}</p>
           ) : (
             <div className="space-y-1.5 max-h-48 overflow-y-auto">
               {presets.map((p) => (
                 <div
                   key={p.id}
-                  className="flex items-start gap-2 p-2 rounded border border-gray-700 hover:border-gray-500 group transition-colors"
+                  className="flex items-start gap-2 p-2 rounded border border-line hover:border-line-2 group transition-colors"
                 >
                   <button
                     type="button"
                     className="flex-1 text-left min-w-0"
                     onClick={() => onLoad(p)}
                   >
-                    <div className="text-xs font-medium text-gray-200 truncate">{p.name}</div>
-                    <div className="text-xs text-gray-500 truncate">
+                    <div className="text-xs font-medium text-fg truncate">{p.name}</div>
+                    <div className="text-xs text-fg-dim truncate">
                       {p.model} · {p.style}
                       {p.prompt && <span className="italic"> · "{p.prompt.slice(0, 40)}{p.prompt.length > 40 ? "…" : ""}"</span>}
                     </div>
                   </button>
                   <button
                     type="button"
-                    className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-red-400 transition-all p-0.5 shrink-0"
+                    className="opacity-0 group-hover:opacity-100 text-fg-dim hover:text-bad transition-all p-0.5 shrink-0"
                     onClick={() => remove(p.id)}
                     title="Delete preset"
                   >

@@ -69,7 +69,7 @@ function ChangeRow({ field, change }: { field: string; change: FieldChange }) {
         <span style={{ color: "var(--fg)" }}>processing</span>:{" "}
         {added.map((e, i) => (
           <span key={i} style={{
-            display: "inline-block", background: "#ff980022", border: "1px solid #ff980055",
+            display: "inline-block", background: "color-mix(in srgb, var(--warn) 13%, transparent)", border: "1px solid color-mix(in srgb, var(--warn) 33%, transparent)",
             borderRadius: 3, padding: "1px 5px", marginRight: 4, color: "var(--fg)",
           }}>
             +{formatProcessingEntry(e)}
@@ -77,7 +77,7 @@ function ChangeRow({ field, change }: { field: string; change: FieldChange }) {
         ))}
         {removed.map((e, i) => (
           <span key={i} style={{
-            display: "inline-block", background: "#f4433622", border: "1px solid #f4433655",
+            display: "inline-block", background: "color-mix(in srgb, var(--bad) 13%, transparent)", border: "1px solid color-mix(in srgb, var(--bad) 33%, transparent)",
             borderRadius: 3, padding: "1px 5px", marginRight: 4, color: "var(--fg)",
           }}>
             −{formatProcessingEntry(e)}
@@ -165,9 +165,9 @@ export default function DiffModal({ datasetId, versions, onClose }: Props) {
             <>
               <div style={{ display: "flex", gap: 12, marginBottom: 4 }}>
                 {[
-                  { label: "Added", count: diff.summary.added, color: "#4caf50" },
-                  { label: "Removed", count: diff.summary.removed, color: "#f44336" },
-                  { label: "Modified", count: diff.summary.modified, color: "#ff9800" },
+                  { label: "Added", count: diff.summary.added, color: "var(--good)" },
+                  { label: "Removed", count: diff.summary.removed, color: "var(--bad)" },
+                  { label: "Modified", count: diff.summary.modified, color: "var(--warn)" },
                   { label: "Unchanged", count: diff.summary.unchanged, color: "var(--fg-mute)" },
                 ].map((s) => (
                   <div key={s.label} style={{ textAlign: "center", flex: 1 }}>
@@ -177,7 +177,7 @@ export default function DiffModal({ datasetId, versions, onClose }: Props) {
                 ))}
               </div>
 
-              <Section title="Added" color="#4caf50" count={diff.added.length} defaultOpen={diff.added.length > 0}>
+              <Section title="Added" color="var(--good)" count={diff.added.length} defaultOpen={diff.added.length > 0}>
                 {diff.added.map((item, i) => (
                   <div key={i} style={{ fontSize: 12, padding: "3px 0", borderBottom: "1px solid var(--line)", display: "flex", gap: 8 }}>
                     <span style={{ fontFamily: "Geist Mono, monospace", flex: 1 }}>{item.filename}</span>
@@ -186,7 +186,7 @@ export default function DiffModal({ datasetId, versions, onClose }: Props) {
                 ))}
               </Section>
 
-              <Section title="Removed" color="#f44336" count={diff.removed.length} defaultOpen={diff.removed.length > 0}>
+              <Section title="Removed" color="var(--bad)" count={diff.removed.length} defaultOpen={diff.removed.length > 0}>
                 {diff.removed.map((item, i) => (
                   <div key={i} style={{ fontSize: 12, padding: "3px 0", borderBottom: "1px solid var(--line)", display: "flex", gap: 8 }}>
                     <span style={{ fontFamily: "Geist Mono, monospace", flex: 1 }}>{item.filename}</span>
@@ -195,7 +195,7 @@ export default function DiffModal({ datasetId, versions, onClose }: Props) {
                 ))}
               </Section>
 
-              <Section title="Modified" color="#ff9800" count={diff.modified.length} defaultOpen={diff.modified.length > 0}>
+              <Section title="Modified" color="var(--warn)" count={diff.modified.length} defaultOpen={diff.modified.length > 0}>
                 {diff.modified.map((item, i) => (
                   <div key={i} style={{ fontSize: 12, padding: "6px 0", borderBottom: "1px solid var(--line)" }}>
                     <div style={{ fontFamily: "Geist Mono, monospace", marginBottom: 3 }}>{item.filename}</div>

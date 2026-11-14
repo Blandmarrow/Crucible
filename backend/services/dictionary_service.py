@@ -30,6 +30,7 @@ import unicodedata
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.error import URLError
 
 from backend.config import settings
 from backend.downloads import DownloadCancelled, DownloadHashMismatch, download_verified, part_path
@@ -210,15 +211,24 @@ async def _install() -> None:
             "The downloaded dictionary is not the expected file, so it was not used. "
             "Try again later."
         )
+    # The message reaches the browser through `status()`, so it is a fixed string chosen
+    # by the exception's type and never interpolates the exception: an OSError's text
+    # names local paths, and a stray exception's text is anything at all. The log keeps
+    # the detail, which is why each message points at Logs.
     except DictionaryError as e:
         logger.error("Dictionary conversion failed: %s", e)
-        _fail(f"Could not build the dictionary: {e}")
-    except OSError as e:
+        _fail("The downloaded dictionary is not in the expected format, so it was not used. "
+              "See Logs for the details.")
+    except (URLError, ConnectionError, TimeoutError) as e:  # URLError covers HTTPError
         logger.warning("Dictionary download failed: %s", e)
-        _fail(f"Could not download the dictionary ({e}). Check the connection and retry.")
-    except Exception as e:  # never let the task die silently
+        _fail("Could not download the dictionary. Check the connection and retry.")
+    except OSError as e:
+        logger.warning("Dictionary install failed: %s", e)
+        _fail("Could not save the dictionary. Check the free disk space, and see Logs "
+              "for the details.")
+    except Exception:  # never let the task die silently
         logger.exception("Dictionary install failed")
-        _fail(f"Could not install the dictionary: {e}")
+        _fail("Could not install the dictionary. See Logs for the details.")
 
 
 def _fail(message: str) -> None:

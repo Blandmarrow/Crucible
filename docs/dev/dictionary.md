@@ -53,8 +53,11 @@ in the global progress bar or the Logs page.
 - `sweep_leftovers()` at startup removes what a killed process left behind, and logs
   rather than raises on a file the OS will not release. A leftover is never trusted.
 - Failures land in `_progress.error` as one sentence the UI shows as it is: a hash
-  mismatch, a conversion error, or an `OSError` from the transport. A failed state lasts
-  until the next install or removal.
+  mismatch, a conversion error, a network error, a disk error, or anything else. **The
+  sentence is fixed per exception type and never interpolates the exception** — it
+  reaches the browser through `status()`, an `OSError`'s text names local paths, and
+  CodeQL's `py/stack-trace-exposure` flagged the `{e}` it once carried (alerts #111–#113).
+  The log keeps the detail. A failed state lasts until the next install or removal.
 - **Remove unlinks the database first**, through `utils.unlink_retrying`, then the rest
   of the folder. On Windows a lookup or status read holding the file open blocks the
   delete, and the `FileInUseError` becomes `main.py`'s 409. The folder used to go first:

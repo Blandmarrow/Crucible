@@ -165,7 +165,9 @@ def test_an_unexpected_archive_member_is_refused(tmp_path, monkeypatch):
 
     status = run(scenario())
     assert status["state"] == "failed"
-    assert "unexpected file" in status["error"]
+    assert "not in the expected format" in status["error"]
+    # The archive's member names stay in the log, never in what the browser is sent.
+    assert "evil" not in status["error"]
     assert not d.db_path().exists()
 
 
@@ -178,6 +180,7 @@ def test_without_a_network_the_install_fails_visibly(tmp_path):
     status = run(scenario())
     assert status["state"] == "failed"
     assert status["error"].startswith("Could not download the dictionary")
+    assert "no network in tests" not in status["error"]  # the exception's text stays in the log
 
 
 def test_sweep_removes_what_an_unfinished_install_left(tmp_path):

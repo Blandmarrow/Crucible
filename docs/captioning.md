@@ -103,7 +103,10 @@ Available on the Captioning page. The gallery's **Caption** action has none of t
 captions exactly the selected images, captioned or not, and its delimiter mode decides
 whether a new caption replaces or joins the old one.
 
-- **Scope** — All images, Uncaptioned only, or Selected images
+- **Scope** — All images, Uncaptioned only, or Selected images. The selection is not kept
+  when you reload the page, so *Selected* with nothing selected in this dataset blocks Run
+  (and Run Detection) with a note, rather than captioning the whole dataset. Pick images in
+  the gallery, then open the Captioning page from the sidebar.
 - **Minimum aesthetic score** — skip images below this score (requires aesthetic scoring to have been run first)
 - **Exclude quality flags** — skip images flagged as blurry, noisy, near-uniform, watermarked, duplicate, NSFW, or AI artifacts
 - **Subfolder** — scope the run to a specific subfolder (shown when subfolders exist)

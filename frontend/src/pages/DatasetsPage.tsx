@@ -748,7 +748,7 @@ export default function DatasetsPage() {
           <div style={{
             position: "absolute", inset: 0, zIndex: 10, pointerEvents: "none",
             background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center",
-            color: "var(--accent-text)", fontSize: 12, fontWeight: 600,
+            color: "var(--accent)", fontSize: 12, fontWeight: 600,
           }}>
             Drop to upload
           </div>

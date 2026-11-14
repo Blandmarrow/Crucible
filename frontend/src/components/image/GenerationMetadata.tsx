@@ -43,7 +43,7 @@ export default function GenerationMetadata({ metadata }: Props) {
     <div className="border-t border-line mt-2 pt-2">
       <button
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-1.5 w-full text-left text-xs font-medium text-fg uppercase tracking-wide hover:text-fg transition-colors"
+        className="flex items-center gap-1.5 w-full text-left text-xs font-medium text-fg uppercase tracking-wide hover:text-fg-strong transition-colors"
       >
         <Cpu size={12} className="text-accent-text" />
         GENERATION METADATA

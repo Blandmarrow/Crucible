@@ -51,7 +51,10 @@ in Settings → UI Behavior, stored under `THEME_KEY` (`docs/dev/persistence.md`
   box); near-black in both themes. `--good` is likewise dark green in light mode.
 - **No fixed Tailwind palette classes for UI** (`text-gray-500`, `border-gray-700`,
   `text-red-400`, `hover:text-white`…): they ignore the theme. Use the token classes (`text-fg`,
-  `text-fg-mute`, `text-fg-dim`, `border-line`, `text-bad`, `text-warn`, `text-info`). Tints
+  `text-fg-mute`, `text-fg-dim`, `text-fg-soft`, `border-line`, `text-bad`, `text-warn`,
+  `text-info`, `text-orange`). A hover that brightens text already at `--fg` uses
+  `hover:text-fg-strong` (white in dark, black in light); `hover:text-fg` there is a no-op.
+  `orange` replaces Tailwind's own orange scale in `tailwind.config.js`. Tints
   are `color-mix(in srgb, var(--warn) 10%, transparent)`, not a hard-coded `rgba`, and popover
   shadows use `--shadow-lg`.
 - **What stays the same in both themes, on purpose:** modal backdrops (`.dialog-bg`,

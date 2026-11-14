@@ -129,7 +129,7 @@ export default function StyleReferencePicker({
       <div>
         <p className="text-xs text-fg-dim mb-1.5">
           From local files{" "}
-          <span className="text-fg-dim">— embedded on-the-fly, no pre-computation needed</span>
+          <span className="text-fg-soft">— embedded on-the-fly, no pre-computation needed</span>
         </p>
         {externalFiles.length > 0 && (
           <div className="grid grid-cols-6 gap-1.5 mb-2">

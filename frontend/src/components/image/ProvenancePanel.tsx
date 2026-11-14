@@ -95,7 +95,7 @@ export default function ProvenancePanel({ image }: Props) {
     <div className="border-t border-line mt-2 pt-2">
       <button
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-1.5 w-full text-left text-xs font-medium text-fg uppercase tracking-wide hover:text-fg transition-colors"
+        className="flex items-center gap-1.5 w-full text-left text-xs font-medium text-fg uppercase tracking-wide hover:text-fg-strong transition-colors"
       >
         <ScrollText size={12} className="text-accent-text" />
         SOURCE &amp; LICENSE
@@ -131,7 +131,7 @@ export default function ProvenancePanel({ image }: Props) {
                     <div key={key} className="contents">
                       <span className="text-fg-dim">
                         {label}
-                        {inherited.has(key) && <span className="text-fg-dim"> (inherited)</span>}
+                        {inherited.has(key) && <span className="text-fg-soft"> (inherited)</span>}
                       </span>
                       {/* A source URL is scraped/EXIF data — only http(s) becomes
                           a link, anything else renders as inert text. */}

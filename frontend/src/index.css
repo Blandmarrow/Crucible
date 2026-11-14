@@ -15,6 +15,8 @@
     --fg-mute: #9aa6a3;
     --fg-dim: #5e6a68;
     --fg-soft: #404a48;
+    /* A step past --fg, for a hover that brightens text already at --fg. */
+    --fg-strong: #ffffff;
 
     --accent: #10b981;
     --accent-2: #34d399;
@@ -74,6 +76,7 @@
     --fg-mute: #40474a;
     --fg-dim: #5f6866;
     --fg-soft: #7c8482;
+    --fg-strong: #000000;
 
     --accent: #10b981;
     --accent-2: #0ea472;

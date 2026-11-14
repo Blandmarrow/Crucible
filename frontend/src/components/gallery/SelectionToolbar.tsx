@@ -691,7 +691,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
               <div
                 key={m.id}
                 className={`flex items-center gap-3 p-2.5 rounded border cursor-pointer transition-colors text-sm ${
-                  captionModel === m.id ? "border-accent bg-accent/10" : "border-line hover:border-line-2"
+                  captionModel === m.id ? "border-accent bg-accent/10" : "border-line-2 hover:border-fg-dim"
                 }`}
                 onClick={() => { setCaptionModel(m.id); setCaptionStyle("detailed"); setCaptionProviderModel(""); }}
               >
@@ -710,7 +710,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
                   <div
                     key={m.id}
                     className={`flex items-center gap-3 p-2.5 rounded border cursor-pointer transition-colors text-sm ${
-                      captionModel === m.id ? "border-accent bg-accent/10" : "border-line hover:border-line-2"
+                      captionModel === m.id ? "border-accent bg-accent/10" : "border-line-2 hover:border-fg-dim"
                     }`}
                     onClick={() => { setCaptionModel(m.id); setCaptionStyle("detailed"); setCaptionProviderModel(""); }}
                   >
@@ -727,7 +727,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
                   <div
                     key={m.id}
                     className={`flex items-center gap-3 p-2.5 rounded border cursor-pointer transition-colors text-sm ${
-                      captionModel === m.id ? "border-accent bg-accent/10" : "border-line hover:border-line-2"
+                      captionModel === m.id ? "border-accent bg-accent/10" : "border-line-2 hover:border-fg-dim"
                     }`}
                     onClick={() => { setCaptionModel(m.id); setCaptionStyle("detailed"); setCaptionProviderModel(""); }}
                   >
@@ -750,7 +750,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
                     <div key={p.id}>
                       <div
                         className={`flex items-center gap-3 p-2.5 rounded border cursor-pointer transition-colors text-sm ${
-                          isSelected ? "border-accent bg-accent/10" : "border-line hover:border-line-2"
+                          isSelected ? "border-accent bg-accent/10" : "border-line-2 hover:border-fg-dim"
                         }`}
                         onClick={() => { setCaptionModel(baseId); setCaptionProviderModel(p.default_model); }}
                       >
@@ -783,7 +783,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
                     <div key={p.id}>
                       <div
                         className={`flex items-center gap-3 p-2.5 rounded border cursor-pointer transition-colors text-sm ${
-                          isSelected ? "border-accent bg-accent/10" : "border-line hover:border-line-2"
+                          isSelected ? "border-accent bg-accent/10" : "border-line-2 hover:border-fg-dim"
                         }`}
                         onClick={() => { setCaptionModel(baseId); setCaptionProviderModel(p.default_model); }}
                       >

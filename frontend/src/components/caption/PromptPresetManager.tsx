@@ -28,7 +28,7 @@ export default function PromptPresetManager({ currentModel, currentStyle, curren
     <div className="border border-line rounded">
       <button
         type="button"
-        className="flex items-center justify-between w-full px-3 py-2 text-sm text-fg hover:text-fg transition-colors"
+        className="flex items-center justify-between w-full px-3 py-2 text-sm text-fg hover:text-fg-strong transition-colors"
         onClick={() => setOpen((v) => !v)}
       >
         <span className="flex items-center gap-2">
@@ -50,7 +50,7 @@ export default function PromptPresetManager({ currentModel, currentStyle, curren
               {presets.map((p) => (
                 <div
                   key={p.id}
-                  className="flex items-start gap-2 p-2 rounded border border-line hover:border-line-2 group transition-colors"
+                  className="flex items-start gap-2 p-2 rounded border border-line-2 hover:border-fg-dim group transition-colors"
                 >
                   <button
                     type="button"

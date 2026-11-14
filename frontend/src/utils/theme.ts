@@ -56,6 +56,7 @@ export function watchTheme(): void {
     if (getThemePref() === "system") applyTheme("system");
   });
   window.addEventListener("storage", (e) => {
-    if (e.key === THEME_KEY) applyTheme();
+    // A null key is localStorage.clear() in another tab: back to the default.
+    if (e.key === THEME_KEY || e.key === null) applyTheme();
   });
 }

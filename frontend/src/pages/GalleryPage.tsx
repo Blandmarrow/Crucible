@@ -2275,7 +2275,7 @@ export default function GalleryPage() {
               <svg width="40" height="40" viewBox="0 0 16 16" fill="none" stroke="var(--accent)" strokeWidth="1.2">
                 <path d="M8 10V2M5 5l3-3 3 3M2.5 13.5h11"/>
               </svg>
-              <p style={{ margin: "12px 0 0", color: "var(--accent-text)", fontSize: 15, fontWeight: 600 }}>
+              <p style={{ margin: "12px 0 0", color: "var(--accent)", fontSize: 15, fontWeight: 600 }}>
                 Drop images to upload
               </p>
             </div>

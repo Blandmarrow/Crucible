@@ -25,6 +25,7 @@ export default {
           mute: "var(--fg-mute)",
           dim: "var(--fg-dim)",
           soft: "var(--fg-soft)",
+          strong: "var(--fg-strong)",
         },
         accent: {
           DEFAULT: "var(--accent)",
@@ -37,6 +38,9 @@ export default {
           text: "var(--accent-text)",
         },
         "on-accent": "var(--on-accent)",
+        // Replaces Tailwind's own orange scale, which nothing uses: the UI takes
+        // its orange from this token so it follows the theme.
+        orange: "var(--orange)",
         good: { DEFAULT: "var(--good)", bg: "var(--good-bg)" },
         warn: { DEFAULT: "var(--warn)", bg: "var(--warn-bg)" },
         bad: { DEFAULT: "var(--bad)", bg: "var(--bad-bg)" },

@@ -1735,9 +1735,9 @@ export default function ImageDetailPage() {
               >
                 {currentIndex + 1} / {navCtx.ids.length}
                 {navTotal !== undefined && navTotal > navCtx.ids.length && (
-                  <span className="ml-1 text-fg-dim">· {navTotal}</span>
+                  <span className="ml-1 text-fg-soft">· {navTotal}</span>
                 )}
-                {navCtx.page > 1 && <span className="ml-1 text-fg-dim">p.{navCtx.page}</span>}
+                {navCtx.page > 1 && <span className="ml-1 text-fg-soft">p.{navCtx.page}</span>}
               </span>
               <button
                 className="btn-ghost btn-sm p-1"
@@ -2359,7 +2359,7 @@ export default function ImageDetailPage() {
             {image.uniformity_score !== null && image.uniformity_score !== undefined && (
               <>
                 <span className="text-fg-dim">Uniformity</span>
-                <span className={isUniform ? "text-warn" : ""}>
+                <span className={isUniform ? "text-orange" : ""}>
                   {image.uniformity_score.toFixed(1)}{isUniform ? " (flat)" : ""}
                 </span>
               </>
@@ -2611,7 +2611,7 @@ export default function ImageDetailPage() {
           {/* AI Generate section */}
           <div className="border-t border-line pt-3">
             <button
-              className="flex items-center justify-between w-full text-sm font-medium text-fg hover:text-fg transition-colors"
+              className="flex items-center justify-between w-full text-sm font-medium text-fg hover:text-fg-strong transition-colors"
               onClick={() => setShowAi((v) => !v)}
             >
               <span className="flex items-center gap-2">
@@ -2645,7 +2645,7 @@ export default function ImageDetailPage() {
                       key={m.id}
                       title={m.description}
                       className={`flex items-center gap-2 p-2 rounded border cursor-pointer text-xs transition-colors ${
-                        aiModel === m.id ? "border-accent bg-accent/10" : "border-line hover:border-line-2"
+                        aiModel === m.id ? "border-accent bg-accent/10" : "border-line-2 hover:border-fg-dim"
                       }`}
                       onClick={() => { setAiModel(m.id); setAiStyle("detailed"); setAiProviderModel(""); }}
                     >
@@ -2661,7 +2661,7 @@ export default function ImageDetailPage() {
                         <div
                           key={m.id}
                           className={`flex items-center gap-2 p-2 rounded border cursor-pointer text-xs transition-colors ${
-                            aiModel === m.id ? "border-accent bg-accent/10" : "border-line hover:border-line-2"
+                            aiModel === m.id ? "border-accent bg-accent/10" : "border-line-2 hover:border-fg-dim"
                           }`}
                           onClick={() => { setAiModel(m.id); setAiStyle("detailed"); setAiProviderModel(""); }}
                         >
@@ -2678,7 +2678,7 @@ export default function ImageDetailPage() {
                           key={m.id}
                           title={m.description}
                           className={`flex items-center gap-2 p-2 rounded border cursor-pointer text-xs transition-colors ${
-                            aiModel === m.id ? "border-accent bg-accent/10" : "border-line hover:border-line-2"
+                            aiModel === m.id ? "border-accent bg-accent/10" : "border-line-2 hover:border-fg-dim"
                           }`}
                           onClick={() => { setAiModel(m.id); setAiStyle("detailed"); setAiProviderModel(""); }}
                         >
@@ -2697,7 +2697,7 @@ export default function ImageDetailPage() {
                           <div key={p.id}>
                             <div
                               className={`flex items-center gap-2 p-2 rounded border cursor-pointer text-xs transition-colors ${
-                                isSelected ? "border-accent bg-accent/10" : "border-line hover:border-line-2"
+                                isSelected ? "border-accent bg-accent/10" : "border-line-2 hover:border-fg-dim"
                               }`}
                               onClick={() => { setAiModel(baseId); setAiProviderModel(p.default_model); }}
                             >
@@ -2730,7 +2730,7 @@ export default function ImageDetailPage() {
                           <div key={p.id}>
                             <div
                               className={`flex items-center gap-2 p-2 rounded border cursor-pointer text-xs transition-colors ${
-                                isSelected ? "border-accent bg-accent/10" : "border-line hover:border-line-2"
+                                isSelected ? "border-accent bg-accent/10" : "border-line-2 hover:border-fg-dim"
                               }`}
                               onClick={() => { setAiModel(baseId); setAiProviderModel(p.default_model); }}
                             >

@@ -776,7 +776,7 @@ function BucketPanel({
                     </button>
 
                     {confirmDeleteId === img.id ? (
-                      <div style={{ position: "absolute", inset: 0, borderRadius: "var(--r)", background: "rgba(0,0,0,.85)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, zIndex: 10 }}>
+                      <div className="on-media" style={{ position: "absolute", inset: 0, borderRadius: "var(--r)", background: "rgba(0,0,0,.85)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, zIndex: 10 }}>
                         <span style={{ fontSize: 11, color: "var(--bad)", fontWeight: 500 }}>Remove?</span>
                         <div style={{ display: "flex", gap: 4 }}>
                           <button onClick={(e) => { e.stopPropagation(); handleDelete(img.id); }} className="btn sm danger" style={{ fontSize: 11 }}>Yes</button>
@@ -846,7 +846,7 @@ function CooccurrenceHeatmap({ tags, matrix }: { tags: string[]; matrix: number[
               return (
                 <div
                   key={colTag}
-                  style={{ width: CELL, minWidth: CELL, height: CELL, background: bg, border: "1px solid var(--line)", cursor: "default", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, color: val > 0 ? "rgba(255,255,255,.6)" : "transparent" }}
+                  style={{ width: CELL, minWidth: CELL, height: CELL, background: bg, border: "1px solid var(--line)", cursor: "default", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, color: val > 0 ? "color-mix(in srgb, var(--fg) 60%, transparent)" : "transparent" }}
                   onMouseMove={(e) => setTooltip({ x: e.clientX, y: e.clientY, text: isDiag ? `${rowTag}: ${val} images` : `${rowTag} + ${colTag}: ${val} images` })}
                   onMouseLeave={() => setTooltip(null)}
                 >

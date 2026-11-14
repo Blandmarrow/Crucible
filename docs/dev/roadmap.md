@@ -33,8 +33,9 @@ restates its stages.
 
 ## Next session (updated 2026-11-14, empty-selection fix merged)
 
-1. **M11 goes on with Tier 2** (see Now): #9, #16, then #19. #48 waits on a question to its
-   reporter, and #19 on the user picking a light palette. M7's Stage 3 waits behind M11,
+1. **M11 goes on with Tier 3** (see Now), unless the user has picked a light palette for
+   #19, the one Tier 2 item left. The user parked #9 and #16 on 2026-11-14 (under Later).
+   #48 waits on a question to its reporter. M7's Stage 3 waits behind M11,
    under Waiting.
 2. M4 stays held, with its merge checklist under Waiting. The closed items of the previous
    blocks, the two scope bugs and their fixes (PRs #160 and #161), are in
@@ -45,7 +46,8 @@ restates its stages.
 ### M11 — Open enhancement issues
 
 Ordered first by the user on 2026-11-13, ahead of M7's Stage 3 (now under Waiting). It holds
-every open GitHub issue labelled `enhancement` except #90, which stays parked under Later.
+every open GitHub issue labelled `enhancement` except #90, #9 and #16, which stay parked
+under Later.
 Each issue holds the *what*; a box adds only the code pointer found when the issues were
 reviewed. Gate: each box ships with its user docs (`README.md` and the matching
 `docs/*.md`), on its own branch unless it says otherwise. The two design-first items get a
@@ -69,12 +71,6 @@ Tier 1, small:
 
 Tier 2, medium:
 
-- [ ] #9 Duplicates across datasets: a read-only report job. The `phash` scan
-  (`find_duplicates_sync` in `backend/ml/technical_scorer.py`) already scales; the duplicate
-  flag stays per dataset and the report writes none (CLAUDE.md § Key invariants, PM-022).
-- [ ] #16 Keyboard navigation: the file browser first (arrows, Enter, Backspace). Only
-  `ContextMenu` handles arrow keys today. The rest of the app is a separate box, added once
-  this lands.
 - [ ] #19 Light mode: a second set of the colour tokens on `:root` in
   `frontend/src/index.css`, a setting to switch, then the hard-coded colours moved onto
   tokens: about 160 hex or rgba values in `.tsx` files and about 200 fixed gray, white or
@@ -233,6 +229,21 @@ Each line links the record that holds the full text.
   caller's own frontend is the only guard; `services/image_scope.py`, detection, inpaint,
   upscale and LUT read `[]` as nothing. The user chose on 2026-11-14 to fix only the
   Captioning page's empty *Selected* scope (PR #161) and leave the routes as they are.
+- Duplicates across datasets (issue #9), taken out of M11 and parked by the user on
+  2026-11-14. The shape found when it was reviewed: a read-only report job. The `phash` scan
+  (`find_duplicates_sync` in `backend/ml/technical_scorer.py`) already scales; the duplicate
+  flag stays per dataset and the report writes none (CLAUDE.md § Key invariants, PM-022).
+- Keyboard navigation (issue #16), taken out of M11 and parked by the user on 2026-11-14
+  after a scope estimate for the whole app. Today there is almost no focus ring (one
+  `:focus-visible` rule), about 46 clickable `div`s in 13 files that Tab cannot reach
+  (gallery cards hold buttons, so they need `tabIndex` and a role, not `<button>`), and about
+  15 window `keydown` listeners whose text-field guards are spelled four ways (one helper
+  exists, `frontend/src/utils/keyboard.ts`). The phases proposed: a focus ring and one shared
+  guard; the file browser (arrows, Enter, Backspace); the clickable `div`s; gallery grid
+  arrows, the risky one (clashes with the detail page's arrows, the crop nudge,
+  `VideoStrip`, `ComfyPage`'s capture listener, and every key needing the active-pane check);
+  page shortcuts and a `?` help screen. Each phase adds Playwright key tests, since none
+  exist.
 - Face similarity (issue #90), researched 2026-11-13 and parked by the user. The pick is
   YuNet to find faces and SFace to compare them. Both are built into OpenCV, so there is no
   new dependency, and their weights are MIT and Apache-2.0. InsightFace was rejected because

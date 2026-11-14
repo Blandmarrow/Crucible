@@ -31,15 +31,13 @@ restates its stages.
    linking the record that holds the full text.
 5. **Landed**: one line per finished milestone or handoff record.
 
-## Next session (updated 2026-11-14, #45 built)
+## Next session (updated 2026-11-14, #45 merged)
 
-1. **#45 Other captions is built** on `feat/m11-other-captions` (see Now): merge its PR
-   once CI is green and the user agrees.
-2. **#50 Check tags comes next**, then #52, three PRs in all. Open #50's branch by splitting
+1. **#50 Check tags comes next**, then #52, three PRs in all. Open #50's branch by splitting
    `docs/dev/image-detail.md` along the seam in
    [pending-splits.md](pending-splits.md), since both PRs add to its caption panel. #48
    waits on a question to its reporter, and M7's Stage 3 waits behind M11, under Waiting.
-3. M4 stays held, with its merge checklist under Waiting. The closed items of the previous
+2. M4 stays held, with its merge checklist under Waiting. The closed items of the previous
    blocks, the two scope bugs and their fixes (PRs #160 and #161), are in
    [roadmap-archive/handoff-2026-11-14.md](roadmap-archive/handoff-2026-11-14.md).
 
@@ -83,10 +81,10 @@ Tier 3, captioning helpers, one batch: three PRs in this order, by the user's ch
 2026-11-14. Each helper sits in the detail page's caption panel and changes only the
 unsaved draft.
 
-- [ ] #45 Other images' captions: a similar-images panel on the detail page, ranked by
-  shared tags, detected objects, the stored CLIP vector or recency. The user ruled on
-  2026-11-14 that it looks inside the current dataset only. Branch
-  `feat/m11-other-captions`.
+- [x] #45 Other images' captions: merged 2026-11-14 as PR #163, which closes the issue. An
+  *Other captions* section in the detail page's caption panel, ranked by shared tags,
+  detected objects, the stored CLIP vector or recency, inside the current dataset only (the
+  user's ruling of 2026-11-14) (`docs/dev/image-detail.md` § Other captions panel).
 - [ ] #50 Check for a better tag: post counts and aliases through the booru routes
   (`/search` and `/autocomplete` in `backend/routers/booru.py`). Overlaps
   `TagConsolidatePage`. Run only on a button press, since it sends the caption's tags to

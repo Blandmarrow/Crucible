@@ -31,12 +31,11 @@ restates its stages.
    linking the record that holds the full text.
 5. **Landed**: one line per finished milestone or handoff record.
 
-## Next session (updated 2026-11-14, light mode built)
+## Next session (updated 2026-11-14, light mode merged)
 
-1. **Light mode (#19) is on `feat/light-mode`**, awaiting the user's look and merge. After it,
-   M11 goes on with Tier 3 (see Now). The user parked #9 and #16 on 2026-11-14 (under
-   Later). #48 waits on a question to its reporter. M7's Stage 3 waits behind M11, under
-   Waiting.
+1. **M11 goes on with Tier 3** (see Now): #45, #50 and #52, one batch. Tier 2 is closed:
+   #19, light mode, merged as PR #162, and the user parked #9 and #16 (under Later). #48
+   waits on a question to its reporter. M7's Stage 3 waits behind M11, under Waiting.
 2. M4 stays held, with its merge checklist under Waiting. The closed items of the previous
    blocks, the two scope bugs and their fixes (PRs #160 and #161), are in
    [roadmap-archive/handoff-2026-11-14.md](roadmap-archive/handoff-2026-11-14.md).
@@ -71,11 +70,11 @@ Tier 1, small:
 
 Tier 2, medium:
 
-- [x] #19 Light mode: built on `feat/light-mode`. The user picked "Studio grey" from five
-  drafts on 2026-11-14, with a Dark / Light / Match system choice in Settings → UI Behavior,
-  dark the default. A second token block under `:root[data-theme="light"]`, set before first
-  paint, plus `--accent-text` and `--on-accent`; about 60 files swept onto tokens
-  (`docs/dev/styling.md` § Two themes).
+- [x] #19 Light mode: merged 2026-11-14 as PR #162, which closes the issue. The user picked
+  "Studio grey" from five drafts that day, with a Dark / Light / Match system choice in
+  Settings → UI Behavior, dark the default. A second token block under
+  `:root[data-theme="light"]`, set before first paint, plus `--accent-text` and
+  `--on-accent`; about 60 files swept onto tokens (`docs/dev/styling.md` § Two themes).
 
 Tier 3, captioning helpers, one batch:
 

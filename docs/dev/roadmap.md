@@ -31,15 +31,12 @@ restates its stages.
    linking the record that holds the full text.
 5. **Landed**: one line per finished milestone or handoff record.
 
-## Next session (updated 2026-11-14, #50 built)
+## Next session (updated 2026-11-14, #50 merged)
 
-1. **#50 Check tags is built** on `feat/m11-check-tags` (see Now): open its PR, and merge
-   once CI is green and the user agrees. It also fixes the Booru page's Safebooru search,
-   which Cloudflare had been turning away.
-2. **#52 Synonyms comes next**, the last of Tier 3, adding to `docs/dev/caption-editor.md`.
+1. **#52 Synonyms comes next**, the last of Tier 3, adding to `docs/dev/caption-editor.md`.
    #48 waits on a question to its reporter, and M7's Stage 3 waits behind M11, under
    Waiting.
-3. M4 stays held, with its merge checklist under Waiting. The closed items of the previous
+2. M4 stays held, with its merge checklist under Waiting. The closed items of the previous
    blocks, the two scope bugs and their fixes (PRs #160 and #161), are in
    [roadmap-archive/handoff-2026-11-14.md](roadmap-archive/handoff-2026-11-14.md).
 
@@ -87,7 +84,7 @@ unsaved draft.
   *Other captions* section in the detail page's caption panel, ranked by shared tags,
   detected objects, the stored CLIP vector or recency, inside the current dataset only (the
   user's ruling of 2026-11-14) (`docs/dev/caption-editor.md` § Other captions panel).
-- [ ] #50 Check for a better tag: built 2026-11-14 on `feat/m11-check-tags`, PR to open.
+- [x] #50 Check for a better tag: merged 2026-11-14 as PR #164, which closes the issue.
   A **Check tags on Danbooru** button in the caption panel, press-only, through a new
   `POST /booru/check`. It flags aliases, rare tags (under 100 posts with a close tag holding
   at least 100 times more, the user's rule of 2026-11-14) and unknown ones, and an outage

@@ -29,6 +29,7 @@ import ResolutionPicker from "../components/caption/ResolutionPicker";
 import GenerationMetadata from "../components/image/GenerationMetadata";
 import LabelsPanel from "../components/image/LabelsPanel";
 import ProvenancePanel from "../components/image/ProvenancePanel";
+import OtherCaptionsPanel from "../components/caption/OtherCaptionsPanel";
 import StyleMatchPanel from "../components/image/StyleMatchPanel";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import ModelPicker from "../components/providers/ModelPicker";
@@ -50,7 +51,7 @@ import { injectNavId, navIdsParams, navPageParams, readNavContext, removeNavId, 
 import { isTextEntryTarget } from "../utils/keyboard";
 import { useAssignImageLabels, useLabels } from "../hooks/useLabels";
 import { useTokenCount } from "../utils/tokenCount";
-import { imagesCountKey, invalidateDatasetContentScope } from "../constants/queryKeys";
+import { imagesCountKey, invalidateDatasetContentScope, similarCaptionsScope } from "../constants/queryKeys";
 import { TERMINAL_JOB_STATUSES } from "../constants/jobs";
 import type { ImageFilterParams } from "../api/images";
 import { useStyleDistribution } from "../hooks/useStyleDistribution";
@@ -1009,6 +1010,7 @@ export default function ImageDetailPage() {
       const isFix = aiJob.undoText !== undefined;
       qc.invalidateQueries({ queryKey: ["caption", aiJob.imageId] });
       qc.invalidateQueries({ queryKey: ["images", aiJob.datasetId] });
+      qc.invalidateQueries({ queryKey: similarCaptionsScope(aiJob.datasetId) });
       setAiJob(null);
       // A caption job ends `completed` even when its one image failed (a timeout, a 429,
       // a refusal stripped to nothing): the loss is carried by `caption_summary`'s
@@ -1256,6 +1258,7 @@ export default function ImageDetailPage() {
     qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
     qc.invalidateQueries({ queryKey: ["score-values", datasetId] });
     qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
+    qc.invalidateQueries({ queryKey: similarCaptionsScope(datasetId) });
   };
 
   // Every id below comes from the mutation's variables, captured at click time —
@@ -1299,6 +1302,7 @@ export default function ImageDetailPage() {
             settleCaptionWrite(id, t, result);
             dropFixUndo(id);
             qc.invalidateQueries({ queryKey: ["images", dsId] });
+            qc.invalidateQueries({ queryKey: similarCaptionsScope(dsId) });
             toast.success("Caption applied");
           });
       })
@@ -1324,6 +1328,7 @@ export default function ImageDetailPage() {
       qc.invalidateQueries({ queryKey: ["dataset-stats", v.datasetId] });
       qc.invalidateQueries({ queryKey: ["tag-stats", v.datasetId] });
       qc.invalidateQueries({ queryKey: ["tag-cooccurrence", v.datasetId] });
+      qc.invalidateQueries({ queryKey: similarCaptionsScope(v.datasetId) });
       if (data.affected === 0) toast("No redundant tags found");
       else toast.success("Merged redundant tags");
     },
@@ -2607,6 +2612,17 @@ export default function ImageDetailPage() {
           >
             <Combine size={14} /> Merge redundant tags
           </button>
+
+          <OtherCaptionsPanel
+            key={image.id}
+            imageId={image.id}
+            datasetId={datasetId!}
+            captionText={captionText}
+            onSetDraft={(text) => setDraft({ imageId: imageId!, text })}
+            onOpen={(id) =>
+              paneGo(`/datasets/${datasetId}/image/${id}`, { page: "image-detail", datasetId: datasetId!, imageId: id })
+            }
+          />
 
           {/* AI Generate section */}
           <div className="border-t border-line pt-3">

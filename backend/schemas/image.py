@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator
 
 from backend.licenses import FIELD_MAX_LEN, normalize_license_input
@@ -71,6 +71,24 @@ class ImageOut(BaseModel):
     label_ids: list[str] = []
 
     model_config = {"from_attributes": True}
+
+
+class SimilarCaptionItem(BaseModel):
+    id: str
+    filename: str
+    subfolder: str = ""
+    updated_at: UtcDatetime
+    captioned_at: UtcDatetime | None = None
+    caption_text: str
+    score: float
+    shared: list[str] = []
+
+
+class SimilarCaptionsOut(BaseModel):
+    by: Literal["tags", "objects", "clip", "recent"]
+    available: bool
+    reason: str | None = None
+    items: list[SimilarCaptionItem]
 
 
 class ImageListItem(BaseModel):

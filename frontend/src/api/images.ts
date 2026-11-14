@@ -1,5 +1,5 @@
 import client from "./client";
-import type { ImageDetail, ImageListItem } from "../types";
+import type { ImageDetail, ImageListItem, SimilarCaptionsBy, SimilarCaptionsOut } from "../types";
 
 export interface UploadResult {
   added: number;
@@ -178,6 +178,11 @@ export const imagesApi = {
   listIds: (params: ImageIdsParams) =>
     client.get<ImageIdsResult>("/images/ids", { params }).then((r) => r.data),
   get: (id: string) => client.get<ImageDetail>(`/images/${id}`).then((r) => r.data),
+  /** Other captioned images in the same dataset, ranked by `by`. Read-only. */
+  similarCaptions: (id: string, by: SimilarCaptionsBy, limit = 8, signal?: AbortSignal) =>
+    client
+      .get<SimilarCaptionsOut>(`/images/${id}/similar-captions`, { params: { by, limit }, signal })
+      .then((r) => r.data),
   delete: (id: string) => client.delete(`/images/${id}`),
   batchDelete: (image_ids: string[]) =>
     client.delete<DeleteResult>("/images/batch/delete", { data: image_ids }).then((r) => r.data),

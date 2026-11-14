@@ -4,7 +4,7 @@ import logging
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import uuid4
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
@@ -52,9 +52,10 @@ from backend.schemas.image import (
     ImageProvenanceUpdate,
     ImageResizeRequest,
     RenameImageRequest,
+    SimilarCaptionsOut,
 )
 from backend.services.dataset_service import refresh_stats, refresh_stats_after_abort
-from backend.services import version_service
+from backend.services import similar_captions_service, version_service
 from backend.services.dataset_busy import ensure_not_busy
 from backend.services.detection_service import remap_detections_for_crop
 from backend.services.duplicate_service import carry_duplicate_flags, prune_orphaned_duplicate_flags
@@ -1314,6 +1315,23 @@ async def serve_file(image_id: str, db: AsyncSession = Depends(get_db)):
     if not p.exists():
         raise HTTPException(404, "File not found on disk")
     return FileResponse(str(p))
+
+
+@router.get("/{image_id}/similar-captions", response_model=SimilarCaptionsOut)
+async def similar_captions_route(
+    image_id: str,
+    by: Literal["tags", "objects", "clip", "recent"] = "tags",
+    limit: int = Query(8, ge=1, le=24),
+    db: AsyncSession = Depends(get_db),
+):
+    row = (await db.execute(
+        select(Image.dataset_id, Image.caption_text).where(Image.id == image_id)
+    )).one_or_none()
+    if row is None:
+        raise HTTPException(404, "Image not found")
+    return await similar_captions_service.similar_captions(
+        db, image_id, row.dataset_id, row.caption_text or "", by, limit
+    )
 
 
 @router.get("/{image_id}/thumbnail")

@@ -141,3 +141,19 @@ export function invalidateLabelScope(qc: QueryClient) {
 
 /** The declared (possibly empty) dataset categories held on the server. */
 export const DECLARED_CATEGORIES_QUERY_KEY = ["app-data", "categories"];
+
+/**
+ * The detail page's *Other captions* list (`OtherCaptionsPanel`), and the prefix that
+ * refreshes it after a caption write.
+ *
+ * Deliberately **not** nested under `["images", datasetId]`, the reverse of
+ * `imagesCountKey`'s choice. A Shared tags or Looks alike request scans the whole
+ * dataset (about 0.9 s at 100k images), and `TopBar` invalidates that prefix every
+ * couple of seconds while a caption job runs, which would rescan on every tick. So
+ * the detail page's own caption writers (Save, Fix, merge-tags, the `.txt` drop, the
+ * AI job) invalidate `similarCaptionsScope` themselves, and a job's live progress
+ * does not refresh the list; reopening the image does.
+ */
+export const similarCaptionsScope = (datasetId: string | undefined) => ["similar-captions", datasetId] as const;
+export const similarCaptionsKey = (datasetId: string, imageId: string, by: string) =>
+  ["similar-captions", datasetId, imageId, by] as const;

@@ -49,6 +49,8 @@ reaches it: `openai_compat_captioner.make_client` is replaced by `RefusingOpenAI
 (in `conftest.py`), whose every request fails as a refused connection would. A test that
 wants a server patches `make_client`, or `caption_image` itself.
 
+A second autouse fixture, `_no_real_download`, does the same for pinned downloads: `backend/downloads.py::_open`, the one call that fetches the LaMa weights and the WordNet dictionary, raises `ConnectionRefusedError`. A test that wants bytes patches `downloads._open` itself, as `test_dictionary.py`'s `serve` does.
+
 ## Foreign keys in api_env
 
 `api_env` enforces foreign keys by default,

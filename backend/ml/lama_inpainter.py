@@ -26,7 +26,6 @@ import would force every test that so much as imports this module to carry
 `requirements-ci.txt` and will never have torch.
 """
 
-import hashlib
 import logging
 from pathlib import Path
 
@@ -62,14 +61,6 @@ _CROP_MAX_SIDE = 1536     # downscale the crop for inference above this
 _OOM_RETRY_SIDE = 768
 
 
-def _sha256(path: Path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as fh:
-        for block in iter(lambda: fh.read(1024 * 1024), b""):
-            h.update(block)
-    return h.hexdigest()
-
-
 def _ensure_weights(
     job_id: str | None = None,
     loop=None,
@@ -77,30 +68,18 @@ def _ensure_weights(
 ) -> Path:
     """Return the local weights path, downloading and verifying it on first use.
 
-    Modelled on `aesthetic_scorer.download_weights`, but over a plain GET rather
-    than `hf_hub_download` — so progress goes through `emit_sync` directly.
+    The fetch, hash check and `.part` rename are `backend/downloads.py`'s, shared
+    with the WordNet dictionary. Progress goes through `emit_sync` directly;
     `progress_tqdm_patch` is a `huggingface_hub` monkeypatch and does not apply.
     """
+    from backend.downloads import DownloadHashMismatch, cached_verified, download_verified
+
     dest = settings.models_cache_dir / _WEIGHTS_FILENAME
-
-    if dest.exists():
-        actual = _sha256(dest)
-        if actual == _WEIGHTS_SHA256:
-            return dest
-        # A truncated or tampered cache file is deleted rather than re-used: the
-        # next call re-downloads instead of failing forever.
-        logger.warning(
-            "LaMa weights at %s have SHA-256 %s, expected %s — deleting and re-downloading",
-            dest, actual, _WEIGHTS_SHA256,
-        )
-        dest.unlink(missing_ok=True)
-
-    import urllib.request
+    if cached_verified(dest, _WEIGHTS_SHA256):
+        return dest
 
     from backend.ml.download_progress import emit_sync
 
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_suffix(dest.suffix + ".part")
     logger.info("Downloading LaMa weights (~%d MB) from %s", _WEIGHTS_MB, _WEIGHTS_URL)
     if job_id and loop:
         emit_sync(
@@ -109,43 +88,29 @@ def _ensure_weights(
             0.0, dataset_id,
         )
 
-    try:
-        with urllib.request.urlopen(_WEIGHTS_URL, timeout=60) as resp:  # noqa: S310
-            total = int(resp.headers.get("Content-Length") or 0)
-            done = 0
-            next_emit = 0
-            with open(tmp, "wb") as fh:
-                while True:
-                    chunk = resp.read(1024 * 256)
-                    if not chunk:
-                        break
-                    fh.write(chunk)
-                    done += len(chunk)
-                    if job_id and loop and done >= next_emit:
-                        # Emit roughly every 4 MB rather than every chunk.
-                        next_emit = done + 4 * 1024 * 1024
-                        pct = (done / total * 100.0) if total else -1.0
-                        emit_sync(
-                            job_id, loop,
-                            "Downloading LaMa inpainting weights "
-                            f"({done / 1_048_576:.0f} / {(total or 0) / 1_048_576:.0f} MB)",
-                            pct, dataset_id,
-                        )
-    except Exception:
-        tmp.unlink(missing_ok=True)
-        raise
+    next_emit = 0
 
-    actual = _sha256(tmp)
-    if actual != _WEIGHTS_SHA256:
-        tmp.unlink(missing_ok=True)
+    def _progress(done: int, total: int) -> None:
+        nonlocal next_emit
+        if job_id and loop and done >= next_emit:
+            # Emit roughly every 4 MB rather than every chunk.
+            next_emit = done + 4 * 1024 * 1024
+            pct = (done / total * 100.0) if total else -1.0
+            emit_sync(
+                job_id, loop,
+                "Downloading LaMa inpainting weights "
+                f"({done / 1_048_576:.0f} / {(total or 0) / 1_048_576:.0f} MB)",
+                pct, dataset_id,
+            )
+
+    try:
+        download_verified(_WEIGHTS_URL, dest, _WEIGHTS_SHA256, on_progress=_progress)
+    except DownloadHashMismatch as e:
         raise RuntimeError(
-            f"Downloaded LaMa weights have SHA-256 {actual}, expected "
+            f"Downloaded LaMa weights have SHA-256 {e.actual}, expected "
             f"{_WEIGHTS_SHA256}. Refusing to load — the archive is a pickle and "
-            "an unverified one is arbitrary code. Delete "
-            f"{dest.parent / (_WEIGHTS_FILENAME + '.part')} and retry, or check "
-            f"{_WEIGHTS_URL}."
-        )
-    tmp.replace(dest)
+            f"an unverified one is arbitrary code. Retry, or check {_WEIGHTS_URL}."
+        ) from e
     logger.info("LaMa weights saved to %s", dest)
     return dest
 

@@ -234,6 +234,25 @@ The six entries previously recorded here were executed on 2026-07-31: `bulk-ops.
 `detection-inference.md`, `statistics.md`'s misfiled `GET /images/` filter table → `image-filters.md`, and CLAUDE.md § Shared
 utilities → `docs/dev/shared-utilities.md`.
 
+## CLAUDE.md
+
+- **Moves:** Documentation Map rows into two hubs, per decision 2's hub pattern: the four
+  caption rows (`captioning.md`, `caption-failures.md`, `caption-model-picker.md`,
+  `caption-editor.md`) become one row for a `docs/dev/captioning/` family, and the three
+  label rows (`labels.md`, `label-consumers.md`, `labels-ui.md`) one row for a
+  `docs/dev/labels/` family. Each hub doc carries the routing table the rows held.
+- **New file:** `docs/dev/captioning.md` and `docs/dev/labels.md` become hubs (~600 words
+  each, like `docs/dev/quality.md`); their current bodies move into the folders.
+- **Why here:** CLAUDE.md went 2 words over (6,502) when #52 added the
+  `docs/dev/dictionary.md` row on 2026-11-14, after that row was cut to its shortest
+  useful form. § Architecture (2,902) holds the invariants every conversation needs, so it
+  is not the seam. The Map (2,384) is a lookup, and these seven rows are its two largest
+  families. This needs the user's call first (see the note at the top of this file): a
+  hub, or a budget raise.
+- **Watch for:** every inbound `docs/dev/captioning.md` and `docs/dev/labels.md` path stays
+  valid if the hub keeps the name. The `§` pointers into moved sections do not
+  (`grep -rn "captioning.md\` §\|labels.md\` §" docs CLAUDE.md`).
+
 ## README.md
 
 - **Moves:** § Features in full — the eight `###` capability groups under it (~1,150 words),

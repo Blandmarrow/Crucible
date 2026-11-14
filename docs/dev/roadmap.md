@@ -31,13 +31,16 @@ restates its stages.
    linking the record that holds the full text.
 5. **Landed**: one line per finished milestone or handoff record.
 
-## Next session (updated 2026-11-14, #50 merged)
+## Next session (updated 2026-11-15, #52 merged)
 
-1. **#52 Synonyms comes next**, the last of Tier 3, adding to `docs/dev/caption-editor.md`.
-   #48 waits on a question to its reporter, and M7's Stage 3 waits behind M11, under
-   Waiting.
-2. M4 stays held, with its merge checklist under Waiting. The closed items of the previous
-   blocks, the two scope bugs and their fixes (PRs #160 and #161), are in
+1. **M11 Tier 3 is done** (#45, #50, #52). What remains of M11 is #48, waiting on its
+   reporter, and Tier 4's two design-first items, #130 and #129, each of which starts with
+   a design pass rather than code.
+2. **CLAUDE.md is 2 words over budget.** Its seam, two Map hubs, waits on the user's call
+   between a hub and a budget raise (`docs/dev/pending-splits.md`).
+3. M4 stays held, with its merge checklist under Waiting. The closed items of the
+   previous blocks are in
+   [roadmap-archive/handoff-2026-11-15.md](roadmap-archive/handoff-2026-11-15.md) and
    [roadmap-archive/handoff-2026-11-14.md](roadmap-archive/handoff-2026-11-14.md).
 
 ## Now
@@ -92,8 +95,11 @@ unsaved draft.
   PR moves the Booru page's Safebooru search to danbooru.donmai.us with a User-Agent, after
   safebooru.donmai.us answered every API request with a 403 (`docs/dev/caption-editor.md`
   § Check tags).
-- [ ] #52 Synonyms: an offline WordNet lookup, a Settings toggle, and a card under the
-  caption box (the user's choice over a popover at the word, 2026-11-14). Licence checked
+- [x] #52 Synonyms: merged 2026-11-15 as PR #165, which closes the issue. An offline
+  WordNet lookup (`docs/dev/dictionary.md`), a Settings toggle, and a card under the
+  caption box (`docs/dev/caption-editor.md` § Synonym card), the user's choice over a
+  popover at the word, 2026-11-14. The install runs outside the job queue and irregular
+  forms come from WordNet's own lists (decision 18). Licence checked
   2026-11-14: Open English WordNet 2025, core edition, which is CC BY 4.0 on top of the
   Princeton WordNet licence. Both allow any use. Credit both projects, keep Princeton's
   notice and disclaimer with every copy, note our conversion, and never use Princeton's
@@ -325,3 +331,5 @@ Each line links the record that holds the full text.
   ([PM-038](postmortems/PM-038-pipeline-scope-field-nothing-read.md)), and the
   empty-selection bug's, closed by PR #161.
   Record: [roadmap-archive/handoff-2026-11-14.md](roadmap-archive/handoff-2026-11-14.md).
+- **Handoff notes, 15 November 2026**: #52's Next session item, closed when it merged as
+  PR #165. Record: [roadmap-archive/handoff-2026-11-15.md](roadmap-archive/handoff-2026-11-15.md).

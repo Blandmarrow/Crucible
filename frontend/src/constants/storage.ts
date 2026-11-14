@@ -34,6 +34,7 @@ export const GALLERY_DEFAULT_QUALITY_KEY = "gallery-default-quality"; // "" | "i
 export const GALLERY_LICENSE_BADGE_KEY   = "gallery-license-badge";   // "true" | "false" (off by default)
 export const GALLERY_STYLE_METER_KEY     = "gallery-style-meter";     // "true" | "false" (ON by default — read with !== "false")
 export const LABEL_HOTKEYS_KEY           = "label-hotkeys-enabled";   // "true" | "false" (ON by default — read with !== "false")
+export const SYNONYMS_ENABLED_KEY        = "synonyms-enabled";        // "true" | "false" (off by default — the dictionary is a download)
 
 // Captioning defaults
 export const CAPTION_DEFAULT_MODEL_KEY       = "caption-default-model";          // model ID string
@@ -123,4 +124,10 @@ export function getGalleryStyleMeter(): boolean {
 
 export function getLabelHotkeysEnabled(): boolean {
   return localStorage.getItem(LABEL_HOTKEYS_KEY) !== "false";
+}
+
+/** Whether selecting a word in the caption editor shows the synonym card (#52).
+ *  Off by default: turning it on downloads the WordNet dictionary once. */
+export function getSynonymsEnabled(): boolean {
+  return localStorage.getItem(SYNONYMS_ENABLED_KEY) === "true";
 }

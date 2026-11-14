@@ -4,11 +4,13 @@ import {
   GALLERY_LICENSE_BADGE_KEY,
   GALLERY_STYLE_METER_KEY,
   LABEL_HOTKEYS_KEY,
+  SYNONYMS_ENABLED_KEY,
   clampGalleryCheckboxSize,
   getGalleryCheckboxSize,
   getGalleryLicenseBadge,
   getGalleryStyleMeter,
   getLabelHotkeysEnabled,
+  getSynonymsEnabled,
 } from "../constants/storage";
 
 /**
@@ -40,6 +42,11 @@ interface UiPrefsStore {
    *  view — the same reason the three preferences above live here. */
   labelHotkeysEnabled: boolean;
   setLabelHotkeysEnabled: (on: boolean) => void;
+  /** Whether selecting a word in the caption editor shows the synonym card (#52).
+   *  Off by default. Here so a detail pane already open in split view follows a
+   *  change made in Settings. */
+  synonymsEnabled: boolean;
+  setSynonymsEnabled: (on: boolean) => void;
 }
 
 export const useUiPrefsStore = create<UiPrefsStore>((set) => ({
@@ -63,5 +70,10 @@ export const useUiPrefsStore = create<UiPrefsStore>((set) => ({
   setLabelHotkeysEnabled: (on) => {
     localStorage.setItem(LABEL_HOTKEYS_KEY, String(on));
     set({ labelHotkeysEnabled: on });
+  },
+  synonymsEnabled: getSynonymsEnabled(),
+  setSynonymsEnabled: (on) => {
+    localStorage.setItem(SYNONYMS_ENABLED_KEY, String(on));
+    set({ synonymsEnabled: on });
   },
 }));

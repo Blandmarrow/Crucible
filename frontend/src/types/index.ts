@@ -349,6 +349,36 @@ export interface TagCheckResponse {
   suggestions_complete: boolean;
 }
 
+/** The offline synonym dictionary's install state (`GET /dictionary/status`, #52). */
+export type DictionaryState = "missing" | "downloading" | "converting" | "ready" | "failed";
+
+export interface DictionaryStatus {
+  installed: boolean;
+  state: DictionaryState;
+  /** 0–100 while downloading; -1 when unknown (converting, or no Content-Length). */
+  percent: number;
+  message: string;
+  error: string | null;
+  size_bytes: number | null;
+  edition: string;
+}
+
+/** `GET /dictionary/synonyms`: the meanings of a word or its base forms. */
+export interface SynonymSense {
+  /** The base form this meaning belongs to (`goose` for `geese`). */
+  lemma: string;
+  pos: "n" | "v" | "a" | "r";
+  definition: string;
+  words: string[];
+}
+
+export interface SynonymsResponse {
+  /** The lookup key: lowercase, `_` as a space. */
+  word: string;
+  lemmas: string[];
+  senses: SynonymSense[];
+}
+
 /** A source video. Videos are not Images: separate table, separate folder
  *  (`{dataset}/videos/`), separate stats. Frames extracted from a video become
  *  ordinary Image rows. */

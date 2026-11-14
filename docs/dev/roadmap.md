@@ -31,15 +31,17 @@ restates its stages.
    linking the record that holds the full text.
 5. **Landed**: one line per finished milestone or handoff record.
 
-## Next session (updated 2026-11-14, pipeline scope fix merged)
+## Next session (updated 2026-11-14, empty-selection fix built)
 
-1. **M11 goes on with Tier 2** (see Now): #9, #16, then #19. #48 waits on a question to its
+1. **The empty-selection fix is built** on `fix/caption-empty-selection`: the Captioning
+   page blocks Run and Run Detection while *Selected* has nothing selected
+   (`docs/dev/captioning.md` § Captioning post-processing). Frontend only, by the user's
+   call; the server's widening of `[]` stays, under Later. Open its PR and merge.
+2. **M11 goes on with Tier 2** (see Now): #9, #16, then #19. #48 waits on a question to its
    reporter, and #19 on the user picking a light palette. M7's Stage 3 waits behind M11,
    under Waiting.
-2. **The empty-selection bug**, under Later: *Selected* with nothing selected recaptions
-   the whole dataset. The user chose on 2026-11-14 to fix it later, not ahead of Tier 2.
 3. M4 stays held, with its merge checklist under Waiting. The closed items of the previous
-   blocks, the pipeline bug's triage and its fix (PR #160), are in
+   blocks, the two scope bugs' triage and the pipeline fix (PR #160), are in
    [roadmap-archive/handoff-2026-11-14.md](roadmap-archive/handoff-2026-11-14.md).
 
 ## Now
@@ -228,14 +230,14 @@ Each line links the record that holds the full text.
   orientation tag in a PNG or WebP, which Pillow honours, is not confirmed to be applied
   by every browser; one that ignores it would crop the wrong region
   (`docs/dev/image-detail.md` § The crop box, PR #156).
-- An empty selection on the Captioning page's *Selected* scope recaptions the whole
-  dataset. The scope is remembered in the saved workflow, but the selection lives only in
-  memory, so after a reload the page sends `image_ids: []`, which `/run` and `/pipeline`
-  widen to every image (`if body.image_ids:`), with `overwrite` on. Run is not blocked at a
-  count of 0. The likely fix is a run-blocked reason for `scope === "selected"` with no
-  selection here; the detect run on the same page sends `[...selectedIds]` and wants the
-  same check. Found by the review of PM-038's fix (2026-11-14); the user chose the same day
-  to fix it later, as its own change.
+- Four routes still widen `image_ids: []` to the whole dataset: `/captioning/run` and
+  `/captioning/pipeline` (`if body.image_ids:`), the quality scoring start
+  (`backend/routers/quality.py`) and `caption_service.find_replace_captions`. Their
+  docstrings warn of it and `backend/tests/test_caption_start_scope.py` pins it, so each
+  caller's own frontend is the only guard; `services/image_scope.py`, detection, inpaint,
+  upscale and LUT read `[]` as nothing. The user chose on 2026-11-14 to fix only the
+  Captioning page's empty *Selected* scope (`fix/caption-empty-selection`) and leave the
+  routes as they are.
 - Face similarity (issue #90), researched 2026-11-13 and parked by the user. The pick is
   YuNet to find faces and SFace to compare them. Both are built into OpenCV, so there is no
   new dependency, and their weights are MIT and Apache-2.0. InsightFace was rejected because

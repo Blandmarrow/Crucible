@@ -566,11 +566,21 @@ function CaptioningForm({ saved }: { saved: Partial<CaptioningWorkflow> | null }
   ];
   const blockingStep = stepModels.find((s) => captionBackend(s.model) === null);
   const stepPrefix = (n: number) => (isPipeline ? `Step ${n}: ` : "");
-  const runBlockedReason = !blockingStep
+  const modelBlockedReason = !blockingStep
     ? undefined
     : blockingStep.model
       ? `${stepPrefix(blockingStep.stepNumber)}“${blockingStep.model}” is not a captioning model.`
       : `${stepPrefix(blockingStep.stepNumber)}No model selected.`;
+  // The scope is remembered in the saved workflow but the selection lives only in
+  // memory, so after a reload *Selected* can point at nothing. The page would then send
+  // `image_ids: []`, which `/run` and `/pipeline` widen to the whole dataset with
+  // overwrite on. Block instead — and never demote the stored scope to *All* on load,
+  // which would arm exactly that recaption. The detect run below shares this check.
+  const scopeBlockedReason =
+    scope === "selected" && selCountForDataset === 0
+      ? "Nothing selected in this dataset. Select images in the gallery, or pick another scope."
+      : undefined;
+  const runBlockedReason = modelBlockedReason ?? scopeBlockedReason;
 
   const offeredModelIds = captionModelIds(modelsData, providers);
 
@@ -641,7 +651,8 @@ function CaptioningForm({ saved }: { saved: Partial<CaptioningWorkflow> | null }
     mutationFn: () =>
       detectionApi.run({
         dataset_id: datasetId!,
-        image_ids: scope === "selected" ? [...selectedIds] : undefined,
+        // The same ids the caption run sends: only this dataset's share of the selection.
+        image_ids: scope === "selected" ? selectedIdsForDataset : undefined,
         model: selectedModel,
         task: detectTask,
         custom_prompt: detectUseCaptions ? "" : detectPrompt,
@@ -1053,20 +1064,34 @@ function CaptioningForm({ saved }: { saved: Partial<CaptioningWorkflow> | null }
                   <h4>Scope</h4>
                   <p>Which images to caption.</p>
                 </div>
-                <div className="row-flex">
-                  {([
-                    { value: "uncaptioned", label: "Uncaptioned only", sub: uncaptioned },
-                    { value: "selected", label: "Selected", sub: selCountForDataset },
-                    { value: "all", label: "Re-caption all", sub: null },
-                  ] as const).map((opt) => (
-                    <label key={opt.value} className="row-flex" style={{ gap: 6, cursor: "pointer" }}>
-                      <input type="radio" name="scope" checked={scope === opt.value} onChange={() => setScope(opt.value)} />
-                      <span style={{ fontSize: 12.5 }}>
-                        {opt.label}
-                        {opt.sub !== null && <span className="mono" style={{ color: "var(--fg-dim)", marginLeft: 4 }}>{opt.sub}</span>}
-                      </span>
-                    </label>
-                  ))}
+                <div>
+                  <div className="row-flex">
+                    {([
+                      { value: "uncaptioned", label: "Uncaptioned only", sub: uncaptioned },
+                      { value: "selected", label: "Selected", sub: selCountForDataset },
+                      { value: "all", label: "Re-caption all", sub: null },
+                    ] as const).map((opt) => (
+                      <label key={opt.value} className="row-flex" style={{ gap: 6, cursor: "pointer" }}>
+                        <input type="radio" name="scope" checked={scope === opt.value} onChange={() => setScope(opt.value)} />
+                        <span style={{ fontSize: 12.5 }}>
+                          {opt.label}
+                          {opt.sub !== null && (
+                            <span
+                              className="mono"
+                              style={{ color: opt.value === "selected" && opt.sub === 0 ? "var(--warn)" : "var(--fg-dim)", marginLeft: 4 }}
+                            >
+                              {opt.sub}
+                            </span>
+                          )}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                  {scopeBlockedReason && (
+                    <p data-testid="scope-blocked-note" style={{ color: "var(--warn)", fontSize: 11.5, marginTop: 4 }}>
+                      {scopeBlockedReason}
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -1233,7 +1258,8 @@ function CaptioningForm({ saved }: { saved: Partial<CaptioningWorkflow> | null }
                       className="btn ghost sm"
                       style={{ alignSelf: "flex-start" }}
                       onClick={() => detectMutation.mutate()}
-                      disabled={detectMutation.isPending || !!detectJobId || (detectTask === "<CAPTION_TO_PHRASE_GROUNDING>" && !detectUseCaptions && !detectPrompt.trim())}
+                      disabled={detectMutation.isPending || !!detectJobId || !!scopeBlockedReason || (detectTask === "<CAPTION_TO_PHRASE_GROUNDING>" && !detectUseCaptions && !detectPrompt.trim())}
+                      title={scopeBlockedReason}
                     >
                       {detectJobId ? "Running…" : "Run Detection"}
                     </button>

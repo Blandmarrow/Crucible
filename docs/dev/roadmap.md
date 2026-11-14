@@ -31,13 +31,15 @@ restates its stages.
    linking the record that holds the full text.
 5. **Landed**: one line per finished milestone or handoff record.
 
-## Next session (updated 2026-11-14, #45 merged)
+## Next session (updated 2026-11-14, #50 built)
 
-1. **#50 Check tags comes next**, then #52, three PRs in all. Open #50's branch by splitting
-   `docs/dev/image-detail.md` along the seam in
-   [pending-splits.md](pending-splits.md), since both PRs add to its caption panel. #48
-   waits on a question to its reporter, and M7's Stage 3 waits behind M11, under Waiting.
-2. M4 stays held, with its merge checklist under Waiting. The closed items of the previous
+1. **#50 Check tags is built** on `feat/m11-check-tags` (see Now): open its PR, and merge
+   once CI is green and the user agrees. It also fixes the Booru page's Safebooru search,
+   which Cloudflare had been turning away.
+2. **#52 Synonyms comes next**, the last of Tier 3, adding to `docs/dev/caption-editor.md`.
+   #48 waits on a question to its reporter, and M7's Stage 3 waits behind M11, under
+   Waiting.
+3. M4 stays held, with its merge checklist under Waiting. The closed items of the previous
    blocks, the two scope bugs and their fixes (PRs #160 and #161), are in
    [roadmap-archive/handoff-2026-11-14.md](roadmap-archive/handoff-2026-11-14.md).
 
@@ -85,12 +87,14 @@ unsaved draft.
   *Other captions* section in the detail page's caption panel, ranked by shared tags,
   detected objects, the stored CLIP vector or recency, inside the current dataset only (the
   user's ruling of 2026-11-14) (`docs/dev/caption-editor.md` § Other captions panel).
-- [ ] #50 Check for a better tag: post counts and aliases through the booru routes
-  (`/search` and `/autocomplete` in `backend/routers/booru.py`). Overlaps
-  `TagConsolidatePage`. Run only on a button press, since it sends the caption's tags to
-  Danbooru. The user's rule for "rare" (2026-11-14): under 100 posts, with a close tag
-  holding at least 100 times more. A booru failure must read as unreachable, not as every
-  tag "not found": `booru_service` turns every error into an empty list today.
+- [ ] #50 Check for a better tag: built 2026-11-14 on `feat/m11-check-tags`, PR to open.
+  A **Check tags on Danbooru** button in the caption panel, press-only, through a new
+  `POST /booru/check`. It flags aliases, rare tags (under 100 posts with a close tag holding
+  at least 100 times more, the user's rule of 2026-11-14) and unknown ones, and an outage
+  is a 502 rather than every tag "not found". Danbooru only, by the user's choice. The same
+  PR moves the Booru page's Safebooru search to danbooru.donmai.us with a User-Agent, after
+  safebooru.donmai.us answered every API request with a 403 (`docs/dev/caption-editor.md`
+  § Check tags).
 - [ ] #52 Synonyms: an offline WordNet lookup, a Settings toggle, and a card under the
   caption box (the user's choice over a popover at the word, 2026-11-14). Licence checked
   2026-11-14: Open English WordNet 2025, core edition, which is CC BY 4.0 on top of the

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { booruApi } from "../api/booru";
+import { apiErrorDetail } from "../utils/apiError";
 import { copyText } from "../utils/clipboard";
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -94,8 +95,8 @@ export default function BooruPage() {
       )}
 
       {isLoading && <p style={{ color: "var(--fg-mute)", fontSize: 13 }}>Searching {source}…</p>}
-      {error && <p style={{ color: "var(--bad)", fontSize: 13 }}>Search failed. Check your connection.</p>}
-      {!isLoading && search && tags.length === 0 && (
+      {error && <p style={{ color: "var(--bad)", fontSize: 13 }} role="alert">Search failed: {apiErrorDetail(error, "check your connection")}.</p>}
+      {!isLoading && !error && search && tags.length === 0 && (
         <p style={{ color: "var(--fg-mute)", fontSize: 13 }}>No tags found for "{search}"</p>
       )}
 

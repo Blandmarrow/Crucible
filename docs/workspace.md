@@ -63,7 +63,8 @@ A global **Logs** page (sidebar nav item) with two tabs:
 
 Search booru image boards for tag vocabulary when building tag lists for your training subjects:
 
-- Searches **Safebooru** (SFW) or **Gelbooru** (requires an API key + user ID, set in Settings → API Keys or in `.env`)
+- Searches **Safebooru** (SFW) or **Gelbooru** (requires an API key + user ID, set in Settings → API Keys or in `.env`). Safebooru shares Danbooru's tag list, and the lookup reads it from danbooru.donmai.us, since the Safebooru site turns away automated requests
+- If the board cannot be reached, the page says why (for example `HTTP 403`) rather than showing no results
 - Shows tag name, category (character / artist / copyright / general / meta), and post count
 - Configurable result limit (20 / 50 / 100); results cached for 5 minutes
 - Copy individual tags or the full list to clipboard

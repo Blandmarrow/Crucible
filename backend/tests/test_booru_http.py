@@ -20,6 +20,8 @@ now actively wrong: the router resolves the credentials per request from the DB
 (Settings -> API Keys), falling back to the `.env` chain, so what it forwards is
 no longer the singleton's value at all.
 """
+import pytest
+
 from backend.config import settings
 from backend.tests.conftest import API, api_env, run
 
@@ -224,3 +226,89 @@ def test_authenticated_lookup_is_not_served_from_the_anonymous_cache_entry(monke
         assert await bs.search_gelbooru("cat", 20, api_key="k", user_id="u") == []
 
     run(scenario())
+
+
+def test_an_unreachable_booru_is_a_502_with_its_reason(tmp_path, monkeypatch):
+    """An outage used to come back as `[]`, which the Booru page showed as "no tags found"."""
+    import backend.routers.booru as booru_router
+    from backend.services.booru_service import BooruUnavailable
+
+    async def down(*a, **k):
+        raise BooruUnavailable("Could not reach Danbooru (HTTP 403)")
+
+    monkeypatch.setattr(booru_router, "search_safebooru", down)
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            r = await env.client.get(f"{API}/booru/search", params={"q": "cat"})
+            assert r.status_code == 502, r.text
+            assert r.json()["detail"] == "Could not reach Danbooru (HTTP 403)"
+            r = await env.client.post(f"{API}/booru/autocomplete", json={"prefix": "ca"})
+            assert r.status_code == 502, r.text
+
+    run(scenario())
+
+
+class _FakeResponse:
+    def __init__(self, status, body):
+        self.status, self._body = status, body
+
+    async def json(self, content_type=None):
+        import json
+        return json.loads(self._body)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+
+def _fake_session(monkeypatch, status, body):
+    """Patch aiohttp.ClientSession in booru_service; return the log of headers and URLs."""
+    import backend.services.booru_service as bs
+
+    seen: list[dict] = []
+
+    class _Session:
+        def __init__(self, headers=None, **k):
+            seen.append({"headers": headers or {}})
+
+        def get(self, url, params=None, timeout=None):
+            seen[-1].update(url=url, params=params)
+            return _FakeResponse(status, body)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    monkeypatch.setattr(bs, "_cache", {})
+    monkeypatch.setattr(bs.aiohttp, "ClientSession", _Session)
+    return seen
+
+
+def test_danbooru_requests_carry_a_user_agent_and_go_to_the_main_host(monkeypatch):
+    """Cloudflare refuses aiohttp's default User-Agent, and safebooru.donmai.us refuses all."""
+    import backend.services.booru_service as bs
+
+    seen = _fake_session(monkeypatch, 200, '[{"name": "cat_ears", "post_count": 5, "category": 0}]')
+    rows = run(bs.search_safebooru("cat", 20))
+    assert rows == [{"tag": "cat_ears", "count": 5, "category": "general", "source": "safebooru"}]
+    assert seen[0]["headers"]["User-Agent"] == bs._USER_AGENT
+    assert "aiohttp" not in bs._USER_AGENT.lower()
+    assert seen[0]["url"] == "https://danbooru.donmai.us/tags.json"
+
+
+@pytest.mark.parametrize("status, body, reason", [
+    (403, "<!DOCTYPE html><title>Just a moment...</title>", "HTTP 403"),
+    (200, "<!DOCTYPE html><title>Just a moment...</title>", "not JSON"),
+])
+def test_a_challenge_page_is_an_outage_not_an_empty_result(monkeypatch, status, body, reason):
+    import backend.services.booru_service as bs
+
+    _fake_session(monkeypatch, status, body)
+    with pytest.raises(bs.BooruUnavailable, match=reason):
+        run(bs.search_safebooru("cat", 20))
+    assert bs._cache == {}  # a failure is never cached as an empty answer

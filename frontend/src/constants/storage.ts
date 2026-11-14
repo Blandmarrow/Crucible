@@ -10,6 +10,9 @@ export const COMFY_ROWS_VIEW_KEY = "comfy-rows-view"; // prefix; append `-${plan
 export const COMFY_LIBRARY_VIEW_KEY = "comfy-library-view"; // JSON {closed}: the prompt library panel's collapsed category paths (global, not per dataset)
 export const DECLARED_CATEGORIES_KEY = "crucible-declared-categories"; // string[]. Moved to the server; only the one-time browser import reads this
 export const LEGACY_IMPORT_MARKER_KEY = "crucible-legacy-import-v1"; // JSON: what this browser has copied to the server
+// "dark" | "light" | "system" (absent = dark). The inline script in index.html
+// reads this same literal before first paint, so a rename must change both.
+export const THEME_KEY = "crucible-theme";
 
 import { SORT_OPTIONS } from "./galleryOptions";
 

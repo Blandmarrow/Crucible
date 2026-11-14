@@ -32,7 +32,12 @@ export default {
           deep: "var(--accent-deep)",
           glow: "var(--accent-glow)",
           hover: "var(--accent-2)",
+          // Green as text (`text-accent-text`): --accent is a fill colour and is
+          // too light to read as text in light mode.
+          text: "var(--accent-text)",
         },
+        "on-accent": "var(--on-accent)",
+        good: { DEFAULT: "var(--good)", bg: "var(--good-bg)" },
         warn: { DEFAULT: "var(--warn)", bg: "var(--warn-bg)" },
         bad: { DEFAULT: "var(--bad)", bg: "var(--bad-bg)" },
         info: { DEFAULT: "var(--info)", bg: "var(--info-bg)" },

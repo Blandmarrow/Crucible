@@ -22,6 +22,7 @@ import { CAPTIONING_WORKFLOW_PATH } from "../api/appData";
 import { writeToServer } from "../utils/serverWriter";
 import { SORT_OPTIONS } from "../constants/galleryOptions";
 import RadioGroup from "../components/common/RadioGroup";
+import { getThemePref, setThemePref, type ThemePref } from "../utils/theme";
 import NumberField from "../components/common/NumberField";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import DirPickerModal from "../components/common/DirPickerModal";
@@ -122,6 +123,7 @@ const FIELDS: ThresholdField[] = [
 export default function SettingsPage() {
   const qc = useQueryClient();
   const [form, setForm] = useState<Thresholds>(DEFAULTS);
+  const [themePref, setThemePrefState] = useState<ThemePref>(getThemePref);
   const [confirmDefault, setConfirmDefault] = useState<"cancel" | "confirm">(
     () => (localStorage.getItem(CONFIRM_DEFAULT_KEY) === "confirm" ? "confirm" : "cancel")
   );
@@ -889,6 +891,24 @@ export default function SettingsPage() {
       {activeTab === "ui" && (
         <div className="panel">
           <div className="panel-b" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <div>
+              <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 10 }}>Appearance</div>
+              <RadioGroup
+                name="theme"
+                options={[
+                  { value: "dark", label: "Dark", desc: "The default." },
+                  { value: "light", label: "Light", desc: "A low-glare grey, so the page does not compete with your images." },
+                  { value: "system", label: "Match system", desc: "Follows your computer's light or dark setting, and switches when it does." },
+                ]}
+                value={themePref}
+                onChange={(v) => {
+                  setThemePrefState(v as ThemePref);
+                  setThemePref(v as ThemePref);
+                  toast.success("Preference saved");
+                }}
+              />
+            </div>
+
             <div>
               <div style={{ fontWeight: 500, fontSize: 13, marginBottom: 10 }}>Delete confirmation default button</div>
               <RadioGroup

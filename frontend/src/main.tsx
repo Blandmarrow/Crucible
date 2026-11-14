@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
 import { runLegacyImport } from './utils/legacyImport'
+import { watchTheme } from './utils/theme'
 
 // `0.0.0.0` is a bind address, not an address to browse to, but it is the last
 // URL on screen at startup — both launchers print `http://localhost:8000` and
@@ -30,6 +31,8 @@ if (location.hostname === '0.0.0.0') {
 } else {
   // Not awaited: pages render at once, and each query for this data waits on it.
   void runLegacyImport()
+  // index.html's inline script already set the theme; this keeps it current.
+  watchTheme()
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
       <App />

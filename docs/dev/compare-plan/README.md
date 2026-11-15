@@ -192,9 +192,7 @@ line) and a Playwright journey. A landed phase leaves this list; its account is 
 
 1. The page and Side by side: landed as PR #169.
 2. A/B: landed as PR #170.
-3. **Grid and the contact sheet.** Grid mode and the export route, with **Export current
-   view**. Backend tests: a sheet of three tiny images has the expected size, a row with an
-   out-of-tree `file_path` is refused, and the caps answer 422.
+3. Grid and the contact sheet: landed as PR #171.
 4. **Actions and more ways in.** The Quality page's Compare button, Keep this one, and
    delete and labels on any pane. e2e: delete from a pane and see the gallery count drop,
    assign a label, keep one of a seeded duplicate group.
@@ -245,4 +243,4 @@ Still proposals, standing as defaults until something says otherwise:
 7. **Sheet as a job?** A plain request, timed in phase 3, and turned into a job only if
    100 large files take more than a few seconds. Timed 2026-11-15: 1.9 to 3.1 s for 100
    images at 2048×1536 (`docs/dev/gallery/compare.md` § Grid and the contact sheet), so
-   it stays a request. Reported to the user with phase 3's PR.
+   it stays a request. Reported to the user with phase 3's PR (#171).

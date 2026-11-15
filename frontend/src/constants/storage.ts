@@ -8,6 +8,7 @@ export const VIDEO_STRIP_COLLAPSED_KEY = "gallery-videos-collapsed"; // prefix; 
 export const OTHER_CAPTIONS_KEY = "detail-other-captions"; // JSON {open, by}: the detail page's Other captions section, open or closed, and its ranking mode
 export const COMFY_BLUEPRINT_SECTIONS_KEY = "comfy-blueprint-sections"; // prefix; append `-${planId}`. JSON {axes, variations, scenarios}: which Blueprint editor sections are open
 export const COMFY_ROWS_VIEW_KEY = "comfy-rows-view"; // prefix; append `-${planId}`. JSON {closedFolders, closedGroups}: the folder tree's and the grouped Rows table's collapsed folders
+export const COMPARE_PREFS_KEY = "compare-prefs"; // JSON {matchPixels, pixelated}: the Compare page's view toggles (global, not per dataset)
 export const COMFY_LIBRARY_VIEW_KEY = "comfy-library-view"; // JSON {closed}: the prompt library panel's collapsed category paths (global, not per dataset)
 export const DECLARED_CATEGORIES_KEY = "crucible-declared-categories"; // string[]. Moved to the server; only the one-time browser import reads this
 export const LEGACY_IMPORT_MARKER_KEY = "crucible-legacy-import-v1"; // JSON: what this browser has copied to the server

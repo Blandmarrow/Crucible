@@ -16,6 +16,7 @@ import {
   VersionsPage,
   ComfyPage,
   RunsPage,
+  ComparePage,
 } from "../../pages/lazyPages";
 
 // A pane's dataset is part of a page's *identity* for the three pages below: each
@@ -56,6 +57,9 @@ function renderPage(view: PaneView) {
     case "runs":         return <RunsPage />;
     case "file-browser": return <FileBrowserPage />;
     case "booru":        return <BooruPage />;
+    // Not keyed: removing or reordering a pane changes `compareIds`, and a remount
+    // would throw away the zoom the user is comparing at.
+    case "compare":      return <ComparePage />;
     default:             return <DatasetsPage />;
   }
 }

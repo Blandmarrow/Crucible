@@ -46,7 +46,9 @@ from backend.schemas.image import (
     ImageCropRequest,
     ImageFilterParams,
     ImageIdsParams,
+    CompareImage,
     ImageListItem,
+    ImagesByIdsRequest,
     ImageListParams,
     ImageOut,
     ImageProvenanceUpdate,
@@ -511,53 +513,72 @@ _HAS_GENERATION_METADATA = and_(
 )
 
 
+async def _stamped_items(
+    db: AsyncSession, ids: list[str], item_cls: type[ImageListItem] = ImageListItem,
+) -> list:
+    """Load `ids` as `item_cls` rows, in `ids` order, with the list-only fields stamped.
+
+    Shared by `GET /images/` (one dataset, at most 500 ids) and `POST
+    /images/by-ids` (several datasets, at most 100), so the two cannot disagree on
+    the effective license, the label ids or the generation-metadata flag. Neither
+    cap needs chunking on an `IN`. An id with no row (deleted between the id
+    statement and this one, or never real) drops out.
+
+    `generation_metadata` is deferred for this query only, never on the
+    model: a model-level defer is the `source_meta` trap, where every
+    entity reader must remember to undefer. `raiseload` makes a read here
+    fail loudly rather than lazy-load on the async session. The card asks
+    only whether it exists; the modal fetches `GET /images/{id}`.
+    """
+    if not ids:
+        return []
+    by_id: dict[str, Image] = {}
+    has_meta: dict[str, bool] = {}
+    for img, flag in (await db.execute(
+        select(Image, _HAS_GENERATION_METADATA)
+        .options(defer(Image.generation_metadata, raiseload=True))
+        .where(Image.id.in_(ids))
+    )):
+        by_id[img.id] = img
+        has_meta[img.id] = bool(flag)
+    images = [by_id[i] for i in ids if i in by_id]
+    if not images:
+        return []
+
+    # The effective license is the image's own over its dataset's default. One
+    # lookup for every dataset the rows touch, not one per image; the name rides
+    # along because the Compare page shows rows from several datasets.
+    ds_info = {
+        ds_id: (name, lic or "")
+        for ds_id, name, lic in (await db.execute(
+            select(Dataset.id, Dataset.name, Dataset.license)
+            .where(Dataset.id.in_({img.dataset_id for img in images}))
+        ))
+    }
+    # Label ids for every row in one query, bucketed into a dict.
+    labels_by_id = await labels_by_image(db, [img.id for img in images])
+    out = []
+    for img in images:
+        item = item_cls.model_validate(img)
+        name, ds_license = ds_info.get(img.dataset_id, ("", ""))
+        item.license = img.license or ds_license
+        item.label_ids = labels_by_id.get(img.id, [])
+        item.has_generation_metadata = has_meta.get(img.id, False)
+        if isinstance(item, CompareImage):
+            item.dataset_name = name
+        out.append(item)
+    return out
+
+
 @router.get("/", response_model=list[ImageListItem])
 async def list_images(
     f: Annotated[ImageListParams, Query()],
     db: AsyncSession = Depends(get_db),
 ):
     page_ids = (await db.execute(_page_ids_query(f))).scalars().all()
-    images: list[Image] = []
-    has_meta: dict[str, bool] = {}
-    if page_ids:
-        # `ImageListParams.limit` is capped at 500, so this `IN` never needs
-        # chunking. Put back in page order here; a row deleted between the two
-        # statements simply drops out.
-        #
-        # `generation_metadata` is deferred for this query only, never on the
-        # model: a model-level defer is the `source_meta` trap, where every
-        # entity reader must remember to undefer. `raiseload` makes a read here
-        # fail loudly rather than lazy-load on the async session. The card asks
-        # only whether it exists; the modal fetches `GET /images/{id}`.
-        by_id: dict[str, Image] = {}
-        for img, flag in (await db.execute(
-            select(Image, _HAS_GENERATION_METADATA)
-            .options(defer(Image.generation_metadata, raiseload=True))
-            .where(Image.id.in_(page_ids))
-        )):
-            by_id[img.id] = img
-            has_meta[img.id] = bool(flag)
-        images = [by_id[i] for i in page_ids if i in by_id]
-
-    # Stamp the effective license onto each row for the gallery badge. One
-    # extra lookup for the whole page, not per image.
-    ds_license = ""
-    if images:
-        ds_license = (await db.execute(
-            select(Dataset.license).where(Dataset.id == f.dataset_id)
-        )).scalar_one_or_none() or ""
-    # Label ids for the whole page in one query, bucketed into a dict — the same
-    # shape as the effective-license stamp above. `ImageListParams.limit` is
-    # capped at 500, so this `IN` never needs chunking.
-    labels_by_id = await labels_by_image(db, [img.id for img in images])
-    out = []
-    for img in images:
-        item = ImageListItem.model_validate(img)
-        item.license = img.license or ds_license
-        item.label_ids = labels_by_id.get(img.id, [])
-        item.has_generation_metadata = has_meta.get(img.id, False)
-        out.append(item)
-    return out
+    # Put back in page order by the helper; a row deleted between the two
+    # statements simply drops out.
+    return await _stamped_items(db, list(page_ids))
 
 
 def _count_query(f: ImageFilterParams):
@@ -574,7 +595,9 @@ def _count_query(f: ImageFilterParams):
 
 
 # Both of these must stay **above** `GET /{image_id}`, or FastAPI matches
-# `count`/`ids` as an image id and answers 404.
+# `count`/`ids` as an image id and answers 404. `POST /by-ids` below sits here
+# too, though it would not collide (no `POST /{image_id}`): the fixed-path
+# routes stay together, so a later `POST /{image_id}` cannot swallow it.
 @router.get("/count")
 async def count_images(
     f: Annotated[ImageFilterParams, Query()],
@@ -604,6 +627,18 @@ async def list_image_ids(
         total = (await db.execute(_count_query(f))).scalar_one()
         return {"ids": list(rows[:SELECT_ALL_ID_CAP]), "count": total, "truncated": True}
     return {"ids": list(rows), "count": len(rows), "truncated": False}
+
+
+@router.post("/by-ids", response_model=list[CompareImage])
+async def images_by_ids(body: ImagesByIdsRequest, db: AsyncSession = Depends(get_db)):
+    """The metadata of the named images, in the order asked, for the Compare page.
+
+    A POST because up to 100 uuids overflow a sensible query string. Duplicate
+    ids collapse to their first place; an id with no row drops out rather than
+    failing the whole request, since a tab can outlive an image it was showing.
+    """
+    ids = list(dict.fromkeys(body.image_ids))
+    return await _stamped_items(db, ids, CompareImage)
 
 
 @router.post("/upload", status_code=201)

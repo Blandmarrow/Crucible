@@ -54,3 +54,16 @@ export function usePaneGallerySourceVideo(): string | undefined {
   if (ctx) return ctx.view.sourceVideoId;
   return params.get("source_video_id") ?? undefined;
 }
+
+/**
+ * The images a Compare page shows, in order: `compareIds` inside a pane, the
+ * comma-separated `?ids=` outside one. Same pane-wins-outright rule as the two
+ * hooks above, for the same reason. Returns a fresh array on every call, so a
+ * caller that needs a stable dependency should key on `ids.join(",")`.
+ */
+export function usePaneCompareIds(): string[] {
+  const ctx = usePaneContext();
+  const [params] = useSearchParams();
+  if (ctx) return ctx.view.compareIds ?? [];
+  return (params.get("ids") ?? "").split(",").filter(Boolean);
+}

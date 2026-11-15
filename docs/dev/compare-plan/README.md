@@ -189,7 +189,9 @@ The route must follow the project's rules:
 Each phase is one branch and one PR, with its user docs (a section in `docs/gallery.md`
 or a new compare page under `docs/`, and a README line) and a Playwright journey.
 
-1. **The page and Side by side.** `POST /images/by-ids` and `CompareImage`, the routed
+1. **Built on `feat/130-compare-page`; its durable account is now
+   `docs/dev/gallery/compare.md`, so delete this entry when it merges.**
+   **The page and Side by side.** `POST /images/by-ids` and `CompareImage`, the routed
    page, the selection toolbar button, opening in the neighbouring pane
    (`neighbourLeafId`),
    `useLinkedViewport`, the metadata strip, Match pixels and Pixelated, and the persisted

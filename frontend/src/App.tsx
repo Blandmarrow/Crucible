@@ -23,6 +23,7 @@ import {
   ComfyPage,
   RunsPage,
   LogsPage,
+  ComparePage,
 } from "./pages/lazyPages";
 import PaneContainer from "./components/pane/PaneContainer";
 import ErrorBoundary from "./components/common/ErrorBoundary";
@@ -55,6 +56,9 @@ function routeToView(pathname: string): PaneView {
   }
   if (pathname.startsWith("/booru")) return { page: "booru" };
   if (pathname.startsWith("/file-browser")) return { page: "file-browser" };
+  // The ids live in the query string, which this function never sees, so a pane
+  // synced from a routed /compare opens empty and says so (docs/dev/gallery/compare.md).
+  if (pathname.startsWith("/compare")) return { page: "compare" };
   return { page: "datasets" };
 }
 
@@ -98,6 +102,7 @@ function MainContent() {
         <Route path="/datasets/:datasetId/comfy" element={<ErrorBoundary><ComfyPage /></ErrorBoundary>} />
         <Route path="/datasets/:datasetId/runs" element={<ErrorBoundary><RunsPage /></ErrorBoundary>} />
         <Route path="/file-browser" element={<ErrorBoundary><FileBrowserPage /></ErrorBoundary>} />
+        <Route path="/compare" element={<ErrorBoundary><ComparePage /></ErrorBoundary>} />
         <Route path="/settings" element={<ErrorBoundary><SettingsPage /></ErrorBoundary>} />
         <Route path="/logs" element={<ErrorBoundary><LogsPage /></ErrorBoundary>} />
       </Routes>

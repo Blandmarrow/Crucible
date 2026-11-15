@@ -117,7 +117,9 @@ Tier 4, design first:
   - [x] Design: the plan, decision 20 and these boxes (`design/130-compare`).
   - [ ] Phase 1, the page and Side by side (`feat/130-compare-page`): `POST /images/by-ids`,
     the routed page, linked zoom, the selection toolbar's Compare button, opening in the
-    neighbouring pane.
+    neighbouring pane. Built 2026-11-15 on a branch stacked on the design branch, with
+    an Opus review's seven findings fixed (`docs/dev/gallery/compare.md`); its PR waits
+    on the design PR.
   - [ ] Phase 2, A/B (`feat/130-compare-ab`): swipe, flip and difference.
   - [ ] Phase 3, Grid and the contact sheet (`feat/130-contact-sheet`):
     `POST /images/contact-sheet`, timed on 100 large files before shipping.

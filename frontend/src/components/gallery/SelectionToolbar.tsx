@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Trash2, X, Sparkles, Star, FolderInput, ArrowRightFromLine, ScanSearch, Pencil, Maximize2, Palette, Copy, Combine, Crop, ScrollText, Scissors, RefreshCw, Tags, Eraser } from "lucide-react";
+import { Trash2, X, Sparkles, Star, FolderInput, ArrowRightFromLine, ScanSearch, Pencil, Maximize2, Palette, Copy, Combine, Crop, ScrollText, Scissors, RefreshCw, Tags, Eraser, SquareSplitHorizontal } from "lucide-react";
+import { useOpenBeside } from "../../hooks/useOpenBeside";
+import { COMPARE_MAX, compareUrl, compareView } from "../../utils/compare";
 import toast from "react-hot-toast";
 import BulkEditForm from "../caption/BulkEditForm";
 import UpscaleForm from "../upscale/UpscaleForm";
@@ -63,6 +65,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
   const { selectedIds, clear, count } = useSelectionStore();
   const datasetByImageId = useSelectionStore((s) => s.datasetByImageId);
   const qc = useQueryClient();
+  const openBeside = useOpenBeside();
   // Offered by the Set source/license modal so an in-use free-text license is a
   // pick rather than a retype.
   const customLicenses = useCustomLicenses(datasetId);
@@ -583,6 +586,20 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
         )}
         <div className="w-px h-4 bg-line-2" />
 
+        <button
+          className="btn-secondary btn-sm flex items-center gap-1.5"
+          disabled={count < 2 || count > COMPARE_MAX}
+          title={
+            count < 2 ? "Select two or more images to compare"
+            : count > COMPARE_MAX ? `Compare takes up to ${COMPARE_MAX} images`
+            : "Open the selection side by side (in the next pane in split view)"
+          }
+          // Selection order, which is the order the images were picked; it may
+          // span datasets, and so may the comparison.
+          onClick={() => { const ids = [...selectedIds]; openBeside(compareUrl(ids), compareView(ids)); }}
+        >
+          <SquareSplitHorizontal size={14} /> Compare
+        </button>
         <button className="btn-secondary btn-sm flex items-center gap-1.5" onClick={() => setShowBulkEdit(true)}>
           <Pencil size={14} /> Edit
         </button>

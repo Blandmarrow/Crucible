@@ -20,6 +20,15 @@ const PAGE_OPTIONS: { value: PageType; label: string }[] = [
   { value: "booru",        label: "Booru Browser" },
 ];
 
+// Pages reached by clicking something (an image, a video, a Compare button), never
+// chosen here: there would be no id to hand them. Named so the selector can show
+// which page a pane is on instead of falling back to its first option.
+const UNPICKABLE_LABELS: Partial<Record<PageType, string>> = {
+  "image-detail": "Image",
+  "video-detail": "Video",
+  compare: "Compare",
+};
+
 const NEEDS_DATASET = new Set<PageType>(["gallery", "captioning", "quality", "stats", "export", "bulk-edit", "consolidate", "versions", "comfy", "runs"]);
 
 interface Props {
@@ -66,6 +75,9 @@ export default function PaneHeader({ paneId, view, isOnly }: Props) {
         value={view.page}
         onChange={(e) => handlePageChange(e.target.value as PageType)}
       >
+        {UNPICKABLE_LABELS[view.page] && (
+          <option value={view.page} disabled>{UNPICKABLE_LABELS[view.page]}</option>
+        )}
         {PAGE_OPTIONS.map((o) => (
           <option key={o.value} value={o.value}>{o.label}</option>
         ))}

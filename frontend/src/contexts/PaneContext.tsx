@@ -15,7 +15,8 @@ export type PageType =
   | "consolidate"
   | "versions"
   | "comfy"
-  | "runs";
+  | "runs"
+  | "compare";
 
 export interface PaneView {
   page: PageType;
@@ -31,6 +32,10 @@ export interface PaneView {
    *  since chosen — GalleryPage applies it once per change and then leaves its
    *  own state alone. Unlike `subfolder`, "" carries no meaning. */
   sourceVideoId?: string;
+  /** Compare only: the images to compare, in order. Unlike the two deep-link
+   *  fields above this is the page's identity — ComparePage keeps it current as
+   *  panes are removed or reordered, so a pane always describes what it shows. */
+  compareIds?: string[];
 }
 
 interface PaneContextValue {

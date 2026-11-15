@@ -100,6 +100,15 @@ const DATASET_CONTENT_SCOPE = [
   "embedding-coverage",
 ] as const;
 
+/**
+ * The Compare page's rows, `[COMPARE_IMAGES_KEY, ...ids]`. Not under
+ * `["images", datasetId]`, because one comparison can hold images from several
+ * datasets. No writer invalidates it: `ComparePage` listens to the query cache
+ * and refetches when any `["images", …]` or `["image", …]` key is invalidated,
+ * so a new image writer needs to do nothing for Compare.
+ */
+export const COMPARE_IMAGES_KEY = "compare-images";
+
 export function invalidateDatasetContentScope(qc: QueryClient, datasetId: string | undefined) {
   qc.invalidateQueries({ queryKey: ["datasets"] });
   for (const k of DATASET_CONTENT_SCOPE) {

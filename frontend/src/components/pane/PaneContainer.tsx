@@ -10,7 +10,7 @@ interface Props {
 }
 
 export default function PaneContainer({ node, isOnly = false }: Props) {
-  const { setActivePaneId, updateSizes } = usePaneStore();
+  const { setActivePaneId, updateSizes, activePaneId } = usePaneStore();
 
   if (node.type === "leaf") {
     return (
@@ -21,6 +21,9 @@ export default function PaneContainer({ node, isOnly = false }: Props) {
           // active. The click handler below is what the active-pane key guards
           // (VideoStrip, ImageDetailPage) are read against.
           data-testid="pane-leaf"
+          // Which pane the key guards answer to, readable by a spec without
+          // pressing keys to find out.
+          data-active={node.id === activePaneId ? "true" : undefined}
           style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}
           onClick={() => setActivePaneId(node.id)}
         >

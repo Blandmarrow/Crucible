@@ -137,6 +137,18 @@ class ImageListItem(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class CompareImage(ImageListItem):
+    """A list row plus what the Compare page shows beside it. Separate from
+    `ImageListItem` so the gallery's payload, paid per row, does not grow."""
+    aesthetic_model: str | None = None
+    # Filled by the router: rows come from several datasets, so each carries its own.
+    dataset_name: str = ""
+
+
+class ImagesByIdsRequest(BaseModel):
+    image_ids: list[str] = Field(min_length=1, max_length=100)
+
+
 class ImageFilterParams(BaseModel):
     """Every filter `GET /images/` accepts — `dataset_id` plus the whole tail —
     minus paging (`page`/`limit`) and ordering (`sort`/`order`).

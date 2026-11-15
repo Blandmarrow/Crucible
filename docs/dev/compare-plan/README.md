@@ -186,15 +186,11 @@ The route must follow the project's rules:
 
 ## Phases
 
-Each phase is one branch and one PR, with its user docs (a section in `docs/gallery.md`
-or a new compare page under `docs/`, and a README line) and a Playwright journey.
+Each phase is one branch and one PR, with its user docs (`docs/compare.md` and a README
+line) and a Playwright journey. A landed phase leaves this list; its account is in
+`docs/dev/gallery/compare.md`.
 
-1. **The page and Side by side.** `POST /images/by-ids` and `CompareImage`, the routed
-   page, the selection toolbar button, opening in the neighbouring pane
-   (`neighbourLeafId`),
-   `useLinkedViewport`, the metadata strip, Match pixels and Pixelated, and the persisted
-   mode and toggles (a per-viewer key; read `docs/dev/persistence.md` first). e2e: select
-   three, press Compare, wheel over one pane, and check all three transforms moved.
+1. The page and Side by side: landed as PR #169.
 2. **A/B.** Swipe, flip and difference. e2e: drag the divider and check its position.
 3. **Grid and the contact sheet.** Grid mode and the export route, with **Export current
    view**. Backend tests: a sheet of three tiny images has the expected size, a row with an

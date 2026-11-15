@@ -171,6 +171,20 @@ function findSplit(tree: PaneTree, leafId: string): PaneSplit | null {
   return findSplit(tree.children[0], leafId) ?? findSplit(tree.children[1], leafId);
 }
 
+/**
+ * The pane to open something *beside* `leafId` in: the first leaf of the other
+ * half of the split that holds it, or null when `leafId` is the only pane (or
+ * is not in the tree). Compare opens here so the gallery that asked for it
+ * stays on screen. Pure, and exported so it can be reasoned about on its own.
+ */
+export function neighbourLeafId(tree: PaneTree, leafId: string): string | null {
+  const parent = findSplit(tree, leafId);
+  if (!parent) return null;
+  const [first, second] = parent.children;
+  const other = first.type === "leaf" && first.id === leafId ? second : first;
+  return firstLeafId(other);
+}
+
 /** A pane's view as the store holds it now, ahead of any render still pending:
  *  `setView` is synchronous, while the render it starts is a React transition. */
 export function currentPaneView(paneId: string): PaneView | null {

@@ -174,6 +174,15 @@ export interface ImageListItem {
   label_ids: string[];
 }
 
+/** A row of `POST /images/by-ids`, the Compare page's read: a list row plus the
+ *  two things a comparison across datasets needs that the gallery never shows. */
+export interface CompareImage extends ImageListItem {
+  /** Which model produced `aesthetic_score`; scores from two models are not on
+   *  one scale, so the page names it beside the number. */
+  aesthetic_model: string | null;
+  dataset_name: string;
+}
+
 export interface GenerationMetadata {
   source?: string;
   prompt?: string;

@@ -27,3 +27,4 @@ export const VersionsPage = lazy(() => import("./VersionsPage"));
 export const ComfyPage = lazy(() => import("./ComfyPage"));
 export const RunsPage = lazy(() => import("./RunsPage"));
 export const LogsPage = lazy(() => import("./LogsPage"));
+export const ComparePage = lazy(() => import("./ComparePage"));

@@ -212,6 +212,11 @@ export function useViewportPane(
 
     const onKey = (e: KeyboardEvent) => {
       if (e.altKey || e.ctrlKey || e.metaKey) return;
+      // Keys aimed at a control inside the pane belong to it: A/B's divider moves
+      // on the arrow keys, and a focused corner button should not pan. Checked
+      // here because this is a native listener on the pane, which runs before any
+      // React handler on the control could stop the event.
+      if ((e.target as HTMLElement).closest("button, a, input, select, textarea")) return;
       const g = geom();
       if (!g) return;
       const v = vp.get();

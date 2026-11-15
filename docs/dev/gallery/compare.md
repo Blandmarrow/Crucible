@@ -1,8 +1,8 @@
 # The Compare page
 
-`ComparePage` shows two to four images side by side with linked zoom and pan (#130). This
-file covers how it is reached and routed, the batch read behind it, the linked viewport,
-and the pane. The user-facing page is `docs/compare.md`; the design and the phases still
+`ComparePage` shows two to four images side by side, or two in one frame (A/B), with
+linked zoom and pan (#130). This file covers how it is reached and routed, the batch
+read behind it, the linked viewport, the pane, and A/B. The user-facing page is `docs/compare.md`; the design and the phases still
 to come (A/B, the grid and contact sheet, actions) are in `docs/dev/compare-plan/README.md`
 until they land; the rulings are decision 20 (`docs/dev/decisions/20-compare-view.md`).
 The pane system it plugs into is `docs/dev/panes-routing.md`.
@@ -125,8 +125,47 @@ Scores are compared only when every scored image used one aesthetic model, the r
 Quality page applies to *Keep best* (`bestMarks` in `ComparePage.tsx`). The "shown at N%"
 figure is written by the pane's layout callback, not rendered.
 
-`COMPARE_PREFS_KEY` (`constants/storage.ts`) remembers Match pixels and Pixelated per
-browser; see `docs/dev/persistence.md`.
+`COMPARE_PREFS_KEY` (`constants/storage.ts`) remembers the mode, A/B's way of showing B,
+Match pixels and Pixelated per browser; see `docs/dev/persistence.md`.
+
+## A/B
+
+`components/compare/ABView.tsx` draws two images in one frame under the same viewport.
+It binds the frame with `useViewportPane` for image A only; its `onLayout` writes A's
+geometry onto B as well, so B always fills **A's rectangle**. Images of one shape line up
+exactly; another shape is stretched, and the foot says the overlay is approximate. A
+crop is not aligned. Match pixels has no meaning with one frame, so the toolbar hides it.
+
+- **Swipe** clips B with `clip-path: inset(0 0 0 Lpx)` and A with
+  `inset(0 (w − L)px 0 0)`, where `L = W × split − tx`: `inset()` is measured in each
+  image's own box, before its transform. Clipping A too keeps it from showing through a
+  transparent B. The divider and handle are written from the same layout; the handle
+  reads the current split when it remounts. The handle is a `role="slider"` button.
+  **Its arrow keys reach the frame first**: the frame's key handler is a *native*
+  listener on the pane, which runs before any React handler on the handle, so a
+  synthetic `stopPropagation` there came too late and the picture panned whenever it
+  was zoomed. `useViewportPane`'s `onKey` therefore ignores keys aimed at a button,
+  link or field inside the pane.
+- **Flip** shows B only while Space or the button is held, and hides A meanwhile (a
+  transparent B again). The Space listener carries the guards every pane key handler
+  needs: `isTextEntryTarget`, the active-pane check (so Space in the gallery beside it
+  never flips), and **no focused button or link**, where Space means "activate". A
+  window `blur` and the listener's own cleanup clear it, so neither a key released
+  elsewhere nor leaving Flip mid-hold can leave B stuck on.
+- **Difference** is `mix-blend-mode: difference` on B: unchanged pixels go black. No
+  server work.
+
+**Nothing claims to show B before B has loaded.** With B still downloading or failed,
+every mode fell back to A's pixels under a "B" label, which reads as "A and B are
+identical". The labels say *loading* or *could not be loaded*, the flip waits for B
+(its button is disabled until then), and a failed A says so in place, as a failed pane
+does in Side by side.
+
+The A and B picks are **ids** held in page state (`abPick`), falling back to the first
+two images when a pick leaves the set; choosing the image already on the other side
+swaps the two. `ABView` is keyed on the pair, so a new pair remounts it while the shared
+viewport keeps the zoom. It registers its `measure` under A's id, so **100%** in A/B
+means A at its real pixels.
 
 ## Tests
 
@@ -134,5 +173,8 @@ browser; see `docs/dev/persistence.md`.
 all three grow, Fit restores them, remove one and see the URL follow and survive a reload,
 and the two-image floor; and in split view, Compare from the left gallery fills the right
 pane, which becomes the active one, while the left keeps its tiles; then a pane's Open
-puts the detail view on the left, and a caption saved there appears in the comparison. `neighbourLeafId` has no unit test, since the
+puts the detail view on the left, and a caption saved there appears in the comparison.
+A third journey covers A/B: zoomed in, the divider's arrow keys move B's clip without
+panning; Space on a focused button does not flip, while on the frame it shows B only
+while held; Difference sets the blend; and the mode and its view survive a reload. `neighbourLeafId` has no unit test, since the
 frontend has no unit runner; the split-view journey is its test.

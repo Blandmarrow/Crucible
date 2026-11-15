@@ -34,7 +34,7 @@ restates its stages.
 ## Next session (updated 2026-11-15, #130 landed)
 
 1. **#130 Compare landed** in five PRs, #168 to #172 (see Now), and the detail page's
-   Compare menu (With selection, With neighbours) followed in PR #PR; the tray is under
+   Compare menu (With selection, With neighbours) followed in PR #173; the tray is under
    Later. M11 now holds #129, design first, and #48, waiting on its reporter.
 2. **CLAUDE.md is 6 words over budget** (6,506). Its seam, two Map hubs, waits on the
    user's call between a hub and a budget raise (`docs/dev/pending-splits.md`).
@@ -258,7 +258,7 @@ Each line links the record that holds the full text.
 - An **Add to compare** tray filled while browsing, for "Compare with…" on the ComfyUI page
   and a third entry in the detail page's Compare menu (`docs/dev/gallery/compare.md`
   § Not built). The menu's other two entries, **With selection** and **With neighbours**,
-  landed on 2026-11-15 (PR #PR); the user asked for detail-page entry points that day,
+  landed on 2026-11-15 (PR #173); the user asked for detail-page entry points that day,
   after #130.
 - A technical-only scoring run (`POST /quality/score` with only `run_technical`) still
   needs torch: the job imports `backend/ml/aesthetic_scorer.py` before checking which

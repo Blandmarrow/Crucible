@@ -114,7 +114,7 @@ Tier 4, design first:
 - #130 Better comparisons: a Compare page, designed 2026-11-15 in
   [compare-plan/README.md](compare-plan/README.md) under
   [decision 20](decisions/20-compare-view.md). One branch and PR per phase, in this order:
-  - [x] Design: the plan, decision 20 and these boxes (`design/130-compare`).
+  - [x] Design: the plan, decision 20 and these boxes (`design/130-compare`, PR #168).
   - [ ] Phase 1, the page and Side by side (`feat/130-compare-page`): `POST /images/by-ids`,
     the routed page, linked zoom, the selection toolbar's Compare button, opening in the
     neighbouring pane. Built 2026-11-15 on a branch stacked on the design branch, with

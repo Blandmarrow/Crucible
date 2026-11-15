@@ -569,7 +569,10 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
           little of it and pins to the bottom once there is enough to scroll, so
           it can never cover either. It also centres on the pane rather than on
           the window, which is the split-view behaviour anyone would expect. */}
-      <div className="sticky bottom-6 z-40 mx-auto mt-6 w-fit card flex items-center gap-3 px-4 py-3 shadow-xl">
+      {/* Wraps onto more rows rather than running past the pane: twenty-odd
+          actions in one unbreakable row made `w-fit` wider than the pane, and the
+          scroll container then scrolled sideways to reach the end of the bar. */}
+      <div className="sticky bottom-6 z-40 mx-auto mt-6 w-fit max-w-full card flex flex-wrap items-center justify-center gap-x-3 gap-y-2 px-4 py-3 shadow-xl">
         <span className="text-sm font-medium text-accent-text">{count} selected</span>
         {datasetGroups.length > 0 && (
           <div className="flex items-center gap-1">

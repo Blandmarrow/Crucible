@@ -222,7 +222,7 @@ substantial edit.
 | `docs/dev/file-browser.md` | Working on `FileBrowserPage`, its preview panel, or any `/filesystem` endpoint's listing side or `/mkdir` — `canonical_abs_path` and stored-path containment, the name-collision 409s, the router's known holes, the `released` prop | ~1300 |
 | `docs/dev/file-browser-move.md` | Working on `POST /filesystem/move` — the file/directory branches, the canonical-media-folder 409, the derived-artifact guard, platform-aware path prefix tests | ~1300 |
 | `docs/dev/file-browser-rename-delete.md` | Working on `POST /filesystem/rename` or `/delete` — guards C/D/A/B and `_DATASET_LAYOUT_DIRS`, the thumbnail-stem 409, the delete's hook ordering and `_add_orphan` | ~1600 |
-| `docs/dev/frontend-core.md` | Working on global frontend state, the `SelectionToolbar` modals, or the JS error console — `uploadStore` | ~1800 |
+| `docs/dev/frontend-core.md` | Working on global frontend state, the `SelectionToolbar` modals, or the JS error console — `uploadStore` | ~1900 |
 | `docs/dev/frontend-constants.md` | Working on a shared `frontend/src/constants/` module — the caption style table, license vocabulary, `queryKeys.ts` invalidation helpers, `apiErrorDetail` | ~1750 |
 | `docs/dev/frontend-jobs.md` | Working on `useJobSSE`/`useAllJobsSSE`, reconciling after an SSE gap, or job reporting — the partial-failure line, the stale-thumbnail warning and the terminal-emit ordering rule | ~1650 |
 | `docs/dev/job-invalidation.md` | Adding a job-triggering UI or changing what a finished job invalidates — the single-job and id-list patterns, `TopBar`'s global watcher, `IMAGE_MODIFYING_JOB_TYPES` | ~2050 |

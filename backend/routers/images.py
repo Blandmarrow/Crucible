@@ -1,13 +1,14 @@
 import asyncio
 import json
 import logging
+import re
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any, Literal
 from uuid import uuid4
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy import (
     String, and_, case, delete, func, literal_column, or_, select, type_coerce, update as sa_update,
 )
@@ -26,6 +27,9 @@ from backend.licenses import (
     materialize_by_source,
     merge_provenance,
     resolve_provenance,
+)
+from backend.services.contact_sheet import (
+    MAX_SHEET_PIXELS, MAX_SHEET_SIDE, SheetCell, SheetOptions, region_aspect, render_contact_sheet, sheet_size,
 )
 from backend.models import BackgroundJob, Dataset, Image, Video
 from backend.models.detection import Detection
@@ -47,6 +51,7 @@ from backend.schemas.image import (
     ImageFilterParams,
     ImageIdsParams,
     CompareImage,
+    ContactSheetRequest,
     ImageListItem,
     ImagesByIdsRequest,
     ImageListParams,
@@ -595,9 +600,10 @@ def _count_query(f: ImageFilterParams):
 
 
 # Both of these must stay **above** `GET /{image_id}`, or FastAPI matches
-# `count`/`ids` as an image id and answers 404. `POST /by-ids` below sits here
-# too, though it would not collide (no `POST /{image_id}`): the fixed-path
-# routes stay together, so a later `POST /{image_id}` cannot swallow it.
+# `count`/`ids` as an image id and answers 404. `POST /by-ids` and
+# `POST /contact-sheet` below sit here too, though they would not collide (no
+# `POST /{image_id}`): the fixed-path routes stay together, so a later
+# `POST /{image_id}` cannot swallow them.
 @router.get("/count")
 async def count_images(
     f: Annotated[ImageFilterParams, Query()],
@@ -639,6 +645,74 @@ async def images_by_ids(body: ImagesByIdsRequest, db: AsyncSession = Depends(get
     """
     ids = list(dict.fromkeys(body.image_ids))
     return await _stamped_items(db, ids, CompareImage)
+
+
+@router.post("/contact-sheet")
+async def contact_sheet(body: ContactSheetRequest, db: AsyncSession = Depends(get_db)):
+    """Draw the named images as one PNG/JPEG grid and return it as a download.
+
+    Writes nothing to disk: a sheet saved under a dataset would become training
+    data (decision 20). Every stored `file_path` is gated before it is opened,
+    because this route returns pixels it read, so an out-of-tree path would be
+    an arbitrary-file *read*. A refused row fails the whole request with 403; a
+    gated path with no file on disk is a "missing" cell.
+    """
+    ids = list(dict.fromkeys(body.image_ids))
+    rows = {
+        r.id: r for r in (await db.execute(
+            select(
+                Image.id, Image.dataset_id, Image.filename, Image.file_path, Image.width,
+                Image.height, Image.file_size_bytes, Image.format, Image.aesthetic_score,
+                Image.aesthetic_model, Image.caption_text,
+            ).where(Image.id.in_(ids))
+        )).all()
+    }
+    ordered = [rows[i] for i in ids if i in rows]
+    if not ordered:
+        raise HTTPException(404, "None of those images exist")
+    ds_names = dict((await db.execute(
+        select(Dataset.id, Dataset.name).where(Dataset.id.in_({r.dataset_id for r in ordered}))
+    )).all())
+
+    cells = []
+    for r in ordered:
+        path = safe_dataset_path(r.file_path, settings.datasets_dir) if r.file_path else None
+        cells.append(SheetCell(
+            path=path, filename=r.filename, width=r.width, height=r.height,
+            file_size_bytes=r.file_size_bytes, format=r.format,
+            aesthetic_score=r.aesthetic_score, aesthetic_model=r.aesthetic_model,
+            caption=r.caption_text or "", dataset_name=ds_names.get(r.dataset_id, ""),
+        ))
+
+    # Cell shape comes from the first row's stored size, so the size check below
+    # needs no file opened.
+    aspect = region_aspect(ordered[0].width, ordered[0].height, body.region)
+    w, h = sheet_size(len(cells), body.columns, body.cell_px, aspect, body.fields)
+    if max(w, h) > MAX_SHEET_SIDE or w * h > MAX_SHEET_PIXELS:
+        # Both before any image is opened: the side cap alone let a 100-image,
+        # 1024 px sheet allocate ~576 MB, on a thread no cancel can stop.
+        raise HTTPException(
+            422,
+            f"That sheet would be {w}x{h} px; the limit is {MAX_SHEET_SIDE} px on the "
+            f"longest side and {MAX_SHEET_PIXELS // 1_000_000} million pixels in all. "
+            "Use fewer images or a smaller cell width.",
+        )
+
+    opts = SheetOptions(
+        columns=body.columns, cell_px=body.cell_px, fields=tuple(body.fields),
+        background=body.background, format=body.format, region=body.region, aspect=aspect,
+        pixelated=body.pixelated,
+    )
+    data = await asyncio.get_running_loop().run_in_executor(None, render_contact_sheet, cells, opts)
+
+    names = {c.dataset_name for c in cells if c.dataset_name}
+    base = next(iter(names)) if len(names) == 1 else "compare"
+    stem = re.sub(r"[^a-z0-9]+", "-", base.lower()).strip("-") or "compare"
+    ext, media = ("jpg", "image/jpeg") if body.format == "jpeg" else ("png", "image/png")
+    return Response(
+        content=data, media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="{stem}-sheet.{ext}"'},
+    )
 
 
 @router.post("/upload", status_code=201)

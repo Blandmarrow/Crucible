@@ -17,15 +17,33 @@ import { AB_HOWS, COMPARE_MAX, COMPARE_SIDE_MAX, compareUrl, compareView } from 
 import type { AbHow } from "../utils/compare";
 import ComparePane from "../components/compare/ComparePane";
 import ABView from "../components/compare/ABView";
+import CompareGrid from "../components/compare/CompareGrid";
+import ContactSheetDialog from "../components/compare/ContactSheetDialog";
+import type { SheetPrefs } from "../components/compare/ContactSheetDialog";
 import type { BestMarks } from "../components/compare/MetaStrip";
 
-type CompareMode = "side" | "ab";
-interface ComparePrefs { mode: CompareMode; abHow: AbHow; matchPixels: boolean; pixelated: boolean }
-const DEFAULT_PREFS: ComparePrefs = { mode: "side", abHow: "swipe", matchPixels: false, pixelated: false };
+type CompareMode = "side" | "ab" | "grid";
+interface ComparePrefs {
+  /** The last of Side by side or A/B chosen. Grid is never stored: it is what a set
+   *  of more than four opens in, not a habit. */
+  mode: "side" | "ab";
+  abHow: AbHow;
+  matchPixels: boolean;
+  pixelated: boolean;
+  gridColumns: number | "auto";
+  sheet: SheetPrefs;
+}
+const DEFAULT_PREFS: ComparePrefs = {
+  mode: "side", abHow: "swipe", matchPixels: false, pixelated: false, gridColumns: "auto",
+  sheet: { cellPx: 256, fields: ["header", "filename", "size", "score"], background: "dark", format: "png" },
+};
 const MODES: { value: CompareMode; label: string }[] = [
   { value: "side", label: "Side by side" },
   { value: "ab", label: "A/B" },
+  { value: "grid", label: "Grid" },
 ];
+const GRID_COLUMN_CHOICES = [2, 3, 4, 5, 6, 8];
+const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
 
 /**
  * The Compare page (#130, docs/dev/gallery/compare.md): up to four images side
@@ -124,12 +142,82 @@ export default function ComparePage() {
     const swapTo = id === other ? (which === "a" ? abA?.id : abB?.id) : other;
     setAbPick(which === "a" ? { a: id, b: swapTo } : { a: swapTo, b: id });
   };
-  const abMode = prefs.mode === "ab";
+
+  // The mode on screen. A set that arrives from *outside* this page (a Compare
+  // button, a URL) opens as Grid when it holds more than Side by side can show,
+  // and otherwise in the last mode chosen. A list this page wrote itself (a pane
+  // removed or moved, the ticked few, Back to all) is recognised by `ownKey`, not
+  // by being a subset of the last one: three picked in the gallery out of a grid
+  // of ten are a new set too. Worked out during render, React's pattern for state
+  // that follows a prop, so no frame shows the old mode with the new set.
+  const [mode, setModeState] = useState<CompareMode>(() =>
+    wanted.length > COMPARE_SIDE_MAX ? "grid" : prefs.mode);
+  const [ticked, setTicked] = useState<string[]>([]);
+  const [backTo, setBackTo] = useState<string[] | null>(null);
+  const [seenKey, setSeenKey] = useState(idsKey);
+  const [ownKey, setOwnKey] = useState<string | null>(null);
+  if (seenKey !== idsKey) {
+    setSeenKey(idsKey);
+    setTicked([]);
+    if (idsKey !== ownKey) {
+      setModeState(wanted.length > COMPARE_SIDE_MAX ? "grid" : prefs.mode);
+      setBackTo(null);
+    }
+    setOwnKey(null);
+  }
+  const setMode = (m: CompareMode) => {
+    setModeState(m);
+    if (m !== "grid") setPrefs({ mode: m });
+  };
+  const abMode = mode === "ab";
+  const gridMode = mode === "grid";
+  const toggleTick = (id: string) =>
+    setTicked((t) => (t.includes(id) ? t.filter((x) => x !== id) : t.length < COMPARE_SIDE_MAX ? [...t, id] : t));
+  const compareTicked = () => {
+    const picked = items.filter((r) => ticked.includes(r.id)).map((r) => r.id);
+    if (picked.length < 2) return;
+    // The first list ticked from is the one Back to all returns to, however many
+    // times a smaller grid is ticked from after it.
+    setBackTo((b) => b ?? ids);
+    setModeState("side");
+    setIds(picked);
+  };
+  const backToAll = () => {
+    if (!backTo) return;
+    setBackTo(null);
+    setModeState(backTo.length > COMPARE_SIDE_MAX ? "grid" : prefs.mode);
+    setIds(backTo);
+  };
+
+  // Export: the whole set as a sheet, or (Side by side) the shown panes cropped to
+  // the region pane 1 is showing. The region is measured when the button is pressed.
+  const [sheet, setSheet] = useState<{ ids: string[]; columns: number | null; region: [number, number, number, number] | null } | null>(null);
+  const openSheet = () =>
+    setSheet({
+      ids: items.map((r) => r.id),
+      // As the grid draws it: never more columns than images, which the server
+      // would clamp to anyway.
+      columns: gridMode && prefs.gridColumns !== "auto" ? Math.min(prefs.gridColumns, items.length) : null,
+      region: null,
+    });
+  // Every pane gets pane 1's region, as fractions of each image. Exact when the
+  // images share a shape and Match pixels is off, which is when their panes show
+  // the same fraction; otherwise the others' crops differ a little from the screen.
+  const openViewSheet = () => {
+    const g = shown[0] ? measures.current.get(shown[0].id)?.() : null;
+    const region: [number, number, number, number] = g
+      ? [clamp01(-g.tx / g.w), clamp01(-g.ty / g.h), clamp01((g.W - g.tx) / g.w), clamp01((g.H - g.ty) / g.h)]
+      : [0, 0, 1, 1];
+    setSheet({ ids: shown.map((r) => r.id), columns: shown.length, region });
+  };
 
   const best = useMemo(() => bestMarks(shown), [shown]);
   const showDataset = new Set(shown.map((r) => r.dataset_id)).size > 1;
 
-  const setIds = (next: string[]) => go(compareUrl(next), compareView(next), { replace: true });
+  const setIds = (next: string[]) => {
+    setOwnKey(next.join(","));
+    go(compareUrl(next), compareView(next), { replace: true });
+  };
   const remove = (id: string) => {
     if (items.length <= 2) {
       toast("A comparison needs two images. Open the gallery to choose others.");
@@ -175,6 +263,8 @@ export default function ComparePage() {
         Choose others in the gallery.
       </div>
     );
+  } else if (gridMode) {
+    body = <CompareGrid items={items} columns={prefs.gridColumns} ticked={ticked} onToggle={toggleTick} />;
   } else if (abMode && abA && abB) {
     body = (
       <ABView
@@ -215,7 +305,8 @@ export default function ComparePage() {
   const notes: string[] = [];
   if (missing > 0) notes.push(`${missing} image${missing === 1 ? " was" : "s were"} not found (deleted, or from another install) and ${missing === 1 ? "is" : "are"} left out.`);
   if (ids.length > COMPARE_MAX) notes.push(`Only the first ${COMPARE_MAX} images are compared.`);
-  if (!abMode && items.length > COMPARE_SIDE_MAX) notes.push(`Showing the first ${COMPARE_SIDE_MAX} of ${items.length}. Remove one to bring in the next.`);
+  if (mode === "side" && items.length > COMPARE_SIDE_MAX) notes.push(`Showing the first ${COMPARE_SIDE_MAX} of ${items.length}. Remove one to bring in the next, or tick up to ${COMPARE_SIDE_MAX} in Grid.`);
+  const canGoBack = backTo && backTo.length > ids.length;
 
   return (
     <div className="cmp-root">
@@ -226,7 +317,7 @@ export default function ComparePage() {
         </div>
         <div className="cmp-seg" role="group" aria-label="Mode">
           {MODES.map((m) => (
-            <button key={m.value} type="button" aria-pressed={prefs.mode === m.value} onClick={() => setPrefs({ mode: m.value })}>
+            <button key={m.value} type="button" aria-pressed={mode === m.value} onClick={() => setMode(m.value)}>
               {m.label}
             </button>
           ))}
@@ -254,17 +345,49 @@ export default function ComparePage() {
             </div>
           </>
         )}
-        {!abMode && (
+        {mode === "side" && (
           <label className="cmp-check">
             <input type="checkbox" checked={prefs.matchPixels} onChange={(e) => setPrefs({ matchPixels: e.target.checked })} />
             Match pixels
           </label>
         )}
-        <label className="cmp-check">
-          <input type="checkbox" checked={prefs.pixelated} onChange={(e) => setPrefs({ pixelated: e.target.checked })} />
-          Pixelated
-        </label>
+        {!gridMode && (
+          <label className="cmp-check">
+            <input type="checkbox" checked={prefs.pixelated} onChange={(e) => setPrefs({ pixelated: e.target.checked })} />
+            Pixelated
+          </label>
+        )}
+        {gridMode && (
+          <>
+            <label className="cmp-check">
+              Columns
+              <select
+                className="select cmp-pick"
+                value={String(prefs.gridColumns)}
+                onChange={(e) => setPrefs({ gridColumns: e.target.value === "auto" ? "auto" : Number(e.target.value) })}
+              >
+                <option value="auto">Auto</option>
+                {GRID_COLUMN_CHOICES.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </label>
+            <button type="button" className="btn sm" disabled={ticked.length < 2} onClick={compareTicked}
+              title="Open the ticked images side by side">
+              Compare ticked ({ticked.length})
+            </button>
+          </>
+        )}
         <span className="cmp-spacer" />
+        {mode === "side" && (
+          <button type="button" className="btn sm" disabled={!canZoom} onClick={openViewSheet}
+            title="The images shown, each cropped to the part you are zoomed into, as one picture">
+            Export current view
+          </button>
+        )}
+        <button type="button" className="btn sm primary" disabled={items.length < 1} onClick={openSheet}
+          title="Every image in this comparison as one picture">
+          Export sheet
+        </button>
+        {!gridMode && (
         <div className="cmp-zoom" role="group" aria-label="Zoom">
           <button type="button" className="btn sm" aria-label="Zoom out" disabled={!canZoom || zoom <= 1}
             onClick={() => vp.set({ ...vp.get(), z: vp.get().z / 1.5 })}><Minus size={13} /></button>
@@ -279,12 +402,33 @@ export default function ComparePage() {
               if (g) vp.set({ ...vp.get(), z: vp.get().z / g.scale });
             }}>100%</button>
         </div>
+        )}
       </div>
       <div className="cmp-stage">{body}</div>
       <div className="cmp-hint">
-        <span>Scroll to zoom · drag to pan · double-click: fit or 100% · with a pane focused: + − 0 and the arrow keys</span>
+        <span>
+          {gridMode
+            ? `Click to tick up to ${COMPARE_SIDE_MAX}, then Compare ticked opens them side by side`
+            : "Scroll to zoom · drag to pan · double-click: fit or 100% · with a pane focused: + − 0 and the arrow keys"}
+        </span>
         {notes.map((n) => <span key={n}>{n}</span>)}
+        {canGoBack && (
+          <button type="button" className="link-btn" onClick={backToAll}>
+            Back to all {backTo!.length}
+          </button>
+        )}
       </div>
+      {sheet && (
+        <ContactSheetDialog
+          ids={sheet.ids}
+          columns={sheet.columns}
+          region={sheet.region}
+          pixelated={prefs.pixelated}
+          prefs={prefs.sheet}
+          onPrefs={(s) => setPrefs({ sheet: s })}
+          onClose={() => setSheet(null)}
+        />
+      )}
     </div>
   );
 }

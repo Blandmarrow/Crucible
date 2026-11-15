@@ -832,4 +832,36 @@
   }
   .cmp-ab-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 0 8px 6px; color: var(--fg-dim); font-size: 11.5px; }
   .cmp-ab-foot:empty { display: none; }
+
+  /* Grid: equal cells; the ticked ones outlined in the accent. */
+  .cmp-grid { flex: 1; min-height: 0; overflow: auto; display: grid; gap: 8px; padding: 8px; align-content: start; }
+  .cmp-cell {
+    display: flex; flex-direction: column; min-width: 0; padding: 0; text-align: left; cursor: pointer;
+    border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; background: var(--surface-1); color: inherit; font: inherit;
+  }
+  .cmp-cell[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); }
+  .cmp-cell:disabled { cursor: not-allowed; opacity: .6; }
+  .cmp-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .cmp-cell-img {
+    position: relative; aspect-ratio: 4 / 3; max-width: 100%;
+    background: repeating-conic-gradient(var(--surface-2) 0 25%, var(--surface-1) 0 50%) 0 0 / 16px 16px;
+  }
+  .cmp-cell-img img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .cmp-tick {
+    position: absolute; left: 6px; top: 6px; width: 18px; height: 18px; border-radius: 4px;
+    display: grid; place-items: center; border: 1.5px solid #fff; background: rgba(0, 0, 0, .45); color: var(--on-accent);
+  }
+  .cmp-cell[aria-pressed="true"] .cmp-tick { background: var(--accent); border-color: var(--accent); }
+  .cmp-cell-meta { display: flex; justify-content: space-between; gap: 6px; padding: 5px 7px; font-size: 11px; min-width: 0; }
+  .cmp-cell-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .cmp-cell-score { color: var(--fg-mute); font-variant-numeric: tabular-nums; }
+
+  /* The export dialog, inside ModalShell's `.dialog`. */
+  .cmp-dialog-lede { margin: 4px 0 14px; color: var(--fg-mute); font-size: 12.5px; max-width: 52ch; }
+  .cmp-dialog-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 20px; }
+  @media (max-width: 560px) { .cmp-dialog-grid { grid-template-columns: minmax(0, 1fr); } }
+  .cmp-field { display: flex; flex-direction: column; gap: 4px; color: var(--fg-mute); font-size: 12px; }
+  .cmp-fieldset { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+  .cmp-fieldset legend { padding: 0; margin-bottom: 4px; color: var(--fg-mute); font-size: 12px; }
+  .cmp-dialog-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 }

@@ -120,10 +120,10 @@ Tier 4, design first:
     neighbouring pane. Merged 2026-11-15 as PR #169, with an Opus review's seven findings
     fixed (`docs/dev/gallery/compare.md`).
   - [x] Phase 2, A/B (`feat/130-compare-ab`): swipe, flip and difference, with an Opus
-    review's five findings fixed. Merged
-    2026-11-15 as PR #170.
-  - [ ] Phase 3, Grid and the contact sheet (`feat/130-contact-sheet`):
-    `POST /images/contact-sheet`, timed on 100 large files before shipping.
+    review's five findings fixed. Merged 2026-11-15 as PR #170.
+  - [x] Phase 3, Grid and the contact sheet (`feat/130-contact-sheet`):
+    `POST /images/contact-sheet`, timed at 1.9 to 3.1 s for 100 large files, so it stays
+    a request. Merged 2026-11-15 as PR #171, with an Opus review's seven findings fixed.
   - [ ] Phase 4, actions (`feat/130-compare-actions`): the Quality page's Compare button,
     Keep this one, delete and labels. Then close the issue and delete the plan folder.
 - [ ] #129 Chat with an LLM: a plan folder. Read-only tools first, writes behind a

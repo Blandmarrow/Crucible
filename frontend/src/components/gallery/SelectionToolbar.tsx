@@ -592,7 +592,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
           title={
             count < 2 ? "Select two or more images to compare"
             : count > COMPARE_MAX ? `Compare takes up to ${COMPARE_MAX} images`
-            : "Open the selection side by side (in the next pane in split view)"
+            : "Compare the selection: side by side, or as a grid past four (in the next pane in split view)"
           }
           // Selection order, which is the order the images were picked; it may
           // span datasets, and so may the comparison.

@@ -14,7 +14,7 @@ sidebar item, because a comparison always starts from images you have chosen.
 2. Press **Compare** in the selection toolbar.
 
 The images appear in the order you selected them, and a selection that spans datasets
-compares across them. Side by side shows the first four; remove one to bring in the next.
+compares across them. Two to four open side by side; more open as a [grid](#grid).
 
 **In split view**, Compare opens in the *other* pane, so the gallery you selected from
 stays where it is. Change the selection and press Compare again to swap in a new set.
@@ -68,6 +68,35 @@ Three ways to see what changed, chosen beside the lists:
 If A and B have different shapes, B is stretched to A's frame and a note says the
 overlay is approximate. A crop is not lined up automatically. The mode and the way B is
 shown are remembered in this browser.
+
+## Grid
+
+A comparison of more than four images opens as a **Grid**: every image in an equal
+cell, with its file name and aesthetic score. Press **Grid** in the toolbar to see any
+comparison this way, and choose **Columns** (Auto, or a number).
+
+Click images to tick up to four, then press **Compare ticked** to open them side by
+side. **Back to all** under the panes returns to the full set.
+
+## Exporting a contact sheet
+
+**Export sheet** saves every image in the comparison as one picture, laid out like the
+grid, with the text you choose under each image: a title line, the file name, the size
+and format, the aesthetic score, and one line of caption. Pick the cell width, a dark
+or light background, and PNG (exact) or JPEG (smaller), then press **Download**.
+
+In Side by side, **Export current view** saves the panes on screen in one row, each
+cropped to the part you are zoomed into and enlarged to fill its cell. With
+**Pixelated** on, the enlargement keeps hard pixel edges, as on screen. Use it to show
+an upscaler's detail, or a before and after, in one image. The crop is exact for images
+of one shape; with Match pixels on, or images of different shapes, the other panes'
+crops can differ a little from what they show.
+
+The sheet is drawn by Crucible from the full-size files and downloads to your computer.
+It is never added to a dataset, so it can't end up in a training set by accident. A
+sheet is limited to 100 images, 16,000 pixels on its longest side and 64 million pixels
+in all (100 images at 512-pixel cells fit); past that, the dialog says so. A sheet of
+100 large images takes a few seconds.
 
 ## What each pane shows
 

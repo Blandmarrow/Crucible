@@ -64,6 +64,53 @@ test('Compare opens the selection side by side with linked zoom', async ({ page,
   await expect(panes).toHaveCount(2)
 })
 
+/** How far into image B its swipe clip starts, in CSS pixels. */
+async function clipLeft(b: Locator): Promise<number> {
+  return b.evaluate((img) => {
+    const m = /inset\(0px 0px 0px ([\d.]+)px\)/.exec((img as HTMLImageElement).style.clipPath)
+    return m ? parseFloat(m[1]) : -1
+  })
+}
+
+test('A/B shows B beside a divider, while a key is held, or as a difference', async ({ page, request }) => {
+  const { ds } = await seedThree(request, 'compare-ab')
+  const rows = await (await request.get('/api/v1/images/', { params: { dataset_id: ds.id, limit: '10' } })).json()
+  await page.goto(`/compare?ids=${rows.map((r: { id: string }) => r.id).join(',')}`)
+  await page.getByRole('button', { name: 'A/B', exact: true }).click()
+
+  const frame = page.getByTestId('compare-ab')
+  const b = page.getByTestId('compare-ab-b')
+  await expect.poll(() => b.evaluate((img) => parseFloat((img as HTMLImageElement).style.width) || 0)).toBeGreaterThan(0)
+
+  // Swipe: the divider's arrow keys move where B's clip starts.
+  await expect.poll(() => clipLeft(b)).toBeGreaterThan(0)
+  const before = await clipLeft(b)
+  const divider = page.getByRole('slider', { name: 'Divider between A and B' })
+  await divider.focus()
+  await page.keyboard.press('ArrowRight')
+  await page.keyboard.press('ArrowRight')
+  await expect.poll(() => clipLeft(b)).toBeGreaterThan(before)
+
+  // Flip: B shows only while Space is held.
+  await page.getByRole('button', { name: 'Flip', exact: true }).click()
+  const showing = page.getByTestId('compare-ab-showing')
+  await expect(showing).toHaveText(/^A · /)
+  await frame.focus()
+  await page.keyboard.down('Space')
+  await expect(showing).toHaveText(/^B · /)
+  await expect(b).toBeVisible()
+  await page.keyboard.up('Space')
+  await expect(showing).toHaveText(/^A · /)
+  await expect(b).toBeHidden()
+
+  // Difference: B blends over A, and the mode and its view survive a reload.
+  await page.getByRole('button', { name: 'Difference', exact: true }).click()
+  await expect(b).toHaveCSS('mix-blend-mode', 'difference')
+  await page.reload()
+  await expect(page.getByTestId('compare-ab-b')).toHaveCSS('mix-blend-mode', 'difference')
+  await expect(page.getByRole('button', { name: 'A/B', exact: true })).toHaveAttribute('aria-pressed', 'true')
+})
+
 test('in split view, Compare opens in the neighbouring pane and the gallery stays', async ({ page, request }) => {
   const { ds } = await seedThree(request, 'compare-split')
   await page.goto(`/datasets/${ds.id}/gallery`)

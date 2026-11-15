@@ -13,12 +13,19 @@ import { ZOOM_MAX, useLinkedViewport, useViewportZoom } from "../hooks/useLinked
 import type { Geometry, Size } from "../hooks/useLinkedViewport";
 import { loadPersisted, savePersisted } from "../utils/persistentState";
 import { apiErrorDetail } from "../utils/apiError";
-import { COMPARE_MAX, COMPARE_SIDE_MAX, compareUrl, compareView } from "../utils/compare";
+import { AB_HOWS, COMPARE_MAX, COMPARE_SIDE_MAX, compareUrl, compareView } from "../utils/compare";
+import type { AbHow } from "../utils/compare";
 import ComparePane from "../components/compare/ComparePane";
+import ABView from "../components/compare/ABView";
 import type { BestMarks } from "../components/compare/MetaStrip";
 
-interface ComparePrefs { matchPixels: boolean; pixelated: boolean }
-const DEFAULT_PREFS: ComparePrefs = { matchPixels: false, pixelated: false };
+type CompareMode = "side" | "ab";
+interface ComparePrefs { mode: CompareMode; abHow: AbHow; matchPixels: boolean; pixelated: boolean }
+const DEFAULT_PREFS: ComparePrefs = { mode: "side", abHow: "swipe", matchPixels: false, pixelated: false };
+const MODES: { value: CompareMode; label: string }[] = [
+  { value: "side", label: "Side by side" },
+  { value: "ab", label: "A/B" },
+];
 
 /**
  * The Compare page (#130, docs/dev/gallery/compare.md): up to four images side
@@ -105,6 +112,20 @@ export default function ComparePage() {
   }, []);
   const refSize = prefs.matchPixels && shown[0] ? sizes[shown[0].id] ?? null : null;
 
+  // A/B's two images: the user's picks while both are still in the set, otherwise
+  // the first two. Picks are ids, so a removal or reorder elsewhere cannot point
+  // them at a different image.
+  const [abPick, setAbPick] = useState<{ a?: string; b?: string }>({});
+  const abA = items.find((r) => r.id === abPick.a) ?? items[0];
+  const abB = items.find((r) => r.id === abPick.b && r.id !== abA?.id) ?? items.find((r) => r.id !== abA?.id);
+  const pickAb = (which: "a" | "b", id: string) => {
+    const other = which === "a" ? abB?.id : abA?.id;
+    // Choosing the image already on the other side swaps the two.
+    const swapTo = id === other ? (which === "a" ? abA?.id : abB?.id) : other;
+    setAbPick(which === "a" ? { a: id, b: swapTo } : { a: swapTo, b: id });
+  };
+  const abMode = prefs.mode === "ab";
+
   const best = useMemo(() => bestMarks(shown), [shown]);
   const showDataset = new Set(shown.map((r) => r.dataset_id)).size > 1;
 
@@ -154,6 +175,18 @@ export default function ComparePage() {
         Choose others in the gallery.
       </div>
     );
+  } else if (abMode && abA && abB) {
+    body = (
+      <ABView
+        key={`${abA.id}:${abB.id}`}
+        a={abA}
+        b={abB}
+        how={prefs.abHow}
+        vp={vp}
+        pixelated={prefs.pixelated}
+        registerMeasure={registerMeasure}
+      />
+    );
   } else {
     body = (
       <div className={`cmp-panes n${shown.length}`}>
@@ -182,7 +215,7 @@ export default function ComparePage() {
   const notes: string[] = [];
   if (missing > 0) notes.push(`${missing} image${missing === 1 ? " was" : "s were"} not found (deleted, or from another install) and ${missing === 1 ? "is" : "are"} left out.`);
   if (ids.length > COMPARE_MAX) notes.push(`Only the first ${COMPARE_MAX} images are compared.`);
-  if (items.length > COMPARE_SIDE_MAX) notes.push(`Showing the first ${COMPARE_SIDE_MAX} of ${items.length}. Remove one to bring in the next.`);
+  if (!abMode && items.length > COMPARE_SIDE_MAX) notes.push(`Showing the first ${COMPARE_SIDE_MAX} of ${items.length}. Remove one to bring in the next.`);
 
   return (
     <div className="cmp-root">
@@ -191,10 +224,42 @@ export default function ComparePage() {
           <h1>Compare</h1>
           {subtitle && <span className="cmp-sub">{subtitle}</span>}
         </div>
-        <label className="cmp-check">
-          <input type="checkbox" checked={prefs.matchPixels} onChange={(e) => setPrefs({ matchPixels: e.target.checked })} />
-          Match pixels
-        </label>
+        <div className="cmp-seg" role="group" aria-label="Mode">
+          {MODES.map((m) => (
+            <button key={m.value} type="button" aria-pressed={prefs.mode === m.value} onClick={() => setPrefs({ mode: m.value })}>
+              {m.label}
+            </button>
+          ))}
+        </div>
+        {abMode && abA && abB && (
+          <>
+            <label className="cmp-check">
+              A
+              <select className="select cmp-pick" value={abA.id} onChange={(e) => pickAb("a", e.target.value)}>
+                {items.map((r, i) => <option key={r.id} value={r.id}>{i + 1} · {r.filename}</option>)}
+              </select>
+            </label>
+            <label className="cmp-check">
+              B
+              <select className="select cmp-pick" value={abB.id} onChange={(e) => pickAb("b", e.target.value)}>
+                {items.map((r, i) => <option key={r.id} value={r.id}>{i + 1} · {r.filename}</option>)}
+              </select>
+            </label>
+            <div className="cmp-seg" role="group" aria-label="How to show B">
+              {AB_HOWS.map((h) => (
+                <button key={h.value} type="button" aria-pressed={prefs.abHow === h.value} onClick={() => setPrefs({ abHow: h.value })}>
+                  {h.label}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+        {!abMode && (
+          <label className="cmp-check">
+            <input type="checkbox" checked={prefs.matchPixels} onChange={(e) => setPrefs({ matchPixels: e.target.checked })} />
+            Match pixels
+          </label>
+        )}
         <label className="cmp-check">
           <input type="checkbox" checked={prefs.pixelated} onChange={(e) => setPrefs({ pixelated: e.target.checked })} />
           Pixelated
@@ -207,9 +272,10 @@ export default function ComparePage() {
           <button type="button" className="btn sm" aria-label="Zoom in" disabled={!canZoom || zoom >= ZOOM_MAX}
             onClick={() => vp.set({ ...vp.get(), z: vp.get().z * 1.5 })}><Plus size={13} /></button>
           <button type="button" className="btn sm" disabled={!canZoom} onClick={() => vp.reset()}>Fit</button>
-          <button type="button" className="btn sm" disabled={!canZoom} title="The first image at its real pixels"
+          <button type="button" className="btn sm" disabled={!canZoom} title={abMode ? "Image A at its real pixels" : "The first image at its real pixels"}
             onClick={() => {
-              const g = shown[0] ? measures.current.get(shown[0].id)?.() : null;
+              const first = abMode ? abA : shown[0];
+              const g = first ? measures.current.get(first.id)?.() : null;
               if (g) vp.set({ ...vp.get(), z: vp.get().z / g.scale });
             }}>100%</button>
         </div>

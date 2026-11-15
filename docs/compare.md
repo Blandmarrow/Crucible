@@ -1,6 +1,7 @@
 # Compare
 
-Look at two to four images side by side, zoomed in on the same spot in each. Use it to
+Look at two to four images side by side, or two laid over each other, zoomed in on the
+same spot in each. Use it to
 pick the best of several near-duplicates, to judge whether an upscale or colour grade
 improved an image, or to choose between a few ComfyUI takes on one prompt.
 
@@ -46,6 +47,27 @@ when judging an edit. Two toggles change how panes are drawn:
   smoothing. Use it to judge an upscaler's detail.
 
 Both toggles are remembered in this browser.
+
+## A/B: two images in one frame
+
+Press **A/B** in the toolbar to lay one image over another instead of beside it. Pick
+the two with the **A** and **B** lists; choosing the image already on the other side
+swaps them. The same zoom, pan and keys work here, and **Pixelated** applies too.
+
+Three ways to see what changed, chosen beside the lists:
+
+- **Swipe**: A on the left of a divider, B on the right. Drag the round handle, or Tab to
+  it and use the left and right arrow keys.
+- **Flip**: A fills the frame until you hold **Space** (or the **Hold to show B**
+  button), when B replaces it. A change is often easier to catch in a flip than side by
+  side.
+- **Difference**: B is blended over A so that anything the same goes black, and only
+  what changed shows. Images of different sizes are scaled to one frame first, so fine
+  noise shows up as change too.
+
+If A and B have different shapes, B is stretched to A's frame and a note says the
+overlay is approximate. A crop is not lined up automatically. The mode and the way B is
+shown are remembered in this browser.
 
 ## What each pane shows
 

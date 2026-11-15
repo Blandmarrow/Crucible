@@ -174,6 +174,14 @@ export default function SettingsPage() {
     () => localStorage.getItem(CAPTION_DEFAULT_SAVE_BACKUP_KEY) === "true"
   );
 
+  // The app version, from backend/version.py via the health route (decision 19). It cannot
+  // change while the page is open — a new version means a restart, which reloads the page.
+  const { data: appVersion } = useQuery({
+    queryKey: ["health", "version"],
+    queryFn: () => settingsApi.getHealth().then((h) => h.version),
+    staleTime: Infinity,
+  });
+
   const { data: thresholds, isLoading } = useQuery({
     queryKey: ["settings", "thresholds"],
     queryFn: settingsApi.getThresholds,
@@ -386,6 +394,19 @@ export default function SettingsPage() {
       <h1 style={{ fontSize: 18, fontWeight: 600, marginBottom: 4 }}>Settings</h1>
       <p style={{ color: "var(--fg-mute)", fontSize: 13, marginBottom: 20 }}>
         Global configuration for this Crucible instance.
+        {appVersion && (
+          <>
+            {" "}Crucible {appVersion} ·{" "}
+            <a
+              href={`https://github.com/Blandmarrow/Crucible/releases/tag/v${appVersion}`}
+              target="_blank"
+              rel="noreferrer"
+              style={{ color: "var(--accent-text)" }}
+            >
+              Release notes
+            </a>
+          </>
+        )}
       </p>
 
       <div className="tabs">

@@ -31,11 +31,13 @@ restates its stages.
    linking the record that holds the full text.
 5. **Landed**: one line per finished milestone or handoff record.
 
-## Next session (updated 2026-11-15, #52 merged)
+## Next session (updated 2026-11-15, v1.4.0)
 
-1. **M11 Tier 3 is done** (#45, #50, #52). What remains of M11 is #48, waiting on its
-   reporter, and Tier 4's two design-first items, #130 and #129, each of which starts with
-   a design pass rather than code.
+1. **M11 Tier 3 is done** (#45, #50, #52) and shipped as **v1.4.0**, the first release
+   under [decision 19](decisions/19-release-versioning.md); later releases use the
+   `release` skill. What remains of M11 is #48, waiting on its reporter, and Tier 4's two
+   design-first items, #130 and #129, each of which starts with a design pass rather than
+   code. #130 is next.
 2. **CLAUDE.md is 2 words over budget.** Its seam, two Map hubs, waits on the user's call
    between a hub and a budget raise (`docs/dev/pending-splits.md`).
 3. M4 stays held, with its merge checklist under Waiting. The closed items of the
@@ -203,7 +205,9 @@ M8's open items, each needing M4's rewrite of the files it touches. Detail:
 
 - [ ] One release after PR #101: delete the legacy keys, the import code and the plan
   folder, [server-state-plan/](server-state-plan/README.md). Waits on a release so browsers
-  have copied their data over. Record:
+  have copied their data over. **Unblocked**: #101 shipped in `Version-1.2.2`, and
+  `Version-1.3.0` followed. Its release notes say "update to 1.3 or later first"
+  ([decision 19](decisions/19-release-versioning.md)). Record:
   [roadmap-archive/m5-app-stored-prompts.md](roadmap-archive/m5-app-stored-prompts.md).
 
 ### Upstream
@@ -333,3 +337,8 @@ Each line links the record that holds the full text.
   Record: [roadmap-archive/handoff-2026-11-14.md](roadmap-archive/handoff-2026-11-14.md).
 - **Handoff notes, 15 November 2026**: #52's Next session item, closed when it merged as
   PR #165. Record: [roadmap-archive/handoff-2026-11-15.md](roadmap-archive/handoff-2026-11-15.md).
+- **Release versioning and v1.4.0** (2026-11-15): three-number semantic versions tagged
+  `vX.Y.Z` ([decision 19](decisions/19-release-versioning.md)), the version in
+  `backend/version.py` and shown in Settings, and the `release` skill
+  (`.claude/skills/release/SKILL.md`). v1.4.0 carries M11 Tier 1 to 3 and the fixes since
+  `Version-1.3.0`.

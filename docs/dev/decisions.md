@@ -158,3 +158,12 @@ download at once as its own task, which Settings polls, rather than a queued job
 wait behind a long run. Irregular word forms come from WordNet's own lists, which the JSON
 release already carries as each entry's `form`, so one pinned download serves both. Full
 record: [decisions/18-synonym-dictionary-install.md](decisions/18-synonym-dictionary-install.md).
+
+## 19. Releases use three-number semantic versions, tagged vX.Y.Z
+
+**Decided** (2026-11-15, by the user): PATCH for fixes only, MINOR for new features (a
+migration that runs on its own included), MAJOR only when updating needs a manual step
+beyond `manage update`. No fourth number. Tags are `vX.Y.Z` from v1.4.0 on, the old
+`Version-*` tags stay, and the version lives in `backend/version.py`, shown in Settings.
+Release when users gain something; the `release` skill is the procedure. Full record:
+[decisions/19-release-versioning.md](decisions/19-release-versioning.md).

@@ -47,7 +47,16 @@ export interface SecretsUpdate {
 
 export type SecretKey = keyof Secrets;
 
+/** `GET /api/v1/health`: the server is up, when this process started, and the app version. */
+export interface Health {
+  status: string;
+  start_time: number;
+  /** Three plain numbers, from `backend/version.py`; the GitHub tag is `v` + this. */
+  version: string;
+}
+
 export const settingsApi = {
+  getHealth: () => client.get<Health>("/health").then((r) => r.data),
   getThresholds: () =>
     client.get<Thresholds>("/settings/thresholds").then((r) => r.data),
   updateThresholds: (data: Partial<Thresholds>) =>

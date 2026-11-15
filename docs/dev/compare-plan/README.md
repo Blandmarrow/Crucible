@@ -191,7 +191,7 @@ line) and a Playwright journey. A landed phase leaves this list; its account is 
 `docs/dev/gallery/compare.md`.
 
 1. The page and Side by side: landed as PR #169.
-2. **A/B.** Swipe, flip and difference. e2e: drag the divider and check its position.
+2. A/B: landed as PR #170.
 3. **Grid and the contact sheet.** Grid mode and the export route, with **Export current
    view**. Backend tests: a sheet of three tiny images has the expected size, a row with an
    out-of-tree `file_path` is refused, and the caps answer 422.

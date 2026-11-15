@@ -28,6 +28,8 @@ interface Props {
   columns: number | null;
   /** Export current view: the region of every image to keep, x0, y0, x1, y1. */
   region: [number, number, number, number] | null;
+  /** The page's Pixelated toggle: an enlarged cell keeps hard pixel edges. */
+  pixelated: boolean;
   prefs: SheetPrefs;
   onPrefs: (p: SheetPrefs) => void;
   onClose: () => void;
@@ -39,7 +41,7 @@ interface Props {
  * nothing is written into any dataset (decision 20). There is no preview canvas:
  * the grid behind the dialog is the layout the sheet follows.
  */
-export default function ContactSheetDialog({ ids, columns, region, prefs, onPrefs, onClose }: Props) {
+export default function ContactSheetDialog({ ids, columns, region, pixelated, prefs, onPrefs, onClose }: Props) {
   const [busy, setBusy] = useState(false);
   const set = (patch: Partial<SheetPrefs>) => onPrefs({ ...prefs, ...patch });
   const toggleField = (f: SheetField) =>
@@ -49,7 +51,7 @@ export default function ContactSheetDialog({ ids, columns, region, prefs, onPref
     setBusy(true);
     const body: ContactSheetRequest = {
       image_ids: ids, columns, cell_px: prefs.cellPx, fields: prefs.fields,
-      background: prefs.background, format: prefs.format, region,
+      background: prefs.background, format: prefs.format, region, pixelated,
     };
     try {
       const { blob, filename } = await imagesApi.contactSheet(body);
@@ -72,8 +74,11 @@ export default function ContactSheetDialog({ ids, columns, region, prefs, onPref
   };
 
   const title = region ? "Export current view" : "Export sheet";
+  // Not closable while drawing: the request cannot be called back, so a closed
+  // dialog would still download its sheet and toast "Saved" a moment later.
+  const close = () => { if (!busy) onClose(); };
   return (
-    <ModalShell label={title} onClose={onClose} closeOnBackdrop>
+    <ModalShell label={title} onClose={close} closeOnBackdrop>
       <h3>{title}</h3>
       <p className="cmp-dialog-lede">
         {region
@@ -117,7 +122,7 @@ export default function ContactSheetDialog({ ids, columns, region, prefs, onPref
         </fieldset>
       </div>
       <div className="cmp-dialog-foot">
-        <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
+        <button type="button" className="btn ghost" disabled={busy} onClick={close}>Cancel</button>
         <button type="button" className="btn primary" disabled={busy} onClick={download}>
           {busy ? "Drawing…" : "Download"}
         </button>

@@ -29,7 +29,7 @@ from backend.licenses import (
     resolve_provenance,
 )
 from backend.services.contact_sheet import (
-    MAX_SHEET_SIDE, SheetCell, SheetOptions, region_aspect, render_contact_sheet, sheet_size,
+    MAX_SHEET_PIXELS, MAX_SHEET_SIDE, SheetCell, SheetOptions, region_aspect, render_contact_sheet, sheet_size,
 )
 from backend.models import BackgroundJob, Dataset, Image, Video
 from backend.models.detection import Detection
@@ -688,16 +688,20 @@ async def contact_sheet(body: ContactSheetRequest, db: AsyncSession = Depends(ge
     # needs no file opened.
     aspect = region_aspect(ordered[0].width, ordered[0].height, body.region)
     w, h = sheet_size(len(cells), body.columns, body.cell_px, aspect, body.fields)
-    if max(w, h) > MAX_SHEET_SIDE:
+    if max(w, h) > MAX_SHEET_SIDE or w * h > MAX_SHEET_PIXELS:
+        # Both before any image is opened: the side cap alone let a 100-image,
+        # 1024 px sheet allocate ~576 MB, on a thread no cancel can stop.
         raise HTTPException(
             422,
-            f"That sheet would be {w}x{h} px; the longest side is limited to "
-            f"{MAX_SHEET_SIDE} px. Use fewer images, more columns or a smaller cell size.",
+            f"That sheet would be {w}x{h} px; the limit is {MAX_SHEET_SIDE} px on the "
+            f"longest side and {MAX_SHEET_PIXELS // 1_000_000} million pixels in all. "
+            "Use fewer images or a smaller cell width.",
         )
 
     opts = SheetOptions(
         columns=body.columns, cell_px=body.cell_px, fields=tuple(body.fields),
         background=body.background, format=body.format, region=body.region, aspect=aspect,
+        pixelated=body.pixelated,
     )
     data = await asyncio.get_running_loop().run_in_executor(None, render_contact_sheet, cells, opts)
 

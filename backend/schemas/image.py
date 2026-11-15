@@ -159,6 +159,8 @@ class ContactSheetRequest(BaseModel):
     )
     background: Literal["dark", "light"] = "dark"
     format: Literal["png", "jpeg"] = "png"
+    # Enlarge with nearest-neighbour, as the Compare page draws with Pixelated on.
+    pixelated: bool = False
     # x0, y0, x1, y1 as fractions of each image, 0..1, with x0 < x1 and y0 < y1.
     region: tuple[float, float, float, float] | None = None
 

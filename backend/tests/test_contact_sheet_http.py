@@ -8,6 +8,7 @@ drawn upright; every image opened is closed; and nothing is written under the
 datasets folder.
 """
 import io
+import sys
 from pathlib import Path
 
 from PIL import Image
@@ -186,9 +187,83 @@ def test_oversize_sheet_is_422_before_any_image_is_opened(tmp_path, monkeypatch)
             assert r.status_code == 422
             assert "16000" in r.json()["detail"]
             assert opened == []
-            # The same request one column wider is fine, so the cap is the cause.
+            # Three small cells in that one column are fine, so the cap is the cause.
             r = await _sheet(env, [i["id"] for i in imgs[:3]], columns=1, cell_px=128)
             assert r.status_code == 200 and opened
+
+    run(scenario())
+
+
+def test_sheet_area_is_capped_too_before_any_image_is_opened(tmp_path, monkeypatch):
+    """The side cap alone let 100 images at 1024 px through (~576 MB of RGB).
+    The area cap is patched down so a small request trips it."""
+    from backend.routers import images as images_router
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            _, imgs = await _three(env)
+            ids = [i["id"] for i in imgs]
+            w, h = cs.sheet_size(3, 3, 256, 64 / 48, FIELDS)
+            assert max(w, h) < cs.MAX_SHEET_SIDE
+            monkeypatch.setattr(images_router, "MAX_SHEET_PIXELS", w * h - 1)
+            opened = []
+            real = cs.Image.open
+            monkeypatch.setattr(cs.Image, "open", lambda *a, **k: opened.append(a) or real(*a, **k))
+            r = await _sheet(env, ids, columns=3, cell_px=256, fields=FIELDS)
+            assert r.status_code == 422 and "pixels in all" in r.json()["detail"]
+            assert opened == []
+            monkeypatch.setattr(images_router, "MAX_SHEET_PIXELS", w * h)
+            assert (await _sheet(env, ids, columns=3, cell_px=256, fields=FIELDS)).status_code == 200
+
+    run(scenario())
+
+
+def test_a_small_region_is_enlarged_to_fill_its_cell(tmp_path):
+    """Export current view: a zoomed-in region is drawn at cell size, not at its
+    own few pixels in the middle of an empty cell."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            a = await upload_image(env, ds["id"], "a.png", png_bytes(color=(255, 0, 0), size=(64, 48)))
+            r = await _sheet(env, [a["id"]], columns=1, cell_px=200, fields=[], region=[0, 0, 0.25, 0.25])
+            assert r.status_code == 200, r.text
+            lay = cs._layout(1, 1, 200, 4 / 3, [])
+            with Image.open(io.BytesIO(r.content)) as out:
+                out = out.convert("RGB")
+                # The cell's corners are image, not the cell background.
+                for x, y in ((lay.pad + 1, lay.pad + 1), (lay.pad + lay.cell_px - 2, lay.pad + lay.area_h - 2)):
+                    px = out.getpixel((x, y))
+                    assert px[0] > 230 and px[1] < 30, (x, y, px)
+
+    run(scenario())
+
+
+def test_pixelated_enlarges_with_hard_edges(tmp_path):
+    """With Pixelated on, an enlarged image keeps hard pixel edges (nearest
+    neighbour); without it the edge is filtered."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            a = await upload_image(env, ds["id"], "a.png", png_bytes(size=(4, 3)))
+            src = Image.new("RGB", (4, 3), (255, 0, 0))
+            src.paste((0, 0, 255), (2, 0, 4, 3))
+            buf = io.BytesIO()
+            src.save(buf, "PNG")
+            (await _path(env, a["id"])).write_bytes(buf.getvalue())
+            lay = cs._layout(1, 1, 128, 4 / 3, [])
+            y = lay.pad + lay.area_h // 2
+
+            def edge(content: bytes):
+                with Image.open(io.BytesIO(content)) as out:
+                    out = out.convert("RGB")
+                    return out.getpixel((lay.pad + 63, y)), out.getpixel((lay.pad + 64, y))
+
+            hard = await _sheet(env, [a["id"]], columns=1, cell_px=128, fields=[], pixelated=True)
+            left, right = edge(hard.content)
+            assert left == (255, 0, 0) and right == (0, 0, 255), (left, right)
+            soft = await _sheet(env, [a["id"]], columns=1, cell_px=128, fields=[])
+            left, right = edge(soft.content)
+            assert left != (255, 0, 0) or right != (0, 0, 255), (left, right)
 
     run(scenario())
 
@@ -213,48 +288,74 @@ def test_exif_rotated_jpeg_is_drawn_upright(tmp_path):
             assert r.status_code == 200
             with Image.open(io.BytesIO(r.content)) as out:
                 out = out.convert("RGB")
+                # Upright it is 20x40, the cell's own shape, so it fills the cell.
                 lay = cs._layout(1, 1, 128, 0.5, [])
                 x = lay.pad + lay.cell_px // 2
-                top = lay.pad + (lay.area_h - 40) // 2
-                red = out.getpixel((x, top + 8))
-                blue = out.getpixel((x, top + 32))
+                red = out.getpixel((x, lay.pad + lay.area_h // 4))
+                blue = out.getpixel((x, lay.pad + 3 * lay.area_h // 4))
                 assert red[0] > 200 and red[2] < 80, red
                 assert blue[2] > 200 and blue[0] < 80, blue
 
     run(scenario())
 
 
-def test_every_opened_image_is_closed(tmp_path, monkeypatch):
+def test_every_image_made_is_closed(tmp_path, monkeypatch):
+    """Every image any step creates is closed: the open, the EXIF transpose, the
+    mode conversion, the region crop, the resize and the sheet itself. Fixtures
+    cover each path: a rotated JPEG (draft and a real transpose), a palette PNG
+    (the conversion) and an RGBA PNG (pasted through its own alpha). The images
+    themselves are kept, not their `id()`s, which a freed object can hand on."""
     async def scenario():
         async with api_env(tmp_path) as env:
             _, imgs = await _three(env)
-            made, closed = [], set()
-            real_open, real_safe, real_close = cs.Image.open, cs._safe_from, Image.Image.close
+            paths = [await _path(env, i["id"]) for i in imgs]
+            jpg = Image.new("RGB", (64, 48), (200, 30, 30))
+            exif = Image.Exif()
+            exif[0x0112] = 6
+            buf = io.BytesIO()
+            jpg.save(buf, "JPEG", exif=exif)
+            paths[0].write_bytes(buf.getvalue())
+            buf = io.BytesIO()
+            Image.new("RGB", (64, 48), (30, 200, 30)).convert("P").save(buf, "PNG")
+            paths[1].write_bytes(buf.getvalue())
+            buf = io.BytesIO()
+            Image.new("RGBA", (64, 48), (30, 30, 200, 128)).save(buf, "PNG")
+            paths[2].write_bytes(buf.getvalue())
 
-            def open_(*a, **k):
-                im = real_open(*a, **k)
-                made.append(im)
-                return im
+            made: list[Image.Image] = []
 
-            def safe(im):
-                out = real_safe(im)
-                made.append(out)
-                return out
+            def tracked(fn):
+                # Only images the service's own code asks for: Pillow makes and
+                # drops temporaries inside its methods (an RGBA resize goes through
+                # premultiplied "RGBa"), and those are not ours to close.
+                def wrapper(*a, **k):
+                    out = fn(*a, **k)
+                    if isinstance(out, Image.Image) and sys._getframe(1).f_globals.get("__name__") == cs.__name__:
+                        made.append(out)
+                    return out
+                return wrapper
+
+            real_close = Image.Image.close
 
             def close(self):
-                closed.add(id(self))
+                self._test_closed = True
                 return real_close(self)
 
-            monkeypatch.setattr(cs.Image, "open", open_)
-            monkeypatch.setattr(cs, "_safe_from", safe)
+            monkeypatch.setattr(cs.Image, "open", tracked(cs.Image.open))
+            monkeypatch.setattr(cs.Image, "new", tracked(cs.Image.new))
+            monkeypatch.setattr(cs.ImageOps, "exif_transpose", tracked(cs.ImageOps.exif_transpose))
+            for name in ("crop", "resize", "convert"):
+                monkeypatch.setattr(Image.Image, name, tracked(getattr(Image.Image, name)))
             monkeypatch.setattr(Image.Image, "close", close)
             r = await _sheet(env, [i["id"] for i in imgs], region=[0, 0, 0.5, 0.5])
             assert r.status_code == 200
-            assert len(made) >= 6  # a raw open and a transposed copy per image
-            assert all(id(im) in closed for im in made)
-            # And the files can be deleted straight away (no handle held on Windows).
-            for i in imgs:
-                (await _path(env, i["id"])).unlink()
+            # Per image at least an open, a transpose, a crop and a resize; plus the sheet.
+            assert len(made) >= 13, len(made)
+            unclosed = [im for im in made if not getattr(im, "_test_closed", False)]
+            assert unclosed == [], unclosed
+            # On Windows an open handle would also refuse this delete.
+            for p in paths:
+                p.unlink()
 
     run(scenario())
 

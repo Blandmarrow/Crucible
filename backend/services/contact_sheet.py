@@ -15,11 +15,13 @@ import math
 from dataclasses import dataclass
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont
-
-from backend.services.image_service import _safe_from
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 MAX_SHEET_SIDE = 16_000
+# The side cap alone still let 100 images at 1024 px cells through: about
+# 12,700 x 15,100 px, ~576 MB of RGB before encoding. 64M px is ~192 MB, and
+# covers 100 images at 512 px cells with every text line.
+MAX_SHEET_PIXELS = 64_000_000
 MAX_COLUMNS = 12
 DEFAULT_ASPECT = 4 / 3
 # Cells follow the first image's aspect, but never get absurdly tall or wide.
@@ -61,6 +63,8 @@ class SheetOptions:
     # Cell width / height. None = the 4:3 fallback. The route derives it from the
     # first row's stored size so it can size-check before opening anything.
     aspect: float | None = None
+    # Enlarge with nearest-neighbour, as the Compare page's Pixelated toggle draws.
+    pixelated: bool = False
 
 
 @dataclass(frozen=True)
@@ -173,25 +177,49 @@ def _lines_for(cell: SheetCell, fields) -> list[str]:
     return out
 
 
-def _load_cell_image(cell: SheetCell, lay: _Layout, region) -> Image.Image | None:
-    """The cell's pixels, transposed, cropped to `region` and scaled to fit, or
-    None when the file is missing or will not decode. Every image opened here is
-    closed here, the pre-transpose original included."""
-    if cell.path is None:
-        return None
-    raw = None
-    img = None
+def _open_upright(path: Path, need: int) -> Image.Image:
+    """Open `path` as an RGB or RGBA image the right way up (EXIF transpose
+    first, as everywhere), holding **at most one full decode at a time**.
+
+    Not `image_service._safe_from`: that leaves the caller's pre-transpose image
+    open beside the transposed copy, and leaks the image it converts from, so a
+    large PNG sat in memory two or three times over. Here each step closes the one
+    before as soon as the next exists, the order `decode_for_ingest` uses.
+    """
+    raw = Image.open(path)
     try:
-        raw = Image.open(cell.path)
         if raw.format == "JPEG":
             # Decode at a reduced scale. Draft keeps both sides at or above the
             # request, and the pre-transpose axes may be swapped, so ask for the
             # larger need on both.
-            rw = (region[2] - region[0]) if region else 1.0
-            rh = (region[3] - region[1]) if region else 1.0
-            need = math.ceil(max(lay.cell_px / rw, lay.area_h / rh))
             raw.draft("RGB", (need, need))
-        img = _safe_from(raw)
+        img = ImageOps.exif_transpose(raw)
+    except BaseException:
+        raw.close()
+        raise
+    if img is not raw:
+        raw.close()
+    if img.mode not in ("RGB", "RGBA"):
+        try:
+            converted = img.convert("RGB")
+        finally:
+            img.close()
+        img = converted
+    return img
+
+
+def _load_cell_image(cell: SheetCell, lay: _Layout, region, pixelated: bool) -> Image.Image | None:
+    """The cell's pixels, upright, cropped to `region` and scaled to fill the cell
+    (enlarged too, so Export current view shows a small region at full cell
+    size), or None when the file is missing or will not decode. Every image
+    opened or derived here is closed here unless it is the one returned."""
+    if cell.path is None:
+        return None
+    rw = (region[2] - region[0]) if region else 1.0
+    rh = (region[3] - region[1]) if region else 1.0
+    img = None
+    try:
+        img = _open_upright(cell.path, math.ceil(max(lay.cell_px / rw, lay.area_h / rh)))
         if region:
             x0, y0, x1, y1 = region
             w, h = img.size
@@ -202,7 +230,17 @@ def _load_cell_image(cell: SheetCell, lay: _Layout, region) -> Image.Image | Non
             cropped = img.crop(box)
             img.close()
             img = cropped
-        img.thumbnail((lay.cell_px, lay.area_h), Image.Resampling.LANCZOS)
+        scale = min(lay.cell_px / img.width, lay.area_h / img.height)
+        size = (max(1, round(img.width * scale)), max(1, round(img.height * scale)))
+        if size != img.size:
+            # Enlarging follows the page's Pixelated toggle, so a sheet of an
+            # upscaler comparison keeps the hard pixel edges it was judged by.
+            # Shrinking always filters: nearest-neighbour would alias.
+            resample = (Image.Resampling.NEAREST if pixelated and scale > 1
+                        else Image.Resampling.LANCZOS)
+            resized = img.resize(size, resample)
+            img.close()
+            img = resized
         out, img = img, None
         return out
     except Exception:
@@ -210,8 +248,6 @@ def _load_cell_image(cell: SheetCell, lay: _Layout, region) -> Image.Image | Non
     finally:
         if img is not None:
             img.close()
-        if raw is not None:
-            raw.close()
 
 
 def _title(cells: list[SheetCell]) -> str:
@@ -239,7 +275,7 @@ def render_contact_sheet(cells: list[SheetCell], opts: SheetOptions) -> bytes:
             x = lay.pad + col * (lay.cell_px + lay.pad)
             y = lay.header_h + lay.pad + row * (lay.cell_h + lay.pad)
             draw.rectangle((x, y, x + lay.cell_px - 1, y + lay.area_h - 1), fill=theme["cell"])
-            img = _load_cell_image(cell, lay, opts.region)
+            img = _load_cell_image(cell, lay, opts.region, opts.pixelated)
             if img is None:
                 label = _fit(draw, f"missing: {cell.filename}" if cell.filename else "missing",
                              font, lay.cell_px - 2 * lay.pad)
@@ -251,8 +287,9 @@ def render_contact_sheet(cells: list[SheetCell], opts: SheetOptions) -> bytes:
                 try:
                     ox = x + (lay.cell_px - img.width) // 2
                     oy = y + (lay.area_h - img.height) // 2
-                    mask = img.getchannel("A") if "A" in img.getbands() else None
-                    sheet.paste(img.convert("RGB") if mask is None else img, (ox, oy), mask)
+                    # The loader returns RGB or RGBA only; an RGBA image is its own
+                    # paste mask, so no channel or converted copy is made here.
+                    sheet.paste(img, (ox, oy), img if img.mode == "RGBA" else None)
                 finally:
                     img.close()
             ty = y + lay.area_h + lay.pad // 2

@@ -169,6 +169,31 @@ test('more than four open as a grid; ticked ones compare side by side; both expo
   await expect(grid.getByRole('button')).toHaveCount(5)
 })
 
+test('a new set picked from inside the old one opens as a new set, not a removal', async ({ page, request }) => {
+  // In split view the Compare pane is not remounted between presses, so the page
+  // must tell its own edits from a new selection — even one that is a subset.
+  const ds = await createDatasetViaApi(request, `compare-subset-${Date.now()}`)
+  const names: string[] = []
+  for (const n of ['a', 'b', 'c', 'd', 'e']) names.push(await uploadViaApi(request, ds.id, `${n}.png`))
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await expect(page.getByTestId('gallery-tile')).toHaveCount(5)
+  await page.getByRole('button', { name: 'Enter split view' }).click()
+  await page.getByRole('button', { name: 'Split horizontal (side by side)' }).click()
+  const left = page.getByTestId('pane-leaf').nth(0)
+  const right = page.getByTestId('pane-leaf').nth(1)
+
+  await selectAllIn(left, 5)
+  await left.getByRole('button', { name: 'Compare', exact: true }).click()
+  await expect(right.getByTestId('compare-grid').getByRole('button')).toHaveCount(5)
+
+  await left.getByTestId('select-all-btn').click() // Deselect all
+  for (const n of names.slice(0, 3)) await left.getByTestId(`select-${n}`).click()
+  await expect(left.getByText('3 selected')).toBeVisible()
+  await left.getByRole('button', { name: 'Compare', exact: true }).click()
+  await expect(right.getByTestId('compare-pane')).toHaveCount(3)
+  await expect(right.getByTestId('compare-grid')).toHaveCount(0)
+})
+
 test('in split view, Compare opens in the neighbouring pane and the gallery stays', async ({ page, request }) => {
   const { ds } = await seedThree(request, 'compare-split')
   await page.goto(`/datasets/${ds.id}/gallery`)

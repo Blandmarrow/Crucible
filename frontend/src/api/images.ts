@@ -14,6 +14,8 @@ export interface ContactSheetRequest {
   format: "png" | "jpeg";
   /** x0, y0, x1, y1 as fractions of each image, for Export current view. */
   region?: [number, number, number, number] | null;
+  /** Enlarge with nearest-neighbour, as the page draws with Pixelated on. */
+  pixelated?: boolean;
 }
 
 export interface UploadResult {

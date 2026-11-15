@@ -20,7 +20,9 @@ interface Props {
  * decode hundreds of megabytes to draw cells a few hundred pixels wide.
  */
 export default function CompareGrid({ items, columns, ticked, onToggle }: Props) {
-  const cols = columns === "auto" ? autoGridColumns(items.length) : columns;
+  // Never more tracks than images: the sheet clamps the same way, and the grid
+  // is its preview.
+  const cols = columns === "auto" ? autoGridColumns(items.length) : Math.min(columns, items.length);
   const full = ticked.length >= COMPARE_SIDE_MAX;
   return (
     <div

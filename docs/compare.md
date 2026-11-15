@@ -86,13 +86,17 @@ and format, the aesthetic score, and one line of caption. Pick the cell width, a
 or light background, and PNG (exact) or JPEG (smaller), then press **Download**.
 
 In Side by side, **Export current view** saves the panes on screen in one row, each
-cropped to the part you are zoomed into. Use it to show an upscaler's detail, or a
-before and after, in one image.
+cropped to the part you are zoomed into and enlarged to fill its cell. With
+**Pixelated** on, the enlargement keeps hard pixel edges, as on screen. Use it to show
+an upscaler's detail, or a before and after, in one image. The crop is exact for images
+of one shape; with Match pixels on, or images of different shapes, the other panes'
+crops can differ a little from what they show.
 
 The sheet is drawn by Crucible from the full-size files and downloads to your computer.
 It is never added to a dataset, so it can't end up in a training set by accident. A
-sheet is limited to 100 images and 16,000 pixels on its longest side; past that, the
-dialog says so. A sheet of 100 large images takes a few seconds.
+sheet is limited to 100 images, 16,000 pixels on its longest side and 64 million pixels
+in all (100 images at 512-pixel cells fit); past that, the dialog says so. A sheet of
+100 large images takes a few seconds.
 
 ## What each pane shows
 

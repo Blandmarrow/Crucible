@@ -143,24 +143,27 @@ export default function ComparePage() {
     setAbPick(which === "a" ? { a: id, b: swapTo } : { a: swapTo, b: id });
   };
 
-  // The mode on screen. A *new* set of images (not one a pane was removed from,
-  // and not the ticked few from the grid) opens as Grid when it holds more than
-  // Side by side can show, and otherwise in the last mode chosen. Worked out
-  // during render, React's pattern for state that follows a prop, so no frame
-  // shows the old mode with the new set.
+  // The mode on screen. A set that arrives from *outside* this page (a Compare
+  // button, a URL) opens as Grid when it holds more than Side by side can show,
+  // and otherwise in the last mode chosen. A list this page wrote itself (a pane
+  // removed or moved, the ticked few, Back to all) is recognised by `ownKey`, not
+  // by being a subset of the last one: three picked in the gallery out of a grid
+  // of ten are a new set too. Worked out during render, React's pattern for state
+  // that follows a prop, so no frame shows the old mode with the new set.
   const [mode, setModeState] = useState<CompareMode>(() =>
     wanted.length > COMPARE_SIDE_MAX ? "grid" : prefs.mode);
   const [ticked, setTicked] = useState<string[]>([]);
   const [backTo, setBackTo] = useState<string[] | null>(null);
   const [seenKey, setSeenKey] = useState(idsKey);
+  const [ownKey, setOwnKey] = useState<string | null>(null);
   if (seenKey !== idsKey) {
-    const before = new Set(seenKey.split(","));
     setSeenKey(idsKey);
     setTicked([]);
-    if (!wanted.every((id) => before.has(id))) {
+    if (idsKey !== ownKey) {
       setModeState(wanted.length > COMPARE_SIDE_MAX ? "grid" : prefs.mode);
       setBackTo(null);
     }
+    setOwnKey(null);
   }
   const setMode = (m: CompareMode) => {
     setModeState(m);
@@ -173,16 +176,33 @@ export default function ComparePage() {
   const compareTicked = () => {
     const picked = items.filter((r) => ticked.includes(r.id)).map((r) => r.id);
     if (picked.length < 2) return;
-    setBackTo(ids);
+    // The first list ticked from is the one Back to all returns to, however many
+    // times a smaller grid is ticked from after it.
+    setBackTo((b) => b ?? ids);
     setModeState("side");
     setIds(picked);
+  };
+  const backToAll = () => {
+    if (!backTo) return;
+    setBackTo(null);
+    setModeState(backTo.length > COMPARE_SIDE_MAX ? "grid" : prefs.mode);
+    setIds(backTo);
   };
 
   // Export: the whole set as a sheet, or (Side by side) the shown panes cropped to
   // the region pane 1 is showing. The region is measured when the button is pressed.
   const [sheet, setSheet] = useState<{ ids: string[]; columns: number | null; region: [number, number, number, number] | null } | null>(null);
   const openSheet = () =>
-    setSheet({ ids: items.map((r) => r.id), columns: gridMode && prefs.gridColumns !== "auto" ? prefs.gridColumns : null, region: null });
+    setSheet({
+      ids: items.map((r) => r.id),
+      // As the grid draws it: never more columns than images, which the server
+      // would clamp to anyway.
+      columns: gridMode && prefs.gridColumns !== "auto" ? Math.min(prefs.gridColumns, items.length) : null,
+      region: null,
+    });
+  // Every pane gets pane 1's region, as fractions of each image. Exact when the
+  // images share a shape and Match pixels is off, which is when their panes show
+  // the same fraction; otherwise the others' crops differ a little from the screen.
   const openViewSheet = () => {
     const g = shown[0] ? measures.current.get(shown[0].id)?.() : null;
     const region: [number, number, number, number] = g
@@ -194,7 +214,10 @@ export default function ComparePage() {
   const best = useMemo(() => bestMarks(shown), [shown]);
   const showDataset = new Set(shown.map((r) => r.dataset_id)).size > 1;
 
-  const setIds = (next: string[]) => go(compareUrl(next), compareView(next), { replace: true });
+  const setIds = (next: string[]) => {
+    setOwnKey(next.join(","));
+    go(compareUrl(next), compareView(next), { replace: true });
+  };
   const remove = (id: string) => {
     if (items.length <= 2) {
       toast("A comparison needs two images. Open the gallery to choose others.");
@@ -390,7 +413,7 @@ export default function ComparePage() {
         </span>
         {notes.map((n) => <span key={n}>{n}</span>)}
         {canGoBack && (
-          <button type="button" className="link-btn" onClick={() => { setIds(backTo!); }}>
+          <button type="button" className="link-btn" onClick={backToAll}>
             Back to all {backTo!.length}
           </button>
         )}
@@ -400,6 +423,7 @@ export default function ComparePage() {
           ids={sheet.ids}
           columns={sheet.columns}
           region={sheet.region}
+          pixelated={prefs.pixelated}
           prefs={prefs.sheet}
           onPrefs={(s) => setPrefs({ sheet: s })}
           onClose={() => setSheet(null)}

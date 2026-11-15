@@ -30,6 +30,7 @@ import ModelPicker from "../components/providers/ModelPicker";
 import LabelsPanel from "../components/settings/LabelsPanel";
 import SecretField from "../components/settings/SecretField";
 import SynonymsSetting from "../components/settings/SynonymsSetting";
+import { releaseNotesUrl, useAppVersion } from "../hooks/useAppVersion";
 
 const DEFAULTS: Thresholds = {
   blur_threshold: 100,
@@ -174,13 +175,7 @@ export default function SettingsPage() {
     () => localStorage.getItem(CAPTION_DEFAULT_SAVE_BACKUP_KEY) === "true"
   );
 
-  // The app version, from backend/version.py via the health route (decision 19). It cannot
-  // change while the page is open — a new version means a restart, which reloads the page.
-  const { data: appVersion } = useQuery({
-    queryKey: ["health", "version"],
-    queryFn: () => settingsApi.getHealth().then((h) => h.version),
-    staleTime: Infinity,
-  });
+  const appVersion = useAppVersion();
 
   const { data: thresholds, isLoading } = useQuery({
     queryKey: ["settings", "thresholds"],
@@ -398,7 +393,7 @@ export default function SettingsPage() {
           <>
             {" "}Crucible {appVersion} ·{" "}
             <a
-              href={`https://github.com/Blandmarrow/Crucible/releases/tag/v${appVersion}`}
+              href={releaseNotesUrl(appVersion)}
               target="_blank"
               rel="noreferrer"
               style={{ color: "var(--accent-text)" }}

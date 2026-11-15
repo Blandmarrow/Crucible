@@ -6,7 +6,7 @@ import { currentPaneView, usePaneStore } from "../store/paneStore";
 import { matchPath } from "react-router";
 import { useUiPrefsStore } from "../store/uiPrefsStore";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ChevronLeft, ChevronRight, Save, Crop, AlertTriangle, Copy, Sparkles, ChevronDown, ChevronUp, Type, Eye, EyeOff, ScanSearch, Pencil, Maximize2, Palette, CheckSquare, Square, Crosshair, Combine, Focus, BoxSelect, Eraser, RotateCcw } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Save, Crop, AlertTriangle, Copy, Sparkles, ChevronDown, ChevronUp, Type, Eye, EyeOff, ScanSearch, Pencil, Maximize2, Palette, CheckSquare, Square, Crosshair, Combine, Focus, BoxSelect, Eraser, RotateCcw, SquareSplitHorizontal } from "lucide-react";
 import ReactCrop, { type PercentCrop } from "react-image-crop";
 import "react-image-crop/dist/ReactCrop.css";
 import toast from "react-hot-toast";
@@ -24,6 +24,10 @@ import { lutApi } from "../api/lut";
 import { jobsApi } from "../api/jobs";
 import { useJobStore } from "../store/jobStore";
 import { useSelectionStore } from "../store/selectionStore";
+import { useOpenBeside } from "../hooks/useOpenBeside";
+import { compareUrl, compareView, COMPARE_MAX } from "../utils/compare";
+import MenuButton from "../components/common/MenuButton";
+import type { ContextMenuAction } from "../components/common/ContextMenu";
 import PromptPresetManager from "../components/caption/PromptPresetManager";
 import ResolutionPicker from "../components/caption/ResolutionPicker";
 import GenerationMetadata from "../components/image/GenerationMetadata";
@@ -267,6 +271,7 @@ export default function ImageDetailPage() {
   const datasetId = usePaneDatasetId();
   const imageId = usePaneImageId();
   const { go: paneGo, back: paneBack } = usePaneNavigate();
+  const openBeside = useOpenBeside();
   const qc = useQueryClient();
   const paneCtx = usePaneContext();
   const activePaneId = usePaneStore((s) => s.activePaneId);
@@ -433,14 +438,14 @@ export default function ImageDetailPage() {
   // sorts plain-object keys and drops `undefined` props — the same props axios
   // omits from the query string — so the hash and the request agree by
   // construction, and an object rebuilt by `JSON.parse` hashes like the memo did.
-  const { data: nextPageData } = useQuery({
+  const { data: nextPageData, isLoading: nextPageLoading } = useQuery({
     queryKey: ["gallery-nav", datasetId, navCtx?.page, navCtx?.limit, navCtx?.sort, navCtx?.order, navCtx?.filters, "next"],
     queryFn: () => imagesApi.list(navPageParams(datasetId!, navCtx!, navCtx!.page + 1)),
     enabled: atEnd,
     staleTime: 60_000,
   });
 
-  const { data: prevPageData } = useQuery({
+  const { data: prevPageData, isLoading: prevPageLoading } = useQuery({
     queryKey: ["gallery-nav", datasetId, navCtx?.page, navCtx?.limit, navCtx?.sort, navCtx?.order, navCtx?.filters, "prev"],
     queryFn: () => imagesApi.list(navPageParams(datasetId!, navCtx!, navCtx!.page - 1)),
     enabled: atStart,
@@ -474,6 +479,53 @@ export default function ImageDetailPage() {
     }
     paneGo(`/datasets/${datasetId}/image/${id}`, { page: "image-detail", datasetId: datasetId ?? "", imageId: id }, { replace: true });
   }, [navCtx, datasetId, atEnd, atStart, nextId, prevId, nextPageData, prevPageData, paneGo]);
+
+  // The header's Compare menu. *With selection* puts this image first, then the
+  // app-wide selection in pick order, which may span datasets as the gallery's own
+  // Compare button allows. *With neighbours* is the arrow keys' order, page
+  // boundaries included; while an edge page is still loading it waits rather than
+  // open two images where there will be three. A failed edge query stops loading,
+  // so the two in hand still compare.
+  //
+  // Only the selection's *count* is subscribed: the id list is read from the store
+  // on click, so a toggle elsewhere (the other pane's gallery) does not re-render
+  // this page.
+  const selectionCount = useSelectionStore((s) => s.count);
+  const otherSelected = selectionCount - (isImageSelected ? 1 : 0);
+  const withSelectionIds = () => {
+    const ids = [...useSelectionStore.getState().selectedIds].filter((id) => id !== imageId);
+    return imageId ? [imageId, ...ids] : ids;
+  };
+  const neighbourIds = [prevId, imageId ?? null, nextId].filter((id): id is string => !!id);
+  const neighboursLoading = (atEnd && nextPageLoading) || (atStart && prevPageLoading);
+  const openCompare = (ids: string[]) => {
+    openBeside(compareUrl(ids), compareView(ids));
+    // In split view this page stays mounted, and MenuButton hands focus back to
+    // its trigger after the entry runs; a Space aimed at the new Compare pane
+    // would then press the trigger and reopen the menu here. Blur once that has
+    // happened: a microtask runs after the whole click handler.
+    if (paneCtx) queueMicrotask(() => (document.activeElement as HTMLElement | null)?.blur());
+  };
+  const compareActions: ContextMenuAction[] = [
+    {
+      label: otherSelected > 0 ? `With selection (${otherSelected})` : "With selection",
+      onClick: () => openCompare(withSelectionIds()),
+      disabled: otherSelected < 1 || otherSelected + 1 > COMPARE_MAX,
+      title: otherSelected < 1 ? "Select other images in the gallery first"
+        : otherSelected + 1 > COMPARE_MAX ? `Compare takes up to ${COMPARE_MAX} images, this one included`
+        : "This image beside the selected ones",
+    },
+    {
+      label: "With neighbours",
+      onClick: () => openCompare(neighbourIds),
+      disabled: neighbourIds.length < 2 || neighboursLoading,
+      title: neighboursLoading ? `Loading the ${atStart && prevPageLoading ? "previous" : "next"} page…`
+        : neighbourIds.length < 2
+          ? (navCtx && currentIndex >= 0 ? "No other image in the gallery's current view"
+            : "Open this image from the gallery to compare it with the ones beside it")
+        : "The previous image, this one and the next, in the arrow keys' order",
+    },
+  ];
 
   // The wake-up signal for the refresher: a *scalar* over the watched jobs only.
   // `jobStore.updateJob` builds a new Map on every SSE event app-wide, so selecting
@@ -1791,6 +1843,14 @@ export default function ImageDetailPage() {
             {isImageSelected ? <CheckSquare size={14} /> : <Square size={14} />}
             {isImageSelected ? "Selected" : "Select"}
           </button>
+          <MenuButton
+            label={<><SquareSplitHorizontal size={14} /> Compare</>}
+            align="right"
+            className="btn-ghost btn-sm flex items-center gap-1.5"
+            title="Compare this image with others (in the next pane in split view)"
+            testId="detail-compare-menu"
+            actions={compareActions}
+          />
           {(image?.detections?.length ?? 0) > 0 && !cropMode && (
             <button
               className={`btn-sm flex items-center gap-1.5 ${overlayVisible ? "btn-primary" : "btn-ghost"}`}

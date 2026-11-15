@@ -5,9 +5,10 @@ same spot in each. Use it to
 pick the best of several near-duplicates, to judge whether an upscale or colour grade
 improved an image, or to choose between a few ComfyUI takes on one prompt.
 
-Available from: the **Compare** button in the gallery's selection toolbar, and on each
-duplicate group of the **Score images** page. There is no sidebar item, because a
-comparison always starts from images you have chosen.
+Available from: the **Compare** button in the gallery's selection toolbar, the
+**Compare** menu on an image's own page, and each duplicate group of the **Score images**
+page. There is no sidebar item, because a comparison always starts from images you have
+chosen.
 
 ## Opening a comparison
 
@@ -26,7 +27,7 @@ The page's address holds the images it shows, so a reload or a bookmark brings b
 same comparison.
 
 **Back**, at the left of the toolbar, returns to where you opened the comparison: the
-gallery, or the Score images page for a duplicate group. Removing or reordering images
+gallery, the image's page, or the Score images page for a duplicate group. Removing or reordering images
 doesn't add steps, so one press is enough. In split view, or after opening a bookmark,
 it takes you to the first image's gallery (or Score images page) instead.
 
@@ -34,6 +35,19 @@ it takes you to the first image's gallery (or Score images page) instead.
 **Compare** button. It opens the group side by side, best first when every image was
 scored by the same model, with **Keep this one** under each image (see
 [Acting on images](#acting-on-images)).
+
+**From an image:** an image's own page has a **Compare** menu next to **Select**, with
+two choices:
+
+- **With selection** compares this image with the images you have selected. This image
+  comes first, then the rest in the order you selected them. Select images in the gallery,
+  or with **Select** (Space) as you step through them here.
+- **With neighbours** compares the previous image, this one and the next, in the order the
+  arrow keys move through. It needs the image to be opened from the gallery, since that is
+  where the order comes from. At either end of the gallery's view it compares two.
+
+A choice that can't run is greyed out; point at it to see why. As with the gallery's
+button, in split view the comparison opens in the other pane.
 
 ## Zooming and panning
 

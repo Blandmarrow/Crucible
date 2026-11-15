@@ -348,3 +348,59 @@ test('in split view, Compare opens in the neighbouring pane and the gallery stay
   await expect(page.getByText('Saved', { exact: true })).toBeVisible() // a toast, at the app root
   await expect(right.getByRole('button', { name: 'a caption written beside' })).toBeVisible()
 })
+
+test('the detail page compares an image with the selection or its neighbours', async ({ page, request, context }) => {
+  const { ds } = await seedThree(request, 'compare-detail')
+  const idInUrl = () => new URL(page.url()).pathname.split('/image/')[1]
+  const compareIds = () => new URL(page.url()).searchParams.get('ids')!.split(',')
+  const menuItem = (name: RegExp) => page.getByRole('menuitem', { name })
+
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await expect(page.getByTestId('gallery-tile')).toHaveCount(3)
+  await page.getByTestId('gallery-tile').first().click()
+  // The key handler registers in an effect: wait for the page before pressing keys.
+  await expect(page.getByRole('button', { name: 'Back' })).toBeVisible()
+
+  // Select the first and third images from the detail page, then stand on the second.
+  // Each step waits for the counter: a key pressed while the next image loads is lost.
+  const at = (n: number) => expect(page.getByTitle(`Image ${n} of 3`)).toBeVisible()
+  const order: string[] = []
+  await at(1)
+  order.push(idInUrl())
+  await page.getByRole('button', { name: 'Select', exact: true }).click()
+  await page.keyboard.press('ArrowRight')
+  await at(2)
+  order.push(idInUrl())
+  await page.keyboard.press('ArrowRight')
+  await at(3)
+  order.push(idInUrl())
+  await page.getByRole('button', { name: 'Select', exact: true }).click()
+  await page.keyboard.press('ArrowLeft')
+  await at(2)
+  expect(idInUrl()).toBe(order[1])
+
+  // With selection: this image first, then the selection in pick order.
+  await page.getByTestId('detail-compare-menu').click()
+  await menuItem(/^With selection \(2\)/).click()
+  await expect(page).toHaveURL(/\/compare\?ids=/)
+  expect(compareIds()).toEqual([order[1], order[0], order[2]])
+  await expect(page.getByTestId('compare-pane')).toHaveCount(3)
+
+  // Compare's own Back returns to the detail page; With neighbours is the arrow
+  // keys' order.
+  await page.getByRole('button', { name: 'Back', exact: true }).click()
+  await expect(page).toHaveURL(new RegExp(`/image/${order[1]}$`))
+  await page.getByTestId('detail-compare-menu').click()
+  await menuItem(/^With neighbours/).click()
+  await expect(page).toHaveURL(/\/compare\?ids=/)
+  expect(compareIds()).toEqual(order)
+
+  // A detail page opened in a fresh tab has no selection and no gallery order.
+  const fresh = await context.newPage()
+  await fresh.goto(`/datasets/${ds.id}/image/${order[1]}`)
+  await expect(fresh.getByRole('button', { name: 'Back' })).toBeVisible()
+  await fresh.getByTestId('detail-compare-menu').click()
+  await expect(fresh.getByRole('menuitem', { name: /^With selection/ })).toHaveAttribute('aria-disabled', 'true')
+  await expect(fresh.getByRole('menuitem', { name: /^With neighbours/ })).toHaveAttribute('aria-disabled', 'true')
+  await fresh.close()
+})

@@ -361,13 +361,18 @@ export default function ComparePage() {
   // so one step is enough). A pane has no history, and a bookmark or new tab has
   // nothing to go back to, so both land on where a comparison is opened from: the
   // first image's Score images page for a duplicate group, its gallery otherwise.
+  // The previous page may also be an image's detail page (its Compare menu), so the
+  // tooltip names a place only when Back goes there by fallback.
   const backDs = items[0]?.dataset_id;
-  const backLabel = !backDs ? "Datasets" : from === "dups" ? "Score images" : "the gallery";
+  // React Router numbers the entries it pushed; 0 means this page opened the tab.
+  const historyIdx = (window.history.state as { idx?: number } | null)?.idx ?? 0;
+  const backInHistory = !paneCtx && historyIdx > 0;
+  const backLabel = backInHistory ? "the previous page"
+    : !backDs ? "Datasets" : from === "dups" ? "Score images" : "the gallery";
   const goBack = () => {
     const url = !backDs ? "/datasets" : `/datasets/${backDs}/${from === "dups" ? "quality" : "gallery"}`;
     const view: PaneView = !backDs ? { page: "datasets" }
       : { page: from === "dups" ? "quality" : "gallery", datasetId: backDs };
-    // React Router numbers the entries it pushed; 0 means this page opened the tab.
     const idx = (window.history.state as { idx?: number } | null)?.idx ?? 0;
     if (!paneCtx && idx > 0) navigate(-1);
     else go(url, view, { replace: true });

@@ -82,7 +82,14 @@ test('A/B shows B beside a divider, while a key is held, or as a difference', as
   const b = page.getByTestId('compare-ab-b')
   await expect.poll(() => b.evaluate((img) => parseFloat((img as HTMLImageElement).style.width) || 0)).toBeGreaterThan(0)
 
-  // Swipe: the divider's arrow keys move where B's clip starts.
+  // Swipe: the divider's arrow keys move where B's clip starts — and, zoomed in,
+  // only that: the frame's own arrow keys pan, and must not also fire.
+  await frame.focus()
+  await page.keyboard.press('+')
+  await page.keyboard.press('+')
+  await expect(page.locator('.cmp-zoom-read')).toHaveText(/^×/)
+  const a = page.getByTestId('compare-ab-a')
+  const panBefore = await a.evaluate((img) => (img as HTMLImageElement).style.transform)
   await expect.poll(() => clipLeft(b)).toBeGreaterThan(0)
   const before = await clipLeft(b)
   const divider = page.getByRole('slider', { name: 'Divider between A and B' })
@@ -90,11 +97,16 @@ test('A/B shows B beside a divider, while a key is held, or as a difference', as
   await page.keyboard.press('ArrowRight')
   await page.keyboard.press('ArrowRight')
   await expect.poll(() => clipLeft(b)).toBeGreaterThan(before)
+  expect(await a.evaluate((img) => (img as HTMLImageElement).style.transform)).toBe(panBefore)
+  await page.getByRole('button', { name: 'Fit', exact: true }).click()
 
-  // Flip: B shows only while Space is held.
+  // Flip: B shows only while Space is held — not when Space is pressing a button.
   await page.getByRole('button', { name: 'Flip', exact: true }).click()
   const showing = page.getByTestId('compare-ab-showing')
   await expect(showing).toHaveText(/^A · /)
+  await page.keyboard.down('Space') // focus is still on the Flip button
+  await expect(showing).toHaveText(/^A · /)
+  await page.keyboard.up('Space')
   await frame.focus()
   await page.keyboard.down('Space')
   await expect(showing).toHaveText(/^B · /)

@@ -234,16 +234,31 @@ test('a pane can label its image, and delete it', async ({ page, request }) => {
 })
 
 test('a duplicate group opened from the Quality page keeps one and deletes the rest', async ({ page, request }) => {
-  // Three uploads of one PNG are one perceptual hash, so a technical-only scoring
-  // run (CPU, no model) groups them.
+  // The group is staged, not scanned: a scoring run imports torch (the aesthetic
+  // scorer is imported whatever the boxes say), and CI's e2e has none. The
+  // Quality page's group list and the duplicate flags on Compare's rows are
+  // answered as a Technical scan would write them; the resolve itself is real.
   const { ds } = await seedThree(request, 'compare-dups')
-  const start = await request.post('/api/v1/quality/score', {
-    data: { dataset_id: ds.id, run_aesthetic: false, run_technical: true },
+  const rows: { id: string; filename: string; updated_at: string }[] =
+    await (await request.get('/api/v1/images/', { params: { dataset_id: ds.id, limit: '10' } })).json()
+  const root = rows[0].id
+  await page.route(`**/api/v1/quality/duplicates/${ds.id}`, (route) => route.fulfill({
+    json: {
+      groups: [rows.map((r, i) => ({
+        id: r.id, filename: r.filename, aesthetic_score: null, aesthetic_model: null,
+        updated_at: r.updated_at, created_at: r.updated_at, kept: i === 0,
+        source_video_id: null, source_timestamp_ms: null, source_shot_index: null, source_video_name: null,
+      }))],
+    },
+  }))
+  await page.route('**/api/v1/images/by-ids', async (route) => {
+    const res = await route.fetch()
+    const items = await res.json()
+    for (const it of items) {
+      if (it.id !== root) it.quality_flags = { ...it.quality_flags, is_duplicate: true, duplicate_of: root }
+    }
+    await route.fulfill({ response: res, json: items })
   })
-  expect(start.status(), await start.text()).toBe(200)
-  const jobId = (await start.json()).job_id
-  await expect.poll(async () => (await (await request.get(`/api/v1/jobs/${jobId}`)).json()).status, { timeout: 60_000 })
-    .toBe('completed')
 
   await page.goto(`/datasets/${ds.id}/quality`)
   await expect(page.getByRole('heading', { name: 'Duplicate groups' })).toBeVisible()
@@ -272,9 +287,6 @@ test('a duplicate group opened from the Quality page keeps one and deletes the r
   const left = await (await request.get('/api/v1/images/', { params: { dataset_id: ds.id, limit: '10' } })).json()
   expect(left).toHaveLength(1)
   expect(left[0].filename).toBe(chosen)
-  // Its duplicate flags go with the group: nothing is left for it to duplicate.
-  expect(left[0].quality_flags?.is_duplicate).toBeFalsy()
-  expect(left[0].quality_flags?.duplicate_of).toBeUndefined()
 })
 
 test('in split view, Compare opens in the neighbouring pane and the gallery stays', async ({ page, request }) => {

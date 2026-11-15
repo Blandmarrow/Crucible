@@ -329,10 +329,12 @@ two images of different sizes compares resampled pixels, so fine noise shows as 
   side, not as a removal left in Grid.
 - **Labels and delete**: a label ticked in a pane's dialog shows under the pane; a pane's
   delete removes the row (404 after) and the gallery shows one tile fewer.
-- **Keep this one**: three uploads of one PNG, grouped by a technical-only scoring run
-  (CPU, no model), open from the Quality page with Keep on every pane; a Move left keeps
-  it, a removal takes it away; reopened, keeping the second pane's image leaves exactly
-  that one, with its duplicate flags cleared. The label journey deletes its label in a
+- **Keep this one**: a group of three, opened from the Quality page with Keep on every
+  pane; a Move left keeps it, a removal takes it away; reopened, keeping the second
+  pane's image leaves exactly that one. The group is **staged with `page.route`**, not
+  scanned: the Quality page's list and the duplicate flags on Compare's rows are answered
+  as a Technical scan writes them, while the resolve is real. A scoring run imports
+  torch whatever its boxes say, and CI's e2e has none (roadmap § Later). The label journey deletes its label in a
   `finally`: the vocabulary is app-wide and `labels.spec.ts` expects its own label to be
   the only one.
 

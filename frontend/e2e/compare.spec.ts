@@ -289,6 +289,31 @@ test('a duplicate group opened from the Quality page keeps one and deletes the r
   expect(left[0].filename).toBe(chosen)
 })
 
+test('Back returns to the gallery, after edits to the set and from a fresh tab', async ({ page, request }) => {
+  const { ds, names } = await seedThree(request, 'compare-back')
+  const gallery = new RegExp(`/datasets/${ds.id}/gallery`)
+
+  // Opened from the gallery: one step back, even after a pane was removed (the
+  // removal replaces its history entry rather than adding one).
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await selectAllIn(page, 3)
+  await page.getByRole('button', { name: 'Compare', exact: true }).click()
+  await expect(page.getByTestId('compare-pane')).toHaveCount(3)
+  await page.getByRole('button', { name: `Remove ${names[2]} from the comparison` }).click()
+  await expect(page.getByTestId('compare-pane')).toHaveCount(2)
+  await page.getByRole('button', { name: 'Back', exact: true }).click()
+  await expect(page).toHaveURL(gallery)
+  await expect(page.getByTestId('gallery-tile')).toHaveCount(3)
+
+  // Opened straight from a URL, with nothing behind it: the first image's gallery.
+  const rows = await (await request.get('/api/v1/images/', { params: { dataset_id: ds.id, limit: '10' } })).json()
+  const fresh = await page.context().newPage()
+  await fresh.goto(`/compare?ids=${rows.map((r: { id: string }) => r.id).join(',')}`)
+  await expect(fresh.getByTestId('compare-pane')).toHaveCount(3)
+  await fresh.getByRole('button', { name: 'Back', exact: true }).click()
+  await expect(fresh).toHaveURL(gallery)
+})
+
 test('in split view, Compare opens in the neighbouring pane and the gallery stays', async ({ page, request }) => {
   const { ds } = await seedThree(request, 'compare-split')
   await page.goto(`/datasets/${ds.id}/gallery`)

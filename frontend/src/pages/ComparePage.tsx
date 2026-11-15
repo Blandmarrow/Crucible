@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
-import { Minus, Plus } from "lucide-react";
+import { ArrowLeft, Minus, Plus } from "lucide-react";
+import { useNavigate } from "react-router";
+import { usePaneContext } from "../contexts/PaneContext";
+import type { PaneView } from "../contexts/PaneContext";
 import { imagesApi, keptImagesMessage } from "../api/images";
 import { qualityApi } from "../api/quality";
 import type { CompareImage } from "../types";
@@ -80,6 +83,8 @@ export default function ComparePage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const wanted = useMemo(() => [...new Set(ids)].slice(0, COMPARE_MAX), [idsKey]);
   const { go } = usePaneNavigate();
+  const navigate = useNavigate();
+  const paneCtx = usePaneContext();
   const openBeside = useOpenBeside();
   const qc = useQueryClient();
 
@@ -351,6 +356,23 @@ export default function ComparePage() {
   const open = (r: CompareImage) =>
     openBeside(`/datasets/${r.dataset_id}/image/${r.id}`, { page: "image-detail", datasetId: r.dataset_id, imageId: r.id });
 
+  // Back: the browser's previous page when there is one (the gallery or Score
+  // images page that opened this; removals and moves replace their history entry,
+  // so one step is enough). A pane has no history, and a bookmark or new tab has
+  // nothing to go back to, so both land on where a comparison is opened from: the
+  // first image's Score images page for a duplicate group, its gallery otherwise.
+  const backDs = items[0]?.dataset_id;
+  const backLabel = !backDs ? "Datasets" : from === "dups" ? "Score images" : "the gallery";
+  const goBack = () => {
+    const url = !backDs ? "/datasets" : `/datasets/${backDs}/${from === "dups" ? "quality" : "gallery"}`;
+    const view: PaneView = !backDs ? { page: "datasets" }
+      : { page: from === "dups" ? "quality" : "gallery", datasetId: backDs };
+    // React Router numbers the entries it pushed; 0 means this page opened the tab.
+    const idx = (window.history.state as { idx?: number } | null)?.idx ?? 0;
+    if (!paneCtx && idx > 0) navigate(-1);
+    else go(url, view, { replace: true });
+  };
+
   const datasetNames = [...new Set(items.map((r) => r.dataset_name))];
   const subtitle =
     items.length === 0 ? "" :
@@ -443,6 +465,9 @@ export default function ComparePage() {
     <div className="cmp-root">
       <div className="cmp-bar">
         <div className="cmp-title">
+          <button type="button" className="btn sm ghost" onClick={goBack} title={`Back to ${backLabel}`}>
+            <ArrowLeft size={13} /> Back
+          </button>
           <h1>Compare</h1>
           {subtitle && <span className="cmp-sub">{subtitle}</span>}
         </div>

@@ -35,7 +35,7 @@ restates its stages.
 
 1. **#130 Compare landed** in five PRs, #168 to #172 (see Now). M11 now holds #129, design
    first, and #48, waiting on its reporter.
-2. **`docs/dev/gallery/compare.md` is over budget** (3,721 words). Split it first, the next
+2. **`docs/dev/gallery/compare.md` is over budget** (3,781 words). Split it first, the next
    time it is touched, along the seam in `docs/dev/pending-splits.md`: two new files in
    the gallery family, so no Map row.
 3. **CLAUDE.md is 6 words over budget** (6,506). Its seam, two Map hubs, waits on the
@@ -115,19 +115,8 @@ Tier 4, design first:
   [decision 20](decisions/20-compare-view.md), one PR per phase, each after an Opus review
   whose findings were fixed in the same PR. User doc `docs/compare.md`, dev doc
   `docs/dev/gallery/compare.md`; the design plan was deleted when the last phase landed.
-  - [x] Design: the plan, decision 20 and these boxes (`design/130-compare`, PR #168).
-  - [x] Phase 1, the page and Side by side (`feat/130-compare-page`): `POST /images/by-ids`,
-    the routed page, linked zoom, the selection toolbar's Compare button, opening in the
-    neighbouring pane. Merged 2026-11-15 as PR #169, with an Opus review's seven findings
-    fixed (`docs/dev/gallery/compare.md`).
-  - [x] Phase 2, A/B (`feat/130-compare-ab`): swipe, flip and difference, with an Opus
-    review's five findings fixed. Merged 2026-11-15 as PR #170.
-  - [x] Phase 3, Grid and the contact sheet (`feat/130-contact-sheet`):
-    `POST /images/contact-sheet`, timed at 1.9 to 3.1 s for 100 large files, so it stays
-    a request. Merged 2026-11-15 as PR #171, with an Opus review's seven findings fixed.
-  - [x] Phase 4, actions (`feat/130-compare-actions`): the Quality page's Compare button,
-    Keep this one, delete and labels, with an Opus review's six findings fixed. Merged
-    2026-11-15 as PR #172, which closed the issue and deleted the plan folder.
+  The five phase boxes (PRs #168 to #172) are in
+  [roadmap-archive/handoff-2026-11-15.md § #130's phase boxes](roadmap-archive/handoff-2026-11-15.md#130s-phase-boxes).
 - [ ] #129 Chat with an LLM: a plan folder. Read-only tools first, writes behind a
   confirmation, and the paid-call cap applies; weak tool calling in local models is the main
   risk. Large enough to become its own milestone when it is expanded.
@@ -268,6 +257,13 @@ Each line links the record that holds the full text.
   caller's own frontend is the only guard; `services/image_scope.py`, detection, inpaint,
   upscale and LUT read `[]` as nothing. The user chose on 2026-11-14 to fix only the
   Captioning page's empty *Selected* scope (PR #161) and leave the routes as they are.
+- Open a comparison from the image detail page. Today Compare starts only from the
+  gallery's selection bar or a duplicate group; split view is the workaround. The detail
+  page needs a way to say which other images, so the options, cheapest first: **Compare
+  with selection** (the current image plus the app-wide selection), **Compare with
+  neighbours** (previous and next in the arrow keys' order), or an **Add to compare**
+  tray filled while browsing (`docs/dev/gallery/compare.md` § Not built). Asked for by
+  the user on 2026-11-15, after #130.
 - A technical-only scoring run (`POST /quality/score` with only `run_technical`) still
   needs torch: the job imports `backend/ml/aesthetic_scorer.py` before checking which
   scorers were asked for, so it fails without torch even though the technical scorer is

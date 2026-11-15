@@ -28,6 +28,11 @@ a remount on every removal would throw away the zoom.
 view switched on while on the page) gets `{page: "compare"}` with no ids and shows the
 empty state. Accepted: re-pressing Compare fills it.
 
+**Back** (`goBack`) is `navigate(-1)` when React Router's `history.state.idx` says there
+is an entry to return to; every edit to the set uses `replace`, so that entry is the page
+that opened Compare. A pane has no history, and a bookmark or new tab has `idx` 0, so
+both go to the first image's Score images page (`from=dups`) or gallery instead.
+
 ## Opening it beside the gallery
 
 The selection toolbar's **Compare** button (2 to `COMPARE_MAX` = 100 selected,

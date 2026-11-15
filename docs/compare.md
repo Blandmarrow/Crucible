@@ -25,6 +25,11 @@ returns to the gallery as you left it.
 The page's address holds the images it shows, so a reload or a bookmark brings back the
 same comparison.
 
+**Back**, at the left of the toolbar, returns to where you opened the comparison: the
+gallery, or the Score images page for a duplicate group. Removing or reordering images
+doesn't add steps, so one press is enough. In split view, or after opening a bookmark,
+it takes you to the first image's gallery (or Score images page) instead.
+
 **From a duplicate group:** on the Score images page, each group of near-duplicates has a
 **Compare** button. It opens the group side by side, best first when every image was
 scored by the same model, with **Keep this one** under each image (see

@@ -22,20 +22,25 @@ interface Props {
 export default function CompareLabelsDialog({ item, onClose }: Props) {
   const { labels } = useLabels();
   const assign = useAssignImageLabels(item.id);
-  // Ticks flip at once, as on the detail page; the server's list replaces them
-  // whenever it arrives (the assign queue refetches once its last write settles,
-  // and a failed write's refetch is its rollback).
-  const serverKey = item.label_ids.join(",");
-  const [seen, setSeen] = useState(serverKey);
-  const [ticked, setTicked] = useState<string[]>(item.label_ids);
-  if (seen !== serverKey) {
-    setSeen(serverKey);
-    setTicked(item.label_ids);
+  // Ticks flip at once, as on the detail page. A toggle stays in `pending` until
+  // the server's list agrees with it, so a refetch landing between two quick
+  // toggles (the first one's) cannot undo the second on screen; a failed write
+  // drops its entry, and the server's list shows again.
+  const [pending, setPending] = useState<Record<string, boolean>>({});
+  const settled = Object.entries(pending).filter(([id, on]) => item.label_ids.includes(id) === on);
+  if (settled.length > 0) {
+    const rest = { ...pending };
+    for (const [id] of settled) delete rest[id];
+    setPending(rest);
   }
+  const isOn = (id: string) => (id in pending ? pending[id] : item.label_ids.includes(id));
+  const ticked = labels.map((l) => l.id).filter(isOn);
   const toggle = (id: string) => {
-    const on = ticked.includes(id);
-    setTicked(on ? ticked.filter((x) => x !== id) : [...ticked, id]);
-    assign.mutate(on ? { remove: [id] } : { add: [id] });
+    const on = isOn(id);
+    setPending((p) => ({ ...p, [id]: !on }));
+    assign.mutate(on ? { remove: [id] } : { add: [id] }, {
+      onError: () => setPending((p) => { const rest = { ...p }; delete rest[id]; return rest; }),
+    });
   };
 
   return (

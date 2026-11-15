@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { Minus, Plus } from "lucide-react";
@@ -250,34 +250,68 @@ export default function ComparePage() {
   // release their images (`releasing`), and only after that render commits does
   // the effect below send the request. Windows refuses to delete a file still
   // being served to the page (PM-021), so the order is the point.
+  // `from=dups` alone is not trusted: a bookmark or a hand-edited URL outlives a
+  // re-scan that split the group. The rows' own flags must still say "one group":
+  // every image's root (its `duplicate_of`, or itself) the same, and exactly one
+  // image the root, which the scan leaves unflagged.
+  const oneGroup = (() => {
+    const rootOf = (r: CompareImage) => (r.quality_flags?.duplicate_of as string | undefined) ?? r.id;
+    const roots = new Set(items.map(rootOf));
+    return roots.size === 1 && items.filter((r) => r.quality_flags?.duplicate_of).length === items.length - 1;
+  })();
   const canKeep =
     from === "dups" && groupKey === sortedKey(wanted) && !query.isPlaceholderData &&
-    items.length >= 2 && items.length === wanted.length;
+    items.length >= 2 && items.length === wanted.length && oneGroup;
   const [confirm, setConfirm] = useState<PendingOp | null>(null);
   const [running, setRunning] = useState<PendingOp | null>(null);
   const [labelsFor, setLabelsFor] = useState<CompareImage | null>(null);
-  const askDelete = (item: CompareImage) =>
-    setConfirm({ kind: "delete", item, others: [], ids, datasets: [item.dataset_id] });
-  const askKeep = (item: CompareImage) =>
-    setConfirm({
+  // One operation at a time: a second one would mount the first one's images
+  // again while their files are being deleted, and its captured id list would
+  // write the first deletion back into the URL.
+  const busy = running !== null;
+  const askDelete = (item: CompareImage) => {
+    if (!busy) setConfirm({ kind: "delete", item, others: [], ids, datasets: [item.dataset_id] });
+  };
+  const askKeep = (item: CompareImage) => {
+    if (!busy) setConfirm({
       kind: "keep", item, ids,
       others: items.filter((r) => r.id !== item.id),
       datasets: [...new Set(items.map((r) => r.dataset_id))],
     });
+  };
   const releasing = new Set(
     !running ? [] : running.kind === "delete" ? [running.item.id] : running.others.map((r) => r.id),
   );
+  // The effect must start each operation exactly once. Inside a pane `go` changes
+  // identity on every store write (any click in any pane re-renders every leaf),
+  // so it is read through a ref, and `started` guards the rest. `mounted` stops a
+  // late answer from navigating: a pane the user has since moved on would be
+  // pulled back to Compare.
+  const nav = useRef({ go, from });
+  useLayoutEffect(() => { nav.current = { go, from }; });
+  const started = useRef<PendingOp | null>(null);
+  const mounted = useRef(true);
   useEffect(() => {
-    if (!running) return;
+    // Set on every mount, not just declared true: StrictMode's mount-unmount-mount
+    // in development would otherwise leave it false for good.
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+  useEffect(() => {
+    if (!running || started.current === running) return;
+    started.current = running;
     const op = running;
     void (async () => {
       try {
         if (op.kind === "delete") {
           await imagesApi.delete(op.item.id);
           toast.success(`Deleted ${op.item.filename}`);
-          const next = op.ids.filter((x) => x !== op.item.id);
-          setOwnKey(next.join(","));
-          go(compareUrl(next, from), compareView(next, from), { replace: true });
+          if (mounted.current) {
+            const next = op.ids.filter((x) => x !== op.item.id);
+            const { go: goNow, from: fromNow } = nav.current;
+            setOwnKey(next.join(","));
+            goNow(compareUrl(next, fromNow), compareView(next, fromNow), { replace: true });
+          }
         } else {
           const r = await qualityApi.resolveDuplicates([op.item.id], op.others.map((o) => o.id));
           const kept = keptImagesMessage(r);
@@ -293,10 +327,10 @@ export default function ComparePage() {
           invalidateDatasetContentScope(qc, d);
           qc.invalidateQueries({ queryKey: ["duplicates", d] });
         }
-        setRunning(null);
+        if (mounted.current) setRunning(null);
       }
     })();
-  }, [running, qc, go, from]);
+  }, [running, qc]);
   const labelNames = (r: CompareImage) =>
     r.label_ids.map((id) => labelsById.get(id)?.name).filter((n): n is string => !!n);
   const remove = (id: string) => {
@@ -386,6 +420,7 @@ export default function ComparePage() {
             onOpen={() => open(r)}
             onMoveLeft={i > 0 ? () => moveLeft(r.id) : undefined}
             onRemove={() => remove(r.id)}
+            busy={busy}
             onLabels={() => setLabelsFor(r)}
             onDelete={() => askDelete(r)}
             onKeep={canKeep ? () => askKeep(r) : undefined}
@@ -413,7 +448,7 @@ export default function ComparePage() {
         </div>
         <div className="cmp-seg" role="group" aria-label="Mode">
           {MODES.map((m) => (
-            <button key={m.value} type="button" aria-pressed={mode === m.value} onClick={() => setMode(m.value)}>
+            <button key={m.value} type="button" aria-pressed={mode === m.value} disabled={busy} onClick={() => setMode(m.value)}>
               {m.label}
             </button>
           ))}
@@ -525,7 +560,7 @@ export default function ComparePage() {
           }
           confirmLabel={confirm.kind === "delete" ? "Delete" : `Delete ${confirm.others.length}`}
           onCancel={() => setConfirm(null)}
-          onConfirm={() => { setRunning(confirm); setConfirm(null); }}
+          onConfirm={() => { if (!busy) setRunning(confirm); setConfirm(null); }}
         />
       )}
       {labelsFor && (

@@ -199,6 +199,11 @@ test('a pane can label its image, and delete it', async ({ page, request }) => {
   const labelName = `keep-${Date.now()}`
   const lab = await request.post('/api/v1/labels/', { data: { name: labelName } })
   expect(lab.status(), await lab.text()).toBe(201)
+  // The label vocabulary is app-wide and the e2e server is shared, so the label
+  // goes again even if this test fails: labels.spec.ts expects its own to be the
+  // only one with a Set hotkey button.
+  const labelId = (await lab.json()).id
+  try {
   await page.goto(`/datasets/${ds.id}/gallery`)
   await selectAllIn(page, 3)
   await page.getByRole('button', { name: 'Compare', exact: true }).click()
@@ -223,6 +228,9 @@ test('a pane can label its image, and delete it', async ({ page, request }) => {
   expect((await request.get(`/api/v1/images/${victim}`)).status()).toBe(404)
   await page.goto(`/datasets/${ds.id}/gallery`)
   await expect(page.getByTestId('gallery-tile')).toHaveCount(2)
+  } finally {
+    await request.delete(`/api/v1/labels/${labelId}`)
+  }
 })
 
 test('a duplicate group opened from the Quality page keeps one and deletes the rest', async ({ page, request }) => {
@@ -255,11 +263,18 @@ test('a duplicate group opened from the Quality page keeps one and deletes the r
   await page.goto(`/datasets/${ds.id}/quality`)
   await page.getByRole('button', { name: 'Compare', exact: true }).click()
   await expect(keep).toHaveCount(3)
+  // The second pane's image is the one to keep, so the survivor is not just
+  // whichever the scan happened to keep.
+  const chosen = (await page.getByTestId('compare-pane').nth(1).locator('..').locator('.cmp-name').textContent())!
   await keep.nth(1).click()
   await page.getByRole('dialog').getByRole('button', { name: 'Delete 2' }).click()
-  await expect(page.getByText(/^Kept .* and deleted 2 duplicates\.$/)).toBeVisible()
+  await expect(page.getByText(`Kept ${chosen} and deleted 2 duplicates.`, { exact: true })).toBeVisible()
   const left = await (await request.get('/api/v1/images/', { params: { dataset_id: ds.id, limit: '10' } })).json()
   expect(left).toHaveLength(1)
+  expect(left[0].filename).toBe(chosen)
+  // Its duplicate flags go with the group: nothing is left for it to duplicate.
+  expect(left[0].quality_flags?.is_duplicate).toBeFalsy()
+  expect(left[0].quality_flags?.duplicate_of).toBeUndefined()
 })
 
 test('in split view, Compare opens in the neighbouring pane and the gallery stays', async ({ page, request }) => {

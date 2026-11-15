@@ -1647,8 +1647,9 @@ async def resolve_duplicates(body: DuplicateResolve, db: AsyncSession = Depends(
     # rather than a needless scan — so a caller that passes `keep_ids` alone and
     # thereby strands the last survivor of an already-dead root leaves it
     # flagged until the next delete in that dataset or a re-scan. Not reachable
-    # from the UI: `QualityPage`'s only `resolveDuplicates` call always pairs a
-    # group's keep with its own deletes.
+    # from the UI: both callers pair a group's keep with its own deletes —
+    # `QualityPage`'s Keep best / Keep first, and the Compare page's Keep this
+    # one, which is offered only while the comparison is still the whole group.
     await prune_orphaned_duplicate_flags(db, dataset_ids)
     await db.commit()
     return {"deleted": len(deletable), "in_use": in_use, "failed": failed}

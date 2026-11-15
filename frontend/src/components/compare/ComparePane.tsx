@@ -32,6 +32,8 @@ interface Props {
   /** Its file is being deleted: the `<img>` is unmounted first, since Windows
    *  refuses to delete a file still being served to it (PM-021). */
   releasing: boolean;
+  /** A delete or keep is running: actions that change the set wait for it. */
+  busy: boolean;
 }
 
 /**
@@ -42,7 +44,7 @@ interface Props {
  */
 export default function ComparePane({
   item, index, vp, refSize, pixelated, best, showDataset, onSize, registerMeasure, onOpen, onMoveLeft, onRemove,
-  onLabels, onDelete, onKeep, labelNames, releasing,
+  onLabels, onDelete, onKeep, labelNames, releasing, busy,
 }: Props) {
   const paneRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
@@ -108,24 +110,24 @@ export default function ComparePane({
             <ArrowUpRight size={14} />
           </button>
           {onMoveLeft && (
-            <button type="button" className="cmp-corner-btn" title="Move left" aria-label={`Move ${item.filename} left`} onClick={onMoveLeft}>
+            <button type="button" className="cmp-corner-btn" title="Move left" aria-label={`Move ${item.filename} left`} disabled={busy} onClick={onMoveLeft}>
               <ChevronLeft size={14} />
             </button>
           )}
           <button type="button" className="cmp-corner-btn" title="Labels" aria-label={`Labels for ${item.filename}`} onClick={onLabels}>
             <Tags size={14} />
           </button>
-          <button type="button" className="cmp-corner-btn" title="Delete the image and its file" aria-label={`Delete ${item.filename}`} disabled={releasing} onClick={onDelete}>
+          <button type="button" className="cmp-corner-btn" title="Delete the image and its file" aria-label={`Delete ${item.filename}`} disabled={busy} onClick={onDelete}>
             <Trash2 size={14} />
           </button>
-          <button type="button" className="cmp-corner-btn" title="Remove from the comparison (the file stays)" aria-label={`Remove ${item.filename} from the comparison`} onClick={onRemove}>
+          <button type="button" className="cmp-corner-btn" title="Remove from the comparison (the file stays)" aria-label={`Remove ${item.filename} from the comparison`} disabled={busy} onClick={onRemove}>
             <X size={14} />
           </button>
         </div>
       </div>
       <MetaStrip item={item} best={best} showDataset={showDataset} zoomRef={zoomRef} labelNames={labelNames}>
         {onKeep && (
-          <button type="button" className="btn sm" disabled={releasing} onClick={onKeep}>Keep this one</button>
+          <button type="button" className="btn sm" disabled={busy} onClick={onKeep}>Keep this one</button>
         )}
       </MetaStrip>
     </div>

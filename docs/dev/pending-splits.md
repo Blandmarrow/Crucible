@@ -283,7 +283,8 @@ utilities → `docs/dev/shared-utilities.md`.
   (`useLinkedViewport`, `ComparePane`, `ABView`); the contact sheet is mostly a backend
   route and service (`backend/services/contact_sheet.py`); what stays is the page's
   identity, routing, the batch read and the actions. Moving one seam alone leaves
-  `compare.md` near 70% of budget; both leave roughly 1,450 + 1,050 + 950.
+  `compare.md` near 80% of budget; both leave roughly 1,750 + 1,050 + 950 (3,687 in all
+  on 2026-11-15, after #130 phase 4 grew § Acting on images to 560).
 - **Watch for:** `docs/dev/gallery.md`'s routing rows name `compare.md` for
   `useLinkedViewport.ts`, `components/compare/` and `contact_sheet.py`, and each needs the
   right new file. `docs/compare.md` is the user doc for all three, so the new files

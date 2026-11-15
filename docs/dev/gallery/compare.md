@@ -256,7 +256,10 @@ already own, so Compare adds no new write path:
   and in the scan's order otherwise. The button shows **only while the comparison is
   still the whole group as opened** (`groupKey`, compared as a sorted id list so Move
   left keeps it): resolving part of a group would leave the removed members flagged as
-  duplicates of an image the user never chose.
+  duplicates of an image the user never chose. `from=dups` alone is not trusted, since
+  a bookmark outlives a re-scan that split the group: the rows' own flags must still
+  say one group (every root, `duplicate_of` or the image itself, the same, and exactly
+  one image unflagged, as the scan leaves the root).
 
 **Both destructive actions release the file before asking for its deletion.** A
 confirmed op is stored as `running`; the panes it deletes render a placeholder instead
@@ -266,6 +269,24 @@ sends the request. Windows refuses to delete a file still being served to the pa
 dataset the op touched gets `invalidateDatasetContentScope` and its `["duplicates", id]`
 key (PM-029: every dataset the selection touched). A Keep shows what it did in place of
 the panes, with a button to open the kept image.
+
+Three guards keep that sequence honest, each from a review of the first version:
+
+- **One operation at a time.** While one runs, every action that changes the set
+  (Delete, Keep, Move left, Remove) and the mode switch are disabled: a second op would
+  mount the first one's images again mid-delete, and its captured id list would write
+  the first deletion back into the URL; a mode switch would mount Grid or A/B images of
+  the files being deleted.
+- **Each op starts once.** Inside a pane, `usePaneNavigate`'s `go` changes identity on
+  every pane-store write (any click in any pane re-renders every leaf), so with `go` in
+  the effect's dependencies a click mid-request sent the request again. `go` and `from`
+  are read through a ref, and a `started` ref guards the effect.
+- **A late answer does not navigate.** If the page unmounted while the request was out,
+  the delete's URL write is skipped, so a pane the user moved on is not pulled back.
+
+The labels dialog keeps each toggle in `pending` until the server's list agrees with
+it, so a refetch from the first of two quick toggles cannot untick the second on
+screen; a failed write drops its entry.
 
 ## Not built
 
@@ -310,7 +331,10 @@ two images of different sizes compares resampled pixels, so fine noise shows as 
   delete removes the row (404 after) and the gallery shows one tile fewer.
 - **Keep this one**: three uploads of one PNG, grouped by a technical-only scoring run
   (CPU, no model), open from the Quality page with Keep on every pane; a Move left keeps
-  it, a removal takes it away; reopened, keeping one deletes the other two.
+  it, a removal takes it away; reopened, keeping the second pane's image leaves exactly
+  that one, with its duplicate flags cleared. The label journey deletes its label in a
+  `finally`: the vocabulary is app-wide and `labels.spec.ts` expects its own label to be
+  the only one.
 
 `backend/tests/test_contact_sheet_http.py` covers the route:
 

@@ -6,4 +6,4 @@ PATCH for fixes only, MINOR for new features, MAJOR when updating needs a manual
 `v` plus this value.
 """
 
-__version__ = "1.4.0"
+__version__ = "1.5.0"

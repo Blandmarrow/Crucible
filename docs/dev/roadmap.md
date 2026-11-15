@@ -35,7 +35,8 @@ restates its stages.
 
 1. **#130 Compare landed** in five PRs, #168 to #172 (see Now), and the detail page's
    Compare menu (With selection, With neighbours) followed in PR #173; the tray is under
-   Later. M11 now holds #129, design first, and #48, waiting on its reporter.
+   Later. All of it shipped as v1.5.0. M11 now holds #129, design first, and #48, waiting
+   on its reporter.
 2. **CLAUDE.md is 6 words over budget** (6,506). Its seam, two Map hubs, waits on the
    user's call between a hub and a budget raise (`docs/dev/pending-splits.md`).
 3. M4 stays held, with its merge checklist under Waiting. The closed items of the
@@ -354,3 +355,5 @@ Each line links the record that holds the full text.
   `backend/version.py` and shown in Settings, and the `release` skill
   (`.claude/skills/release/SKILL.md`). v1.4.0 carries M11 Tier 1 to 3 and the fixes since
   `Version-1.3.0`.
+- **v1.5.0** (2026-11-15): the Compare page, #130 (PRs #169 to #172), opening it from an
+  image's own page (#173), and the selection toolbar's wrap fix (#174).

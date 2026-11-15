@@ -23,10 +23,13 @@ export function autoGridColumns(n: number): number {
   return Math.min(n, Math.max(2, Math.ceil(Math.sqrt(n * 1.4))));
 }
 
-export function compareUrl(ids: string[]): string {
-  return `/compare?ids=${ids.join(",")}`;
+/** Where a comparison came from; see `PaneView.compareFrom`. */
+export type CompareFrom = "dups";
+
+export function compareUrl(ids: string[], from?: CompareFrom): string {
+  return `/compare?ids=${ids.join(",")}${from ? `&from=${from}` : ""}`;
 }
 
-export function compareView(ids: string[]): PaneView {
-  return { page: "compare", compareIds: ids };
+export function compareView(ids: string[], from?: CompareFrom): PaneView {
+  return from ? { page: "compare", compareIds: ids, compareFrom: from } : { page: "compare", compareIds: ids };
 }

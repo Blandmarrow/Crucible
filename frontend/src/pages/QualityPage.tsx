@@ -23,6 +23,8 @@ import { QUALITY_WORKFLOW_KEY, QUALITY_FILTERS_PREFIX } from "../constants/stora
 import { loadPersisted, clearPersisted, datasetScopedKey } from "../utils/persistentState";
 import { invalidateDatasetContentScope } from "../constants/queryKeys";
 import { useDebouncedPersist } from "../hooks/useDebouncedPersist";
+import { useOpenBeside } from "../hooks/useOpenBeside";
+import { COMPARE_MAX, compareUrl, compareView } from "../utils/compare";
 import { useStyleDistribution } from "../hooks/useStyleDistribution";
 import { quantileAt } from "../utils/percentile";
 
@@ -270,6 +272,7 @@ const SCORING_OPTIONS = [
 export default function QualityPage() {
   const datasetId = usePaneDatasetId();
   const qc = useQueryClient();
+  const openBeside = useOpenBeside();
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
 
   // Remembered "workflow" config — global, shared across all datasets.
@@ -1285,6 +1288,20 @@ export default function QualityPage() {
                   </div>
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  <button
+                    className="btn sm"
+                    disabled={group.length > COMPARE_MAX}
+                    title={group.length > COMPARE_MAX
+                      ? `Compare takes up to ${COMPARE_MAX} images`
+                      : "Look at the group side by side, best first, and keep one from there"}
+                    onClick={() => {
+                      // Best first where the group can be ranked (every score on one
+                      // model); otherwise the scan's own order, kept image first.
+                      const ordered = anyScored && !mixedModels ? rankForKeepBest(group) : group;
+                      const ids = ordered.map((m) => m.id);
+                      openBeside(compareUrl(ids, "dups"), compareView(ids, "dups"));
+                    }}
+                  >Compare</button>
                   <button
                     className="btn sm primary"
                     // "Best" is meaningless with nothing scored: the old code

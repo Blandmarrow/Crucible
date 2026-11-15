@@ -67,3 +67,12 @@ export function usePaneCompareIds(): string[] {
   if (ctx) return ctx.view.compareIds ?? [];
   return (params.get("ids") ?? "").split(",").filter(Boolean);
 }
+
+/** Where the Compare page's set came from (`?from=` outside a pane), with the
+ *  same pane-wins-outright rule. Only "dups" means anything. */
+export function usePaneCompareFrom(): "dups" | undefined {
+  const ctx = usePaneContext();
+  const [params] = useSearchParams();
+  if (ctx) return ctx.view.compareFrom;
+  return params.get("from") === "dups" ? "dups" : undefined;
+}

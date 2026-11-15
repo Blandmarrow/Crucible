@@ -36,6 +36,9 @@ export interface PaneView {
    *  fields above this is the page's identity — ComparePage keeps it current as
    *  panes are removed or reordered, so a pane always describes what it shows. */
   compareIds?: string[];
+  /** Compare only: where the set came from. "dups" (a Quality page duplicate
+   *  group) offers Keep this one while the comparison is still that whole group. */
+  compareFrom?: "dups";
 }
 
 interface PaneContextValue {

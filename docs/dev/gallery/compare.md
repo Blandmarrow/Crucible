@@ -3,9 +3,9 @@
 `ComparePage` shows two to four images side by side, or two in one frame (A/B), with
 linked zoom and pan, or up to 100 as a grid that exports as a contact sheet (#130). This
 file covers how it is reached and routed, the batch read behind it, the linked
-viewport, the pane, A/B, and the grid and `POST /images/contact-sheet`. The user-facing page is `docs/compare.md`; the design and the phases still
-to come (A/B, the grid and contact sheet, actions) are in `docs/dev/compare-plan/README.md`
-until they land; the rulings are decision 20 (`docs/dev/decisions/20-compare-view.md`).
+viewport, the pane, A/B, the grid and `POST /images/contact-sheet`, the actions in the
+view, and what was left unbuilt. The user-facing page is `docs/compare.md`; the rulings
+are decision 20 (`docs/dev/decisions/20-compare-view.md`).
 The pane system it plugs into is `docs/dev/panes-routing.md`.
 
 ## A page reached from images, never from the sidebar
@@ -236,6 +236,57 @@ its JSON `detail` back into the error for `apiErrorDetail`. It cannot be closed 
 sheet is drawing: the request cannot be called back, and a closed dialog still
 downloaded and toasted "Saved".
 
+## Acting on images
+
+Decision 20 puts three actions in the view. All of them write through code other pages
+already own, so Compare adds no new write path:
+
+- **Labels** open `CompareLabelsDialog`, a `ModalShell` around `LabelCheckList`, not
+  `LabelPicker`'s popover: a pane clips its overflow, which is the case
+  `docs/dev/menus-popovers.md` warns an absolute panel gets cut off in. It writes through
+  `useAssignImageLabels(imageId)`, the detail page's per-image queue, and flips its ticks
+  at once, replaced by the server's list whenever that arrives. The label hotkeys are not
+  wired here.
+- **Delete** uses the single-image route, `imagesApi.delete`, so a file open in another
+  program is a 409 whose detail the toast shows, and the pane comes back.
+- **Keep this one** calls `POST /quality/duplicates/resolve` with the chosen image as the
+  keeper and the rest as `delete_ids`, the Quality page's own route. The Quality page's
+  per-group **Compare** button opens the group with `from=dups` (`PaneView.compareFrom`,
+  `usePaneCompareFrom`), ordered by `rankForKeepBest` when every score is on one model
+  and in the scan's order otherwise. The button shows **only while the comparison is
+  still the whole group as opened** (`groupKey`, compared as a sorted id list so Move
+  left keeps it): resolving part of a group would leave the removed members flagged as
+  duplicates of an image the user never chose.
+
+**Both destructive actions release the file before asking for its deletion.** A
+confirmed op is stored as `running`; the panes it deletes render a placeholder instead
+of their `<img>` (`releasing`), and only the effect that runs after that render commits
+sends the request. Windows refuses to delete a file still being served to the page
+(PM-021, CLAUDE.md § Key invariants), so the order is the point. Afterwards every
+dataset the op touched gets `invalidateDatasetContentScope` and its `["duplicates", id]`
+key (PM-029: every dataset the selection touched). A Keep shows what it did in place of
+the panes, with a button to open the kept image.
+
+## Not built
+
+Each could follow #130; each needs something it did not build:
+
+- **Compare with original** for copy-mode edits needs a lineage column (the source
+  image's id) on `Image`: a new mirrored column and every rebuild path (CLAUDE.md § Key
+  invariants). Its own issue.
+- **Compare with an earlier version** needs a route that serves a file from
+  `.versions/objects/`, gated like the file route, and a picker on the Versions page.
+- **A compare tray** filled from the detail page while browsing, and the "Compare with…"
+  buttons it would enable on the detail and ComfyUI pages.
+- **Label hotkeys** on the focused pane: the detail page's handler would have to move into
+  a shared hook with every guard it carries (`docs/dev/labels-ui.md` § Hotkeys).
+- **Videos** side by side with linked playback (frames are images, so they work now),
+  and **automatic alignment** of crops and offsets.
+
+Two limits stand: the browser draws each image, so EXIF orientation in PNG and WebP
+depends on it, the open question the crop box has (roadmap § Later); and Difference on
+two images of different sizes compares resampled pixels, so fine noise shows as change.
+
 ## Tests
 
 `frontend/e2e/compare.spec.ts`, one journey per bullet:
@@ -255,6 +306,11 @@ downloaded and toasted "Saved".
   five.
 - **A subset is a new set**: three picked from a grid of five in split view open side by
   side, not as a removal left in Grid.
+- **Labels and delete**: a label ticked in a pane's dialog shows under the pane; a pane's
+  delete removes the row (404 after) and the gallery shows one tile fewer.
+- **Keep this one**: three uploads of one PNG, grouped by a technical-only scoring run
+  (CPU, no model), open from the Quality page with Keep on every pane; a Move left keeps
+  it, a removal takes it away; reopened, keeping one deletes the other two.
 
 `backend/tests/test_contact_sheet_http.py` covers the route:
 

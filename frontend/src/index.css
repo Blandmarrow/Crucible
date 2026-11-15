@@ -801,6 +801,13 @@
     color: var(--fg-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .cmp-caption.open { white-space: normal; }
+  .cmp-labels { display: flex; flex-wrap: wrap; gap: 4px; }
+  .cmp-label {
+    font-size: 10.5px; line-height: 1.5; padding: 0 6px; border-radius: 999px;
+    border: 1px solid var(--line-2); background: var(--surface-2); color: var(--fg-mute);
+  }
+  .cmp-acts { display: flex; gap: 6px; margin-top: 3px; }
+  .cmp-corner-btn:disabled { opacity: .5; cursor: not-allowed; }
 
   /* Mode and A/B switches: one bordered row of buttons, the pressed one filled. */
   .cmp-seg { display: inline-flex; border: 1px solid var(--line-2); border-radius: var(--r); overflow: hidden; }

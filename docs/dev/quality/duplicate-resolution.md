@@ -19,6 +19,8 @@ Two things changed about the buttons at the same time:
 - **"Keep best" goes through a `ConfirmDialog` for same-source groups**, naming the video and listing the timestamps being deleted. Refusing outright would break the legitimate case and push users to work around it in the gallery. **"Keep first" stays one click** — it keeps the scan's own choice rather than a score-driven one.
 - **The null sort was backwards.** `(b.aesthetic_score ?? 0) - (a.aesthetic_score ?? 0)` ranks an unscored frame below a 0.1 and so deletes it preferentially, when unscored means *unknown*, not bad. `rankForKeepBest` is an explicit nulls-last comparator, and the button is disabled with an explanatory `title` when no member has a score — "best" is meaningless there, and the old code silently kept whichever came first and called it best.
 
+**Each group card also has Compare**, which opens the group in the Compare page (`from=dups`), ordered by `rankForKeepBest` when every score is on one model, where **Keep this one** resolves the group through the same `POST /quality/duplicates/resolve`. Its rules (offered only while the comparison is still the whole group; panes release their files before the request) are in `docs/dev/gallery/compare.md` § Acting on images.
+
 ## Bulk resolution
 
 A scoring run over a large dataset produces a panel with a hundred-odd groups, and clearing them one card at a time is not a workflow. The panel's top row carries filter chips and two bulk buttons — *Keep best in N groups* and *Keep first in N groups* — plus per-group buttons unchanged.

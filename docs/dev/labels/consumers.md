@@ -5,8 +5,8 @@ assignment: the `GET /images/` filter block and its shared validator, the export
 and its client encoder, the `VersionImageState.label_ids` snapshot mirror and restore's
 Pass 2c, and the cross-dataset copy/duplicate/move paths plus the five same-dataset
 derivative sites. The vocabulary itself — the two tables, `label_service.py`, the `/labels`
-router and `POST /labels/assign` — is `docs/dev/labels.md`; the frontend surfaces are
-`docs/dev/labels-ui.md`. The param contract the filters join is `docs/dev/image-filters.md`,
+router and `POST /labels/assign` — is `docs/dev/labels/backend.md`; the frontend surfaces are
+`docs/dev/labels/ui.md`. The param contract the filters join is `docs/dev/image-filters.md`,
 the export filter table is `docs/dev/export.md`, and the snapshot passes the mirror rides
 are `docs/dev/versioning/mirrors.md`.
 
@@ -84,7 +84,7 @@ unchanged; two encodings of one thing was the bug. `frontend/e2e/export-plain.sp
 guards it by asserting on the files on disk, not on the preview.
 
 `_write_image` and the caption sidecar writer stay untouched — see the
-labels-are-not-tags invariant at the top of `docs/dev/labels.md`.
+labels-are-not-tags invariant at the top of `docs/dev/labels/backend.md`.
 
 ## The mirror column
 

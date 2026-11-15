@@ -5,8 +5,8 @@ labels panel, the detail-view hotkeys and the gallery toolbar's bulk modal — a
 shared pieces behind them: the `["labels"]` query and its invalidation helper, the
 render-time bounds check on a persisted label filter, the `GalleryPage` persistence edits
 a new filter field costs, and the per-image assign queue the hotkeys depend on. The
-endpoints these call are `docs/dev/labels.md` (`POST /labels/assign` in particular); how
-the gallery and export filters behave server-side is `docs/dev/label-consumers.md`. The
+endpoints these call are `docs/dev/labels/backend.md` (`POST /labels/assign` in particular); how
+the gallery and export filters behave server-side is `docs/dev/labels/consumers.md`. The
 gallery's label filter control itself is `docs/dev/gallery/filters.md` § Gallery filters.
 
 ## Files and the query key

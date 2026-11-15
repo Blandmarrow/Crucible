@@ -1,6 +1,6 @@
 """Caption jobs send a remote captioner several requests at once (M10 T2).
 
-What is pinned (docs/dev/captioning.md § Requests in flight):
+What is pinned (docs/dev/captioning/jobs.md § Requests in flight):
 - `bound` requests are in flight at most, and exactly `bound` when there is work: the
   provider's `max_concurrent`, or `ollama_max_concurrent` for an `ollama:` model, and 1
   by default;

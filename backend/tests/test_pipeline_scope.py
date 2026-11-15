@@ -3,7 +3,7 @@
 A pipeline started with *Uncaptioned only* recaptioned every image: the route had no
 empty-caption filter, and the per-step `overwrite` it accepted was never read. The
 scope is now one request-level `overwrite`, under /run's rule with step 1's
-`delimiter_mode` standing in for the request's (docs/dev/captioning.md § Captioning
+`delimiter_mode` standing in for the request's (docs/dev/captioning/jobs.md § Captioning
 post-processing).
 
 Torch-free: the provider is stubbed, as in `test_caption_start_scope.py`.

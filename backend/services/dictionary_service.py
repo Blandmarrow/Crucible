@@ -9,7 +9,7 @@ connection per call.
 The install is **not** a `BackgroundJob`. The job queue runs one job at a time, and
 a 10 MB download that waited behind a two-hour scoring run would make the toggle look
 broken (the user's ruling, 2026-11-14). It is one module-level task instead, whose
-progress Settings polls through `GET /dictionary/status`. `docs/dev/dictionary.md`
+progress Settings polls through `GET /dictionary/status`. `docs/dev/captioning/dictionary.md`
 has the why of each part.
 
 Licence: CC BY 4.0 on top of Princeton's WordNet licence. Every copy keeps both

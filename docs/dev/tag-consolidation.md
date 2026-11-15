@@ -6,7 +6,7 @@ term per cluster, then rewrite every caption. Segments are individual tags for b
 captions or whole phrases/sentences for natural-language captions, so this works on prose
 too (`all-MiniLM-L6-v2` is a sentence transformer). Complements the cheaper
 subsumption cleanup (`subsume_tags()` in `backend/utils.py`), which is exposed as the
-captioning `dedupe_tags` post-processing flag (see `docs/dev/captioning.md`) and as the
+captioning `dedupe_tags` post-processing flag (see `docs/dev/captioning/jobs.md`) and as the
 synchronous `subsume` endpoint behind the Consolidate page "Quick cleanup", the
 `SelectionToolbar` "Merge tags" action, and the `ImageDetailPage` per-image button.
 
@@ -48,7 +48,7 @@ path (SentenceTransformer is an `nn.Module`).
 
 **Router** — `backend/routers/tag_consolidation.py` (prefix `/tag-consolidation`,
 registered in `main.py`). Both endpoints follow the `BackgroundJob` →
-`job_queue.enqueue(job, _run)` → SSE pattern (see `docs/dev/captioning.md`):
+`job_queue.enqueue(job, _run)` → SSE pattern (see `docs/dev/captioning/jobs.md`):
 - `POST /dataset/{id}/analyze` (`{threshold≥0.5≤1, subfolder?}`) — job type
   `tag_consolidate_analyze`; `_run` calls `analyze` and stores the proposal in
   `job.result_data`. Returns `{job_id, total}` (or `{job_id: null, message}` if no

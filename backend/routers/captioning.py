@@ -96,7 +96,7 @@ def _failure_headline(
 # ── Requests in flight (M10 T2) ───────────────────────────────────────────────
 # Both caption loops send a remote captioner up to `bound` requests at once and
 # finish each image serially, in input order (`utils.InOrderCalls`). See
-# docs/dev/captioning.md § Requests in flight.
+# docs/dev/captioning/jobs.md § Requests in flight.
 
 
 # Added to Ollama's empty-caption reason when requests run several at once.
@@ -604,7 +604,7 @@ async def start_caption_job(
 
         # The requests run up to `bound` at once (M10 T2); everything after each
         # one, from the done_items write to the progress event, stays serial and
-        # in input order on the one session. See docs/dev/captioning.md
+        # in input order on the one session. See docs/dev/captioning/jobs.md
         # § Requests in flight.
         if is_openai_compat:
             bound = _clamp_bound(openai_provider.max_concurrent)

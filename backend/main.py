@@ -78,7 +78,7 @@ async def lifespan(app: FastAPI):
     await _sweep_old_jobs()
     await _sweep_orphan_dataset_folders()
     # A dictionary install the last process did not finish left a .part or .tmp
-    # behind; neither is ever trusted, so they just go (docs/dev/dictionary.md).
+    # behind; neither is ever trusted, so they just go (docs/dev/captioning/dictionary.md).
     dictionary_service.sweep_leftovers()
     await job_queue.start()
     # Integrity check + rotating backup: seconds of disk I/O on a large database, and

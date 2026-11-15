@@ -26,7 +26,7 @@
     `better`.
 - **Consequences:**
   - The install is the one long-running operation outside `workers/job_queue.py`. It
-    needed its own shutdown hook and startup sweep (`docs/dev/dictionary.md` § Install).
+    needed its own shutdown hook and startup sweep (`docs/dev/captioning/dictionary.md` § Install).
   - Its failure shows only where the user is looking: in Settings or on the card.
 - **Revisit when:** a second job-shaped task wants to bypass the queue. At that point a
   queue lane for short downloads may beat a second hand-rolled task.

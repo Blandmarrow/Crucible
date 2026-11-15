@@ -31,14 +31,16 @@ restates its stages.
    linking the record that holds the full text.
 5. **Landed**: one line per finished milestone or handoff record.
 
-## Next session (updated 2026-11-15, #130 landed)
+## Next session (updated 2026-11-15, captioning and labels hubs)
 
 1. **#130 Compare landed** in five PRs, #168 to #172 (see Now), and the detail page's
    Compare menu (With selection, With neighbours) followed in PR #173; the tray is under
    Later. All of it shipped as v1.5.0. M11 now holds #129, design first, and #48, waiting
    on its reporter.
-2. **CLAUDE.md is 6 words over budget** (6,506). Its seam, two Map hubs, waits on the
-   user's call between a hub and a budget raise (`docs/dev/pending-splits.md`).
+2. **CLAUDE.md is back under budget** (6,396 of 6,500): captioning and labels went behind
+   hubs, `docs/dev/captioning.md` and `docs/dev/labels.md`, on
+   `docs/hub-captioning-labels`, PR #177. The Map has room for three or four new rows; #129's plan
+   should put its docs in one family from the start.
 3. M4 stays held, with its merge checklist under Waiting. The closed items of the
    previous blocks are in
    [roadmap-archive/handoff-2026-11-15.md](roadmap-archive/handoff-2026-11-15.md) and
@@ -65,7 +67,7 @@ Tier 1, small:
 - [x] #105 Re-caption with the existing caption: merged 2026-11-13 as PR #159, which closed
   the issue. `{previous_caption}` now works on every pipeline step and on `/run`, the
   detail page's AI panel has a Fix current mode, and the Captioning page's step 1 has an
-  "Include current caption" toggle (`docs/dev/captioning.md` § The `{previous_caption}`
+  "Include current caption" toggle (`docs/dev/captioning/jobs.md` § The `{previous_caption}`
   placeholder).
 - [ ] #48 Toggle thumbnails: ask the reporter what the problem is first. The likely fix is a
   thumbnail size setting (today `thumbnail_size = 256` in `backend/config.py`, set only by
@@ -87,18 +89,18 @@ unsaved draft.
 - [x] #45 Other images' captions: merged 2026-11-14 as PR #163, which closes the issue. An
   *Other captions* section in the detail page's caption panel, ranked by shared tags,
   detected objects, the stored CLIP vector or recency, inside the current dataset only (the
-  user's ruling of 2026-11-14) (`docs/dev/caption-editor.md` § Other captions panel).
+  user's ruling of 2026-11-14) (`docs/dev/captioning/editor.md` § Other captions panel).
 - [x] #50 Check for a better tag: merged 2026-11-14 as PR #164, which closes the issue.
   A **Check tags on Danbooru** button in the caption panel, press-only, through a new
   `POST /booru/check`. It flags aliases, rare tags (under 100 posts with a close tag holding
   at least 100 times more, the user's rule of 2026-11-14) and unknown ones, and an outage
   is a 502 rather than every tag "not found". Danbooru only, by the user's choice. The same
   PR moves the Booru page's Safebooru search to danbooru.donmai.us with a User-Agent, after
-  safebooru.donmai.us answered every API request with a 403 (`docs/dev/caption-editor.md`
+  safebooru.donmai.us answered every API request with a 403 (`docs/dev/captioning/editor.md`
   § Check tags).
 - [x] #52 Synonyms: merged 2026-11-15 as PR #165, which closes the issue. An offline
-  WordNet lookup (`docs/dev/dictionary.md`), a Settings toggle, and a card under the
-  caption box (`docs/dev/caption-editor.md` § Synonym card), the user's choice over a
+  WordNet lookup (`docs/dev/captioning/dictionary.md`), a Settings toggle, and a card under the
+  caption box (`docs/dev/captioning/editor.md` § Synonym card), the user's choice over a
   popover at the word, 2026-11-14. The install runs outside the job queue and irregular
   forms come from WordNet's own lists (decision 18). Licence checked
   2026-11-14: Open English WordNet 2025, core edition, which is CC BY 4.0 on top of the

@@ -54,21 +54,21 @@ provenance rules built on `licenses.py`), `docs/dev/video.md` (`media_types.py`)
 
 ## Shared frontend components
 
-**Shared frontend components** recur across the topic files in CLAUDE.md's Documentation Map; each is documented where it is most central. `SelectionToolbar` → `docs/dev/frontend-core.md`; `ConfirmDialog` and `useModalBehavior` → `docs/dev/styling.md`; `ContextMenu` (the pointer-anchored right-click menu, shared by `FileBrowserPage` and `GalleryPage`'s subfolder rows), `usePopover` (open/outside-click/Escape for a panel anchored to a *button* — the non-modal sibling of `useModalBehavior`), `MenuButton` (a button opening a menu of `ContextMenuAction`s, drawn by `ContextMenu`'s exported `ContextMenuItem`) and `LabelPicker`/`LabelCheckList` (the searchable label checklist behind all four places labels are picked) → `docs/dev/menus-popovers.md`; `MoveToDatasetModal` → `docs/dev/image-files.md`; `GenerationMetadata` → `docs/dev/image-detail.md`; `DirPickerModal` → `docs/dev/dataset-operations.md`; `JobProgressBar` → `docs/dev/versioning/frontend.md`; `ServerStateGate` and `writeToServer` (a form whose saved state lives on the server) → `docs/dev/app-stored-data.md`;
-`NumberField` (any bounded numeric input — never re-clamp per keystroke) →
-`docs/dev/frontend-core.md` for the one-line rule, `docs/dev/video/extract-controls.md`
-§ NumberField for the full contract;
-`frontend/src/utils/subfolderTree.ts` (`buildSubfolderTree` and `ancestorPaths`, shared by the
-gallery sidebar and the Export page's checklist, plus the tick helpers only the latter uses) →
-`docs/dev/export.md`;
-`frontend/src/utils/galleryNav.ts` (the gallery → detail-view nav context: `readNavContext`/
-`writeNavContext`, `injectNavId`/`removeNavId`, and `navPageParams`, the one builder for a
-listing request over a stored context) and `serverPageContext` (the one way to replace
-that context's ids with a verbatim server page — it clears the `injected` marker a
-listing response cannot carry) → `docs/dev/gallery/nav.md`;
-`frontend/src/utils/download.ts` (`triggerDownload(content, filename, mime)`, which hands
-the viewer a file the page made, and `safeFilename`; used by the Stats page's CSVs and the
-Runs page's recipe export) → `docs/dev/comfyui/recipes.md` § The recipe bar.
+**Shared frontend components** recur across the topic files in CLAUDE.md's Documentation Map; each is documented where it is most central.
+
+- `SelectionToolbar` → `docs/dev/frontend-core.md`;
+- `ConfirmDialog` and `useModalBehavior` → `docs/dev/styling.md`;
+- `ContextMenu` (the pointer-anchored right-click menu, shared by `FileBrowserPage` and `GalleryPage`'s subfolder rows), `usePopover` (open/outside-click/Escape for a panel anchored to a *button* — the non-modal sibling of `useModalBehavior`), `MenuButton` (a button opening a menu of `ContextMenuAction`s, drawn by `ContextMenu`'s exported `ContextMenuItem`) and `LabelPicker`/`LabelCheckList` (the searchable label checklist behind all four places labels are picked) → `docs/dev/menus-popovers.md`;
+- `MoveToDatasetModal` → `docs/dev/image-files.md`;
+- `GenerationMetadata` → `docs/dev/image-detail.md`;
+- `DirPickerModal` → `docs/dev/dataset-operations.md`;
+- `JobProgressBar` → `docs/dev/versioning/frontend.md`;
+- `useAppVersion` and `releaseNotesUrl` (the running version and its release-notes link) → `docs/dev/settings.md`;
+- `ServerStateGate` and `writeToServer` (a form whose saved state lives on the server) → `docs/dev/app-stored-data.md`;
+- `NumberField` (any bounded numeric input — never re-clamp per keystroke) → `docs/dev/frontend-core.md` for the one-line rule, `docs/dev/video/extract-controls.md` § NumberField for the full contract;
+- `frontend/src/utils/subfolderTree.ts` (`buildSubfolderTree` and `ancestorPaths`, shared by the gallery sidebar and the Export page's checklist, plus the tick helpers only the latter uses) → `docs/dev/export.md`;
+- `frontend/src/utils/galleryNav.ts` (the gallery → detail-view nav context: `readNavContext`/`writeNavContext`, `injectNavId`/`removeNavId`, and `navPageParams`, the one builder for a listing request over a stored context) and `serverPageContext` (the one way to replace that context's ids with a verbatim server page — it clears the `injected` marker a listing response cannot carry) → `docs/dev/gallery/nav.md`;
+- `frontend/src/utils/download.ts` (`triggerDownload(content, filename, mime)`, which hands the viewer a file the page made, and `safeFilename`; used by the Stats page's CSVs and the Runs page's recipe export) → `docs/dev/comfyui/recipes.md` § The recipe bar.
 
 **`frontend/src/utils/clipboard.ts`** — `copyText(text): Promise<boolean>`, the one way this
 

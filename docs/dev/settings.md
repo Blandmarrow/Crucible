@@ -22,6 +22,8 @@ This file covers `SettingsPage` and the `/settings` router: the `ThresholdSettin
 
 `useQuery({ queryKey: ["settings", "thresholds"], staleTime: 60_000 })` — shared key with `StatsPage` so both components see the same cached value. Save button is enabled only when at least one field differs from the loaded values (`isChanged`). Save sends only the changed fields via `PATCH`. "Reset to defaults" restores the local form state to the `DEFAULTS` constant without an API call.
 
+**The running version** shows twice: in the line under the page title ("Crucible X.Y.Z · Release notes") and under the app's name at the top of the sidebar (`components/layout/Sidebar.tsx`, `data-testid="sidebar-version"`), which replaced a fixed "local" caption. Both read `useAppVersion()` (`frontend/src/hooks/useAppVersion.ts`): the version from `GET /health` under the one query key `["health", "version"]`, fetched once (`staleTime: Infinity`), since a new version needs a restart and a reload anyway. `releaseNotesUrl(version)` builds the GitHub link for both. The rule that the version lives only in `backend/version.py` is decision 19; `frontend/e2e/app-boot.spec.ts` checks both places against the health route.
+
 The Settings page uses a **tab-based layout** with nine tabs. All localStorage-backed preferences take effect immediately (no Save button); the quality thresholds, versioning mode, and both ComfyUI fields require an explicit Save. The **ComfyUI tab** holds `comfyui_url` (with a *Test connection* button → `comfyApi.ping`) and `comfy_workflow_dir` (with a `DirPickerModal` Browse), both server-side `ThresholdSettings` columns — see `docs/dev/comfyui/queue.md`.
 
 ## Gallery tab

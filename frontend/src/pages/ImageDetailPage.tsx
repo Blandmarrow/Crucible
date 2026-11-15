@@ -1787,7 +1787,11 @@ export default function ImageDetailPage() {
     <div className="flex h-full">
       {/* Left: image */}
       <div className="flex-1 flex flex-col min-w-0">
-        <div className="p-3 border-b border-line flex items-center gap-3">
+        {/* Wraps rather than overflowing: past its width the buttons used to run
+            under the info panel (and a positioned one, the Compare menu, over it).
+            The filename takes the spare width, basis 0, so it truncates first and
+            the buttons wrap only when they alone no longer fit. */}
+        <div className="p-3 border-b border-line flex flex-wrap items-center gap-x-3 gap-y-2">
           <button className="btn-ghost btn-sm flex items-center gap-1.5" onClick={() => paneBack({ page: "gallery", datasetId: datasetId ?? "" })}>
             <ArrowLeft size={14} /> Back
           </button>
@@ -1833,8 +1837,7 @@ export default function ImageDetailPage() {
             </div>
           )}
 
-          <span className="text-sm text-fg-mute truncate">{image.filename}</span>
-          <div className="flex-1" />
+          <span className="text-sm text-fg-mute truncate flex-1 basis-0 min-w-0">{image.filename}</span>
           <button
             className={`btn-sm flex items-center gap-1.5 ${isImageSelected ? "btn-primary" : "btn-ghost"}`}
             onClick={() => toggle(imageId!, datasetId ?? "")}

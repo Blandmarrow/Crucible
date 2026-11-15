@@ -27,7 +27,7 @@ Only the **replace** worker (`_run_crop_upscale_replace`) writes `result_data` �
 
 **ImageDetailPage selection**: A **Select / Selected** toggle button sits in the top toolbar (right of the filename, before the Compare menu and the Boxes button). It calls `selectionStore.toggle(imageId, datasetId)` and reflects `isSelected(imageId)` via a targeted selector. Pressing **Space** anywhere on the page (except when a text field is focused or a modal is open) does the same thing — handled in the arrow-key `useEffect` alongside ArrowLeft/ArrowRight; `showDetectModal` is additionally checked. The button is styled `btn-primary` + `CheckSquare` icon when selected, `btn-ghost` + `Square` when not.
 
-The header's **Compare** menu, right of the toggle, opens the image with the selection or with its arrow-key neighbours; see `docs/dev/gallery/compare.md` § Opening it beside the gallery.
+The header's **Compare** menu, right of the toggle, opens the image with the selection or with its arrow-key neighbours; see `docs/dev/gallery/compare.md` § Opening it beside the gallery. The header wraps (`flex-wrap`) rather than overflowing: the filename takes the spare width at basis 0, so it truncates first and the buttons wrap only when they alone no longer fit. Before, a narrow pane ran the buttons under the info panel, and the menu's positioned wrapper painted over it.
 
 ## ImageDetailPage labels panel and hotkeys
 

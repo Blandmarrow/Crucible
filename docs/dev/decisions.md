@@ -167,3 +167,12 @@ beyond `manage update`. No fourth number. Tags are `vX.Y.Z` from v1.4.0 on, the 
 `Version-*` tags stay, and the version lives in `backend/version.py`, shown in Settings.
 Release when users gain something; the `release` skill is the procedure. Full record:
 [decisions/19-release-versioning.md](decisions/19-release-versioning.md).
+
+## 20. Compare is a page opened from images, with download-only sheets
+
+**Decided** (2026-11-15, by the user): issue #130's Compare view is a routed page with no
+sidebar entry, opened from Compare buttons in the gallery and on the Quality page, and in
+the neighbouring pane in split view. Linked panes match the same region by default. A
+contact sheet is a download and is never written to disk. The view can keep, delete and
+label images. One PR per phase. Full record:
+[decisions/20-compare-view.md](decisions/20-compare-view.md).

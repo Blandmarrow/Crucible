@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 
 /**
- * Linked zoom and pan for the Compare page (docs/dev/gallery/compare.md).
+ * Linked zoom and pan for the Compare page (docs/dev/gallery/compare-viewer.md).
  *
  * Every pane shares one view, held in *normalized* coordinates: the point of the
  * picture at the pane's centre (`cx`, `cy`, 0..1 on each axis) and a zoom factor

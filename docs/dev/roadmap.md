@@ -33,14 +33,12 @@ restates its stages.
 
 ## Next session (updated 2026-11-15, #130 landed)
 
-1. **#130 Compare landed** in five PRs, #168 to #172 (see Now). M11 now holds #129, design
-   first, and #48, waiting on its reporter.
-2. **`docs/dev/gallery/compare.md` is over budget** (3,781 words). Split it first, the next
-   time it is touched, along the seam in `docs/dev/pending-splits.md`: two new files in
-   the gallery family, so no Map row.
-3. **CLAUDE.md is 6 words over budget** (6,506). Its seam, two Map hubs, waits on the
+1. **#130 Compare landed** in five PRs, #168 to #172 (see Now), and the detail page's
+   Compare menu (With selection, With neighbours) followed in PR #173; the tray is under
+   Later. M11 now holds #129, design first, and #48, waiting on its reporter.
+2. **CLAUDE.md is 6 words over budget** (6,506). Its seam, two Map hubs, waits on the
    user's call between a hub and a budget raise (`docs/dev/pending-splits.md`).
-4. M4 stays held, with its merge checklist under Waiting. The closed items of the
+3. M4 stays held, with its merge checklist under Waiting. The closed items of the
    previous blocks are in
    [roadmap-archive/handoff-2026-11-15.md](roadmap-archive/handoff-2026-11-15.md) and
    [roadmap-archive/handoff-2026-11-14.md](roadmap-archive/handoff-2026-11-14.md).
@@ -257,13 +255,11 @@ Each line links the record that holds the full text.
   caller's own frontend is the only guard; `services/image_scope.py`, detection, inpaint,
   upscale and LUT read `[]` as nothing. The user chose on 2026-11-14 to fix only the
   Captioning page's empty *Selected* scope (PR #161) and leave the routes as they are.
-- Open a comparison from the image detail page. Today Compare starts only from the
-  gallery's selection bar or a duplicate group; split view is the workaround. The detail
-  page needs a way to say which other images, so the options, cheapest first: **Compare
-  with selection** (the current image plus the app-wide selection), **Compare with
-  neighbours** (previous and next in the arrow keys' order), or an **Add to compare**
-  tray filled while browsing (`docs/dev/gallery/compare.md` § Not built). Asked for by
-  the user on 2026-11-15, after #130.
+- An **Add to compare** tray filled while browsing, for "Compare with…" on the ComfyUI page
+  and a third entry in the detail page's Compare menu (`docs/dev/gallery/compare.md`
+  § Not built). The menu's other two entries, **With selection** and **With neighbours**,
+  landed on 2026-11-15 (PR #173); the user asked for detail-page entry points that day,
+  after #130.
 - A technical-only scoring run (`POST /quality/score` with only `run_technical`) still
   needs torch: the job imports `backend/ml/aesthetic_scorer.py` before checking which
   scorers were asked for, so it fails without torch even though the technical scorer is

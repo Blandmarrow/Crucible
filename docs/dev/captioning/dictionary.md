@@ -4,7 +4,7 @@ This file covers the offline WordNet dictionary behind the caption editor's syno
 (#52): the install task in `backend/services/dictionary_service.py`, the `/dictionary`
 router, the archive guards, the SQLite schema and the morphy port that finds a word's base
 form. The card itself, its selection state and the swap guard are in
-`docs/dev/caption-editor.md` § Synonym card. The pinned download is `backend/downloads.py`,
+`docs/dev/captioning/editor.md` § Synonym card. The pinned download is `backend/downloads.py`,
 shared with LaMa and indexed in `docs/dev/shared-utilities.md`. The licence text is in
 `THIRD_PARTY_NOTICES.md`.
 

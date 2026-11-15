@@ -54,5 +54,5 @@
   - `backend/tests/test_caption_concurrency.py` covers both loops: in-flight counts, Stop,
     a failed save's count, rename names, one client per job, and 429.
   - `backend/tests/test_run_paid_calls.py` covers the cap with N above 1.
-  - The hand checks against a real provider are in `docs/dev/captioning.md`
+  - The hand checks against a real provider are in `docs/dev/captioning/jobs.md`
     § Requests in flight.

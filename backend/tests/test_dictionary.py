@@ -2,7 +2,7 @@
 
 A tiny archive in the real OEWN JSON shape stands in for the 10 MB one, served
 through `downloads._open` (which conftest's `_no_real_download` otherwise refuses).
-The real archive's shape was checked on 2026-11-14 — see `docs/dev/dictionary.md`.
+The real archive's shape was checked on 2026-11-14 — see `docs/dev/captioning/dictionary.md`.
 """
 
 import asyncio

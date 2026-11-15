@@ -18,7 +18,7 @@ only CPU work moved.
   captioners. Merged 2026-11-12 as PR #147: a per-provider Max concurrent requests and one
   app-wide Ollama setting, default 1, in both caption loops; a crash leaves at most N calls
   uncounted ([decision 16](../decisions/16-concurrent-caption-requests.md)). Detail:
-  `docs/dev/captioning.md` § Requests in flight.
+  `docs/dev/captioning/jobs.md` § Requests in flight.
 - [x] T3: parallel import and rescan, with one decode per file. Merged 2026-11-12 as
   PR #146: up to 8 files at once, and a PNG decoded once instead of four times, 7.6× faster
   on JPEGs and 18× on large PNGs. Name and stem picking stays serial. Detail:

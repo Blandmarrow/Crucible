@@ -1,6 +1,6 @@
 # The captioning model picker
 
-This file covers which models a captioning picker offers and which ids a caption request accepts: the registry's `kind`/`description` fields, the `GET /captioning/models` filter, the `_caption_backend` validator that turns an unknown id into a 422, the four surfaces that render the one query, and the frontend predicates over a model id (`captionBackend` and the `takesPrompt` built on it). Where `kind` is declared per model is `docs/dev/model-registry.md`; what a job does once its model passes is `docs/dev/captioning.md`; the `openai_compat:` providers the list includes are `docs/dev/llm-providers.md`.
+This file covers which models a captioning picker offers and which ids a caption request accepts: the registry's `kind`/`description` fields, the `GET /captioning/models` filter, the `_caption_backend` validator that turns an unknown id into a 422, the four surfaces that render the one query, and the frontend predicates over a model id (`captionBackend` and the `takesPrompt` built on it). Where `kind` is declared per model is `docs/dev/model-registry.md`; what a job does once its model passes is `docs/dev/captioning/jobs.md`; the `openai_compat:` providers the list includes are `docs/dev/llm-providers.md`.
 
 ## The registry owns what a model is
 

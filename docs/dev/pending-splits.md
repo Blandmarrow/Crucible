@@ -14,10 +14,12 @@ of the next session that would append to that file.
 Nothing here is ever a reason to compress prose to get back under budget. See the
 `doc-maintenance` skill, § Splitting an oversized doc.
 
-**Before the next split that adds a Map row:** CLAUDE.md is at ~99% of its budget (noted
-2026-11-12), so that split needs a hub or a budget call first. Re-measure each queued seam
-before executing it, and check both halves land under 60% of budget: two of the five seams
-split on 2026-11-12 had to be re-cut on execution.
+**Before the next split that adds a Map row:** CLAUDE.md is at ~98% of its budget (6,396
+words, 2026-11-15, after the captioning and labels hubs), so the Map has room for three or
+four new rows at most. A split *inside* a hubbed family adds a row to its hub instead. Past that,
+the next hub candidates are detection (four rows) and the file browser (three). Re-measure
+each queued seam before executing it, and check both halves land under 60% of budget: two of
+the five seams split on 2026-11-12 had to be re-cut on execution.
 
 ## How entries work
 
@@ -51,7 +53,22 @@ staleness sweep while still recording the seam.
 
 ## Queue
 
-`docs/dev/image-detail.md` → `docs/dev/caption-editor.md` was executed on 2026-11-14 on
+CLAUDE.md → the captioning and labels hubs was executed on 2026-11-15 on
+`docs/hub-captioning-labels`, the user's choice over a budget raise, and the seam **held as
+recorded**, with one addition: `docs/dev/captioning/dictionary.md` joined the captioning
+family, since the synonym card it serves sits in the caption panel. Eight Map rows became two
+and CLAUDE.md went from 6,506 to 6,396 words. The bodies moved word for word into
+`docs/dev/captioning/` (`jobs.md`, `failures.md`, `model-picker.md`, `editor.md`,
+`dictionary.md`) and `docs/dev/labels/` (`backend.md`, `consumers.md`, `ui.md`), and both
+folders went into `SPLIT_INDEXES`. The entry's Watch-for was right that only `§` pointers
+into the two hub paths would go stale; it missed that four of them wrap across a line break
+(`decisions/16`, `throughput-plan/README.md`, `routers/captioning.py`,
+`test_pipeline_scope.py`), which a one-line grep cannot see, and that
+`docs/dev/workspace.md` already cited a § Captioning job execution that the 2026-11-12 split
+had removed. That pointer now aims at `docs/dev/captioning/failures.md` § What a failed job
+counts.
+
+`docs/dev/image-detail.md` → docs/dev/caption-editor.md (now `docs/dev/captioning/editor.md`) was executed on 2026-11-14 on
 `feat/m11-check-tags`, at the start of #50's branch, and the seam **held as recorded**:
 § ImageDetailPage caption panel (1,106 words) and § Other captions panel (427) moved word for
 word with their headings unchanged. That left 2,044 (image-detail) and 1,631
@@ -75,7 +92,7 @@ new file needed no Map row, only a README Docs-table row and a place in `docs/fe
 Five splits were executed on 2026-11-12 on `docs/split-queue-2026-11-12`, ahead of M10 T5.
 `docs/dev/quality/scoring.md` → `docs/dev/quality/scoring-job.md` held as recorded (1,749 +
 2,048), and so did `docs/dev/comfyui/queue.md` → `docs/dev/comfyui/rows-api.md` (1,997 +
-1,713). Two were **re-cut on execution**. `docs/dev/captioning.md` → `docs/dev/caption-failures.md`:
+1,713). Two were **re-cut on execution**. docs/dev/captioning.md → docs/dev/caption-failures.md (now `docs/dev/captioning/failures.md`):
 the recorded bullets would have left 2,302 words (66%), so § Requests in flight's 429 and
 failed-job-counts bullets and § Ollama timeout went too, all failure counting; § Captioning
 job execution then had no reason to exist, and its three staying bullets joined
@@ -233,25 +250,6 @@ The six entries previously recorded here were executed on 2026-07-31: `bulk-ops.
 `docs/dev/versioning/`), `export.md` → `export-licensing.md`, `detection.md` →
 `detection-inference.md`, `statistics.md`'s misfiled `GET /images/` filter table → `image-filters.md`, and CLAUDE.md § Shared
 utilities → `docs/dev/shared-utilities.md`.
-
-## CLAUDE.md
-
-- **Moves:** Documentation Map rows into two hubs, per decision 2's hub pattern: the four
-  caption rows (`captioning.md`, `caption-failures.md`, `caption-model-picker.md`,
-  `caption-editor.md`) become one row for a `docs/dev/captioning/` family, and the three
-  label rows (`labels.md`, `label-consumers.md`, `labels-ui.md`) one row for a
-  `docs/dev/labels/` family. Each hub doc carries the routing table the rows held.
-- **New file:** `docs/dev/captioning.md` and `docs/dev/labels.md` become hubs (~600 words
-  each, like `docs/dev/quality.md`); their current bodies move into the folders.
-- **Why here:** CLAUDE.md went 2 words over (6,502) when #52 added the
-  `docs/dev/dictionary.md` row on 2026-11-14, after that row was cut to its shortest
-  useful form. § Architecture (2,902) holds the invariants every conversation needs, so it
-  is not the seam. The Map (2,384) is a lookup, and these seven rows are its two largest
-  families. This needs the user's call first (see the note at the top of this file): a
-  hub, or a budget raise.
-- **Watch for:** every inbound `docs/dev/captioning.md` and `docs/dev/labels.md` path stays
-  valid if the hub keeps the name. The `§` pointers into moved sections do not
-  (`grep -rn "captioning.md\` §\|labels.md\` §" docs CLAUDE.md`).
 
 ## README.md
 

@@ -59,7 +59,7 @@ right pane opens detail on the left rather than replacing itself.
 **The detail page's Compare menu** (`ImageDetailPage`'s header, a `MenuButton`,
 `testId` `detail-compare-menu`) opens through the same hook, with no `from`, so Keep
 never shows. It has no hotkey: a single key would collide with the user's label hotkeys
-(`docs/dev/labels-ui.md` § Hotkeys). Its two entries:
+(`docs/dev/labels/ui.md` § Hotkeys). Its two entries:
 
 - **With selection** sends the open image first, then `selectionStore`'s ids in pick
   order with the open image removed, so a selected current image is not counted twice.
@@ -171,7 +171,7 @@ Each could follow #130; each needs something it did not build:
   menu (whose selection and neighbours entries need no tray, § Opening it beside the
   gallery).
 - **Label hotkeys** on the focused pane: the detail page's handler would have to move into
-  a shared hook with every guard it carries (`docs/dev/labels-ui.md` § Hotkeys).
+  a shared hook with every guard it carries (`docs/dev/labels/ui.md` § Hotkeys).
 - **Videos** side by side with linked playback (frames are images, so they work now),
   and **automatic alignment** of crops and offsets.
 

@@ -27,16 +27,18 @@ re-chosen.
       itself, `docs/video-extraction.md` and `docs/video-reextract.md`.
 - [x] `docs/dev/labels.md`, both seams (2026-10-29): the consumers (filters, export, the
       snapshot mirror, cross-dataset and derivative hooks) moved to
-      `docs/dev/label-consumers.md` and the frontend to `docs/dev/labels-ui.md`, as three
-      flat siblings rather than a hub.
+      docs/dev/label-consumers.md and the frontend to docs/dev/labels-ui.md, as three
+      flat siblings rather than a hub (since 2026-11-15 behind a hub, as
+      `docs/dev/labels/consumers.md` and `docs/dev/labels/ui.md`).
 - [x] `docs/dev/ml-models.md` (2026-10-29): both recorded seams plus a third. LaMa joined
       `docs/dev/image-processing-models.md`; eviction, unloads, leases and releasing moved
       to `docs/dev/model-residency.md`; the ID registry and per-model loader notes moved to
       `docs/dev/model-registry.md`. Three flat siblings, no hub.
 - [x] `docs/dev/captioning.md` (2026-10-29): the recorded provider seam plus the picker.
       Providers moved to `docs/dev/llm-providers.md` and the model picker to
-      `docs/dev/caption-model-picker.md`; the job half stays at ~2,480 (71%) as one
-      subsystem. Three flat siblings, no hub.
+      docs/dev/caption-model-picker.md; the job half stays at ~2,480 (71%) as one
+      subsystem. Three flat siblings, no hub (the captioning ones went behind a hub on
+      2026-11-15; the picker is now `docs/dev/captioning/model-picker.md`).
 - [x] `docs/dev/bulk-image-jobs.md` (2026-10-29): the recorded seam. Detection-driven
       cropping moved to `docs/dev/detection-crop.md` and watermark removal to
       `docs/dev/inpaint.md`; the crop remap stays as its own `##`, since all four crop sites

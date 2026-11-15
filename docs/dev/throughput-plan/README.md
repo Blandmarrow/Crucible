@@ -4,7 +4,7 @@
 [../roadmap.md](../roadmap.md); why it is a milestone of its own, and what it will not
 build, is [decision 14](../decisions/14-job-throughput-is-its-own-milestone.md). When a
 stage lands, move its durable rationale into the topic file that owns the code
-(`docs/dev/ml-models.md`, `docs/dev/quality/scoring.md`, `docs/dev/quality/scoring-job.md`, `docs/dev/captioning.md`,
+(`docs/dev/ml-models.md`, `docs/dev/quality/scoring.md`, `docs/dev/quality/scoring-job.md`, `docs/dev/captioning/jobs.md`,
 `docs/dev/image-import.md`) and delete the stage from here. Delete the folder when
 everything is done or dropped. M10 landed on 2026-11-12 with T6 parked
 ([roadmap-archive/m10-job-throughput.md](../roadmap-archive/m10-job-throughput.md)), so
@@ -47,7 +47,7 @@ subagent reported it and it was not re-read; verify it before building on it.
 | `score_image_sync` | Decodes the file (`open_rgb`), preprocesses it, moves it to the card and runs the model, all inside the one GPU call. The card waits during the first two steps. **Fixed by T5**: each scorer's `prepare_*` half runs on the default pool, up to 8 images ahead, 2.3× to 3.6× faster, scores identical | Checked |
 | A full scoring run | Each check is its own pass and decodes every file again: up to seven decodes with every box ticked, six GPU passes (aesthetic, watermark, CLIP, DINOv2 and its layers, NSFW) plus the technical check's own `cv2` read. Watermark and CLIP each run the CLIP image encoder again. **Measured by T4**: decode alone is 13–23% of a full run on small JPEGs and 54–68% on large PNGs and real ComfyUI images | Checked by T4 |
 | `technical_scorer.score_images_technical` | CPU-only (OpenCV). One `run_in_executor` call per image, awaited, so one core is busy. **Fixed by T1**: up to 4 at once, 2.0× to 2.3× faster (`docs/dev/quality/scoring-job.md` § The technical scorer runs several images at once) | Checked |
-| `openai_compat_captioner._caption_sync` | One request at a time, and a new `OpenAI(...)` client for each image. **Fixed by T2**: up to a provider's Max concurrent requests at once, on one async client per job (`docs/dev/captioning.md` § Requests in flight) | Checked |
+| `openai_compat_captioner._caption_sync` | One request at a time, and a new `OpenAI(...)` client for each image. **Fixed by T2**: up to a provider's Max concurrent requests at once, on one async client per job (`docs/dev/captioning/jobs.md` § Requests in flight) | Checked |
 | `ollama_captioner` | One request at a time, and a new `httpx.AsyncClient` for each image. **Fixed by T2**, with one app-wide setting since Ollama has no provider row | Checked |
 | The local captioners (Florence-2, PaliGemma, JoyCaption) | One image per call. `caption_batch` is defined in `florence_captioner.py`, `paligemma_captioner.py` and `ollama_captioner.py`, and nothing outside the tests calls it | Checked for `caption_batch`; from the audit for the per-image loop |
 | `wd14_tagger` | Its ONNX session is built with `providers=["CPUExecutionProvider"]`, one image per call | Checked |
@@ -65,7 +65,7 @@ T1, the technical scorer on several cores, is done; its design and timing now li
 `docs/dev/quality/scoring-job.md` § The technical scorer runs several images at once. T3,
 parallel import and one decode per file, is done too; its design and timing live in
 `docs/dev/image-import.md` § Several files at once, one decode each. T2, concurrent requests
-for the remote captioners, is done; its design lives in `docs/dev/captioning.md` § Requests
+for the remote captioners, is done; its design lives in `docs/dev/captioning/jobs.md` § Requests
 in flight, and its rulings in [decision 16](../decisions/16-concurrent-caption-requests.md).
 T5, decoding ahead of the GPU call, is done; its design, the checks that the scores did not
 move, and its timing live in `docs/dev/quality/scoring-job.md` § The GPU checks prepare

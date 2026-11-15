@@ -59,7 +59,7 @@ Client side, `ExportPage` builds the trio through one `labelParams()` helper use
 by both the POST bodies and the preview query, **omitting falsy values**:
 `label_missing: false` means "only labelled images", so sending the plain boolean
 default made every export silently drop every unlabelled image while the preview
-promised the full count. See `docs/dev/label-consumers.md` § Export.
+promised the full count. See `docs/dev/labels/consumers.md` § Export.
 
 **Limit to subfolders** also narrows the query, and the match is **exact** on the wire: `Image.subfolder.in_(subfolders)`, so `a` does not include `a/b`. Ticking a parent is entirely client-side. `ExportPage` builds a tree (`frontend/src/utils/subfolderTree.ts`) and a tick adds each path from `subtreeTargets`, which is what keeps it possible to leave out one child. A subtree match on the server would lose that. `withMissingAncestors` adds a row for a parent `list_subfolders` does not return, and the gallery deliberately does not call it, because its sidebar hangs rename and delete menus off every row. A parent holding images itself also renders a "(this folder)" row: its main row stands for the whole branch, so without one, ticking `a/b` alone and ticking `a` then unticking `a/c` look identical on screen and export different files.
 

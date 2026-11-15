@@ -57,7 +57,7 @@ plus the `labelHotkeysEnabled` toggle. Extracted into
 precedent; the tab body is a thin `{activeTab === "labels" && <div className="panel"><LabelsPanel /></div>}`.
 Nothing here is a `ThresholdSettings` field — the vocabulary is its own table behind
 `/labels`, and every edit saves immediately rather than through the page-level Save
-button. See `docs/dev/labels-ui.md` for the panel and `docs/dev/labels.md` for the `/labels` endpoints it calls.
+button. See `docs/dev/labels/ui.md` for the panel and `docs/dev/labels/backend.md` for the `/labels` endpoints it calls.
 
 **Recolouring** is a per-row swatch button opening a `usePopover` panel (`docs/dev/menus-popovers.md`
 § Anchored popovers) — twenty swatches in the shared `SwatchGrid`, which the create form
@@ -79,7 +79,7 @@ Immediate-save preferences:
 - Delete-confirmation default button (`cancel` / `confirm`). Stored under `CONFIRM_DEFAULT_KEY`. Read by `ConfirmDialog` on every mount when `danger=true` and no `defaultFocus` prop is provided.
 - Branch snapshot behavior (`ask` / `auto`). Stored under `BRANCH_SNAPSHOT_KEY`. When `"ask"`, `BranchSelector` shows an inline prompt before checkout or branch creation letting the user choose whether to create a snapshot. When `"auto"`, snapshots are always created without prompting.
 - **Auto-rescan dataset on open** (`auto_rescan_on_open`, default off). Unlike the two above, this is a *server-side* setting persisted on the `ThresholdSettings` row (not localStorage), but the toggle still saves immediately via `mutation.mutate({ auto_rescan_on_open })` rather than the page-level Save button. When on, opening a dataset gallery fires `POST /datasets/{id}/rescan` once per dataset open (`GalleryPage`, gated by the `settingsApi.getThresholds` query). See `docs/dev/image-import.md` § Folder rescan / sync.
-- **Synonym suggestions** (`SYNONYMS_ENABLED_KEY`, default off), owned by `uiPrefsStore` like the gallery toggles. The section is its own component, `components/settings/SynonymsSetting.tsx`. Turning it on calls `POST /dictionary/install` when the server has no dictionary, and the status line under it polls `GET /dictionary/status` while an install runs. The toggle is per browser, while the dictionary is per install. See `docs/dev/dictionary.md`.
+- **Synonym suggestions** (`SYNONYMS_ENABLED_KEY`, default off), owned by `uiPrefsStore` like the gallery toggles. The section is its own component, `components/settings/SynonymsSetting.tsx`. Turning it on calls `POST /dictionary/install` when the server has no dictionary, and the status line under it polls `GET /dictionary/status` while an install runs. The toggle is per browser, while the dictionary is per install. See `docs/dev/captioning/dictionary.md`.
 
 ## Quality Thresholds tab
 
@@ -97,7 +97,7 @@ Version control mode radio (`off | manual | auto`) plus branch snapshot behavior
 
 Manage OpenAI-compatible provider configurations (see `docs/dev/llm-providers.md`). Add / edit / delete providers. Name and Base URL are required; changes are saved immediately per-mutation (no page-level Save). Provider mutations also invalidate `["captioning-models"]` so the model picker on CaptioningPage reflects changes immediately.
 
-Below the providers, an **Ollama** panel holds `ollama_max_concurrent` (1–16, default 1), a `ThresholdSettings` column because Ollama has no provider row: how many caption requests a job keeps in flight to Ollama (M10 T2, `docs/dev/captioning.md` § Requests in flight). It has its own Save button, like the ComfyUI fields, and is not part of the page-level Save.
+Below the providers, an **Ollama** panel holds `ollama_max_concurrent` (1–16, default 1), a `ThresholdSettings` column because Ollama has no provider row: how many caption requests a job keeps in flight to Ollama (M10 T2, `docs/dev/captioning/jobs.md` § Requests in flight). It has its own Save button, like the ComfyUI fields, and is not part of the page-level Save.
 
 ## API Keys tab
 

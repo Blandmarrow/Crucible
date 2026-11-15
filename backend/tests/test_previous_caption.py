@@ -1,6 +1,6 @@
 """`{previous_caption}` in a custom prompt is filled with the image's caption (#105).
 
-What is pinned (docs/dev/captioning.md § The `{previous_caption}` placeholder):
+What is pinned (docs/dev/captioning/jobs.md § The `{previous_caption}` placeholder):
 - `/run` fills it from the caption each image holds when the job *starts* (not when it
   was queued), and with `""` for an uncaptioned image; a prompt without it is sent
   unchanged;

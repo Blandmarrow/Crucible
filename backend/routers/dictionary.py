@@ -1,5 +1,5 @@
 """The offline synonym dictionary (#52). See `services/dictionary_service.py` and
-`docs/dev/dictionary.md`."""
+`docs/dev/captioning/dictionary.md`."""
 
 import asyncio
 

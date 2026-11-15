@@ -119,7 +119,8 @@ Tier 4, design first:
     the routed page, linked zoom, the selection toolbar's Compare button, opening in the
     neighbouring pane. Merged 2026-11-15 as PR #169, with an Opus review's seven findings
     fixed (`docs/dev/gallery/compare.md`).
-  - [x] Phase 2, A/B (`feat/130-compare-ab`): swipe, flip and difference. Merged
+  - [x] Phase 2, A/B (`feat/130-compare-ab`): swipe, flip and difference, with an Opus
+    review's five findings fixed. Merged
     2026-11-15 as PR #170.
   - [ ] Phase 3, Grid and the contact sheet (`feat/130-contact-sheet`):
     `POST /images/contact-sheet`, timed on 100 large files before shipping.

@@ -149,6 +149,30 @@ class ImagesByIdsRequest(BaseModel):
     image_ids: list[str] = Field(min_length=1, max_length=100)
 
 
+class ContactSheetRequest(BaseModel):
+    """`POST /images/contact-sheet`: what to draw. Nothing here names a path."""
+    image_ids: list[str] = Field(min_length=1, max_length=100)
+    columns: int | None = Field(default=None, ge=1, le=12)
+    cell_px: int = Field(default=256, ge=128, le=1024)
+    fields: list[Literal["header", "filename", "size", "score", "caption"]] = Field(
+        default_factory=lambda: ["header", "filename", "size", "score"]
+    )
+    background: Literal["dark", "light"] = "dark"
+    format: Literal["png", "jpeg"] = "png"
+    # x0, y0, x1, y1 as fractions of each image, 0..1, with x0 < x1 and y0 < y1.
+    region: tuple[float, float, float, float] | None = None
+
+    @field_validator("region")
+    @classmethod
+    def _region_in_bounds(cls, v):
+        if v is None:
+            return v
+        x0, y0, x1, y1 = v
+        if not all(0.0 <= c <= 1.0 for c in v) or not (x0 < x1 and y0 < y1):
+            raise ValueError("region must be x0,y0,x1,y1 within 0..1 with x0 < x1 and y0 < y1")
+        return v
+
+
 class ImageFilterParams(BaseModel):
     """Every filter `GET /images/` accepts — `dataset_id` plus the whole tail —
     minus paging (`page`/`limit`) and ordering (`sort`/`order`).

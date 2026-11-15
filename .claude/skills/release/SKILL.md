@@ -122,9 +122,14 @@ gh release create vX.Y.Z --target "$sha" --title "Crucible X.Y.Z" --notes-file <
 ## 9. Verify and report
 
 ```bash
-gh release view vX.Y.Z --json tagName,isLatest,url
-git fetch -q --tags && git show vX.Y.Z:backend/version.py | grep __version__
+gh release list --limit 2                                # vX.Y.Z on top, marked Latest
+gh release view vX.Y.Z --json isDraft,name,targetCommitish,url
+git fetch -q --tags origin && git show vX.Y.Z:backend/version.py | grep __version__
 ```
+
+`gh release view --json` has no `isLatest` field, so read Latest from the list. Pass
+`--target` the **full** SHA, as step 8's `git rev-parse` does: GitHub answers a short one
+with a 422 saying the tag is not valid, and creates nothing.
 
 Report the release URL, that it is marked Latest, and that the tag's `backend/version.py`
 matches the tag. If anything differs, say so; do not delete or move a published tag

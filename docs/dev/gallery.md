@@ -19,7 +19,7 @@ filter sends is `docs/dev/image-filters.md`.
 | [drag-drop.md](gallery/drag-drop.md) | The `DndContext`, droppable-id namespaces and collision detection, dragging cards and folders onto subfolder rows, manual `sort_order` ordering |
 | [state.md](gallery/state.md) | The `gallery-state-*` blob, the debounce rules (PM-012), the save effect and unmount flush, **Reset filters** |
 | [nav.md](gallery/nav.md) | The `gallery-nav-*` context the detail view's arrows walk, `injectNavId`, `atEnd`, the live refresh and live total |
-| [compare.md](gallery/compare.md) | The Compare page the selection toolbar opens: routing by id list, opening beside the gallery (`neighbourLeafId`), `POST /images/by-ids`, the linked viewport, the pane |
+| [compare.md](gallery/compare.md) | The Compare page the selection toolbar opens: routing by id list, opening beside the gallery (`neighbourLeafId`), `POST /images/by-ids`, the linked viewport, the pane, A/B, the grid and `POST /images/contact-sheet` |
 
 ## Where things live
 
@@ -32,8 +32,8 @@ not a see-also, and says which part of the code it owns.
 |---|---|
 | `backend/routers/datasets.py` (the `/{dataset_id}/subfolders` routes) | `docs/dev/gallery/subfolder-rename.md` for the `PATCH` and its guard table; + `docs/dev/gallery/subfolders.md` for the create and delete the sidebar calls |
 | `backend/services/dataset_service.py` (its subfolder half) | `docs/dev/gallery/subfolder-rename.md` — `repath_subfolder`, the LIKE escaping it duplicates from `delete_subfolder`, the `declared_subfolders` rebuild; + `docs/dev/gallery/subfolders.md` for `list_subfolders`' root row and `delete_subfolder`'s subtree |
-| `backend/routers/images.py` | `docs/dev/gallery/filters.md` § Sorting for the ordering block and `_ALLOWED_SORT_FIELDS`; + `docs/dev/gallery/drag-drop.md` for `PATCH /images/batch/reorder`; + `docs/dev/image-filters.md` for the filter params; + `docs/dev/gallery/compare.md` for `_stamped_items` and `POST /images/by-ids` |
-| `backend/tests/test_images_by_ids_http.py` | `docs/dev/gallery/compare.md` |
+| `backend/routers/images.py` | `docs/dev/gallery/filters.md` § Sorting for the ordering block and `_ALLOWED_SORT_FIELDS`; + `docs/dev/gallery/drag-drop.md` for `PATCH /images/batch/reorder`; + `docs/dev/image-filters.md` for the filter params; + `docs/dev/gallery/compare.md` for `_stamped_items`, `POST /images/by-ids` and `POST /images/contact-sheet` |
+| `backend/tests/test_images_by_ids_http.py`, `backend/services/contact_sheet.py`, `backend/tests/test_contact_sheet_http.py` | `docs/dev/gallery/compare.md` |
 | `backend/tests/test_subfolder_repath_http.py` | `docs/dev/gallery/subfolder-rename.md` |
 | `backend/tests/test_image_sort_fields.py` | `docs/dev/gallery/filters.md` § Sorting |
 

@@ -1,8 +1,9 @@
 # The Compare page
 
 `ComparePage` shows two to four images side by side, or two in one frame (A/B), with
-linked zoom and pan (#130). This file covers how it is reached and routed, the batch
-read behind it, the linked viewport, the pane, and A/B. The user-facing page is `docs/compare.md`; the design and the phases still
+linked zoom and pan, or up to 100 as a grid that exports as a contact sheet (#130). This
+file covers how it is reached and routed, the batch read behind it, the linked
+viewport, the pane, A/B, and the grid and `POST /images/contact-sheet`. The user-facing page is `docs/compare.md`; the design and the phases still
 to come (A/B, the grid and contact sheet, actions) are in `docs/dev/compare-plan/README.md`
 until they land; the rulings are decision 20 (`docs/dev/decisions/20-compare-view.md`).
 The pane system it plugs into is `docs/dev/panes-routing.md`.
@@ -167,6 +168,53 @@ swaps the two. `ABView` is keyed on the pair, so a new pair remounts it while th
 viewport keeps the zoom. It registers its `measure` under A's id, so **100%** in A/B
 means A at its real pixels.
 
+## Grid and the contact sheet
+
+**Which mode a set opens in** is worked out during render, React's pattern for state
+that follows a prop (`seenKey` in `ComparePage.tsx`): a *new* set of ids opens as Grid
+when it holds more than `COMPARE_SIDE_MAX`, and otherwise in the last mode chosen. A
+set that is a subset of the last one (a pane removed, or the ticked few from the grid)
+keeps its mode. Grid is never stored in `COMPARE_PREFS_KEY`, since it follows from the
+set's size, not from a habit.
+
+`components/compare/CompareGrid.tsx` shows thumbnails, not the files: a grid of a
+hundred large PNGs would decode hundreds of megabytes for cells a few hundred pixels
+wide. Up to four cells tick; **Compare ticked** remembers the full list in `backTo`
+and replaces the ids with the ticked ones, and **Back to all N** puts the full list back.
+The grid's "auto" columns are `autoGridColumns` in `utils/compare.ts`, the same formula
+as the server's `auto_columns`, so the sheet follows the grid on screen.
+
+**`POST /images/contact-sheet`** (`backend/routers/images.py`, drawing in
+`backend/services/contact_sheet.py`) returns the sheet as a download and writes nothing
+to disk (decision 20). It is the first route that returns *generated* image bytes, and
+the first to set `Content-Disposition`; the filename is the dataset name (or `compare`)
+reduced to `[a-z0-9-]`, never interpolated raw. In order:
+
+1. Ids are deduped; rows with none drop out; none at all is a 404.
+2. **Every `file_path` is gated with `safe_dataset_path` before anything opens it**, and
+   one refused row fails the request with 403. This route returns pixels it read, so an
+   ungated path would be an arbitrary-file *read* (CLAUDE.md § Path traversal guard).
+   A gated path with no file, or one that will not decode, draws a "missing" cell.
+3. The output size is computed by `sheet_size` from the first row's **stored**
+   width and height, and refused with 422 past 16,000 px on the long side, before any
+   image is opened.
+4. `render_contact_sheet` runs on the default pool (`run_in_executor`), never the GPU
+   thread. Each image is opened with `Image.open`, `draft` for JPEG speed, then
+   `image_service._safe_from` (EXIF transpose); the region crop is applied after the
+   transpose; **every image, the pre-transpose original included, is closed in a
+   `finally`**. Text is `ImageFont.load_default(size=…)`, so no font file ships.
+
+**Timing** (dev PC, 2026-11-15): 100 images at 2048×1536, half PNG and half JPEG, every
+text line: 1.9 s (JPEG out) to 2.3 s (PNG out) at 256 px cells, 2.4 to 3.1 s at 512 px.
+So it stays a plain request, not a background job, by the plan's own test; a sheet
+that grows past a few seconds is the trigger to revisit.
+
+**Export current view** (Side by side only) measures pane 1 at click time and sends its
+visible rectangle as `region`, `[x0, y0, x1, y1]` in fractions of each image, with the
+shown panes in one row. `ContactSheetDialog` saves the blob through an `<a download>`;
+with `responseType: "blob"` an error body is a Blob too, so `imagesApi.contactSheet`
+parses its JSON `detail` back into the error for `apiErrorDetail`.
+
 ## Tests
 
 `frontend/e2e/compare.spec.ts`: select three, press Compare, wheel over one pane and see
@@ -176,5 +224,12 @@ pane, which becomes the active one, while the left keeps its tiles; then a pane'
 puts the detail view on the left, and a caption saved there appears in the comparison.
 A third journey covers A/B: zoomed in, the divider's arrow keys move B's clip without
 panning; Space on a focused button does not flip, while on the frame it shows B only
-while held; Difference sets the blend; and the mode and its view survive a reload. `neighbourLeafId` has no unit test, since the
+while held; Difference sets the blend; and the mode and its view survive a reload.
+A fourth covers the grid: five selected open as a grid, Export sheet downloads a PNG,
+two ticked open side by side, Export current view downloads a JPEG, and Back to all
+returns to the five. `backend/tests/test_contact_sheet_http.py` covers the route: the
+size helper against the real output, JPEG, the region, the out-of-tree 403 with the
+outside file untouched, a missing file's placeholder, the caps refused before any
+`Image.open`, an EXIF-rotated JPEG drawn transposed, nothing written under the
+datasets folder, and every opened image closed. `neighbourLeafId` has no unit test, since the
 frontend has no unit runner; the split-view journey is its test.

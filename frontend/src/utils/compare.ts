@@ -16,6 +16,13 @@ export const AB_HOWS: { value: AbHow; label: string }[] = [
   { value: "difference", label: "Difference" },
 ];
 
+/** The grid's "auto" columns: `ceil(sqrt(n × 1.4))`, roughly square and a little
+ *  wider than tall — the server's `auto_columns` in `services/contact_sheet.py`,
+ *  so the grid on screen and the sheet it exports agree — but never one column. */
+export function autoGridColumns(n: number): number {
+  return Math.min(n, Math.max(2, Math.ceil(Math.sqrt(n * 1.4))));
+}
+
 export function compareUrl(ids: string[]): string {
   return `/compare?ids=${ids.join(",")}`;
 }

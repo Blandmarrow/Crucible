@@ -22,7 +22,7 @@ The order images travel through the app:
 | 3 | Score for aesthetics, technical quality, watermarks and NSFW | [Quality Scoring](scoring.md) |
 | 3 | Compare images against reference images for style, read as a percentile | [Style Similarity](style-similarity.md) |
 | 3 | Review and clear the duplicate groups a scoring run found | [Duplicate Resolution](duplicates.md) |
-| 3 | Compare images side by side with linked zoom, to pick a keeper or judge an edit | [Compare](compare.md) |
+| 3 | Compare images side by side with linked zoom, to pick a keeper or judge an edit; export a contact sheet | [Compare](compare.md) |
 | 4 | Detect and segment objects; crop to subject; locate watermarks | [Object Detection](detection.md) |
 | 5 | Batch-edit captions, crops, resizes; upscale and LUT color grade | [Batch Editing & Image Processing](editing.md) |
 | 5 | Re-cut curated video frames from their source at full resolution | [Re-extracting Frames](video-reextract.md) |

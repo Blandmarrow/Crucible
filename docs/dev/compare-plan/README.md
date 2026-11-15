@@ -243,4 +243,6 @@ Still proposals, standing as defaults until something says otherwise:
 6. **Does any item under § Not in this plan belong in this issue?** Compare with original
    is the one most often wanted, and the most expensive; it stays its own issue.
 7. **Sheet as a job?** A plain request, timed in phase 3, and turned into a job only if
-   100 large files take more than a few seconds. That timing goes back to the user.
+   100 large files take more than a few seconds. Timed 2026-11-15: 1.9 to 3.1 s for 100
+   images at 2048×1536 (`docs/dev/gallery/compare.md` § Grid and the contact sheet), so
+   it stays a request. Reported to the user with phase 3's PR.

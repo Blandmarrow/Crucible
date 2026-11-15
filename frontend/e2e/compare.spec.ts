@@ -123,6 +123,52 @@ test('A/B shows B beside a divider, while a key is held, or as a difference', as
   await expect(page.getByRole('button', { name: 'A/B', exact: true })).toHaveAttribute('aria-pressed', 'true')
 })
 
+test('more than four open as a grid; ticked ones compare side by side; both exports download', async ({ page, request }) => {
+  const ds = await createDatasetViaApi(request, `compare-grid-${Date.now()}`)
+  for (const n of ['a', 'b', 'c', 'd', 'e']) await uploadViaApi(request, ds.id, `${n}.png`)
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await selectAllIn(page, 5)
+  await page.getByRole('button', { name: 'Compare', exact: true }).click()
+
+  // Five is more than Side by side shows, so the set opens as a grid.
+  const grid = page.getByTestId('compare-grid')
+  await expect(grid.getByRole('button')).toHaveCount(5)
+  await expect(page.getByRole('button', { name: 'Grid', exact: true })).toHaveAttribute('aria-pressed', 'true')
+
+  // The whole set as one sheet: the server draws it, the browser saves it.
+  await page.getByRole('button', { name: 'Export sheet' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Export sheet' })
+  const [sheet] = await Promise.all([
+    page.waitForEvent('download'),
+    dialog.getByRole('button', { name: 'Download' }).click(),
+  ])
+  expect(sheet.suggestedFilename()).toMatch(/-sheet\.png$/)
+  expect((await import('node:fs')).statSync(await sheet.path()).size).toBeGreaterThan(0)
+  await expect(dialog).toBeHidden()
+
+  // Tick two, compare them side by side, and come back to all five.
+  await grid.getByRole('button').nth(0).click()
+  await grid.getByRole('button').nth(2).click()
+  await page.getByRole('button', { name: 'Compare ticked (2)' }).click()
+  const panes = page.getByTestId('compare-pane')
+  await expect(panes).toHaveCount(2)
+  await expect.poll(() => new URL(page.url()).searchParams.get('ids')!.split(',').length).toBe(2)
+
+  // Export current view: the shown panes, each cropped to the region on screen.
+  for (let i = 0; i < 2; i++) await expect.poll(() => drawnWidth(panes.nth(i))).toBeGreaterThan(0)
+  await page.getByRole('button', { name: 'Export current view' }).click()
+  const view = page.getByRole('dialog', { name: 'Export current view' })
+  await view.getByRole('radio', { name: 'JPEG (smaller)' }).check()
+  const [crop] = await Promise.all([
+    page.waitForEvent('download'),
+    view.getByRole('button', { name: 'Download' }).click(),
+  ])
+  expect(crop.suggestedFilename()).toMatch(/-sheet\.jpg$/)
+
+  await page.getByRole('button', { name: 'Back to all 5' }).click()
+  await expect(grid.getByRole('button')).toHaveCount(5)
+})
+
 test('in split view, Compare opens in the neighbouring pane and the gallery stays', async ({ page, request }) => {
   const { ds } = await seedThree(request, 'compare-split')
   await page.goto(`/datasets/${ds.id}/gallery`)

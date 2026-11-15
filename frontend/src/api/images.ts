@@ -1,6 +1,21 @@
 import client from "./client";
 import type { CompareImage, ImageDetail, ImageListItem, SimilarCaptionsBy, SimilarCaptionsOut } from "../types";
 
+export type SheetField = "header" | "filename" | "size" | "score" | "caption";
+
+/** `POST /images/contact-sheet` (`ContactSheetRequest` in `backend/schemas/image.py`). */
+export interface ContactSheetRequest {
+  image_ids: string[];
+  /** 1–12, or null for the server's auto layout. */
+  columns: number | null;
+  cell_px: number;
+  fields: SheetField[];
+  background: "dark" | "light";
+  format: "png" | "jpeg";
+  /** x0, y0, x1, y1 as fractions of each image, for Export current view. */
+  region?: [number, number, number, number] | null;
+}
+
 export interface UploadResult {
   added: number;
   files: string[];
@@ -182,6 +197,24 @@ export const imagesApi = {
    *  drop out. The Compare page's only read. */
   byIds: (image_ids: string[]) =>
     client.post<CompareImage[]>("/images/by-ids", { image_ids }).then((r) => r.data),
+  /** Draw a contact sheet on the server and return it with the filename the
+   *  server chose. Nothing is saved anywhere (decision 20). With a blob response
+   *  type an error's body is a Blob too, so its JSON `detail` is read back into
+   *  the error, where `apiErrorDetail` expects it. */
+  contactSheet: async (body: ContactSheetRequest): Promise<{ blob: Blob; filename: string }> => {
+    try {
+      const r = await client.post<Blob>("/images/contact-sheet", body, { responseType: "blob" });
+      const disposition = String(r.headers["content-disposition"] ?? "");
+      const filename = /filename="([^"]+)"/.exec(disposition)?.[1] ?? "contact-sheet.png";
+      return { blob: r.data, filename };
+    } catch (err) {
+      const res = (err as { response?: { data?: unknown } }).response;
+      if (res?.data instanceof Blob) {
+        try { res.data = JSON.parse(await res.data.text()); } catch { /* not JSON: leave it */ }
+      }
+      throw err;
+    }
+  },
   /** Other captioned images in the same dataset, ranked by `by`. Read-only. */
   similarCaptions: (id: string, by: SimilarCaptionsBy, limit = 8, signal?: AbortSignal) =>
     client

@@ -194,6 +194,126 @@ test('a new set picked from inside the old one opens as a new set, not a removal
   await expect(right.getByTestId('compare-grid')).toHaveCount(0)
 })
 
+test('a pane can label its image, and delete it', async ({ page, request }) => {
+  const { ds, names } = await seedThree(request, 'compare-act')
+  const labelName = `keep-${Date.now()}`
+  const lab = await request.post('/api/v1/labels/', { data: { name: labelName } })
+  expect(lab.status(), await lab.text()).toBe(201)
+  // The label vocabulary is app-wide and the e2e server is shared, so the label
+  // goes again even if this test fails: labels.spec.ts expects its own to be the
+  // only one with a Set hotkey button.
+  const labelId = (await lab.json()).id
+  try {
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await selectAllIn(page, 3)
+  await page.getByRole('button', { name: 'Compare', exact: true }).click()
+  const panes = page.getByTestId('compare-pane')
+  await expect(panes).toHaveCount(3)
+
+  // Labels: a dialog (a pane clips popovers), written through the detail page's queue.
+  await page.getByRole('button', { name: `Labels for ${names[0]}` }).click()
+  const dialog = page.getByRole('dialog', { name: `Labels for ${names[0]}` })
+  await dialog.getByRole('checkbox', { name: labelName }).check()
+  await expect(dialog.getByRole('checkbox', { name: labelName })).toBeChecked()
+  await dialog.getByRole('button', { name: 'Done' }).click()
+  await expect(page.locator('.cmp-label', { hasText: labelName })).toHaveCount(1)
+
+  // Delete: confirmed, then the image and its file are gone and the pane with them.
+  const rows = await (await request.get('/api/v1/images/', { params: { dataset_id: ds.id, limit: '10' } })).json()
+  const victim = rows.find((r: { filename: string }) => r.filename === names[2]).id
+  await page.getByRole('button', { name: `Delete ${names[2]}` }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Delete', exact: true }).click()
+  await expect(page.getByText(`Deleted ${names[2]}`)).toBeVisible()
+  await expect(panes).toHaveCount(2)
+  expect((await request.get(`/api/v1/images/${victim}`)).status()).toBe(404)
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await expect(page.getByTestId('gallery-tile')).toHaveCount(2)
+  } finally {
+    await request.delete(`/api/v1/labels/${labelId}`)
+  }
+})
+
+test('a duplicate group opened from the Quality page keeps one and deletes the rest', async ({ page, request }) => {
+  // The group is staged, not scanned: a scoring run imports torch (the aesthetic
+  // scorer is imported whatever the boxes say), and CI's e2e has none. The
+  // Quality page's group list and the duplicate flags on Compare's rows are
+  // answered as a Technical scan would write them; the resolve itself is real.
+  const { ds } = await seedThree(request, 'compare-dups')
+  const rows: { id: string; filename: string; updated_at: string }[] =
+    await (await request.get('/api/v1/images/', { params: { dataset_id: ds.id, limit: '10' } })).json()
+  const root = rows[0].id
+  await page.route(`**/api/v1/quality/duplicates/${ds.id}`, (route) => route.fulfill({
+    json: {
+      groups: [rows.map((r, i) => ({
+        id: r.id, filename: r.filename, aesthetic_score: null, aesthetic_model: null,
+        updated_at: r.updated_at, created_at: r.updated_at, kept: i === 0,
+        source_video_id: null, source_timestamp_ms: null, source_shot_index: null, source_video_name: null,
+      }))],
+    },
+  }))
+  await page.route('**/api/v1/images/by-ids', async (route) => {
+    const res = await route.fetch()
+    const items = await res.json()
+    for (const it of items) {
+      if (it.id !== root) it.quality_flags = { ...it.quality_flags, is_duplicate: true, duplicate_of: root }
+    }
+    await route.fulfill({ response: res, json: items })
+  })
+
+  await page.goto(`/datasets/${ds.id}/quality`)
+  await expect(page.getByRole('heading', { name: 'Duplicate groups' })).toBeVisible()
+  await page.getByRole('button', { name: 'Compare', exact: true }).click()
+  await expect(page).toHaveURL(/from=dups/)
+  const keep = page.getByRole('button', { name: 'Keep this one' })
+  await expect(keep).toHaveCount(3)
+
+  // Keep this one only while the comparison is the whole group: a move keeps it,
+  // a removal takes it away (resolving part of a group would strand the rest).
+  await page.getByRole('button', { name: /^Move .* left$/ }).first().click()
+  await expect(keep).toHaveCount(3)
+  await page.getByRole('button', { name: /^Remove .* from the comparison$/ }).last().click()
+  await expect(page.getByTestId('compare-pane')).toHaveCount(2)
+  await expect(keep).toHaveCount(0)
+
+  await page.goto(`/datasets/${ds.id}/quality`)
+  await page.getByRole('button', { name: 'Compare', exact: true }).click()
+  await expect(keep).toHaveCount(3)
+  // The second pane's image is the one to keep, so the survivor is not just
+  // whichever the scan happened to keep.
+  const chosen = (await page.getByTestId('compare-pane').nth(1).locator('..').locator('.cmp-name').textContent())!
+  await keep.nth(1).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Delete 2' }).click()
+  await expect(page.getByText(`Kept ${chosen} and deleted 2 duplicates.`, { exact: true })).toBeVisible()
+  const left = await (await request.get('/api/v1/images/', { params: { dataset_id: ds.id, limit: '10' } })).json()
+  expect(left).toHaveLength(1)
+  expect(left[0].filename).toBe(chosen)
+})
+
+test('Back returns to the gallery, after edits to the set and from a fresh tab', async ({ page, request }) => {
+  const { ds, names } = await seedThree(request, 'compare-back')
+  const gallery = new RegExp(`/datasets/${ds.id}/gallery`)
+
+  // Opened from the gallery: one step back, even after a pane was removed (the
+  // removal replaces its history entry rather than adding one).
+  await page.goto(`/datasets/${ds.id}/gallery`)
+  await selectAllIn(page, 3)
+  await page.getByRole('button', { name: 'Compare', exact: true }).click()
+  await expect(page.getByTestId('compare-pane')).toHaveCount(3)
+  await page.getByRole('button', { name: `Remove ${names[2]} from the comparison` }).click()
+  await expect(page.getByTestId('compare-pane')).toHaveCount(2)
+  await page.getByRole('button', { name: 'Back', exact: true }).click()
+  await expect(page).toHaveURL(gallery)
+  await expect(page.getByTestId('gallery-tile')).toHaveCount(3)
+
+  // Opened straight from a URL, with nothing behind it: the first image's gallery.
+  const rows = await (await request.get('/api/v1/images/', { params: { dataset_id: ds.id, limit: '10' } })).json()
+  const fresh = await page.context().newPage()
+  await fresh.goto(`/compare?ids=${rows.map((r: { id: string }) => r.id).join(',')}`)
+  await expect(fresh.getByTestId('compare-pane')).toHaveCount(3)
+  await fresh.getByRole('button', { name: 'Back', exact: true }).click()
+  await expect(fresh).toHaveURL(gallery)
+})
+
 test('in split view, Compare opens in the neighbouring pane and the gallery stays', async ({ page, request }) => {
   const { ds } = await seedThree(request, 'compare-split')
   await page.goto(`/datasets/${ds.id}/gallery`)

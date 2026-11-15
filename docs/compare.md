@@ -5,8 +5,9 @@ same spot in each. Use it to
 pick the best of several near-duplicates, to judge whether an upscale or colour grade
 improved an image, or to choose between a few ComfyUI takes on one prompt.
 
-Available from: the **Compare** button in the gallery's selection toolbar. There is no
-sidebar item, because a comparison always starts from images you have chosen.
+Available from: the **Compare** button in the gallery's selection toolbar, and on each
+duplicate group of the **Score images** page. There is no sidebar item, because a
+comparison always starts from images you have chosen.
 
 ## Opening a comparison
 
@@ -23,6 +24,16 @@ returns to the gallery as you left it.
 
 The page's address holds the images it shows, so a reload or a bookmark brings back the
 same comparison.
+
+**Back**, at the left of the toolbar, returns to where you opened the comparison: the
+gallery, or the Score images page for a duplicate group. Removing or reordering images
+doesn't add steps, so one press is enough. In split view, or after opening a bookmark,
+it takes you to the first image's gallery (or Score images page) instead.
+
+**From a duplicate group:** on the Score images page, each group of near-duplicates has a
+**Compare** button. It opens the group side by side, best first when every image was
+scored by the same model, with **Keep this one** under each image (see
+[Acting on images](#acting-on-images)).
 
 ## Zooming and panning
 
@@ -113,13 +124,27 @@ comparable ([Choosing the aesthetic model](reading-scores.md#choosing-the-aesthe
 
 ## Changing the comparison
 
-Each pane has three buttons in its top-right corner:
+Each pane has buttons in its top-right corner:
 
 - **Open** the image in the detail view. In split view it opens in the other pane, so
   the comparison stays on screen.
 - **Move left** swaps the pane with the one before it.
+- **Labels** and **Delete**: see below.
 - **Remove** takes the image out of the comparison. Its file is not touched. A
   comparison needs at least two images.
 
 If some of the images no longer exist (deleted since, or a link from another install), a
 note under the panes says how many were left out.
+
+## Acting on images
+
+- **Labels** opens a list of your [labels](labels.md); tick or untick them for that
+  image. Its labels show under the pane.
+- **Delete** removes the image and its file from its dataset, with its caption, after
+  you confirm. The comparison carries on with the rest.
+- **Keep this one** appears under each image of a duplicate group opened from the Score
+  images page. It keeps that image and deletes the rest of the group, after you confirm,
+  as **Keep best** does on that page but with your choice. It shows only while the
+  comparison is still the whole group: once you remove an image from it, keeping one
+  would leave the removed ones still marked as duplicates, so the button goes away.
+  Open the group again from the Score images page to get it back.

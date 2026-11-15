@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowUpRight, ChevronLeft, X } from "lucide-react";
+import { ArrowUpRight, ChevronLeft, Tags, Trash2, X } from "lucide-react";
 import type { CompareImage } from "../../types";
 import { imagesApi } from "../../api/images";
 import { useViewportPane } from "../../hooks/useLinkedViewport";
@@ -23,6 +23,17 @@ interface Props {
   onOpen: () => void;
   onMoveLeft?: () => void;
   onRemove: () => void;
+  onLabels: () => void;
+  onDelete: () => void;
+  /** Duplicate groups only, while the comparison is still the whole group. */
+  onKeep?: () => void;
+  /** Names of the labels attached, for the strip. */
+  labelNames: string[];
+  /** Its file is being deleted: the `<img>` is unmounted first, since Windows
+   *  refuses to delete a file still being served to it (PM-021). */
+  releasing: boolean;
+  /** A delete or keep is running: actions that change the set wait for it. */
+  busy: boolean;
 }
 
 /**
@@ -33,6 +44,7 @@ interface Props {
  */
 export default function ComparePane({
   item, index, vp, refSize, pixelated, best, showDataset, onSize, registerMeasure, onOpen, onMoveLeft, onRemove,
+  onLabels, onDelete, onKeep, labelNames, releasing, busy,
 }: Props) {
   const paneRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
@@ -67,10 +79,11 @@ export default function ComparePane({
         data-testid="compare-pane"
         aria-label={`${item.filename}. Scroll or press + and − to zoom, drag or use the arrow keys to pan, 0 to fit.`}
       >
-        {!placed && !failed && (
+        {releasing && <div className="cmp-missing">Deleting…</div>}
+        {!releasing && !placed && !failed && (
           <img className="cmp-thumb" src={imagesApi.thumbnailUrlVersioned(item.id, item.updated_at)} alt="" draggable={false} />
         )}
-        {failed ? (
+        {releasing ? null : failed ? (
           <div className="cmp-missing">This image's file could not be loaded.</div>
         ) : (
           <img
@@ -97,16 +110,26 @@ export default function ComparePane({
             <ArrowUpRight size={14} />
           </button>
           {onMoveLeft && (
-            <button type="button" className="cmp-corner-btn" title="Move left" aria-label={`Move ${item.filename} left`} onClick={onMoveLeft}>
+            <button type="button" className="cmp-corner-btn" title="Move left" aria-label={`Move ${item.filename} left`} disabled={busy} onClick={onMoveLeft}>
               <ChevronLeft size={14} />
             </button>
           )}
-          <button type="button" className="cmp-corner-btn" title="Remove from the comparison" aria-label={`Remove ${item.filename} from the comparison`} onClick={onRemove}>
+          <button type="button" className="cmp-corner-btn" title="Labels" aria-label={`Labels for ${item.filename}`} onClick={onLabels}>
+            <Tags size={14} />
+          </button>
+          <button type="button" className="cmp-corner-btn" title="Delete the image and its file" aria-label={`Delete ${item.filename}`} disabled={busy} onClick={onDelete}>
+            <Trash2 size={14} />
+          </button>
+          <button type="button" className="cmp-corner-btn" title="Remove from the comparison (the file stays)" aria-label={`Remove ${item.filename} from the comparison`} disabled={busy} onClick={onRemove}>
             <X size={14} />
           </button>
         </div>
       </div>
-      <MetaStrip item={item} best={best} showDataset={showDataset} zoomRef={zoomRef} />
+      <MetaStrip item={item} best={best} showDataset={showDataset} zoomRef={zoomRef} labelNames={labelNames}>
+        {onKeep && (
+          <button type="button" className="btn sm" disabled={busy} onClick={onKeep}>Keep this one</button>
+        )}
+      </MetaStrip>
     </div>
   );
 }

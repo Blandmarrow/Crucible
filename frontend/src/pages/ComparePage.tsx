@@ -1,12 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
-import { Minus, Plus } from "lucide-react";
-import { imagesApi } from "../api/images";
+import { ArrowLeft, Minus, Plus } from "lucide-react";
+import { useNavigate } from "react-router";
+import { usePaneContext } from "../contexts/PaneContext";
+import type { PaneView } from "../contexts/PaneContext";
+import { imagesApi, keptImagesMessage } from "../api/images";
+import { qualityApi } from "../api/quality";
 import type { CompareImage } from "../types";
-import { COMPARE_IMAGES_KEY } from "../constants/queryKeys";
+import { COMPARE_IMAGES_KEY, invalidateDatasetContentScope } from "../constants/queryKeys";
 import { COMPARE_PREFS_KEY } from "../constants/storage";
-import { usePaneCompareIds } from "../hooks/usePaneDatasetId";
+import { usePaneCompareFrom, usePaneCompareIds } from "../hooks/usePaneDatasetId";
+import { useLabels } from "../hooks/useLabels";
 import { usePaneNavigate } from "../hooks/usePaneNavigate";
 import { useOpenBeside } from "../hooks/useOpenBeside";
 import { ZOOM_MAX, useLinkedViewport, useViewportZoom } from "../hooks/useLinkedViewport";
@@ -21,6 +26,8 @@ import CompareGrid from "../components/compare/CompareGrid";
 import ContactSheetDialog from "../components/compare/ContactSheetDialog";
 import type { SheetPrefs } from "../components/compare/ContactSheetDialog";
 import type { BestMarks } from "../components/compare/MetaStrip";
+import CompareLabelsDialog from "../components/compare/CompareLabelsDialog";
+import ConfirmDialog from "../components/common/ConfirmDialog";
 
 type CompareMode = "side" | "ab" | "grid";
 interface ComparePrefs {
@@ -44,6 +51,20 @@ const MODES: { value: CompareMode; label: string }[] = [
 ];
 const GRID_COLUMN_CHOICES = [2, 3, 4, 5, 6, 8];
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
+/** A set's identity regardless of order, so a Move left keeps a group a group. */
+const sortedKey = (ids: string[]) => [...ids].sort().join(",");
+
+/** A confirmed Delete or Keep this one, with what it needs captured when confirmed. */
+interface PendingOp {
+  kind: "delete" | "keep";
+  item: CompareImage;
+  /** Keep: the images deleted. Delete: empty. */
+  others: CompareImage[];
+  /** The id list as it was, for the URL a delete writes back. */
+  ids: string[];
+  /** Every dataset the operation touches, each refreshed afterwards (PM-029). */
+  datasets: string[];
+}
 
 /**
  * The Compare page (#130, docs/dev/gallery/compare.md): up to four images side
@@ -53,6 +74,8 @@ const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
  */
 export default function ComparePage() {
   const ids = usePaneCompareIds();
+  const from = usePaneCompareFrom();
+  const { byId: labelsById } = useLabels();
   const idsKey = ids.join(",");
   // `ids` is a fresh array each render; everything below keys on the joined string.
   // Deduped: the server collapses repeats, and a hand-edited `?ids=a,a,b` would
@@ -60,6 +83,8 @@ export default function ComparePage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const wanted = useMemo(() => [...new Set(ids)].slice(0, COMPARE_MAX), [idsKey]);
   const { go } = usePaneNavigate();
+  const navigate = useNavigate();
+  const paneCtx = usePaneContext();
   const openBeside = useOpenBeside();
   const qc = useQueryClient();
 
@@ -156,12 +181,19 @@ export default function ComparePage() {
   const [backTo, setBackTo] = useState<string[] | null>(null);
   const [seenKey, setSeenKey] = useState(idsKey);
   const [ownKey, setOwnKey] = useState<string | null>(null);
+  // A duplicate group opened from the Quality page offers Keep this one only
+  // while the comparison is still that whole group: resolving part of a group
+  // would leave the rest flagged as duplicates of an image the user never chose.
+  const [groupKey, setGroupKey] = useState<string | null>(() => (from === "dups" ? sortedKey(wanted) : null));
+  const [resolved, setResolved] = useState<{ kept: CompareImage; deleted: number } | null>(null);
   if (seenKey !== idsKey) {
     setSeenKey(idsKey);
     setTicked([]);
     if (idsKey !== ownKey) {
       setModeState(wanted.length > COMPARE_SIDE_MAX ? "grid" : prefs.mode);
       setBackTo(null);
+      setGroupKey(from === "dups" ? sortedKey(wanted) : null);
+      setResolved(null);
     }
     setOwnKey(null);
   }
@@ -216,8 +248,96 @@ export default function ComparePage() {
 
   const setIds = (next: string[]) => {
     setOwnKey(next.join(","));
-    go(compareUrl(next), compareView(next), { replace: true });
+    go(compareUrl(next, from), compareView(next, from), { replace: true });
   };
+
+  // Delete and Keep this one: confirmed first, then the panes whose files go
+  // release their images (`releasing`), and only after that render commits does
+  // the effect below send the request. Windows refuses to delete a file still
+  // being served to the page (PM-021), so the order is the point.
+  // `from=dups` alone is not trusted: a bookmark or a hand-edited URL outlives a
+  // re-scan that split the group. The rows' own flags must still say "one group":
+  // every image's root (its `duplicate_of`, or itself) the same, and exactly one
+  // image the root, which the scan leaves unflagged.
+  const oneGroup = (() => {
+    const rootOf = (r: CompareImage) => (r.quality_flags?.duplicate_of as string | undefined) ?? r.id;
+    const roots = new Set(items.map(rootOf));
+    return roots.size === 1 && items.filter((r) => r.quality_flags?.duplicate_of).length === items.length - 1;
+  })();
+  const canKeep =
+    from === "dups" && groupKey === sortedKey(wanted) && !query.isPlaceholderData &&
+    items.length >= 2 && items.length === wanted.length && oneGroup;
+  const [confirm, setConfirm] = useState<PendingOp | null>(null);
+  const [running, setRunning] = useState<PendingOp | null>(null);
+  const [labelsFor, setLabelsFor] = useState<CompareImage | null>(null);
+  // One operation at a time: a second one would mount the first one's images
+  // again while their files are being deleted, and its captured id list would
+  // write the first deletion back into the URL.
+  const busy = running !== null;
+  const askDelete = (item: CompareImage) => {
+    if (!busy) setConfirm({ kind: "delete", item, others: [], ids, datasets: [item.dataset_id] });
+  };
+  const askKeep = (item: CompareImage) => {
+    if (!busy) setConfirm({
+      kind: "keep", item, ids,
+      others: items.filter((r) => r.id !== item.id),
+      datasets: [...new Set(items.map((r) => r.dataset_id))],
+    });
+  };
+  const releasing = new Set(
+    !running ? [] : running.kind === "delete" ? [running.item.id] : running.others.map((r) => r.id),
+  );
+  // The effect must start each operation exactly once. Inside a pane `go` changes
+  // identity on every store write (any click in any pane re-renders every leaf),
+  // so it is read through a ref, and `started` guards the rest. `mounted` stops a
+  // late answer from navigating: a pane the user has since moved on would be
+  // pulled back to Compare.
+  const nav = useRef({ go, from });
+  useLayoutEffect(() => { nav.current = { go, from }; });
+  const started = useRef<PendingOp | null>(null);
+  const mounted = useRef(true);
+  useEffect(() => {
+    // Set on every mount, not just declared true: StrictMode's mount-unmount-mount
+    // in development would otherwise leave it false for good.
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+  useEffect(() => {
+    if (!running || started.current === running) return;
+    started.current = running;
+    const op = running;
+    void (async () => {
+      try {
+        if (op.kind === "delete") {
+          await imagesApi.delete(op.item.id);
+          toast.success(`Deleted ${op.item.filename}`);
+          if (mounted.current) {
+            const next = op.ids.filter((x) => x !== op.item.id);
+            const { go: goNow, from: fromNow } = nav.current;
+            setOwnKey(next.join(","));
+            goNow(compareUrl(next, fromNow), compareView(next, fromNow), { replace: true });
+          }
+        } else {
+          const r = await qualityApi.resolveDuplicates([op.item.id], op.others.map((o) => o.id));
+          const kept = keptImagesMessage(r);
+          if (kept) toast.error(kept);
+          setResolved({ kept: op.item, deleted: r.deleted });
+        }
+      } catch (err) {
+        // A file open in another program is a 409 whose detail says so; the pane
+        // comes back, since nothing was deleted.
+        toast.error(apiErrorDetail(err, op.kind === "delete" ? "Delete failed" : "Could not resolve the group"));
+      } finally {
+        for (const d of op.datasets) {
+          invalidateDatasetContentScope(qc, d);
+          qc.invalidateQueries({ queryKey: ["duplicates", d] });
+        }
+        if (mounted.current) setRunning(null);
+      }
+    })();
+  }, [running, qc]);
+  const labelNames = (r: CompareImage) =>
+    r.label_ids.map((id) => labelsById.get(id)?.name).filter((n): n is string => !!n);
   const remove = (id: string) => {
     if (items.length <= 2) {
       toast("A comparison needs two images. Open the gallery to choose others.");
@@ -236,6 +356,23 @@ export default function ComparePage() {
   const open = (r: CompareImage) =>
     openBeside(`/datasets/${r.dataset_id}/image/${r.id}`, { page: "image-detail", datasetId: r.dataset_id, imageId: r.id });
 
+  // Back: the browser's previous page when there is one (the gallery or Score
+  // images page that opened this; removals and moves replace their history entry,
+  // so one step is enough). A pane has no history, and a bookmark or new tab has
+  // nothing to go back to, so both land on where a comparison is opened from: the
+  // first image's Score images page for a duplicate group, its gallery otherwise.
+  const backDs = items[0]?.dataset_id;
+  const backLabel = !backDs ? "Datasets" : from === "dups" ? "Score images" : "the gallery";
+  const goBack = () => {
+    const url = !backDs ? "/datasets" : `/datasets/${backDs}/${from === "dups" ? "quality" : "gallery"}`;
+    const view: PaneView = !backDs ? { page: "datasets" }
+      : { page: from === "dups" ? "quality" : "gallery", datasetId: backDs };
+    // React Router numbers the entries it pushed; 0 means this page opened the tab.
+    const idx = (window.history.state as { idx?: number } | null)?.idx ?? 0;
+    if (!paneCtx && idx > 0) navigate(-1);
+    else go(url, view, { replace: true });
+  };
+
   const datasetNames = [...new Set(items.map((r) => r.dataset_name))];
   const subtitle =
     items.length === 0 ? "" :
@@ -243,7 +380,17 @@ export default function ComparePage() {
     (datasetNames.length === 1 ? ` from ${datasetNames[0]}` : ` from ${datasetNames.length} datasets`);
 
   let body: React.ReactNode;
-  if (wanted.length === 0) {
+  if (resolved) {
+    body = (
+      <div className="empty-state">
+        <p style={{ margin: 0 }}>
+          Kept {resolved.kept.filename}
+          {resolved.deleted > 0 && ` and deleted ${resolved.deleted} duplicate${resolved.deleted === 1 ? "" : "s"}`}.
+        </p>
+        <button type="button" className="btn sm" onClick={() => open(resolved.kept)}>Open it in the detail view</button>
+      </div>
+    );
+  } else if (wanted.length === 0) {
     body = (
       <div className="empty-state">
         Nothing to compare yet. Select two or more images in the gallery and press Compare.
@@ -295,6 +442,12 @@ export default function ComparePage() {
             onOpen={() => open(r)}
             onMoveLeft={i > 0 ? () => moveLeft(r.id) : undefined}
             onRemove={() => remove(r.id)}
+            busy={busy}
+            onLabels={() => setLabelsFor(r)}
+            onDelete={() => askDelete(r)}
+            onKeep={canKeep ? () => askKeep(r) : undefined}
+            labelNames={labelNames(r)}
+            releasing={releasing.has(r.id)}
           />
         ))}
       </div>
@@ -312,12 +465,15 @@ export default function ComparePage() {
     <div className="cmp-root">
       <div className="cmp-bar">
         <div className="cmp-title">
+          <button type="button" className="btn sm ghost" onClick={goBack} title={`Back to ${backLabel}`}>
+            <ArrowLeft size={13} /> Back
+          </button>
           <h1>Compare</h1>
           {subtitle && <span className="cmp-sub">{subtitle}</span>}
         </div>
         <div className="cmp-seg" role="group" aria-label="Mode">
           {MODES.map((m) => (
-            <button key={m.value} type="button" aria-pressed={mode === m.value} onClick={() => setMode(m.value)}>
+            <button key={m.value} type="button" aria-pressed={mode === m.value} disabled={busy} onClick={() => setMode(m.value)}>
               {m.label}
             </button>
           ))}
@@ -418,6 +574,26 @@ export default function ComparePage() {
           </button>
         )}
       </div>
+      {confirm && (
+        <ConfirmDialog
+          danger
+          title={confirm.kind === "delete" ? `Delete ${confirm.item.filename}?` : `Keep ${confirm.item.filename}?`}
+          message={
+            confirm.kind === "delete"
+              ? "This deletes the image and its file from the dataset, with its caption."
+              : `This deletes the other ${confirm.others.length} image${confirm.others.length === 1 ? "" : "s"} in this duplicate group, with their files and captions: ${confirm.others.map((o) => o.filename).join(", ")}.`
+          }
+          confirmLabel={confirm.kind === "delete" ? "Delete" : `Delete ${confirm.others.length}`}
+          onCancel={() => setConfirm(null)}
+          onConfirm={() => { if (!busy) setRunning(confirm); setConfirm(null); }}
+        />
+      )}
+      {labelsFor && (
+        <CompareLabelsDialog
+          item={items.find((r) => r.id === labelsFor.id) ?? labelsFor}
+          onClose={() => setLabelsFor(null)}
+        />
+      )}
       {sheet && (
         <ContactSheetDialog
           ids={sheet.ids}

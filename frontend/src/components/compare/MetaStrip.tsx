@@ -18,11 +18,14 @@ interface Props {
   /** Receives the "shown at N%" span, which the pane rewrites on every layout
    *  without a React render (see `useViewportPane`). */
   zoomRef: React.Ref<HTMLSpanElement>;
+  labelNames: string[];
+  /** Actions under the facts (Keep this one). */
+  children?: React.ReactNode;
 }
 
 /** The facts under one pane. Best values are marked in words, never by colour
  *  alone, so they read in both themes and to colour-blind users. */
-export default function MetaStrip({ item, best, showDataset, zoomRef }: Props) {
+export default function MetaStrip({ item, best, showDataset, zoomRef, labelNames, children }: Props) {
   const [captionOpen, setCaptionOpen] = useState(false);
   const caption = item.caption_text.trim();
 
@@ -49,6 +52,11 @@ export default function MetaStrip({ item, best, showDataset, zoomRef }: Props) {
         {showDataset && <span>{item.dataset_name}</span>}
         <span ref={zoomRef} />
       </div>
+      {labelNames.length > 0 && (
+        <div className="cmp-labels" aria-label="Labels">
+          {labelNames.map((n) => <span key={n} className="cmp-label">{n}</span>)}
+        </div>
+      )}
       {caption && (
         <button
           type="button"
@@ -60,6 +68,7 @@ export default function MetaStrip({ item, best, showDataset, zoomRef }: Props) {
           {caption}
         </button>
       )}
+      {children && <div className="cmp-acts">{children}</div>}
     </div>
   );
 }

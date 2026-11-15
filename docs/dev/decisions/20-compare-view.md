@@ -4,7 +4,8 @@
 
 - **Date:** 2026-11-15.
 - **Status:** **Decided** (2026-11-15, by the user), while designing issue #130. The
-  design is [compare-plan/README.md](../compare-plan/README.md) until it lands.
+  design plan was deleted once all four phases landed (PRs #169 to #172); what was built
+  is described in `docs/dev/gallery/compare.md`.
 - **Decision:**
   - **Compare is a routed page, not a modal**, at `/compare?ids=…`, tied to no dataset,
     since a selection can span datasets.

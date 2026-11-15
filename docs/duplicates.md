@@ -14,6 +14,7 @@ After a scoring run that includes duplicate detection, the Score images page gro
 
 - **Keep best** — retains the image with the highest aesthetic score and deletes the rest. Images with no aesthetic score rank **last**, never first: unscored means unknown, not bad. If no image in the group has been scored at all, the button is disabled and says so — use *Keep first* instead. It is disabled for the same reason when a group's scores come from **two different aesthetic models**: the thumbnails then carry a small model label under each score, and re-scoring the group with one model re-enables it. The two aesthetic scales are not comparable — see [Choosing the aesthetic model](reading-scores.md#choosing-the-aesthetic-model)
 - **Keep first** — retains the image marked *kept*, which is always first in the group, and deletes the rest
+- **Compare** — opens the group in the [Compare](compare.md) page, side by side and best first, so you can zoom in on all of them at once and press **Keep this one** under the image you want
 
 Both buttons ask for confirmation on a group whose frames all came from one video — see below.
 

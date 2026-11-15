@@ -272,3 +272,22 @@ utilities → `docs/dev/shared-utilities.md`.
   it is the index doc for the same material, so anything § Features says that the topic docs
   do not is a fact to move *there* rather than lose. A handful of Features bullets name
   things with no topic doc at all (verify each against the Docs table before cutting).
+
+## docs/dev/gallery/compare.md
+
+- **Moves:** two seams, into two files, both inside the gallery family (hub rows only, no
+  CLAUDE.md Map row). § Linked zoom, § The pane and § A/B (289 + 183 + 441 words on
+  2026-11-15) go to docs/dev/gallery/compare-viewer.md; § Grid and the contact sheet (798)
+  goes to docs/dev/gallery/contact-sheet.md. Each takes its own bullets from § Tests.
+- **Why here:** they are three subsystems. The viewer is frontend rendering
+  (`useLinkedViewport`, `ComparePane`, `ABView`); the contact sheet is mostly a backend
+  route and service (`backend/services/contact_sheet.py`); what stays is the page's
+  identity, routing, the batch read and the actions. Moving one seam alone leaves
+  `compare.md` near 80% of budget; both leave roughly 1,750 + 1,050 + 950 (3,781 in all
+  on 2026-11-15, after #130 phase 4 grew § Acting on images to 560).
+- **Watch for:** `docs/dev/gallery.md`'s routing rows name `compare.md` for
+  `useLinkedViewport.ts`, `components/compare/` and `contact_sheet.py`, and each needs the
+  right new file. `docs/compare.md` is the user doc for all three, so the new files
+  mirror its sections rather than a user doc of their own. § Linked zoom is cited by name
+  from § A/B; `docs/dev/quality/duplicate-resolution.md` cites § Acting on images, which
+  stays.

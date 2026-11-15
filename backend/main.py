@@ -45,6 +45,7 @@ from backend.database import init_db
 from backend.ml.model_manager import ModelInUseError
 from backend.request_guard import RequestGuardMiddleware
 from backend.utils import FileInUseError
+from backend.version import __version__
 
 # Project the .env/OS-env HF_TOKEN into the process environment, where the ten HuggingFace-hub
 # loaders — none of which pass token= — will find it. Stays here, between the config and router
@@ -168,7 +169,7 @@ async def _sweep_orphan_dataset_folders() -> None:
 
 app = FastAPI(
     title="Crucible",
-    version="1.0.0",
+    version=__version__,
     lifespan=lifespan,
 )
 
@@ -308,7 +309,7 @@ async def shutdown():
 
 @app.get("/api/v1/health", status_code=200)
 async def health():
-    return {"status": "ok", "start_time": _START_TIME}
+    return {"status": "ok", "start_time": _START_TIME, "version": __version__}
 
 
 @app.post("/api/v1/restart", status_code=204)

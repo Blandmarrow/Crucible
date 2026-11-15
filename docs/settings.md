@@ -2,6 +2,10 @@
 
 Route: `/settings` — accessible from the sidebar. Settings are grouped into nine tabs. The Labels tab is covered in [labels.md](labels.md).
 
+The line under the page title shows which version of Crucible you are running, such as
+"Crucible 1.4.0", with a **Release notes** link to that version's page on GitHub. Quote the
+version when you report a bug.
+
 ## Gallery
 
 Browser-local preferences, each taking effect immediately:

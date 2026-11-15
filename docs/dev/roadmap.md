@@ -39,7 +39,7 @@ restates its stages.
    on its reporter.
 2. **CLAUDE.md is back under budget** (6,396 of 6,500): captioning and labels went behind
    hubs, `docs/dev/captioning.md` and `docs/dev/labels.md`, on
-   `docs/hub-captioning-labels`. The Map has room for three or four new rows; #129's plan
+   `docs/hub-captioning-labels`, PR #177. The Map has room for three or four new rows; #129's plan
    should put its docs in one family from the start.
 3. M4 stays held, with its merge checklist under Waiting. The closed items of the
    previous blocks are in

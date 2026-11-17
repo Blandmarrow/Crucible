@@ -31,102 +31,50 @@ restates its stages.
    linking the record that holds the full text.
 5. **Landed**: one line per finished milestone or handoff record.
 
-## Next session (updated 2026-11-15, captioning and labels hubs)
+## Next session (updated 2026-11-18, #129 designed)
 
-1. **#130 Compare landed** in five PRs, #168 to #172 (see Now), and the detail page's
-   Compare menu (With selection, With neighbours) followed in PR #173; the tray is under
-   Later. All of it shipped as v1.5.0. M11 now holds #129, design first, and #48, waiting
-   on its reporter.
-2. **CLAUDE.md is back under budget** (6,396 of 6,500): captioning and labels went behind
-   hubs, `docs/dev/captioning.md` and `docs/dev/labels.md`, on
-   `docs/hub-captioning-labels`, PR #177. The Map has room for three or four new rows; #129's plan
-   should put its docs in one family from the start.
-3. M4 stays held, with its merge checklist under Waiting. The closed items of the
-   previous blocks are in
-   [roadmap-archive/handoff-2026-11-15.md](roadmap-archive/handoff-2026-11-15.md) and
-   [roadmap-archive/handoff-2026-11-14.md](roadmap-archive/handoff-2026-11-14.md).
+This block lives on `feat/analyst` only: by decision 21 nothing of M12 reaches `main`, the
+docs included, until the whole feature is done.
+
+1. **#129 is designed** as M12, the dataset analyst
+   ([decision 21](decisions/21-dataset-analyst.md), plan
+   [analyst-plan/README.md](analyst-plan/README.md)). Start with phase 0, the fake LLM
+   server, on a branch off `feat/analyst`.
+2. **M11 is archived** with only #48 open, now under Waiting
+   ([roadmap-archive/m11-open-enhancements.md](roadmap-archive/m11-open-enhancements.md)).
+3. Merge `main` into `feat/analyst` regularly, and run the branch's migrations only on a
+   throwaway database. The previous block is in
+   [roadmap-archive/handoff-2026-11-18.md](roadmap-archive/handoff-2026-11-18.md).
 
 ## Now
 
-### M11 — Open enhancement issues
+### M12 — Dataset analyst
 
-Ordered first by the user on 2026-11-13, ahead of M7's Stage 3 (now under Waiting). It holds
-every open GitHub issue labelled `enhancement` except #90, #9 and #16, which stay parked
-under Later.
-Each issue holds the *what*; a box adds only the code pointer found when the issues were
-reviewed. Gate: each box ships with its user docs (`README.md` and the matching
-`docs/*.md`), on its own branch unless it says otherwise. The two design-first items get a
-plan folder and are expanded here before any code. The tiers are the order.
+Issue #129, expanded on 2026-11-18 under [decision 21](decisions/21-dataset-analyst.md).
+Plan: [analyst-plan/README.md](analyst-plan/README.md). Gate: every phase below merged into
+`feat/analyst` with its tests and docs, then one PR to `main`. Each phase is a branch off
+`feat/analyst`, reviewed by Opus before it merges back.
 
-Tier 1, small:
-
-- [x] #24 Remove captions: a `clear` operation for caption bulk edit, merged 2026-11-13 as
-  PR #157, which closed the issue. The user chose to delete a cleared caption's
-  `.txt`, and to make that the rule for every path that empties a caption
-  (`docs/dev/image-import.md` § Caption sidecars).
-- [x] #105 Re-caption with the existing caption: merged 2026-11-13 as PR #159, which closed
-  the issue. `{previous_caption}` now works on every pipeline step and on `/run`, the
-  detail page's AI panel has a Fix current mode, and the Captioning page's step 1 has an
-  "Include current caption" toggle (`docs/dev/captioning/jobs.md` § The `{previous_caption}`
-  placeholder).
-- [ ] #48 Toggle thumbnails: ask the reporter what the problem is first. The likely fix is a
-  thumbnail size setting (today `thumbnail_size = 256` in `backend/config.py`, set only by
-  environment variable) plus the existing Rebuild thumbnails job. Full resolution in the
-  gallery as an opt-in at most; thumbnails stay on, since other views depend on them.
-
-Tier 2, medium:
-
-- [x] #19 Light mode: merged 2026-11-14 as PR #162, which closes the issue. The user picked
-  "Studio grey" from five drafts that day, with a Dark / Light / Match system choice in
-  Settings → UI Behavior, dark the default. A second token block under
-  `:root[data-theme="light"]`, set before first paint, plus `--accent-text` and
-  `--on-accent`; about 60 files swept onto tokens (`docs/dev/styling.md` § Two themes).
-
-Tier 3, captioning helpers, one batch: three PRs in this order, by the user's choice of
-2026-11-14. Each helper sits in the detail page's caption panel and changes only the
-unsaved draft.
-
-- [x] #45 Other images' captions: merged 2026-11-14 as PR #163, which closes the issue. An
-  *Other captions* section in the detail page's caption panel, ranked by shared tags,
-  detected objects, the stored CLIP vector or recency, inside the current dataset only (the
-  user's ruling of 2026-11-14) (`docs/dev/captioning/editor.md` § Other captions panel).
-- [x] #50 Check for a better tag: merged 2026-11-14 as PR #164, which closes the issue.
-  A **Check tags on Danbooru** button in the caption panel, press-only, through a new
-  `POST /booru/check`. It flags aliases, rare tags (under 100 posts with a close tag holding
-  at least 100 times more, the user's rule of 2026-11-14) and unknown ones, and an outage
-  is a 502 rather than every tag "not found". Danbooru only, by the user's choice. The same
-  PR moves the Booru page's Safebooru search to danbooru.donmai.us with a User-Agent, after
-  safebooru.donmai.us answered every API request with a 403 (`docs/dev/captioning/editor.md`
-  § Check tags).
-- [x] #52 Synonyms: merged 2026-11-15 as PR #165, which closes the issue. An offline
-  WordNet lookup (`docs/dev/captioning/dictionary.md`), a Settings toggle, and a card under the
-  caption box (`docs/dev/captioning/editor.md` § Synonym card), the user's choice over a
-  popover at the word, 2026-11-14. The install runs outside the job queue and irregular
-  forms come from WordNet's own lists (decision 18). Licence checked
-  2026-11-14: Open English WordNet 2025, core edition, which is CC BY 4.0 on top of the
-  Princeton WordNet licence. Both allow any use. Credit both projects, keep Princeton's
-  notice and disclaimer with every copy, note our conversion, and never use Princeton's
-  name in advertising. The app downloads the official JSON zip (about 10 MB) with a pinned
-  hash and converts it locally, so the repo carries none of the data. Skip the "2025+"
-  edition, whose proper nouns come from Wikidata.
-
-Tier 4, design first:
-
-- [x] #130 Better comparisons: the Compare page, merged 2026-11-15 under
-  [decision 20](decisions/20-compare-view.md), one PR per phase, each after an Opus review
-  whose findings were fixed in the same PR. User doc `docs/compare.md`, dev doc
-  `docs/dev/gallery/compare.md`; the design plan was deleted when the last phase landed.
-  The five phase boxes (PRs #168 to #172) are in
-  [roadmap-archive/handoff-2026-11-15.md § #130's phase boxes](roadmap-archive/handoff-2026-11-15.md#130s-phase-boxes).
-- [ ] #129 Chat with an LLM: a plan folder. Read-only tools first, writes behind a
-  confirmation, and the paid-call cap applies; weak tool calling in local models is the main
-  risk. Large enough to become its own milestone when it is expanded.
+- [ ] Phase 0: the test harness, a fake OpenAI-compatible server for pytest and e2e
+  ([§ Phase 0](analyst-plan/README.md#phase-0--test-harness)).
+- [ ] Phase 1: the health report, the goal field and dataset notes, with no LLM
+  ([§ Phase 1](analyst-plan/README.md#phase-1--health-report-no-llm)).
+- [ ] Phase 2: the analyst chat without tools, its privacy filter, budgets and streaming
+  ([§ Phase 2](analyst-plan/README.md#phase-2--analyst-chat-no-tools)).
+- [ ] Phase 3: read-only tools for models that handle them
+  ([§ Phase 3](analyst-plan/README.md#phase-3--read-only-tools)).
+- [ ] Phase 4: actions behind confirmation, each taking a snapshot first
+  ([§ Phase 4](analyst-plan/README.md#phase-4--actions-behind-confirmation)).
+- [ ] Phase 5: measure caption–image agreement, then build what measures well
+  ([§ Phase 5](analyst-plan/README.md#phase-5--captionimage-agreement-measure-first)).
+- [ ] The final PR from `feat/analyst` to `main`, with the user docs complete.
 
 ## Waiting
 
 ### M7 — Style embedding
 
-Waits on M11, by the user's ordering of 2026-11-13; nothing else blocks it.
+Waits on M12, which grew out of M11's #129, by the user's ordering of 2026-11-13 (M11 ahead
+of M7's Stage 3); nothing else blocks it.
 Gate: the layer and blend change merged with its docs, then the remaining stages expanded here
 in their plan's order. Plan: [style-embedding-plan/README.md](style-embedding-plan/README.md).
 Stage 2 there (DINOv3) is not built, by
@@ -214,6 +162,16 @@ M8's open items, each needing M4's rewrite of the files it touches. Detail:
   `Version-1.3.0` followed. Its release notes say "update to 1.3 or later first"
   ([decision 19](decisions/19-release-versioning.md)). Record:
   [roadmap-archive/m5-app-stored-prompts.md](roadmap-archive/m5-app-stored-prompts.md).
+
+### M11's last box
+
+Waits on the issue's reporter. M11 itself is archived:
+[roadmap-archive/m11-open-enhancements.md](roadmap-archive/m11-open-enhancements.md).
+
+- [ ] #48 Toggle thumbnails: ask the reporter what the problem is first. The likely fix is a
+  thumbnail size setting (today `thumbnail_size = 256` in `backend/config.py`, set only by
+  environment variable) plus the existing Rebuild thumbnails job. Full resolution in the
+  gallery as an opt-in at most; thumbnails stay on, since other views depend on them.
 
 ### Upstream
 
@@ -359,3 +317,10 @@ Each line links the record that holds the full text.
   `Version-1.3.0`.
 - **v1.5.0** (2026-11-15): the Compare page, #130 (PRs #169 to #172), opening it from an
   image's own page (#173), and the selection toolbar's wrap fix (#174).
+- **M11 — Open enhancement issues** (2026-11-13 to 2026-11-15, PRs #157 to #172): caption
+  clearing, re-captioning with the existing caption, light mode, the three caption helpers and
+  the Compare page. #129 became M12; #48 waits on its reporter, under Waiting. Record:
+  [roadmap-archive/m11-open-enhancements.md](roadmap-archive/m11-open-enhancements.md).
+- **Handoff notes, 18 November 2026**: the Next session block of 2026-11-15, closed when
+  #129 was designed. Record:
+  [roadmap-archive/handoff-2026-11-18.md](roadmap-archive/handoff-2026-11-18.md).

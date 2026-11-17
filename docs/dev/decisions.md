@@ -176,3 +176,13 @@ the neighbouring pane in split view. Linked panes match the same region by defau
 contact sheet is a download and is never written to disk. The view can keep, delete and
 label images. One PR per phase. Full record:
 [decisions/20-compare-view.md](decisions/20-compare-view.md).
+
+## 21. The LLM chat is a dataset analyst built on Crucible's own findings
+
+**Decided** (2026-11-18, by the user): issue #129's chat is an analyst for one dataset.
+Crucible computes a health report of findings, an optional goal and per-dataset notes, and
+the LLM explains them and suggests actions; performing actions comes last, behind
+confirmation. Crucible enforces what the LLM sees, budgets are in tokens, the chat is tried
+in the split-view panes first, and nothing reaches `main`, docs included, until the whole
+feature is done on `feat/analyst`. Full record:
+[decisions/21-dataset-analyst.md](decisions/21-dataset-analyst.md).

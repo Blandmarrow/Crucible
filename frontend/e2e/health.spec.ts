@@ -17,7 +17,8 @@ test('health report: dismiss a finding and open another one\'s images', async ({
   await expect(uncaptioned).toContainText('2 of 2 images')
   await expect(page.getByTestId('finding-no_goal')).toBeVisible()
 
-  await uncaptioned.getByRole('button', { name: 'Dismiss…' }).click()
+  // Its accessible name carries the finding's title, so a screen reader can tell rows apart.
+  await uncaptioned.getByRole('button', { name: 'Dismiss: Images with no caption' }).click()
   const dialog = page.getByRole('dialog', { name: /Dismiss/ })
   await dialog.getByLabel('Reason').fill('captions come from the next run')
   await dialog.getByRole('button', { name: 'Dismiss', exact: true }).click()

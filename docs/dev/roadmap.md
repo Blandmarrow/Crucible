@@ -31,23 +31,21 @@ restates its stages.
    linking the record that holds the full text.
 5. **Landed**: one line per finished milestone or handoff record.
 
-## Next session (updated 2026-11-18, M12 phase 1 done, room made for phase 2)
+## Next session (updated 2026-11-19, M12 phase 2a in review)
 
 This block lives on `feat/analyst` only: by decision 21 nothing of M12 reaches `main`, the
 docs included, until the whole feature is done.
 
-1. **Phase 1 is built and merged**: the health report, notes and goal (#179), the Health
-   page (#180) and the gallery `?filter=` deep link (#181), all into `feat/analyst`. Start
-   phase 2, the analyst chat without tools
-   ([§ Phase 2](analyst-plan/README.md#phase-2--analyst-chat-no-tools)), on a branch off
-   `feat/analyst` with an Opus review; it will want splitting into PRs as phase 1 was.
-2. **CLAUDE.md has room for phase 2's key invariant** (everything the LLM sees goes through
-   `build_context`): detection and the file browser went behind hubs on `main`, PR #182,
-   merged in here on 2026-11-18, leaving this branch at 6,392 of 6,500 words. Keep the
-   invariant short and put its detail in `docs/dev/analyst.md`.
+1. **2a is PR #183** into `feat/analyst`: the chat tables, budgets, provider privacy and
+   `build_context` (`docs/dev/analyst/chat.md`), Opus-reviewed with every finding fixed.
+   Merge it once the user agrees, then start **2b**, sending: the streaming call, the
+   shared limiter, budgets and cancel (the list under Now).
+2. **Two rulings for phase 2 (user, 2026-11-18)**: the provider's `max_concurrent` becomes
+   one limiter shared by chats and caption jobs, which touches `captioning.py`; and replies
+   render with `react-markdown`, raw HTML off.
 3. Merge `main` into `feat/analyst` regularly, and run the branch's migrations only on a
    throwaway database. The previous block is in
-   [roadmap-archive/handoff-2026-11-18.md](roadmap-archive/handoff-2026-11-18.md).
+   [roadmap-archive/handoff-2026-11-19.md](roadmap-archive/handoff-2026-11-19.md).
 
 ## Now
 
@@ -68,7 +66,18 @@ Plan: [analyst-plan/README.md](analyst-plan/README.md). Gate: every phase below 
     PR #180 into `feat/analyst`, 2026-11-18.
   - [x] 1c, the gallery `?filter=` deep link: PR #181 into `feat/analyst`, 2026-11-18.
 - [ ] Phase 2: the analyst chat without tools, its privacy filter, budgets and streaming
-  ([§ Phase 2](analyst-plan/README.md#phase-2--analyst-chat-no-tools)).
+  ([§ Phase 2](analyst-plan/README.md#phase-2--analyst-chat-no-tools)), in five PRs:
+  - [x] 2a, the chat tables, budget settings, provider privacy and `build_context` with the
+    preview route (record: `docs/dev/analyst/chat.md`): PR #183 into `feat/analyst`,
+    2026-11-19.
+  - [ ] 2b, sending: the streaming call, a per-provider limiter shared with caption jobs,
+    budgets, cancel, the startup sweep and dataset-delete cancel, finding references.
+  - [ ] 2c, the chat page: `chatStore`, the components, `react-markdown`, the Settings
+    Analyst tab and the user docs.
+  - [ ] 2d, note proposals: the `crucible-notes` parser, accept and undo, the notes' chat
+    columns.
+  - [ ] 2e, "Open chat beside" with the pane layout persisted, then scripted trials against
+    local models and Gemini Flash.
 - [ ] Phase 3: read-only tools for models that handle them
   ([§ Phase 3](analyst-plan/README.md#phase-3--read-only-tools)).
 - [ ] Phase 4: actions behind confirmation, each taking a snapshot first
@@ -332,3 +341,6 @@ Each line links the record that holds the full text.
 - **Handoff notes, 18 November 2026**: the Next session block of 2026-11-15, closed when
   #129 was designed. Record:
   [roadmap-archive/handoff-2026-11-18.md](roadmap-archive/handoff-2026-11-18.md).
+- **Handoff notes, 19 November 2026**: the Next session block of 2026-11-18 (phase 1 done),
+  closed when phase 2 started with PR #183. Record:
+  [roadmap-archive/handoff-2026-11-19.md](roadmap-archive/handoff-2026-11-19.md).

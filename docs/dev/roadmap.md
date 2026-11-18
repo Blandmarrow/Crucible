@@ -41,7 +41,7 @@ docs included, until the whole feature is done.
    start 1b, the Health page, dialogs and card badge, then 1c, the gallery `?filter=` deep
    link ([§ Phase 1](analyst-plan/README.md#phase-1--health-report-no-llm)); each on a branch
    off `feat/analyst` with an Opus review.
-2. 1b carries the user docs (`docs/analyst.md`, a README row). CLAUDE.md is at 6,483 of
+2. 1b carries the user docs (a new analyst page in `docs/`, a README row). CLAUDE.md is at 6,483 of
    6,500 words, so phase 2's key invariant needs room made first.
 3. Merge `main` into `feat/analyst` regularly, and run the branch's migrations only on a
    throwaway database. The previous block is in

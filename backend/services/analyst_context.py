@@ -16,9 +16,13 @@ The categories, each behind a toggle (`schemas.chat.PRIVACY_CATEGORIES`):
   uses, recorded in the manifest); a dismissal is a preference naming its finding.
 - **tags**, **captions**, **file names**: data from scrapers, sidecars and captioners,
   so untrusted. They go inside one `<dataset-data>` block that the system prompt calls
-  data, with the delimiter neutralised inside it. A file name is only ever the base
-  name; no absolute path is sent under any setting.
+  data. A file name is only ever the base name; no absolute path is sent under any
+  setting.
 - **images**: reserved, never sent.
+
+Every string Crucible did not write passes through `_clean`, which keeps it on one line
+and unable to close or fake the data block. The history obeys the toggles too: an
+earlier reply written while a category now off was shared is withheld (`_history`).
 
 Captions are a seeded sample stratified by length, so the same dataset state gives the
 same sample, and each is cut to `CAPTION_MAX_CHARS`. See docs/dev/analyst/chat.md.
@@ -26,6 +30,7 @@ same sample, and each is cut to `CAPTION_MAX_CHARS`. See docs/dev/analyst/chat.m
 import math
 import random
 import re
+import unicodedata
 from dataclasses import dataclass, field
 
 from sqlalchemy import func, select
@@ -64,8 +69,15 @@ CHARS_PER_TOKEN = 4
 
 DATA_OPEN = "<dataset-data>"
 DATA_CLOSE = "</dataset-data>"
-# A fixed pattern, so stdlib `re` is safe here (CLAUDE.md § client-supplied regex).
-_DELIMITER_RE = re.compile(r"<\s*/?\s*dataset-data", re.IGNORECASE)
+# Fixed patterns, so stdlib `re` is safe here (CLAUDE.md § client-supplied regex).
+# The delimiter's name with any separator, after NFKC folded fullwidth letters to ASCII.
+_DELIMITER_NAME_RE = re.compile(r"dataset\W*data", re.IGNORECASE)
+
+# What stands in for an earlier reply written while a category now off was shared.
+WITHHELD_REPLY = (
+    "(An earlier reply is withheld here: it was written when this chat shared data it "
+    "no longer shares.)"
+)
 
 _SAMPLE_SLOT = "analyst_sample"
 
@@ -146,9 +158,17 @@ def _one_line(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
-def _neutralise(text: str) -> str:
-    """Keep data from closing (or reopening) the data block early."""
-    return _DELIMITER_RE.sub(lambda m: m.group(0).replace("<", "‹"), text)
+def _clean(text: str, limit: int) -> str:
+    """Text that came from the user or the dataset, made safe to place in the prompt:
+    one line (so it cannot forge a heading or a list item), no format characters (a
+    zero-width space hides a tag from a match), NFKC-folded (fullwidth `＜` becomes `<`),
+    no angle brackets, and the data block's name broken, so it can neither close the
+    block nor open a fake one. Every string not written by Crucible goes through here."""
+    text = unicodedata.normalize("NFKC", text)
+    text = "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
+    text = text.replace("<", "‹").replace(">", "›")
+    text = _DELIMITER_NAME_RE.sub("dataset data", text)
+    return _one_line(text, limit)
 
 
 def _fmt(value) -> str:
@@ -266,8 +286,8 @@ def _numbers_section(ds: Dataset, report: HealthReport, stats: dict, delta: str 
 
 
 def _identity_section(ds: Dataset) -> _Section:
-    goal = ds.goal.strip() or "not set"
-    return _Section("identity", f"## The dataset\nName: {ds.name}\nGoal: {goal}", items=2)
+    goal = _clean(ds.goal, 2000) or "not set"
+    return _Section("identity", f"## The dataset\nName: {_clean(ds.name, 255)}\nGoal: {goal}", items=2)
 
 
 async def _notes_section(db: AsyncSession, ds: Dataset) -> tuple[_Section, dict[str, list[str]]]:
@@ -289,7 +309,7 @@ async def _notes_section(db: AsyncSession, ds: Dataset) -> tuple[_Section, dict[
         if not rows:
             lines.append("(none)")
         for n, item in enumerate(rows, 1):
-            text = _one_line(item.text, 2000)
+            text = _clean(item.text, 2000)
             if getattr(item, "decided_at", None):
                 text = f"({item.decided_at:%Y-%m-%d}) {text}"
             if getattr(item, "finding_id", None):
@@ -307,14 +327,14 @@ async def _tags_section(db: AsyncSession, ds: Dataset) -> _Section | None:
     lines = [
         f"Most used tags, over {captions['tag_like']} tag-style captions "
         f"({captions['distinct_tags']} distinct tags):",
-        ", ".join(f"{_one_line(t['tag'], 80)} ({t['count']})" for t in top[:TOP_TAGS_SENT]),
+        ", ".join(f"{_clean(t['tag'], 80)} ({t['count']})" for t in top[:TOP_TAGS_SENT]),
     ]
     if captions.get("everywhere"):
-        lines.append("In nearly every caption: " + ", ".join(_one_line(t["tag"], 80) for t in captions["everywhere"]))
+        lines.append("In nearly every caption: " + ", ".join(_clean(t["tag"], 80) for t in captions["everywhere"]))
     if captions.get("singleton_examples"):
         lines.append(
             f"Used only once ({captions['singleton_tags']} tags), for example: "
-            + ", ".join(_one_line(t, 80) for t in captions["singleton_examples"])
+            + ", ".join(_clean(t, 80) for t in captions["singleton_examples"])
         )
     return _Section("tags", "\n".join(lines), items=len(top[:TOP_TAGS_SENT]))
 
@@ -330,35 +350,41 @@ def _stratified_positions(n: int, k: int, seed: str) -> list[int]:
     return out
 
 
-async def _sample(db: AsyncSession, ds: Dataset, captioned_only: bool) -> list[tuple[str, str]]:
+async def _sample(db: AsyncSession, ds: Dataset, captioned_only: bool, stats: dict) -> list[tuple[str, str]]:
     """(base file name, caption) for up to `CAPTION_SAMPLE_SIZE` images, stratified by
-    caption length. Cached on the image validator, like the Stats payloads."""
+    caption length. Cached on the image validator, like the Stats payloads.
+
+    The window ranks ids alone, by the integer `caption_token_count`, so a big dataset
+    sorts small tuples rather than every caption's text; the ~20 picked rows are read by
+    id after. The row count comes from the cached Stats payload. Its captioned count
+    ignores whitespace-only captions that the `!= ""` scope keeps, so it can only be
+    smaller, and every position picked stays in range."""
     validator = await _image_validator(db, ds.id, None)
     key = (ds.id, None, f"{_SAMPLE_SLOT}:{int(captioned_only)}")
     cached = _stats_cache_get(key, validator)
     if cached is not None:
         return cached["rows"]
 
-    def scope(stmt):
-        stmt = _stats_scan(stmt, ds.id, None)
-        return stmt.where(Image.caption_text != "") if captioned_only else stmt
-
-    n = int(await db.scalar(scope(select(func.count()).select_from(Image))) or 0)
+    n = int(stats.get("captioned_count" if captioned_only else "image_count") or 0)
     rows: list[tuple[str, str]] = []
     if n:
-        k = min(CAPTION_SAMPLE_SIZE, n)
-        picks = _stratified_positions(n, k, ds.id)
-        ranked = scope(select(
-            Image.filename,
-            Image.caption_text,
-            func.row_number().over(order_by=(func.length(Image.caption_text), Image.id)).label("rn"),
-        )).subquery()
-        result = await db.execute(
-            select(ranked.c.filename, ranked.c.caption_text)
-            .where(ranked.c.rn.in_(picks))
-            .order_by(ranked.c.rn)
+        picks = _stratified_positions(n, min(CAPTION_SAMPLE_SIZE, n), ds.id)
+        tokens = func.coalesce(Image.caption_token_count, 0)
+        stmt = _stats_scan(
+            select(Image.id, func.row_number().over(order_by=(tokens, Image.id)).label("rn")), ds.id, None
         )
-        rows = [(base_name(f or ""), c or "") for f, c in result.all()]
+        if captioned_only:
+            stmt = stmt.where(Image.caption_text != "")
+        ranked = stmt.subquery()
+        order = {
+            row_id: rn for row_id, rn in (await db.execute(
+                select(ranked.c.id, ranked.c.rn).where(ranked.c.rn.in_(picks))
+            )).all()
+        }
+        found = (await db.execute(
+            select(Image.id, Image.filename, Image.caption_text).where(Image.id.in_(list(order)))
+        )).all()
+        rows = [(base_name(f or ""), c or "") for _id, f, c in sorted(found, key=lambda r: order[r[0]])]
     _stats_cache_put(key, validator, {"rows": rows})
     return rows
 
@@ -370,11 +396,11 @@ def _sample_section(rows: list[tuple[str, str]], captions: bool, names: bool) ->
         what = "Sample captions"
         lines = []
         for n, (name, caption) in enumerate(rows, 1):
-            text = _one_line(caption, CAPTION_MAX_CHARS) or "(no caption)"
-            lines.append(f"{n}. {name}: {text}" if names else f"{n}. {text}")
+            text = _clean(caption, CAPTION_MAX_CHARS) or "(no caption)"
+            lines.append(f"{n}. {_clean(name, 200)}: {text}" if names else f"{n}. {text}")
     else:
         what = "Sample file names"
-        lines = [f"{n}. {name}" for n, (name, _c) in enumerate(rows, 1)]
+        lines = [f"{n}. {_clean(name, 200)}" for n, (name, _c) in enumerate(rows, 1)]
     header = f"{what} ({len(rows)}, spread across caption lengths):"
     text = header + "\n" + "\n".join(lines)
     # Charged to captions when they are on; the names in it are then a small extra.
@@ -387,35 +413,61 @@ def _sample_section(rows: list[tuple[str, str]], captions: bool, names: bool) ->
 # --- History -----------------------------------------------------------------------
 
 
-def _history(messages: list[ChatMessage], budget: int) -> tuple[list[ContextMessage], int, int]:
+def _sent_then(m: ChatMessage) -> set[str]:
+    """The categories an assistant reply's context carried. A reply with no manifest is
+    taken to have seen everything, so it is withheld unless everything is on now."""
+    manifest = m.context_manifest
+    if not manifest:
+        return set(PRIVACY_CATEGORIES)
+    return {c for c, v in (manifest.get("categories") or {}).items() if (v or {}).get("sent")}
+
+
+def _history(
+    messages: list[ChatMessage], budget: int, privacy: dict[str, bool]
+) -> tuple[list[ContextMessage], int, int, int]:
     """The conversation, newest first within `budget` characters, then put back in
     order with same-role neighbours merged (a user turn whose reply failed would
     otherwise sit next to the following one, which strict chat templates refuse).
-    Returns (messages, kept, dropped)."""
+
+    **An assistant reply written while a category now off was shared is withheld**,
+    its text replaced by `WITHHELD_REPLY`: it may quote captions or names, and history
+    would otherwise carry them past the toggle, or past a switch to a billed provider.
+    The user's own turns are kept as typed. Returns (messages, kept, dropped, withheld).
+    """
+    # Reserved categories are off for every chat alike, so they never make a reply wider.
+    now_off = {c for c, on in privacy.items() if not on and c not in RESERVED_CATEGORIES}
     usable = [
         m for m in messages
         if m.role in ("user", "assistant")
         and m.content.strip()
         and (m.role == "user" or m.status in ("complete", "partial", "cancelled"))
     ]
+    withheld_ids = {id(m) for m in usable if m.role == "assistant" and _sent_then(m) & now_off}
+
+    def text_of(m: ChatMessage) -> str:
+        return WITHHELD_REPLY if id(m) in withheld_ids else m.content
+
     kept: list[ChatMessage] = []
     used = 0
     for m in reversed(usable):
-        if used + len(m.content) > budget and kept:
+        size = len(text_of(m))
+        if used + size > budget and kept:
             break
         kept.append(m)
-        used += len(m.content)
+        used += size
     kept.reverse()
     # Never open on an assistant turn.
     while kept and kept[0].role == "assistant":
         kept.pop(0)
     out: list[ContextMessage] = []
     for m in kept:
+        text = text_of(m)
         if out and out[-1].role == m.role:
-            out[-1] = ContextMessage(role=m.role, content=out[-1].content + "\n\n" + m.content)
+            out[-1] = ContextMessage(role=m.role, content=out[-1].content + "\n\n" + text)
         else:
-            out.append(ContextMessage(role=m.role, content=m.content))
-    return out, len(kept), len(usable) - len(kept)
+            out.append(ContextMessage(role=m.role, content=text))
+    withheld = sum(1 for m in kept if id(m) in withheld_ids)
+    return out, len(kept), len(usable) - len(kept), withheld
 
 
 # --- The one entry point -------------------------------------------------------------
@@ -437,8 +489,10 @@ async def build_context(db: AsyncSession, chat: Chat, *, draft: str = "") -> Con
     history_rows = list((await db.execute(
         select(ChatMessage).where(ChatMessage.chat_id == chat.id).order_by(ChatMessage.seq)
     )).scalars().all())
+    # The newest reply the model actually wrote. Its summary is None when its context
+    # carried no numbers, and then there is no delta: never one against an older reply.
     prev_reply = next(
-        (m for m in reversed(history_rows) if m.role == "assistant" and m.findings_summary is not None),
+        (m for m in reversed(history_rows) if m.role == "assistant" and m.status != "error"),
         None,
     )
 
@@ -456,18 +510,18 @@ async def build_context(db: AsyncSession, chat: Chat, *, draft: str = "") -> Con
         if section is not None:
             parts.data.append(section)
     if privacy["captions"] or privacy["file_names"]:
-        rows = await _sample(db, ds, captioned_only=privacy["captions"])
+        rows = await _sample(db, ds, privacy["captions"], stats)
         parts.data += _sample_section(rows, privacy["captions"], privacy["file_names"])
 
     blocks = [s.text for s in parts.sections]
-    data_text = "\n\n".join(_neutralise(s.text) for s in parts.data if s.text)
+    data_text = "\n\n".join(s.text for s in parts.data if s.text)
     if data_text:
         blocks.append(f"## Data from the dataset\n{DATA_OPEN}\n{data_text}\n{DATA_CLOSE}")
     if not blocks:
         blocks.append("Nothing about the dataset is shared with you in this chat; the user can change that.")
     system = SYSTEM_PROMPT + "\n\n# Context\n\n" + "\n\n".join(blocks)
 
-    history, kept, dropped = _history(history_rows, HISTORY_MAX_CHARS)
+    history, kept, dropped, withheld = _history(history_rows, HISTORY_MAX_CHARS, privacy)
     messages = [ContextMessage(role="system", content=system), *history]
     if draft.strip():
         if messages[-1].role == "user":
@@ -487,6 +541,7 @@ async def build_context(db: AsyncSession, chat: Chat, *, draft: str = "") -> Con
         privacy_source=source,
         history_messages=kept,
         history_dropped=dropped,
+        history_withheld=withheld,
         total_chars=total_chars,
         estimated_tokens=math.ceil(total_chars / CHARS_PER_TOKEN),
         note_numbers=note_numbers,

@@ -90,12 +90,18 @@ async def update_chat(chat_id: str, body: ChatUpdate, db: AsyncSession = Depends
     to another (a local server's "everything" to a billed one)."""
     chat = await _get_chat(db, chat_id)
     fields = body.model_fields_set
+    provider_change = "provider_id" in fields and body.provider_id != chat.provider_id
+    if provider_change and "privacy" in fields:
+        raise HTTPException(
+            422, "Change the provider first, then the privacy settings: a provider change resets them"
+        )
+    if provider_change:
+        await _check_provider(db, body.provider_id)
     if "title" in fields and body.title is not None:
         chat.title = body.title.strip()
     if "model" in fields and body.model is not None:
         chat.model = body.model
-    if "provider_id" in fields and body.provider_id != chat.provider_id:
-        await _check_provider(db, body.provider_id)
+    if provider_change:
         chat.provider_id = body.provider_id
         chat.privacy = None
     if "privacy" in fields:

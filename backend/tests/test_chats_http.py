@@ -82,6 +82,53 @@ def test_provider_change_clears_the_chat_override(tmp_path):
             r = await env.client.patch(f"{API}/chats/{chat['id']}", json={"provider_id": paid["id"]})
             assert r.json()["privacy"] == {"tags": True}
 
+            # A form that resends its toggles with a provider change is refused, and
+            # nothing in the request is applied.
+            r = await env.client.patch(f"{API}/chats/{chat['id']}", json={
+                "title": "x", "provider_id": local["id"], "privacy": {"captions": True},
+            })
+            assert r.status_code == 422
+            got = (await env.client.get(f"{API}/chats/{chat['id']}")).json()
+            assert (got["provider_id"], got["title"], got["privacy"]) == (paid["id"], "", {"tags": True})
+
+    run(scenario())
+
+
+def test_editing_a_provider_clears_its_chats_overrides(tmp_path):
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("c")
+            prov = await _provider(env, "local")
+            base = f"{API}/datasets/{ds['id']}/chats"
+            chat = (await env.client.post(base, json={"provider_id": prov["id"]})).json()
+            url = f"{API}/chats/{chat['id']}"
+
+            async def privacy() -> dict | None:
+                return (await env.client.get(url)).json()["privacy"]
+
+            # A rename, a model or an override of its own: the chat's toggles stay.
+            await env.client.patch(url, json={"privacy": {"captions": True}})
+            await env.client.patch(f"{API}/providers/{prov['id']}", json={"name": "renamed", "max_tokens": 99})
+            await env.client.patch(f"{API}/providers/{prov['id']}", json={"analyst_privacy": {"tags": True}})
+            assert await privacy() == {"captions": True}
+
+            # Ticking `billed` changes what the server is: the toggles go.
+            await env.client.patch(f"{API}/providers/{prov['id']}", json={"billed": True})
+            assert await privacy() is None
+
+            # So does pointing it at another server.
+            await env.client.patch(url, json={"privacy": {"captions": True}})
+            await env.client.patch(f"{API}/providers/{prov['id']}", json={"base_url": "http://localhost:10/v1"})
+            assert await privacy() is None
+
+            # An empty override is no override.
+            r = await env.client.patch(f"{API}/providers/{prov['id']}", json={"analyst_privacy": {}})
+            assert r.json()["analyst_privacy"] is None
+            r = await env.client.post(f"{API}/providers/", json={
+                "name": "empty", "base_url": "http://localhost:11/v1", "analyst_privacy": {},
+            })
+            assert r.json()["analyst_privacy"] is None
+
     run(scenario())
 
 

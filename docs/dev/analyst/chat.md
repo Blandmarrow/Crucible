@@ -41,11 +41,19 @@ What a chat may send is decided by, in order:
    `{category: bool}`. `provider_privacy(row)` lays it over the defaults, and
    `OpenAIProviderOut` returns both the stored value and the result
    (`analyst_privacy_effective`). The update schema's `analyst_privacy_reset` sets it back to
-   NULL, because the router's `exclude_none` loop cannot.
+   NULL, because the router's `exclude_none` loop cannot; an empty `{}` is stored as NULL
+   too.
 3. **The chat's override**, `chats.privacy`, laid on top by
-   `analyst_context.effective_privacy`. **A provider change clears it** (`PATCH /chats/{id}`):
-   a "send everything" chosen for a local server must not follow the chat to a paid one. With
-   no provider, the billed defaults apply.
+   `analyst_context.effective_privacy`. With no provider, the billed defaults apply.
+
+**A chat's override never outlives the server it was chosen for.** A "send everything" picked
+for a local server must not follow the chat to a paid one, so three paths clear it:
+
+- `PATCH /chats/{id}` with a new provider clears it. Sending `privacy` in the same request is
+  a 422, so a form that resends its toggles cannot carry them over.
+- `PATCH /providers/{id}` that changes the provider's `base_url`, or whether it counts as
+  billed, clears the override of every chat on it. A rename or a new model does not.
+- Earlier replies are covered by § History below.
 
 `images` is reserved for a vision phase. It is forced off at every layer, and a request to
 turn it on is a 422 (`schemas.chat.check_privacy`), as is an unknown category.
@@ -71,7 +79,7 @@ a second. The categories:
 | `captions` | A sample of up to 20 captions, each cut to 300 characters |
 | `file_names` | The sample's base file names |
 
-Four rules hold the filter together:
+Five rules hold the filter together:
 
 - **A finding's `numbers` dict goes through an allowlist** (`_numbers_text`): plain numbers,
   plus the keys in `_SAFE_TEXT_NUMBERS` and `_SAFE_DICT_NUMBERS`, which hold Crucible's own
@@ -79,25 +87,45 @@ Four rules hold the filter together:
   belong to `tags`. A new finding that puts dataset text in `numbers` is dropped by default,
   not leaked; add its key to an allowlist only if the text is Crucible's own.
 - **Tags, captions and file names are untrusted.** They come from scrapers, sidecars and
-  captioners, so they sit in one `<dataset-data>` block that the prompt calls data, and
-  `_neutralise` breaks any copy of the delimiter inside them. A caption can still argue for
-  an action, which is why every proposal and action waits for the user.
+  captioners, so they sit in one `<dataset-data>` block that the prompt calls data. A caption
+  can still argue for an action, which is why every proposal and action waits for the user.
+- **Every string Crucible did not write goes through `_clean`**: the name, the goal, notes,
+  tags, captions and file names. It folds the text to one line, so it cannot forge a heading
+  or list item. It applies NFKC (fullwidth `＜` becomes `<`) and drops format characters (a
+  zero-width space hides the delimiter from a match). It swaps `<` and `>` for `‹ ›` and
+  breaks the delimiter's name however it is spelled, so data can neither close the block nor
+  open a fake one. A new kind of dataset text gets the same treatment.
 - **No absolute path is ever sent.** The sample reads `Image.filename` and `base_name` keeps
   only its last component, whatever the separator.
 - **Captions on also reveals tags**, since tags are written in captions. The property test
   treats them that way.
 
-The sample is stratified by caption length: the rows ordered by length and id, split into 20
-equal strata, one row from each, picked by a generator seeded on the dataset id. The same
-state gives the same sample, and it is cached on the image validator in the Stats cache.
+The sample is stratified by caption length. The rows are ranked by `caption_token_count`
+and id, split into 20 equal strata, and one row is taken from each, picked by a generator
+seeded on the dataset id. The same state gives the same sample, cached on the image
+validator in the Stats cache. The window ranks ids only, an integer sort rather than every
+caption's text, and the picked rows are read by id after. The row count comes from the
+cached Stats payload; its captioned count ignores whitespace-only captions, so it is never
+larger than the scope and every pick is in range.
+
+## History
 
 The history keeps the newest messages within `HISTORY_MAX_CHARS`, skips failed and empty
 replies, never opens on an assistant turn, and merges two same-role turns in a row (a user
 message whose reply failed sits next to the next one, which strict templates refuse).
 
-**"Since your last reply"** diffs the newest assistant row's `findings_summary` and
-`image_count` against now: "images 130 → 100; blurry 30 → 0 (resolved)". It is a `numbers`
-fact, so a reply sent without numbers stores no summary and the next one shows no delta.
+**An earlier reply written while a category now off was shared is withheld**: its text is
+replaced by `WITHHELD_REPLY` and counted in the manifest's `history_withheld`. A reply quotes
+captions and names freely, so without this, turning captions off, or switching a chat to a
+billed provider, would still send them through the history. The test is the reply's own
+`context_manifest`: if any category it sent is off now, it is withheld. A reply with no
+manifest is treated as having seen everything. The user's own turns are kept as typed.
+
+**"Since your last reply"** diffs the newest reply the model wrote (an `error` row is
+skipped) against now: "images 130 → 100; blurry 30 → 0 (resolved)". It reads that reply's
+`findings_summary` and `image_count`. They are a `numbers` fact, so a reply sent without
+numbers stores none, and the next context shows no delta rather than one against an older
+reply.
 
 The manifest records each category's `sent`, `chars` and `items`, where the privacy came from
 (`chat`, `provider` or `none`), how much history was kept and dropped, a character estimate of
@@ -118,9 +146,15 @@ of the reply that made it (phase 2d), not against the notes as they are later.
 ## Tests
 
 - `backend/tests/test_analyst_context.py`. The privacy test seeds a sentinel string in every
-  category and builds the context under all 64 combinations of toggles. A disabled category's
-  sentinel must be absent, an enabled one's present, and the datasets folder's absolute path
-  never there. Also covered: the delimiter, the sample, the delta, note numbering and the
-  history shape.
+  category, and an earlier reply that quotes them all. It builds the context under all 64
+  combinations of toggles, once through the chat's override and once through the
+  provider's. A disabled category's sentinel must be absent, an enabled one's present, and
+  the earlier reply withheld unless everything is on. Two things must never appear: the
+  datasets folder's absolute path, in either spelling, and sentinels in columns the context
+  does not read (provenance, licence, subfolder). Both tag findings fire, so the `numbers`
+  allowlist is exercised. Also covered: delimiter tricks (zero-width, fullwidth, entity,
+  Unicode hyphen), newlines in the goal and a file name, the sample, the delta, note
+  numbering and the history rules.
 - `backend/tests/test_chats_http.py`: the routes, the cascades (dataset, provider, a chat's
-  usage surviving it), the budget settings and the provider override.
+  usage surviving it), the budget settings, the provider override, and the three paths that
+  clear a chat's override.

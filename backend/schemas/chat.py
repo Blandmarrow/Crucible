@@ -70,7 +70,9 @@ class ChatCreate(BaseModel):
 
 class ChatUpdate(BaseModel):
     """Absent fields are left alone. `privacy: null` clears the override (read through
-    `model_fields_set`), and a provider change clears it too."""
+    `model_fields_set`), and a provider change clears it too; sending `privacy` in the
+    same request as a provider change is a 422, so a form that resends its toggles
+    cannot carry them over."""
 
     title: str | None = Field(None, max_length=200)
     provider_id: str | None = Field(None, max_length=36)
@@ -105,6 +107,9 @@ class ContextManifest(BaseModel):
     privacy_source: Literal["chat", "provider", "none"]
     history_messages: int = 0
     history_dropped: int = 0
+    # Earlier replies sent as a placeholder, because their context shared a category
+    # that is off now (`analyst_context._history`).
+    history_withheld: int = 0
     total_chars: int = 0
     # A character estimate (chars / 4); the real count comes from the server's usage.
     estimated_tokens: int = 0

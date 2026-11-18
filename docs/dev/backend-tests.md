@@ -79,8 +79,10 @@ handler stream both in-process and over a socket:
   on `E2E_LLM_PORT` (default 8197). Its lock covers only `handle`, never a streamed write,
   so a stalled stream does not block other requests.
 
-It answers `…/models` and `…/chat/completions`, plain and streamed (with the usage chunk
-when `stream_options.include_usage` asks for it). Every request is recorded in `requests`
+It answers `/models` and `/chat/completions`, with or without a `/v1` prefix, plain and
+streamed (with the usage chunk when `stream_options.include_usage` asks for it). Other
+paths are 404s, LM Studio's own `/api/v1/models` included, so a run never takes its unload
+branch against the fake. Usage counts message text, not image bytes. Every request is recorded in `requests`
 with its headers and parsed body, which is what a privacy test reads; e2e specs read the
 same record from `GET /_fake/requests`.
 
@@ -88,10 +90,19 @@ A test scripts replies by pushing `Reply` objects onto `replies`, used first in 
 Otherwise a `[[fake:…]]` marker in the last user message picks a preset, so a browser spec
 chooses through prompt text alone: `refusal`, `empty`, `length`, `notes`,
 `notes-malformed`, `tool`, `no-usage`, `slow`, `stall`, `429`, `500` and `401`. An unknown
-marker is a 400 naming it. How each stall ended lands in `stall_endings`
-(`client_gone`, `timeout` or `cancelled`), so a cancel test can prove the stream was
-dropped. `backend/tests/test_fake_llm.py` pins all of this through the real SDK, and
-`frontend/e2e/fake-llm.spec.ts` drives a caption job against the served fake.
+marker is a 400 naming it. `slow` and `stall` work on plain requests too, which matters
+because a caption job does not stream: a plain reply waits the same total, and a plain
+stall answers nothing and then drops the connection.
+
+**The in-process path honours the client's read timeout.** A mock transport ignores it on
+its own, so the fake raises the transport's `ReadTimeout` itself, which the SDK reports as
+`APITimeoutError`, as a real socket does; an idle-timeout test works through either
+adapter. **How each chat completion ended** lands in `endings`, the same in both
+adapters: `done`, `client_gone` (the client cancelled, closed the stream, disconnected or
+timed out first) or `timeout` (a stall ran its course). A cancel test reads it to prove
+the stream was dropped. `backend/tests/test_fake_llm.py` pins all of this through the
+real SDK, and `frontend/e2e/fake-llm.spec.ts` drives a caption job against the served
+fake.
 
 ## Foreign keys in api_env
 

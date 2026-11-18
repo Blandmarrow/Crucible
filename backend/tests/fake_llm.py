@@ -12,7 +12,7 @@ socket.
   installed SDK uses. The `fake_llm` fixture in `conftest.py` patches
   `openai_compat_captioner.make_client` to return this client.
 - `transport()` — an `httpx.MockTransport`, for code on plain `httpx`
-  (`run_service._LLM_TRANSPORT`). Streamed bodies are async, so async clients only.
+  (`run_service._LLM_TRANSPORT`). Its handler is async: async clients only.
 - `serve()` — a stdlib HTTP server on a real port, for the e2e suite, whose backend
   is a separate process (`python -m backend.tests.fake_llm --port 8197`).
 
@@ -22,11 +22,11 @@ imports the app. It is not named `test_*`, so pytest does not collect it.
 
 What it models:
 
-- `GET …/models` and `POST …/chat/completions` (any prefix, so `/v1` or not), plain
+- `GET /models` and `POST /chat/completions`, with or without a `/v1` prefix, plain
   and `stream: true`. A stream is SSE `data:` chunks ending in `data: [DONE]`; with
   `stream_options.include_usage` a last chunk carries `usage` and empty `choices`,
   as OpenAI sends it. Usage is a deterministic estimate, one token per four
-  characters. Image parts are accepted and ignored.
+  characters of message text; image parts are accepted and not counted.
 - **Recording.** Every request lands in `requests` (method, path, lower-cased
   headers, parsed JSON body), the record privacy tests read. `GET /_fake/requests`
   serves it to e2e specs; `/_fake/*` requests are not recorded themselves.
@@ -37,10 +37,20 @@ What it models:
   `[[fake:tool]]`, `[[fake:no-usage]]`, `[[fake:slow]]`, `[[fake:stall]]`,
   `[[fake:429]]`, `[[fake:500]]`, `[[fake:401]]`. No marker gives `FAKE_REPLY`. An
   unknown marker is a 400 naming it, so a typo fails loudly.
-- **A stall** sends a few chunks, then nothing, until the client goes away or
-  `Reply.stall_seconds` pass; the stream then ends without a finish chunk or
-  `[DONE]`. How each stall ended is appended to `stall_endings`: `client_gone` or
-  `timeout` over a socket, `cancelled` or `timeout` in-process.
+- **Slow and stalled replies, plain or streamed.** `Reply.chunk_delay` spaces a
+  stream's chunks; a plain reply waits the same total before it answers. A stall
+  sends nothing more (a stream: after `stall_after` content chunks; a plain reply:
+  nothing at all) until the client gives up or `Reply.stall_seconds` pass. A stream
+  then ends with no finish chunk and no `[DONE]`; a plain request's connection is
+  dropped unanswered.
+- **The client's read timeout is honoured in-process too.** A mock transport would
+  otherwise ignore it, so a wait longer than the request's read timeout raises the
+  transport's `ReadTimeout`, which the SDK reports as `APITimeoutError` — what a
+  real socket gives.
+- **How each chat completion ended** is appended to `endings`, the same way in both
+  adapters: `done` (fully delivered), `client_gone` (the client cancelled, closed the
+  stream, disconnected or timed out first) or `timeout` (a stall ran its course). A
+  cancel test reads it to prove the stream was dropped.
 
 What it does not model: the legacy `/completions` endpoint, `n > 1`, logprobs,
 response formats (a JSON-mode request gets the scripted text as is), and any check of
@@ -88,6 +98,8 @@ NOTES_MALFORMED_TEXT = (
 )  # misspelt op, a word for a number, junk, an op with no text, and no closing fence
 
 _MARKER_RE = re.compile(r"\[\[fake:([a-z0-9-]+)\]\]")
+_MODELS_PATHS = ("/models", "/v1/models")
+_CHAT_PATHS = ("/chat/completions", "/v1/chat/completions")
 
 
 @dataclass
@@ -98,20 +110,25 @@ class Pause:
 
 @dataclass
 class Stall:
-    """Send nothing more until the client goes away or `seconds` pass, then end."""
+    """Send nothing more until the client gives up or `seconds` pass, then end."""
     seconds: float
 
 
 @dataclass
 class Plan:
-    """What one request is answered with, free of any HTTP library."""
+    """What one request is answered with, free of any HTTP library. A plain plan's
+    parts are its waits followed by its body; a streamed plan's interleave them."""
     status: int
     headers: dict[str, str]
     parts: list = field(default_factory=list)  # bytes | Pause | Stall
     streaming: bool = False
+    chat: bool = False  # a chat completion: its ending is recorded
 
     def body(self) -> bytes:
         return b"".join(p for p in self.parts if isinstance(p, bytes))
+
+    def waits(self) -> list:
+        return [p for p in self.parts if not isinstance(p, bytes)]
 
 
 @dataclass
@@ -131,7 +148,7 @@ class Reply:
     error: dict | None = None  # the OpenAI-shaped body of a non-200
     chunk_size: int = 8  # characters per streamed content chunk
     chunk_delay: float = 0.0
-    stall_after: int | None = None  # streamed content chunks sent before a stall
+    stall_after: int | None = None  # content chunks streamed before a stall (capped at all of them)
     stall_seconds: float = 60.0
 
 
@@ -187,7 +204,7 @@ class FakeLLM:
         self.models = list(models)
         self.replies: deque[Reply] = deque()
         self.requests: list[dict] = []
-        self.stall_endings: list[str] = []
+        self.endings: list[str] = []
         self._count = 0
 
     # ── The handler ──────────────────────────────────────────────────────────
@@ -206,10 +223,10 @@ class FakeLLM:
             "headers": {k.lower(): v for k, v in headers.items()},
             "json": body,
         })
-        if method == "GET" and path.endswith("/models"):
+        if method == "GET" and path in _MODELS_PATHS:
             return self._json(200, {"object": "list", "data": [
                 {"id": m, "object": "model", "created": 0, "owned_by": "fake"} for m in self.models]})
-        if method == "POST" and path.endswith("/chat/completions"):
+        if method == "POST" and path in _CHAT_PATHS:
             return self._chat(body if isinstance(body, dict) else {})
         return self._json(404, {"error": {"message": f"fake LLM has no route {method} {path}",
                                           "type": "invalid_request_error", "param": None, "code": None}})
@@ -234,11 +251,14 @@ class FakeLLM:
         self._count += 1
         cid = f"chatcmpl-fake-{self._count}"
         model = body.get("model") or self.models[0]
+        prompt_text = "".join(_text_of(m.get("content")) for m in body.get("messages") or [] if isinstance(m, dict))
         usage = {
-            "prompt_tokens": _tokens(json.dumps(body.get("messages") or [])),
+            "prompt_tokens": _tokens(prompt_text),
             "completion_tokens": _tokens(reply.text + "".join(t.arguments for t in reply.tool_calls or [])),
         }
         usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
+        pieces = [reply.text[i:i + reply.chunk_size] for i in range(0, len(reply.text), reply.chunk_size)]
+
         if not body.get("stream"):
             message: dict = {"role": "assistant", "content": reply.text if not reply.tool_calls else (reply.text or None)}
             if reply.tool_calls:
@@ -250,21 +270,29 @@ class FakeLLM:
                    "choices": [{"index": 0, "message": message, "finish_reason": reply.finish_reason}]}
             if reply.usage:
                 out["usage"] = usage
-            return self._json(200, out)
+            plan = self._json(200, out)
+            if reply.stall_after is not None:
+                plan.parts.insert(0, Stall(reply.stall_seconds))
+            elif reply.chunk_delay and len(pieces) > 1:
+                plan.parts.insert(0, Pause(reply.chunk_delay * (len(pieces) - 1)))
+            plan.chat = True
+            return plan
 
         def chunk(delta: dict, finish: str | None = None) -> bytes:
             return _sse({"id": cid, "object": "chat.completion.chunk", "created": 0, "model": model,
                          "choices": [{"index": 0, "delta": delta, "finish_reason": finish}]})
 
         parts: list = [chunk({"role": "assistant", "content": ""})]
-        pieces = [reply.text[i:i + reply.chunk_size] for i in range(0, len(reply.text), reply.chunk_size)]
+        stall_at = None if reply.stall_after is None else min(reply.stall_after, len(pieces))
         for n, piece in enumerate(pieces):
-            if reply.stall_after is not None and n >= reply.stall_after:
-                parts.append(Stall(reply.stall_seconds))
-                return Plan(200, {"content-type": "text/event-stream"}, parts, streaming=True)
+            if n == stall_at:
+                break
             if reply.chunk_delay and n:
                 parts.append(Pause(reply.chunk_delay))
             parts.append(chunk({"content": piece}))
+        if stall_at is not None:  # also when there was no text to stream first
+            parts.append(Stall(reply.stall_seconds))
+            return Plan(200, {"content-type": "text/event-stream"}, parts, streaming=True, chat=True)
         for i, t in enumerate(reply.tool_calls or []):
             parts.append(chunk({"tool_calls": [{"index": i, "id": f"call_fake_{i}", "type": "function",
                                                 "function": {"name": t.name, "arguments": ""}}]}))
@@ -276,7 +304,7 @@ class FakeLLM:
             parts.append(_sse({"id": cid, "object": "chat.completion.chunk", "created": 0, "model": model,
                                "choices": [], "usage": usage}))
         parts.append(_sse("[DONE]"))
-        return Plan(200, {"content-type": "text/event-stream"}, parts, streaming=True)
+        return Plan(200, {"content-type": "text/event-stream"}, parts, streaming=True, chat=True)
 
     @staticmethod
     def _json(status: int, payload) -> Plan:
@@ -284,31 +312,59 @@ class FakeLLM:
 
     # ── In-process adapters ──────────────────────────────────────────────────
 
-    async def _aparts(self, parts: list):
-        for part in parts:
-            if isinstance(part, bytes):
-                yield part
-            elif isinstance(part, Pause):
-                await asyncio.sleep(part.seconds)
-            elif isinstance(part, Stall):
-                try:
-                    await asyncio.sleep(part.seconds)
-                except asyncio.CancelledError:
-                    self.stall_endings.append("cancelled")
-                    raise
-                self.stall_endings.append("timeout")
-                return
+    async def _wait(self, part, read: float | None, mod, request) -> bool:
+        """Play one `Pause` or `Stall` under the request's read timeout. Raises the
+        transport's `ReadTimeout` when the client would give up first; returns True
+        when a stall ran its course."""
+        if read is not None and part.seconds > read:
+            await asyncio.sleep(read)
+            raise mod.ReadTimeout("fake LLM: nothing arrived within the read timeout", request=request)
+        await asyncio.sleep(part.seconds)
+        return isinstance(part, Stall)
+
+    async def _stream_body(self, plan: Plan, read: float | None, mod, request):
+        ending = "client_gone"  # unless the loop below says otherwise
+        last = len(plan.parts) - 1
+        try:
+            for n, part in enumerate(plan.parts):
+                if isinstance(part, bytes):
+                    if n == last:
+                        # Handed over in full: the SDK stops at `[DONE]` and closes
+                        # the response without resuming this generator.
+                        ending = "done"
+                    yield part
+                elif await self._wait(part, read, mod, request):
+                    ending = "timeout"
+                    return
+            ending = "done"
+        finally:
+            # Also reached on a cancel, an `aclose()` and a read timeout.
+            self.endings.append(ending)
 
     def _mock_transport(self, mod):
-        def handler(request):
-            request.read()
+        async def handler(request):
+            await request.aread()
             plan = self.handle(request.method, request.url.path, dict(request.headers), request.content)
-            content = self._aparts(plan.parts) if plan.streaming else plan.body()
-            return mod.Response(plan.status, headers=plan.headers, content=content)
+            read = (request.extensions.get("timeout") or {}).get("read")
+            if plan.streaming:
+                return mod.Response(plan.status, headers=plan.headers,
+                                    content=self._stream_body(plan, read, mod, request))
+            if plan.chat:
+                ending = "client_gone"
+                try:
+                    for part in plan.waits():
+                        if await self._wait(part, read, mod, request):
+                            ending = "timeout"
+                            raise mod.RemoteProtocolError("fake LLM: stalled, then dropped the connection",
+                                                          request=request)
+                    ending = "done"
+                finally:
+                    self.endings.append(ending)
+            return mod.Response(plan.status, headers=plan.headers, content=plan.body())
         return mod.MockTransport(handler)
 
     def transport(self) -> httpx.MockTransport:
-        """For code on plain `httpx`. A streamed body is async: async clients only."""
+        """For code on plain `httpx`. The handler is async: async clients only."""
         return self._mock_transport(httpx)
 
     def sdk_transport(self):
@@ -349,13 +405,29 @@ def _client_gone(conn: socket.socket) -> bool:
         return True
 
 
+def _sit_out(conn: socket.socket, part) -> str | None:
+    """Wait out a `Pause` or `Stall`, watching for the client to leave. Returns
+    `client_gone`, `timeout` (a stall ran its course), or None (a pause ended)."""
+    deadline = time.monotonic() + part.seconds
+    while time.monotonic() < deadline:
+        if _client_gone(conn):
+            return "client_gone"
+        time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
+    return "timeout" if isinstance(part, Stall) else None
+
+
 def serve(fake: FakeLLM, host: str = "127.0.0.1", port: int = 0, quiet: bool = False) -> ThreadingHTTPServer:
     """The real-socket adapter: a stdlib HTTP server (not yet serving). Unlike
     `fake_comfy.serve`, the lock covers only `handle` — popping a reply and
-    recording the request — and never the streamed write, so a stalled stream does
-    not block other requests. Port 0 picks a free port; read it back from
-    `server.server_address[1]`."""
+    recording the request — and recording an ending, never a wait or a write, so a
+    stalled reply does not block other requests. Port 0 picks a free port; read it
+    back from `server.server_address[1]`."""
     lock = threading.Lock()
+
+    def ended(plan: Plan, how: str) -> None:
+        if plan.chat:
+            with lock:
+                fake.endings.append(how)
 
     class Handler(BaseHTTPRequestHandler):
         def _dispatch(self):
@@ -370,40 +442,47 @@ def serve(fake: FakeLLM, host: str = "127.0.0.1", port: int = 0, quiet: bool = F
                     text = traceback.format_exc()
                     sys.stderr.write(text)
                     plan = Plan(500, {"content-type": "text/plain"}, [text.encode()])
-            self.send_response(plan.status)
-            for k, v in plan.headers.items():
-                self.send_header(k, v)
-            if not plan.streaming:
+            try:
+                if plan.streaming:
+                    ended(plan, self._stream(plan))
+                    return
+                for part in plan.waits():
+                    how = _sit_out(self.connection, part)
+                    if how is not None:  # gone, or a stall ran out: drop it unanswered
+                        self.close_connection = True
+                        ended(plan, how)
+                        return
                 data = plan.body()
+                self.send_response(plan.status)
+                for k, v in plan.headers.items():
+                    self.send_header(k, v)
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
                 self.wfile.write(data)
-                return
-            # Close-delimited: no Content-Length, and the connection ends the body.
+                ended(plan, "done")
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                self.close_connection = True
+                ended(plan, "client_gone")
+
+        def _stream(self, plan: Plan) -> str:
+            """Write a streamed plan close-delimited (no Content-Length; the
+            connection ends the body) and say how it ended."""
+            self.send_response(plan.status)
+            for k, v in plan.headers.items():
+                self.send_header(k, v)
             self.send_header("Cache-Control", "no-cache")
             self.send_header("Connection", "close")
             self.end_headers()
             self.close_connection = True
-            try:
-                for part in plan.parts:
-                    if isinstance(part, bytes):
-                        self.wfile.write(part)
-                        self.wfile.flush()
-                    elif isinstance(part, Pause):
-                        time.sleep(part.seconds)
-                    elif isinstance(part, Stall):
-                        ending = "timeout"
-                        deadline = time.monotonic() + part.seconds
-                        while time.monotonic() < deadline:
-                            if _client_gone(self.connection):
-                                ending = "client_gone"
-                                break
-                            time.sleep(0.05)
-                        with lock:
-                            fake.stall_endings.append(ending)
-                        return
-            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
-                return  # the client left mid-stream
+            for part in plan.parts:
+                if isinstance(part, bytes):
+                    self.wfile.write(part)
+                    self.wfile.flush()
+                else:
+                    how = _sit_out(self.connection, part)
+                    if how is not None:
+                        return how
+            return "done"
 
         do_GET = do_POST = do_DELETE = _dispatch
 
@@ -415,7 +494,6 @@ def serve(fake: FakeLLM, host: str = "127.0.0.1", port: int = 0, quiet: bool = F
         # SO_REUSEADDR on Windows lets a second socket bind a port another process
         # already holds, so a stale server could answer the readiness probe.
         allow_reuse_address = sys.platform != "win32"
-        daemon_threads = True  # a stalled stream must not hold up shutdown
 
     return Server((host, port), Handler)
 

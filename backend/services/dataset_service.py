@@ -731,6 +731,9 @@ async def create_dataset(
     description: str = "",
     category: str = "",
     provenance: dict | None = None,
+    *,
+    goal: str = "",
+    target_resolution: int | None = None,
 ) -> Dataset:
     """Create a dataset row + its on-disk folders in one commit.
 
@@ -752,6 +755,7 @@ async def create_dataset(
     ds = Dataset(
         id=ds_id, name=name, description=description, category=category,
         folder_path=str(folder),
+        goal=goal, target_resolution=target_resolution,
         **{f: v for f, v in (provenance or {}).items() if f in PROVENANCE_FIELDS},
     )
     db.add(ds)
@@ -2276,7 +2280,12 @@ async def duplicate_dataset(
     new_by_source: dict[str, Image] = {}
 
     # --- Step 1: create fresh destination dataset ---
-    new_ds = await create_dataset(db, new_name, source_dataset.description, source_dataset.category)
+    new_ds = await create_dataset(
+        db, new_name, source_dataset.description, source_dataset.category,
+        # The goal says what the images are for, so it travels with them. Notes do
+        # not: they are the user's working record for one dataset, not its content.
+        goal=source_dataset.goal, target_resolution=source_dataset.target_resolution,
+    )
     new_ds.declared_subfolders = list(source_dataset.declared_subfolders or [])
     # Carry the provenance defaults across so images copied with raw (still
     # inherited) values resolve to the same license they had in the source.

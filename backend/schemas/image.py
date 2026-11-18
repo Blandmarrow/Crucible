@@ -213,6 +213,12 @@ class ImageFilterParams(BaseModel):
     mp_max: float | None = None
     ar_min: float | None = None
     ar_max: float | None = None
+    # Exclusive: `min(width, height) < short_side_max`. The health report's
+    # "below the target resolution" finding links through it.
+    short_side_max: int | None = None
+    # True = only images whose scores predate an in-place pixel rewrite; False =
+    # only fresh ones (see docs/dev/quality/scores-stale.md).
+    scores_stale: bool | None = None
     format_filter: str | None = None
     score_filters: str | None = None
     subfolder: str | None = None

@@ -12,5 +12,6 @@ from backend.models.style_run import StyleSimilarityRun
 from backend.models.app_data import CaptionPromptPreset, DeclaredCategory, PromptGenPreset
 from backend.models.run import Run
 from backend.models.run_recipe import SavedRunRecipe
+from backend.models.notes import AppNoteItem, DatasetNoteItem, NoteItemHistory
 
-__all__ = ["Dataset", "Image", "Video", "BackgroundJob", "Detection", "Label", "ImageLabel", "ThresholdSettings", "DatasetBranch", "DatasetVersion", "VersionImageState", "OpenAIProvider", "ComfyPlan", "ComfyRow", "ComfyLibraryPrompt", "ComfyBlueprint", "ComfyLeaf", "StyleSimilarityRun", "CaptionPromptPreset", "DeclaredCategory", "PromptGenPreset", "Run", "SavedRunRecipe"]
+__all__ = ["Dataset", "Image", "Video", "BackgroundJob", "Detection", "Label", "ImageLabel", "ThresholdSettings", "DatasetBranch", "DatasetVersion", "VersionImageState", "OpenAIProvider", "ComfyPlan", "ComfyRow", "ComfyLibraryPrompt", "ComfyBlueprint", "ComfyLeaf", "StyleSimilarityRun", "CaptionPromptPreset", "DeclaredCategory", "PromptGenPreset", "Run", "SavedRunRecipe", "DatasetNoteItem", "AppNoteItem", "NoteItemHistory"]

@@ -35,6 +35,21 @@ from backend.workers.job_queue import job_queue
 router = APIRouter(prefix="/datasets", tags=["datasets"])
 
 
+def _apply_goal_fields(ds: Dataset, body: DatasetUpdate) -> None:
+    """Apply the analyst's goal fields from a PATCH body.
+
+    `goal`: None leaves it alone, "" clears it. `target_resolution` is read through
+    `model_fields_set`, since None has to mean "clear" when it was sent and "leave it"
+    when it was not.
+    """
+    if body.goal is not None:
+        # Stripped, so a goal of spaces is stored as none rather than as a goal the
+        # health report then calls missing.
+        ds.goal = body.goal.strip()
+    if "target_resolution" in body.model_fields_set:
+        ds.target_resolution = body.target_resolution
+
+
 def _apply_provenance_defaults(ds: Dataset, body: DatasetUpdate) -> None:
     """Apply the dataset-level provenance defaults from a PATCH body.
 
@@ -106,6 +121,9 @@ async def list_datasets(
             source_url=ds.source_url,
             license=ds.license,
             attribution=ds.attribution,
+            goal=ds.goal,
+            target_resolution=ds.target_resolution,
+            health_summary=ds.health_summary,
         )
         for ds in datasets
     ]
@@ -125,6 +143,8 @@ async def create(body: DatasetCreate, db: AsyncSession = Depends(get_db)):
             "license": body.license,  # already normalized by the schema validator
             "attribution": body.attribution,
         },
+        goal=body.goal.strip(),
+        target_resolution=body.target_resolution,
     )
 
 
@@ -151,9 +171,10 @@ async def update_dataset(dataset_id: str, body: DatasetUpdate, db: AsyncSession 
         if conflict.scalar():
             raise HTTPException(400, f"Dataset '{body.name}' already exists")
         ds = await rename_dataset(db, ds, body.name, body.description)
-        # Apply category + provenance updates after rename (rename already committed)
+        # Apply category, goal + provenance updates after rename (rename already committed)
         if body.category is not None:
             ds.category = body.category
+        _apply_goal_fields(ds, body)
         _apply_provenance_defaults(ds, body)
         await db.commit()
         await db.refresh(ds)
@@ -163,6 +184,7 @@ async def update_dataset(dataset_id: str, body: DatasetUpdate, db: AsyncSession 
         ds.description = body.description
     if body.category is not None:
         ds.category = body.category
+    _apply_goal_fields(ds, body)
     _apply_provenance_defaults(ds, body)
     await db.commit()
     await db.refresh(ds)

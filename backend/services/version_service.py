@@ -611,6 +611,21 @@ async def create_snapshot(
     if dataset is None:
         raise ValueError(f"Dataset {dataset_id} not found")
 
+    # The health findings as they stand, so the Health page can say "was N at vX"
+    # (M12). Taken first, before this function writes anything: the report runs the
+    # Stats scans when its caches are cold, and SQLite's write lock would otherwise
+    # be held for all of them (callers that flushed before calling, like
+    # `create_branch`, still hold it). Read-only and never fatal: a snapshot that
+    # failed because a report could not be built would cost the user their safety
+    # net for a nicety. NULL then reads as "no baseline". Imported here:
+    # health_service imports dataset_service.
+    from backend.services.health_service import summary_for_snapshot
+    try:
+        findings_summary = await summary_for_snapshot(db, dataset_id)
+    except Exception:  # noqa: BLE001 — any failure degrades to "no baseline"
+        logger.exception("Health summary for snapshot of dataset %s failed", dataset_id)
+        findings_summary = None
+
     # Resolve branch: explicit branch_id wins; otherwise the dataset's current
     # branch (so auto-snapshots — pre-restore, checkout — land on the branch the
     # user is actually on); main is only a fallback for datasets that have never
@@ -670,6 +685,7 @@ async def create_snapshot(
         description=description,
         image_count=len(images),
         source=source,
+        findings_summary=findings_summary,
     )
     db.add(version)
     await db.flush()

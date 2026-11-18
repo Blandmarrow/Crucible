@@ -17,16 +17,31 @@ class ProvenanceDefaults(BaseModel):
     _norm_license = field_validator("license")(normalize_license_input)
 
 
+# What a dataset is for (M12). Free text read by the analyst; capped so it fits a
+# small model's context beside the findings and notes.
+GOAL_MAX_LEN = 2000
+# The short side a dataset trains at. Bounds are sanity limits, not training advice.
+TARGET_RESOLUTION_MIN = 64
+TARGET_RESOLUTION_MAX = 16384
+
+
 class DatasetCreate(ProvenanceDefaults):
     name: str = Field(..., min_length=1, max_length=255)
     description: str = ""
     category: str = ""
+    goal: str = Field("", max_length=GOAL_MAX_LEN)
+    target_resolution: int | None = Field(None, ge=TARGET_RESOLUTION_MIN, le=TARGET_RESOLUTION_MAX)
 
 
 class DatasetUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=255)
     description: str | None = None
     category: str | None = None
+    # None = leave unchanged; "" = clear the goal.
+    goal: str | None = Field(None, max_length=GOAL_MAX_LEN)
+    # Absent = leave unchanged; an explicit null clears it (read via model_fields_set,
+    # since None cannot mean both).
+    target_resolution: int | None = Field(None, ge=TARGET_RESOLUTION_MIN, le=TARGET_RESOLUTION_MAX)
     # None = leave unchanged; "" = clear the default.
     source_name: str | None = Field(None, max_length=FIELD_MAX_LEN["source_name"])
     source_url: str | None = Field(None, max_length=FIELD_MAX_LEN["source_url"])
@@ -125,6 +140,11 @@ class DatasetOut(BaseModel):
     source_url: str = ""
     license: str = ""
     attribution: str = ""
+    goal: str = ""
+    target_resolution: int | None = None
+    # The last health report's severity counts, for the card badge; None = never
+    # computed. See backend/services/health_service.py.
+    health_summary: dict | None = None
 
     model_config = {"from_attributes": True}
 

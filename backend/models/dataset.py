@@ -33,6 +33,17 @@ class Dataset(Base):
 
     current_branch_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
 
+    # What the dataset is for (M12), read by the analyst. Separate from `description`,
+    # which usually says where the images came from. "" means no goal set.
+    goal: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    # The short side the dataset is meant to train at; NULL means use the health
+    # report's default. A number beside the goal so no check has to parse prose.
+    target_resolution: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # The last health report's severity counts, for the dataset card's badge:
+    # {"error", "warn", "info", "computed_at"}. Written by `health_service` without
+    # bumping `updated_at` (part of the stats cache validator). NULL = never computed.
+    health_summary: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
     # Provenance defaults — inherited by any image whose own field is NULL/empty.
     # "" means unset (see backend/licenses.py::resolve_provenance).
     source_name: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")

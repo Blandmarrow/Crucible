@@ -272,6 +272,12 @@ def _apply_image_filters(q, f: ImageFilterParams):
     if f.ar_max is not None:
         q = q.where(Image.width < f.ar_max * Image.height)
 
+    if f.short_side_max is not None:
+        q = q.where(func.min(Image.width, Image.height) < f.short_side_max)
+
+    if f.scores_stale is not None:
+        q = q.where(Image.scores_stale == f.scores_stale)
+
     if f.format_filter:
         q = q.where(Image.format == f.format_filter)
 

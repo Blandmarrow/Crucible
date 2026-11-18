@@ -16,6 +16,7 @@ through are `docs/dev/image-filters.md`; the Stats cache and index pin the repor
 | [notes.md](analyst/notes.md) | Dataset and app-wide notes: the three tables, soft delete and history, the size caps, a dismissal as a note, the `/notes` and `/app-notes` routes, the goal fields on `Dataset` |
 | [ui.md](analyst/ui.md) | The frontend: `HealthPage`, the notes editor, the dialogs' goal fields, the card badge, their query keys and routing |
 | [chat.md](analyst/chat.md) | The chat (phase 2): the `chats`, `chat_messages` and `llm_usage` tables, the token budget settings, privacy defaults and overrides, `build_context` and its categories, the preview route |
+| [sending.md](analyst/sending.md) | Sending a message: the order of a send, the streamed call and its two time limits, usage before the reply, the SSE events and resume, budgets, cancel and the sweeps, the provider limit shared with captioning |
 
 ## Where things live
 
@@ -28,6 +29,7 @@ through are `docs/dev/image-filters.md`; the Stats cache and index pin the repor
 | `frontend/src/pages/HealthPage.tsx`, `frontend/src/components/health/`, `frontend/src/api/health.ts`, `frontend/src/api/notes.ts` | `docs/dev/analyst/ui.md` |
 | `frontend/src/components/datasets/GoalFields.tsx`, `HealthBadge.tsx` | `docs/dev/analyst/ui.md`; + `docs/dev/dataset-operations.md` for the dialogs, `docs/dev/datasets-page.md` for the card |
 | `backend/models/chat.py`, `backend/schemas/chat.py`, `backend/routers/chats.py`, `backend/services/analyst_context.py`, `openai_providers.analyst_privacy` | `docs/dev/analyst/chat.md`; + `docs/dev/llm-providers.md` for the rest of the provider |
+| `backend/services/chat_runner.py`, `backend/ml/chat_stream.py`, `backend/services/llm_limiter.py` | `docs/dev/analyst/sending.md`; + `docs/dev/captioning/jobs.md` for the caption side of the limiter |
 | `frontend/src/components/common/FilteredImagesModal.tsx` | `docs/dev/statistics-panels.md`; + `docs/dev/analyst/ui.md` for the Health page's use |
 
 ## The rule a later phase must not break

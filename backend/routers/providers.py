@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.database import get_db
 from backend.models.chat import Chat
 from backend.models.openai_provider import OpenAIProvider
+from backend.services import llm_limiter
 from backend.schemas.openai_provider import (
     OpenAIProviderCreate,
     OpenAIProviderOut,
@@ -55,6 +56,8 @@ async def update_provider(provider_id: str, body: OpenAIProviderUpdate, db: Asyn
         # server, or a change in whether it bills, must not inherit "send everything".
         await db.execute(update(Chat).where(Chat.provider_id == row.id).values(privacy=None))
     await db.commit()
+    # The shared limit in use, if any, takes the new size now (services/llm_limiter.py).
+    llm_limiter.resize(row.id, row.max_concurrent)
     await db.refresh(row)
     return OpenAIProviderOut.from_orm_row(row)
 

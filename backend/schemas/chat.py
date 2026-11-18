@@ -117,7 +117,33 @@ class ContextManifest(BaseModel):
     note_numbers: dict[str, list[str]] = Field(default_factory=dict)
 
 
+class BudgetOut(BaseModel):
+    """Where a chat and today stand against the token budgets. Only a billed provider
+    meets them, so `would_exceed` is always False for a free one."""
+
+    billed: bool
+    # The most the next send could use: its context plus a full-length reply.
+    estimate: int
+    chat_used: int
+    chat_budget: int
+    day_used: int
+    day_budget: int
+    would_exceed: bool
+
+
 class PreviewOut(BaseModel):
     messages: list[ContextMessage]
     manifest: ContextManifest
     privacy: dict[str, bool]
+    budget: BudgetOut
+
+
+class SendRequest(BaseModel):
+    content: str = Field(..., min_length=1, max_length=20_000)
+
+    @field_validator("content")
+    @classmethod
+    def _not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("A message cannot be empty")
+        return v

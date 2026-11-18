@@ -15,6 +15,7 @@ from backend.ml import ollama_captioner
 from backend.ml.model_manager import model_manager
 from backend.models import BackgroundJob, Image
 from backend.models.openai_provider import OpenAIProvider
+from backend.services import llm_limiter
 from backend.services.image_scope import flag_exclusions
 from backend.schemas.openai_provider import MAX_CONCURRENT_REQUESTS
 from backend.utils import ALLOWED_FLAG_KEYS, InOrderCalls, chunked, normalize_subfolder, subsume_tags
@@ -645,20 +646,26 @@ async def start_caption_job(
                     )
                 elif is_openai_compat:
                     from backend.ml.openai_compat_captioner import caption_image as _oi
-                    return await _oi(
-                        file_path,
-                        base_url=openai_provider.base_url,
-                        api_key=openai_provider.api_key,
-                        model_name=openai_model_name,
-                        style=body.style,
-                        custom_prompt=resolved_prompt,
-                        max_px=openai_provider.max_image_px,
-                        max_tokens=openai_provider.max_tokens,
-                        timeout_s=openai_provider.timeout_s,
-                        target_w=body.target_width,
-                        target_h=body.target_height,
-                        client=remote,
-                    )
+                    # The provider's slots are shared with other jobs and chats
+                    # (services/llm_limiter.py); `bound` above stays this job's window.
+                    async with llm_limiter.slot(
+                        openai_provider.id, openai_provider.max_concurrent,
+                        stop=lambda: job_queue.cancel_requested(job_id),
+                    ):
+                        return await _oi(
+                            file_path,
+                            base_url=openai_provider.base_url,
+                            api_key=openai_provider.api_key,
+                            model_name=openai_model_name,
+                            style=body.style,
+                            custom_prompt=resolved_prompt,
+                            max_px=openai_provider.max_image_px,
+                            max_tokens=openai_provider.max_tokens,
+                            timeout_s=openai_provider.timeout_s,
+                            target_w=body.target_width,
+                            target_h=body.target_height,
+                            client=remote,
+                        )
                 elif is_wd14:
                     from backend.ml import wd14_tagger
                     return await asyncio.get_running_loop().run_in_executor(
@@ -695,6 +702,10 @@ async def start_caption_job(
             try:
                 async with AsyncSessionLocal() as session, calls:
                     async for i, item, call_result, call_exc in calls:
+                        # A request still waiting for the provider's slot when Stop came was never
+                        # sent (llm_limiter.SlotSkipped): nothing to save or count as a failure.
+                        if isinstance(call_exc, llm_limiter.SlotSkipped):
+                            continue
                         img_id, file_path, img_filename, img_subfolder, existing_caption = item
                         caption = ""
                         # Set by both except branches so an already-counted exception is
@@ -1269,20 +1280,25 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
                         )
                     elif is_openai_compat:
                         from backend.ml.openai_compat_captioner import caption_image as _oi
-                        return await _oi(
-                            file_path,
-                            base_url=openai_provider.base_url,
-                            api_key=openai_provider.api_key,
-                            model_name=openai_model_name,
-                            style=step.style,
-                            custom_prompt=resolved_prompt,
-                            max_px=openai_provider.max_image_px,
-                            max_tokens=openai_provider.max_tokens,
-                            timeout_s=openai_provider.timeout_s,
-                            target_w=step.target_width,
-                            target_h=step.target_height,
-                            client=remote,
-                        )
+                        # The provider's slots are shared with other jobs and chats.
+                        async with llm_limiter.slot(
+                            openai_provider.id, openai_provider.max_concurrent,
+                            stop=lambda: job_queue.cancel_requested(job_id),
+                        ):
+                            return await _oi(
+                                file_path,
+                                base_url=openai_provider.base_url,
+                                api_key=openai_provider.api_key,
+                                model_name=openai_model_name,
+                                style=step.style,
+                                custom_prompt=resolved_prompt,
+                                max_px=openai_provider.max_image_px,
+                                max_tokens=openai_provider.max_tokens,
+                                timeout_s=openai_provider.timeout_s,
+                                target_w=step.target_width,
+                                target_h=step.target_height,
+                                client=remote,
+                            )
                     elif is_wd14:
                         from backend.ml import wd14_tagger
                         return await asyncio.get_running_loop().run_in_executor(
@@ -1297,6 +1313,10 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
                 async with AsyncSessionLocal() as session, calls:
                     cached_vram_mb = 0
                     async for i, item, call_result, call_exc in calls:
+                        # A request still waiting for the provider's slot when Stop came was never
+                        # sent (llm_limiter.SlotSkipped): nothing to save or count as a failure.
+                        if isinstance(call_exc, llm_limiter.SlotSkipped):
+                            continue
                         img_id, file_path, img_filename, img_subfolder = item
                         caption = ""
                         # See the matching flag in /run's loop.

@@ -75,6 +75,8 @@ async def lifespan(app: FastAPI):
     # having just been failed above, for an explicit resume
     # (docs/dev/comfyui/automation.md).
     await _reconcile_interrupted_runs()
+    # An analyst reply the last process was streaming left a `partial` row.
+    await _sweep_interrupted_chats()
     await _sweep_old_jobs()
     await _sweep_orphan_dataset_folders()
     # A dictionary install the last process did not finish left a .part or .tmp
@@ -87,6 +89,8 @@ async def lifespan(app: FastAPI):
     # mid-run (asyncio only holds a weak one).
     _background_tasks.add(asyncio.create_task(_startup_db_maintenance()))
     yield
+    # Replies still streaming end as `error: interrupted`, with their usage recorded.
+    await _stop_chats()
     await dictionary_service.shutdown()
     await job_queue.stop()
 
@@ -144,6 +148,29 @@ async def _reconcile_interrupted_runs() -> None:
         await reconcile_interrupted_runs()
     except Exception:
         logging.getLogger(__name__).exception("Run reconciliation failed")
+
+
+async def _sweep_interrupted_chats() -> None:
+    """Turn analyst replies a crash left `partial` into `error: interrupted`. Never fatal
+    to startup (services/chat_runner.py)."""
+    from backend.services import chat_runner
+
+    try:
+        n = await chat_runner.mark_interrupted()
+        if n:
+            logging.getLogger(__name__).info("Marked %d interrupted analyst replies", n)
+    except Exception:
+        logging.getLogger(__name__).exception("Analyst chat sweep failed")
+
+
+async def _stop_chats() -> None:
+    """Stop the analyst replies still streaming at shutdown. Never fatal."""
+    from backend.services import chat_runner
+
+    try:
+        await chat_runner.stop_all()
+    except Exception:
+        logging.getLogger(__name__).exception("Stopping analyst replies failed")
 
 
 async def _sweep_old_jobs() -> None:

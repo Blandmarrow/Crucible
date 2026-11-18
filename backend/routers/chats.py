@@ -1,9 +1,13 @@
-"""Analyst chats (M12 phase 2): a dataset's conversations and the "what gets sent"
-preview. Sending a message arrives with the streaming call. See docs/dev/analyst/chat.md.
+"""Analyst chats (M12 phase 2): a dataset's conversations, the "what gets sent" preview,
+and sending a message with its streamed reply. See docs/dev/analyst/chat.md and
+docs/dev/analyst/sending.md.
 """
+import json
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sse_starlette.sse import EventSourceResponse
 
 from backend.database import get_db
 from backend.models import Chat, ChatMessage, Dataset, OpenAIProvider
@@ -15,7 +19,9 @@ from backend.schemas.chat import (
     ChatUpdate,
     PreviewOut,
     PreviewRequest,
+    SendRequest,
 )
+from backend.services import chat_runner
 from backend.services.analyst_context import build_context
 
 router = APIRouter(tags=["chats"])
@@ -114,13 +120,87 @@ async def update_chat(chat_id: str, body: ChatUpdate, db: AsyncSession = Depends
 @router.delete("/chats/{chat_id}", status_code=204)
 async def delete_chat(chat_id: str, db: AsyncSession = Depends(get_db)):
     chat = await _get_chat(db, chat_id)
+    # A reply still streaming would otherwise write to rows the delete just removed.
+    await chat_runner.cancel_chat(chat_id)
     await db.delete(chat)
     await db.commit()
 
 
 @router.post("/chats/{chat_id}/preview-context", response_model=PreviewOut)
 async def preview_context(chat_id: str, body: PreviewRequest, db: AsyncSession = Depends(get_db)):
-    """Exactly what the next send would use: the same `build_context` call."""
+    """Exactly what the next send would use (the same `build_context` call), and where
+    the budgets stand for it."""
     chat = await _get_chat(db, chat_id)
     built = await build_context(db, chat, draft=body.draft)
-    return PreviewOut(messages=built.messages, manifest=built.manifest, privacy=built.privacy)
+    provider = await db.get(OpenAIProvider, chat.provider_id) if chat.provider_id else None
+    estimate = chat_runner.send_estimate(built.manifest.estimated_tokens, provider)
+    budget = await chat_runner.budget_status(db, chat, provider, estimate)
+    return PreviewOut(messages=built.messages, manifest=built.manifest, privacy=built.privacy, budget=budget)
+
+
+def _event_stream(run: "chat_runner._Run") -> EventSourceResponse:
+    """The run's events as SSE. Leaving (a closed tab) only stops listening: the reply
+    keeps being written by its task. The listener is added inside the generator, so a
+    client that leaves before the first event never leaves one behind; its `start`
+    carries the text so far, so nothing streamed before then is lost."""
+
+    async def generate():
+        queue = chat_runner.listen(run)
+        try:
+            while True:
+                event, data = await queue.get()
+                yield {"event": event, "data": json.dumps(data)}
+                if event in chat_runner.TERMINAL_EVENTS:
+                    break
+        finally:
+            chat_runner.stop_listening(run, queue)
+
+    return EventSourceResponse(generate())
+
+
+@router.post("/chats/{chat_id}/messages")
+async def send_message(chat_id: str, body: SendRequest, db: AsyncSession = Depends(get_db)):
+    """Send a message and stream the reply: `start`, `delta`…, `usage`, then `done` or
+    `error` carrying the stored reply. Refusals (no provider or model, a reply already
+    running, a budget) are plain HTTP errors and store nothing."""
+    chat = await _get_chat(db, chat_id)
+    run = await chat_runner.start(db, chat, body.content)
+    return _event_stream(run)
+
+
+async def _get_message(db: AsyncSession, chat_id: str, message_id: int) -> ChatMessage:
+    msg = await db.get(ChatMessage, message_id)
+    if msg is None or msg.chat_id != chat_id:
+        raise HTTPException(404, "Message not found")
+    return msg
+
+
+@router.get("/chats/{chat_id}/messages/{message_id}/stream")
+async def resume_stream(chat_id: str, message_id: int, db: AsyncSession = Depends(get_db)):
+    """Pick a reply back up after a reload: the text so far, then the rest live. A reply
+    that already ended answers with its `start` and its final event at once."""
+    await _get_message(db, chat_id, message_id)
+    run = chat_runner.get_run(message_id)
+    if run is not None:
+        return _event_stream(run)
+    # The run may have ended during the read above: read the row again, as it is now.
+    db.expire_all()
+    msg = await _get_message(db, chat_id, message_id)
+    final = ChatMessageOut.model_validate(msg).model_dump(mode="json")
+    start = {"chat_id": chat_id, "message_id": msg.id, "user_message_id": None, "content": msg.content}
+
+    async def generate():
+        yield {"event": "start", "data": json.dumps(start)}
+        yield {"event": "error" if msg.status == "error" else "done", "data": json.dumps(final)}
+
+    return EventSourceResponse(generate())
+
+
+@router.post("/chats/{chat_id}/messages/{message_id}/cancel", response_model=ChatMessageOut)
+async def cancel_message(chat_id: str, message_id: int, db: AsyncSession = Depends(get_db)):
+    """Stop a reply, keeping what arrived as `cancelled`. Cancelling one that already
+    ended changes nothing and returns it as it is."""
+    await _get_message(db, chat_id, message_id)
+    await chat_runner.cancel(message_id)
+    db.expire_all()
+    return ChatMessageOut.model_validate(await _get_message(db, chat_id, message_id))

@@ -39,7 +39,7 @@ restates its stages.
    on its reporter.
 2. **CLAUDE.md has room again** (6,301 of 6,500): after captioning and labels (PR #177),
    detection and the file browser went behind hubs too, `docs/dev/detection.md` and
-   `docs/dev/file-browser.md`, on `docs/hub-detection-file-browser` (2026-11-18). The
+   `docs/dev/file-browser.md`, on `docs/hub-detection-file-browser`, PR #182 (2026-11-18). The
    95 words freed are for M12 phase 2's key invariant (everything the LLM sees goes through
    `build_context`), which lands on `feat/analyst`.
 3. M4 stays held, with its merge checklist under Waiting. The closed items of the

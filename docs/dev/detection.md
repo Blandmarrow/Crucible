@@ -30,9 +30,9 @@ not a see-also, and says which part of the code it owns.
 | `backend/routers/detection.py` (everything but `crop_to_detection`) | `docs/dev/detection/endpoints.md` |
 | `backend/routers/detection.py::crop_to_detection` | `docs/dev/detection/crop.md` |
 | `backend/models/detection.py` (the `mask_area` listeners) | `docs/dev/detection/endpoints.md` § Router and endpoints |
-| `backend/services/detection_service.py` | `docs/dev/detection/endpoints.md` § Storage for the snapshot helpers; + `docs/dev/bulk-image-jobs.md` for `remap_detections_for_crop` |
+| `backend/services/detection_service.py` | `docs/dev/versioning/mirrors.md` for the mirror shape and the snapshot read/replace helpers (summary: `docs/dev/detection/endpoints.md` § Storage); + `docs/dev/bulk-image-jobs.md` for `remap_detections_for_crop` |
 | `backend/ml/sam2_predictor.py`, `backend/ml/sam3_predictor.py`, `backend/ml/nudenet_scorer.py`, `backend/ml/florence_captioner.py` (its detection entry) | `docs/dev/detection/inference.md` |
-| `backend/ml/mask_utils.py` | `docs/dev/detection/inference.md` for refine and merge geometry; + `docs/dev/detection/crop.md` for `detection_crop_rect`, + `docs/dev/detection/endpoints.md` for `detection_mask_area` |
+| `backend/ml/mask_utils.py` | `docs/dev/detection/inference.md` for refine and merge geometry; + `docs/dev/detection/crop.md` for `detection_crop_rect`, + `docs/dev/detection/endpoints.md` for `detection_mask_area`, + `docs/dev/bulk-image-jobs.md` for `remap_detection_geometry`, `_clip_polygon_unit` and `stored_polygons`, + `docs/dev/export.md` for `compose_loss_mask` and `rasterize_detections` (why the paint job uses the latter: `docs/dev/detection/inpaint.md`) |
 | `backend/routers/inpaint.py` | `docs/dev/detection/inpaint.md` |
 | `frontend/src/constants/detectionModels.ts`, `frontend/src/api/detection.ts` | `docs/dev/detection/endpoints.md` § Frontend surfaces |
 | `frontend/src/components/detection/` (`DetectionsPanel`, `DetectionRunForm`, `DetectionBulkDeleteForm`) | `docs/dev/detection/endpoints.md` § Frontend surfaces |

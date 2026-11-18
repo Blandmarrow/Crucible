@@ -57,16 +57,21 @@ staleness sweep while still recording the seam.
 ## Queue
 
 CLAUDE.md → the detection and file-browser hubs was executed on 2026-11-18 on
-`docs/hub-detection-file-browser`, the user's choice over a budget raise, to make room for
-M12 phase 2's `build_context` invariant. The seam **held as recorded** above (four rows and
-three). Seven Map rows became two and CLAUDE.md went from 6,396 to 6,301 words. The bodies
+`docs/hub-detection-file-browser` (PR #182), the user's choice over a budget raise, to make room for
+M12 phase 2's `build_context` invariant. The seam **held as recorded** (detection's four rows,
+the file browser's three). Seven Map rows became two and CLAUDE.md went from 6,396 to 6,301 words. The bodies
 moved word for word into `docs/dev/detection/` (`endpoints.md`, `inference.md`, `crop.md`,
 `inpaint.md`) and `docs/dev/file-browser/` (`listing.md`, `move.md`, `rename-delete.md`),
 and both folders went into `SPLIT_INDEXES`; only the two bodies that gave up their path to a
 hub got new H1s. Every inbound path pointed at whole files, so each old path mapped to
-exactly one new one, and no `§` pointer had to change file. The history lines here and in
-`docs/dev/roadmap-archive/m3-split-queue.md` keep the old names unquoted, with a pointer
-to the new path.
+exactly one new one, and no `§` pointer had to change file. The history lines that named a
+full path, here and in `docs/dev/roadmap-archive/m3-split-queue.md`, keep it unquoted with a
+pointer to the new one. What the mechanical repoint could not decide, the Opus review
+caught: two pointers meaning the whole family (`ml-models.md`, `environment-setup.md`)
+belong on the hub rather than `endpoints.md`, `mask_utils.py` and `detection_service.py`
+have owners outside the family (`bulk-image-jobs.md`, `export.md`,
+`versioning/mirrors.md`), and the Map row needed `crop_to_detection` and `batch_inpaint`
+back, or a task named by its job type routes to the bulk-jobs or LaMa row first.
 
 CLAUDE.md → the captioning and labels hubs was executed on 2026-11-15 on
 `docs/hub-captioning-labels`, the user's choice over a budget raise, and the seam **held as

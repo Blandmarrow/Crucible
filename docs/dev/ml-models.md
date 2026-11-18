@@ -2,7 +2,7 @@
 
 This file covers what every model shares on its way in: the `model_manager` singleton and how it loads, the ambient `HF_TOKEN` every hub loader relies on, the EXIF-consistent `open_rgb` rule for inference, caption target-resolution preprocessing, startup config validation, TorchDynamo, the `backend/ml/device.py` abstraction, and the single GPU thread every load and inference runs on (`run_on_gpu`).
 
-Its siblings: `docs/dev/model-residency.md` covers what keeps a model resident and how its weights leave — eviction, the unload paths, leases and `_release_to_cpu` — and `docs/dev/model-registry.md` covers the model IDs themselves and each model's loader quirks. The subsystems that consume these models have their own files: `docs/dev/detection/endpoints.md` (object detection), the Quality family that `docs/dev/quality.md` routes to (quality scorers and flags, duplicate detection, style similarity), and `docs/dev/image-processing-models.md` for the pipelines that rewrite pixels — upscaling, LUT grading and LaMa inpainting.
+Its siblings: `docs/dev/model-residency.md` covers what keeps a model resident and how its weights leave — eviction, the unload paths, leases and `_release_to_cpu` — and `docs/dev/model-registry.md` covers the model IDs themselves and each model's loader quirks. The subsystems that consume these models have their own files: `docs/dev/detection.md` (object detection), the Quality family that `docs/dev/quality.md` routes to (quality scorers and flags, duplicate detection, style similarity), and `docs/dev/image-processing-models.md` for the pipelines that rewrite pixels — upscaling, LUT grading and LaMa inpainting.
 
 ### ML model management
 

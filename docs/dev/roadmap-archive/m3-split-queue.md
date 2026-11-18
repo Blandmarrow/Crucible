@@ -40,14 +40,17 @@ re-chosen.
       subsystem. Three flat siblings, no hub (the captioning ones went behind a hub on
       2026-11-15; the picker is now `docs/dev/captioning/model-picker.md`).
 - [x] `docs/dev/bulk-image-jobs.md` (2026-10-29): the recorded seam. Detection-driven
-      cropping moved to `docs/dev/detection-crop.md` and watermark removal to
-      `docs/dev/inpaint.md`; the crop remap stays as its own `##`, since all four crop sites
-      use it. Three flat siblings, no hub.
-- [x] `docs/dev/file-browser.md` (2026-10-29): three ways rather than the recorded two,
+      cropping moved to docs/dev/detection-crop.md and watermark removal to
+      docs/dev/inpaint.md; the crop remap stays as its own `##`, since all four crop sites
+      use it. Three flat siblings, no hub (both went behind the detection hub on
+      2026-11-18, as `docs/dev/detection/crop.md` and `docs/dev/detection/inpaint.md`).
+- [x] docs/dev/file-browser.md (2026-10-29): three ways rather than the recorded two,
       whose mutations half would have sat at 80%. `POST /move` (API-only) moved to
-      `docs/dev/file-browser-move.md`, and rename and delete, the two DB-syncing mutations
-      the page fires, to `docs/dev/file-browser-rename-delete.md`; the endpoint table,
-      collisions, path safety, § Still open and the page stay. Three flat siblings, no hub.
+      docs/dev/file-browser-move.md, and rename and delete, the two DB-syncing mutations
+      the page fires, to docs/dev/file-browser-rename-delete.md; the endpoint table,
+      collisions, path safety, § Still open and the page stay. Three flat siblings, no hub
+      (since 2026-11-18 behind a hub, as `docs/dev/file-browser/listing.md`,
+      `docs/dev/file-browser/move.md` and `docs/dev/file-browser/rename-delete.md`).
 - [x] Versioning hub (2026-10-29): the recorded restore seam would have left
       `versioning-service.md` at ~65%, and moving the mirrors too made the family four
       files, so it got a hub. Both `versioning-service.md` and the old body of

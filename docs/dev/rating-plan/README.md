@@ -337,7 +337,7 @@ Read `docs/dev/quality/style-similarity.md` and `docs/dev/quality/style-evaluati
 **Decided**: not as the default, and not in the same change as §3. Manual Meta approval as a
 prerequisite for quality scoring is a worse regression than the model is an upgrade, and
 swapping the backbone mid-experiment makes a §3 result unattributable. The repo has already
-been burned by gated models — `docs/dev/detection-inference.md` records SAM 3 loading from an
+been burned by gated models — `docs/dev/detection/inference.md` records SAM 3 loading from an
 ungated mirror while an HF access appeal sits pending.
 
 **The trap, if it is ever done**: DINOv3 ViT-B/16 has the same `12 × 768` geometry, so

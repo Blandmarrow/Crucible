@@ -1,6 +1,6 @@
 # Workspace tools: hardware stats, Logs & Booru lookup
 
-This file covers the smaller workspace surfaces: the sidebar hardware meters and their `/system` endpoints, the Logs page (job history + JS error console), and the Booru tag lookup page. The file browser page and its `/filesystem` router — the fourth surface this file used to carry — are now in `docs/dev/file-browser.md`.
+This file covers the smaller workspace surfaces: the sidebar hardware meters and their `/system` endpoints, the Logs page (job history + JS error console), and the Booru tag lookup page. The file browser page and its `/filesystem` router — the fourth surface this file used to carry — are now in `docs/dev/file-browser/listing.md`.
 
 ## System hardware stats
 

@@ -70,7 +70,7 @@ what the router branches on and the set itself is never imported there; `None` i
 and serves the video branch with `video_mime`, so one route
 covers both kinds and `FileResponse` supplies the Range/206 a `<video>` needs to seek. It
 serves an arbitrary absolute path, which is what that deliberately unsandboxed
-local-desktop router already did for images (`docs/dev/file-browser.md` § Path safety) — the
+local-desktop router already did for images (`docs/dev/file-browser/listing.md` § Path safety) — the
 wider allowlist adds no new exposure class. `GET /image-meta` stays image-only: a container
 carries no EXIF or generation parameters.
 

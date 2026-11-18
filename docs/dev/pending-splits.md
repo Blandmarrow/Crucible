@@ -14,12 +14,15 @@ of the next session that would append to that file.
 Nothing here is ever a reason to compress prose to get back under budget. See the
 `doc-maintenance` skill, § Splitting an oversized doc.
 
-**Before the next split that adds a Map row:** CLAUDE.md is at ~98% of its budget (6,396
-words, 2026-11-15, after the captioning and labels hubs), so the Map has room for three or
-four new rows at most. A split *inside* a hubbed family adds a row to its hub instead. Past that,
-the next hub candidates are detection (four rows) and the file browser (three). Re-measure
-each queued seam before executing it, and check both halves land under 60% of budget: two of
-the five seams split on 2026-11-12 had to be re-cut on execution.
+**Before the next split that adds a Map row:** CLAUDE.md is at ~97% of its budget (6,301
+words, 2026-11-18, after the detection and file-browser hubs), and the room is spoken for:
+M12 phase 2 adds a key invariant on `feat/analyst`. A split *inside* a hubbed family adds a
+row to its hub instead. Past that, the next hub candidates are the model rows (`ml-models`,
+`model-residency`, `model-registry`: three) and the frontend rows (`frontend-core`,
+`frontend-constants`, `frontend-jobs`, `job-invalidation`: four), then pairs such as export
+and statistics, or a budget decision. Re-measure each queued seam before executing it,
+and check both halves land under 60% of budget: two of the five seams split on 2026-11-12
+had to be re-cut on execution.
 
 ## How entries work
 
@@ -52,6 +55,23 @@ ground while sitting *below* that 60% floor — so it would read as already-spli
 staleness sweep while still recording the seam.
 
 ## Queue
+
+CLAUDE.md → the detection and file-browser hubs was executed on 2026-11-18 on
+`docs/hub-detection-file-browser` (PR #182), the user's choice over a budget raise, to make room for
+M12 phase 2's `build_context` invariant. The seam **held as recorded** (detection's four rows,
+the file browser's three). Seven Map rows became two and CLAUDE.md went from 6,396 to 6,301 words. The bodies
+moved word for word into `docs/dev/detection/` (`endpoints.md`, `inference.md`, `crop.md`,
+`inpaint.md`) and `docs/dev/file-browser/` (`listing.md`, `move.md`, `rename-delete.md`),
+and both folders went into `SPLIT_INDEXES`; only the two bodies that gave up their path to a
+hub got new H1s. Every inbound path pointed at whole files, so each old path mapped to
+exactly one new one, and no `§` pointer had to change file. The history lines that named a
+full path, here and in `docs/dev/roadmap-archive/m3-split-queue.md`, keep it unquoted with a
+pointer to the new one. What the mechanical repoint could not decide, the Opus review
+caught: two pointers meaning the whole family (`ml-models.md`, `environment-setup.md`)
+belong on the hub rather than `endpoints.md`, `mask_utils.py` and `detection_service.py`
+have owners outside the family (`bulk-image-jobs.md`, `export.md`,
+`versioning/mirrors.md`), and the Map row needed `crop_to_detection` and `batch_inpaint`
+back, or a task named by its job type routes to the bulk-jobs or LaMa row first.
 
 CLAUDE.md → the captioning and labels hubs was executed on 2026-11-15 on
 `docs/hub-captioning-labels`, the user's choice over a budget raise, and the seam **held as
@@ -169,7 +189,7 @@ as an M3 task, the second of the user-docs queue, and was **re-cut on execution*
 entry's own fallback. Re-measured at 2,696 words, the recorded seam (§ Starting up,
 § Restarting & shutting down and § Database backups out to `docs/server.md`) would have left
 ~1,670 behind, 67% of budget, so § File Browser went to its own page as well, mirroring
-`docs/dev/file-browser.md`. That left ~1,150 (workspace), ~1,110 (server) and ~610 (file
+docs/dev/file-browser.md (now `docs/dev/file-browser/listing.md`). That left ~1,150 (workspace), ~1,110 (server) and ~610 (file
 browser). The entry's Watch-for was right but missed CLAUDE.md's `§ Restarting & shutting
 down` pointer, which the checker cannot see; the re-cut added the `#file-browser` links in
 README, `docs/datasets.md` and `docs/features.md`.
@@ -187,7 +207,7 @@ subfolder sidebar, a subsystem of its own, mirroring `docs/dev/gallery/subfolder
 (gallery) and ~740 (subfolders). The entry's Watch-for was right except for
 `docs/duplicates.md`, which no longer linked here.
 
-`docs/dev/bulk-image-jobs.md` → `docs/dev/detection-crop.md` **and** `docs/dev/inpaint.md` was
+`docs/dev/bulk-image-jobs.md` → docs/dev/detection-crop.md **and** docs/dev/inpaint.md (now `docs/dev/detection/crop.md` and `docs/dev/detection/inpaint.md`) was
 executed on 2026-10-29 as an M3 task, with the seam as recorded and the remap bullets promoted
 to their own `##` in the staying half. The entry's word counts were stale: re-measured at
 3,946 words, the split left ~1,970 behind (56%, so little headroom; the next move out is

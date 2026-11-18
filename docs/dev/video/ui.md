@@ -145,7 +145,7 @@ Windows the app's own handle is what makes the delete or rename fail
 (`docs/dev/postmortems/PM-021-served-file-handle-blocked-windows-delete.md`). The backend
 retry covers only the teardown race; this covers the rest. Cancelling the dialog remounts
 the player. `FileBrowserPage`'s `PreviewPanel` takes the same `released` prop, set from a
-modal **or** its inline rename (`docs/dev/file-browser.md`).
+modal **or** its inline rename (`docs/dev/file-browser/listing.md`).
 
 `utils/videoPlayback.ts` is the shared classifier. `playbackErrorMessage(el, {filename,
 codecLabel})` reads `el.error.code` and returns **null for `MEDIA_ERR_ABORTED`** — the

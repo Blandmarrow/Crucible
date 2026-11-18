@@ -5,8 +5,8 @@ request scope, the crop rect math, the replace and new-file branches, and
 `CropToDetectionForm`. The job shares its loop shape (per-item failure counting, the PM-013
 commit ordering, `thumbnails_stale`) with the bulk jobs in `docs/dev/bulk-image-jobs.md`,
 which also owns the detection remap every replace-mode crop runs. The detector whose boxes
-it consumes is `docs/dev/detection.md`; its sibling consumer, which paints detections out
-rather than cropping to them, is `docs/dev/inpaint.md`. The user-facing side is
+it consumes is `docs/dev/detection/endpoints.md`; its sibling consumer, which paints detections out
+rather than cropping to them, is `docs/dev/detection/inpaint.md`. The user-facing side is
 `docs/detection.md` § Crop to detected subject.
 
 ## The job

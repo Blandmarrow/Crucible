@@ -69,11 +69,11 @@ class _Provider:
     """What the call needs from the provider row, read once at send time."""
     id: str
     base_url: str
-    api_key: str
-    timeout_s: float
-    max_tokens: int
-    max_concurrent: int
-    billed: bool
+    api_key: str = field(repr=False)  # never in a repr, a log line or a traceback's locals
+    timeout_s: float = 0.0
+    max_tokens: int = 0
+    max_concurrent: int = 1
+    billed: bool = False
 
 
 @dataclass
@@ -86,6 +86,9 @@ class _Run:
     listeners: set[asyncio.Queue] = field(default_factory=set)
     task: asyncio.Task | None = None
     user_cancelled: bool = False
+    # Set once the call is over and the reply is being stored: from then on a Stop, a
+    # delete or a shutdown waits for the store instead of cancelling it.
+    ending: bool = False
     final: tuple[str, dict] | None = None
 
     @property
@@ -107,6 +110,9 @@ class _Run:
 
 # message id -> its run, while the reply is being written.
 _runs: dict[int, _Run] = {}
+# Chats with a send between its refusal checks and its run being registered: `start`
+# awaits several times in that window, and a double-click must not slip a second send in.
+_starting: set[str] = set()
 
 
 def active_for_chat(chat_id: str) -> _Run | None:
@@ -176,9 +182,17 @@ async def start(db: AsyncSession, chat: Chat, content: str) -> _Run:
     model = chat.model or provider.default_model
     if not model:
         raise HTTPException(422, "Choose a model for this chat, or set the provider's default model.")
-    if active_for_chat(chat.id) is not None:
+    if chat.id in _starting or active_for_chat(chat.id) is not None:
         raise HTTPException(409, "A reply is still being written in this chat. Wait for it or stop it first.")
+    # No await between the check above and this line, so two sends cannot both pass it.
+    _starting.add(chat.id)
+    try:
+        return await _start(db, chat, content, provider, model)
+    finally:
+        _starting.discard(chat.id)
 
+
+async def _start(db: AsyncSession, chat: Chat, content: str, provider: OpenAIProvider, model: str) -> _Run:
     preview = await build_context(db, chat, draft=content)
     budget = await budget_status(db, chat, provider, send_estimate(preview.manifest.estimated_tokens, provider))
     if budget.would_exceed:
@@ -246,9 +260,13 @@ async def _flush_loop(run: _Run) -> None:
 
 
 async def _execute(run: _Run, cfg: _Provider, model: str, messages: list[dict], prompt_chars: int) -> None:
-    opened = False
+    opened = sent = refused = False
     status, error_kind, detail = "complete", None, None
     tokens_in = tokens_out = None
+
+    def on_send() -> None:
+        nonlocal sent
+        sent = True
 
     def on_open() -> None:
         nonlocal opened
@@ -268,6 +286,7 @@ async def _execute(run: _Run, cfg: _Provider, model: str, messages: list[dict], 
                 result = await stream_chat(
                     client, model=model, messages=messages, max_tokens=cfg.max_tokens,
                     first_token_s=FIRST_TOKEN_S, idle_s=IDLE_S, on_text=on_text, on_open=on_open,
+                    on_send=on_send,
                 )
             finally:
                 await client.close()
@@ -282,31 +301,64 @@ async def _execute(run: _Run, cfg: _Provider, model: str, messages: list[dict], 
     except ChatStreamError as exc:
         status, error_kind, detail = "error", exc.kind, scrub(str(exc), cfg.api_key)
         opened = opened or exc.opened
+        refused = exc.refused
         logger.warning("Analyst chat %s: the call failed (%s)", run.chat_id, exc.kind)
     except asyncio.CancelledError:
         if run.user_cancelled:
             status = "cancelled"
         else:
             status, error_kind, detail = "error", "interrupted", INTERRUPTED_DETAIL
-    except Exception:  # noqa: BLE001 — never leave a row partial
-        logger.exception("Analyst chat %s: unexpected failure", run.chat_id)
+    except Exception as exc:  # noqa: BLE001 — never leave a row partial
+        # The message only, scrubbed: an exception's text is the one place a key could ride.
+        logger.error("Analyst chat %s: unexpected failure: %s: %s", run.chat_id,
+                     type(exc).__name__, scrub(str(exc), cfg.api_key))
         status, error_kind, detail = "error", "fatal", "Something went wrong in Crucible; see the log."
     finally:
+        # From here on, a Stop, a delete or a shutdown waits for the store (`_stop`).
+        run.ending = True
         flusher.cancel()
-        try:
-            await flusher
-        except BaseException:  # noqa: BLE001 — its own cancel
-            pass
+        await asyncio.wait({flusher})
 
     estimated = tokens_in is None or tokens_out is None
-    record = opened or bool(run.parts)
+    # Recorded once the server accepted the request or text arrived. A billed request that
+    # was sent but cut short before any answer (a Stop or a time limit while the server
+    # was still working) is recorded too, as an estimate: it may have been billed. Only an
+    # HTTP refusal is known to have run nothing.
+    record = opened or bool(run.parts) or (cfg.billed and sent and not refused)
     if record:
         tokens_in = tokens_in if tokens_in is not None else estimate_tokens(prompt_chars)
         tokens_out = tokens_out if tokens_out is not None else estimate_tokens(len(run.text))
     try:
-        await _finish(run, cfg, status, error_kind, detail, tokens_in, tokens_out, estimated, record)
+        # Shielded: nothing that cancels this task can leave the row `partial` and the
+        # listeners waiting. `_stop` no longer cancels once `ending` is set.
+        await asyncio.shield(_finish(run, cfg, status, error_kind, detail, tokens_in, tokens_out, estimated, record))
+    except Exception:  # noqa: BLE001 — the store failed: still end the run for its listeners
+        logger.error("Analyst chat %s: could not store the reply", run.chat_id, exc_info=True)
+        await _finish_failed(run)
     finally:
         _runs.pop(run.message_id, None)
+
+
+async def _finish_failed(run: _Run) -> None:
+    """The reply could not be stored: mark the row an error if possible, and send every
+    listener a final `error` so none waits forever."""
+    from backend.database import AsyncSessionLocal
+
+    detail = "Crucible could not save this reply; see the log."
+    try:
+        async with AsyncSessionLocal() as s:
+            await s.execute(
+                update(ChatMessage).where(ChatMessage.id == run.message_id)
+                .values(status="error", error_kind="fatal", error_detail=detail, content=run.text)
+            )
+            await s.commit()
+    except Exception:  # noqa: BLE001 — the startup sweep catches a row left partial
+        logger.error("Analyst chat %s: could not mark the reply failed", run.chat_id, exc_info=True)
+    run.final = ("error", {
+        "id": run.message_id, "status": "error", "error_kind": "fatal",
+        "error_detail": detail, "content": run.text,
+    })
+    run.emit(*run.final)
 
 
 async def _related(db: AsyncSession, dataset_id: str, text: str) -> list[str]:
@@ -386,15 +438,16 @@ def stop_listening(run: _Run, q: asyncio.Queue) -> None:
 
 
 async def _stop(run: _Run, *, by_user: bool) -> None:
-    run.user_cancelled = run.user_cancelled or by_user
+    """Cancel the run's call, unless it is already storing its reply, and wait until it
+    has ended. `asyncio.wait` neither passes a cancel of the caller into the task nor
+    swallows one aimed at the caller (PM-027)."""
+    run.user_cancelled = run.user_cancelled or (by_user and not run.ending)
     task = run.task
     if task is None or task.done():
         return
-    task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
+    if not run.ending:
+        task.cancel()
+    await asyncio.wait({task})
 
 
 async def cancel(message_id: int) -> bool:

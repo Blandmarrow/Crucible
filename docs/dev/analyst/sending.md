@@ -19,7 +19,9 @@ provider limit shared with caption jobs. The context the call sends is
 
 1. **Refusals first, storing nothing.** No provider (422), no model on the chat or as the
    provider's default (422), a reply already being written in this chat (409), or a budget
-   the send could pass (409, below).
+   the send could pass (409, below). The chat goes into `_starting` straight after its
+   check, with no await between, and leaves it once its run is registered. A double-click
+   gets a 409, never a second send whose rows collide on `seq`.
 2. **Both rows before the call.** The user's message is stored, and the chat gets its title
    from it if it had none. Then `build_context` runs, and the assistant row is stored with
    `status="partial"`, the reply's `model`, its `context_manifest`, and the
@@ -36,10 +38,19 @@ provider limit shared with caption jobs. The context the call sends is
    tokens, `related_findings`. This is the paid-call cap's rule
    (`docs/dev/comfyui/run-budgets.md`): a failure writing the reply must not lose the
    record of a call that may have been billed.
+5. **The store cannot be cut short.** Once the call is over the run is marked `ending`.
+   From then on a Stop, a delete or a shutdown waits for the store instead of cancelling
+   it, and `_finish` runs under `asyncio.shield`. If the store itself fails (a locked
+   database, say), `_finish_failed` marks the row an error as best it can and still sends
+   every listener a final `error`, so none waits forever.
 
 **What is recorded.** A call is recorded once the server accepted it, or once any text
-arrived. One refused at the door (a 429 or 401 before the stream opened) used nothing and
-records nothing. The tokens are the server's `usage` when it sent one
+arrived. A request to a **billed** provider that was sent but cut short before any answer
+(a Stop, or the first-token limit, while the server was still working) is recorded too, as
+an estimate: it may have been billed. Only an HTTP refusal (a 429 or 401 before the stream
+opened) is known to have run nothing, and records nothing; for a free provider, neither
+case is recorded. A cancelled reply's estimate counts the visible text only: hidden
+reasoning that never arrived cannot be seen. The tokens are the server's `usage` when it sent one
 (`stream_options.include_usage` asks for it). Otherwise they are a character estimate
 (`CHARS_PER_TOKEN`) of the prompt and the text, marked `estimated` on both the usage row
 and the message.
@@ -90,7 +101,8 @@ see.
 **The key stays out.** It is read from the provider row when the send starts and lives only
 in the task. An error message is passed through `scrub`, which replaces the key and cuts the
 message to 500 characters, before it reaches the row or an event. Log lines name the chat
-and the error kind, never the message.
+and the error kind; the one that logs an unexpected failure's message scrubs it first. The
+provider snapshot `_Provider` keeps the key out of its `repr`.
 
 ## Events
 
@@ -103,8 +115,9 @@ cannot send a body:
 - `usage`: `tokens_in`, `tokens_out`, `estimated`, when the call was recorded.
 - `done` or `error`: the stored assistant message (`ChatMessageOut`), the last event.
 
-Each listener has its own queue (`chat_runner.listen`). Leaving stops the listening, never
-the task. `GET /chats/{id}/messages/{mid}/stream` resumes after a reload: while the reply
+Each listener has its own queue (`chat_runner.listen`), added when the stream's generator
+first runs, so a client gone before then leaves none behind. Leaving stops the listening,
+never the task. `GET /chats/{id}/messages/{mid}/stream` resumes after a reload: while the reply
 is running, a `start` with the text so far and then the rest live. Once it has ended, its
 `start` and final event at once.
 
@@ -132,7 +145,9 @@ figures as `budget`, so the composer can warn before Send.
 
 - `POST /chats/{id}/messages/{mid}/cancel` stops the task, waits for it to store the text so
   far as `cancelled` (with its usage), and returns the message. On a reply that already
-  ended it changes nothing.
+  ended, or one already storing its reply, it waits and returns the reply as stored.
+- `_stop` waits with `asyncio.wait`, which neither passes a cancel of the caller into the
+  task nor swallows one aimed at the caller (PM-027).
 - Deleting a chat (`DELETE /chats/{id}`) or a dataset (`DELETE /datasets/{id}`) first stops
   its replies, through `cancel_chat` and `cancel_dataset`. Otherwise the task would write
   to rows the delete removed. Their usage stays, with `chat_id` NULL.
@@ -143,20 +158,29 @@ figures as `budget`, so the composer can warn before Send.
 ## One limit per provider, shared with captioning
 
 A provider's `max_concurrent` is how many requests its server takes at once. By the user's
-ruling of 2026-11-18, every request to a provider now holds one slot of
-`llm_limiter.slot(provider_id, max_concurrent)` while it is in flight. That covers the chat's
-whole stream and each caption request in `/captioning/run` and `/captioning/pipeline`. Two
-caption jobs, or a job and a chat, therefore no longer exceed it together. A job's
-`InOrderCalls` bound is unchanged and still sets its own window
+ruling of 2026-11-18, a request now holds one slot of `llm_limiter.slot(provider_id, ...)`
+while it is in flight. That covers the chat's whole stream and each caption request in
+`/captioning/run` and `/captioning/pipeline`, so a caption job and the chats on one provider
+no longer exceed it together. The job queue runs one job at a time, so two caption jobs never
+overlapped anyway. A job's `InOrderCalls` bound is unchanged and still sets its own window
 (`docs/dev/captioning/jobs.md` § Requests in flight).
 
-- There is one semaphore per provider id and event loop. A changed `max_concurrent`
-  replaces it, and requests holding the old one release into it, so for their length the
-  two can together exceed the new limit once.
-- Ollama has no provider row and keeps its own per-job bound.
-- A caption request waiting for a slot has already been started as far as `InOrderCalls`
-  is concerned. If the job then ends early, `_record_calls_started` counts it as sent. For
-  an automated run's paid-call cap that over-counts, which is the safe direction.
+- **One limit per provider and event loop, resized in place.** The `size` a caller passes
+  only sizes a limit when it is first made. A changed `max_concurrent` reaches it only
+  through `resize`, which the providers route calls after the update. A caption job keeps
+  the setting it read at its start, and that stale copy must not split the limit in two.
+  A shrink takes effect as slots come back.
+- **First come, first served**, and a waiter cancelled while queued leaves without a slot.
+- **A caption Stop drops requests still waiting for a slot.** The caption calls pass the
+  job's cancel flag as `stop`. A request still queued when Stop comes raises `SlotSkipped`
+  and is never sent, and both finish loops skip it without counting a failure. Without
+  this, Stop would be followed, minutes later, by requests queued behind a chat.
+- **Not covered:** Ollama, which has no provider row and keeps its own per-job bound, and
+  ComfyUI prompt generation (`prompt_generator`), which builds its own client.
+- **Paid-call counting.** A caption request waiting for a slot has already been started as
+  far as `InOrderCalls` is concerned. If the job then ends early, `_record_calls_started`
+  counts it as sent, and a skipped request still advances `done_items` past it. For an
+  automated run's paid-call cap that over-counts, which is the safe direction.
 
 ## Tests
 
@@ -169,8 +193,14 @@ caption jobs, or a job and a chat, therefore no longer exceed it together. A job
 - an idle timeout keeping its text and usage, and the refusals storing nothing;
 - budgets refusing a billed send, counting a failed billed call and leaving a free provider
   alone;
-- cancel, and a second send refused while a reply runs;
-- a reply finishing with nobody listening, then resumed;
+- cancel, a second send refused while a reply runs, and two sends at once;
+- a Stop while the reply is being stored, and a store that fails;
+- a billed request cut short before any answer recorded, a free one not;
+- a reply finishing with nobody listening, and a late listener resuming mid-reply;
 - the startup sweep, a dataset deleted mid-reply, and shutdown;
 - a restricted chat's request to the provider carrying no disabled category;
-- a chat and a caption job queuing on one provider slot.
+- a chat and a caption job queuing on one provider slot, and a caption Stop dropping the
+  requests still queued.
+
+`backend/tests/test_llm_limiter.py` covers the limiter on its own: order, resize in place,
+a waiter giving up on `stop`, and a fresh limit per event loop.

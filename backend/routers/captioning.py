@@ -648,7 +648,10 @@ async def start_caption_job(
                     from backend.ml.openai_compat_captioner import caption_image as _oi
                     # The provider's slots are shared with other jobs and chats
                     # (services/llm_limiter.py); `bound` above stays this job's window.
-                    async with llm_limiter.slot(openai_provider.id, openai_provider.max_concurrent):
+                    async with llm_limiter.slot(
+                        openai_provider.id, openai_provider.max_concurrent,
+                        stop=lambda: job_queue.cancel_requested(job_id),
+                    ):
                         return await _oi(
                             file_path,
                             base_url=openai_provider.base_url,
@@ -699,6 +702,10 @@ async def start_caption_job(
             try:
                 async with AsyncSessionLocal() as session, calls:
                     async for i, item, call_result, call_exc in calls:
+                        # A request still waiting for the provider's slot when Stop came was never
+                        # sent (llm_limiter.SlotSkipped): nothing to save or count as a failure.
+                        if isinstance(call_exc, llm_limiter.SlotSkipped):
+                            continue
                         img_id, file_path, img_filename, img_subfolder, existing_caption = item
                         caption = ""
                         # Set by both except branches so an already-counted exception is
@@ -1274,7 +1281,10 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
                     elif is_openai_compat:
                         from backend.ml.openai_compat_captioner import caption_image as _oi
                         # The provider's slots are shared with other jobs and chats.
-                        async with llm_limiter.slot(openai_provider.id, openai_provider.max_concurrent):
+                        async with llm_limiter.slot(
+                            openai_provider.id, openai_provider.max_concurrent,
+                            stop=lambda: job_queue.cancel_requested(job_id),
+                        ):
                             return await _oi(
                                 file_path,
                                 base_url=openai_provider.base_url,
@@ -1303,6 +1313,10 @@ async def run_pipeline(body: CaptionPipelineRequest, db: AsyncSession = Depends(
                 async with AsyncSessionLocal() as session, calls:
                     cached_vram_mb = 0
                     async for i, item, call_result, call_exc in calls:
+                        # A request still waiting for the provider's slot when Stop came was never
+                        # sent (llm_limiter.SlotSkipped): nothing to save or count as a failure.
+                        if isinstance(call_exc, llm_limiter.SlotSkipped):
+                            continue
                         img_id, file_path, img_filename, img_subfolder = item
                         caption = ""
                         # See the matching flag in /run's loop.

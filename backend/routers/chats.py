@@ -140,10 +140,12 @@ async def preview_context(chat_id: str, body: PreviewRequest, db: AsyncSession =
 
 def _event_stream(run: "chat_runner._Run") -> EventSourceResponse:
     """The run's events as SSE. Leaving (a closed tab) only stops listening: the reply
-    keeps being written by its task."""
-    queue = chat_runner.listen(run)
+    keeps being written by its task. The listener is added inside the generator, so a
+    client that leaves before the first event never leaves one behind; its `start`
+    carries the text so far, so nothing streamed before then is lost."""
 
     async def generate():
+        queue = chat_runner.listen(run)
         try:
             while True:
                 event, data = await queue.get()
@@ -177,10 +179,13 @@ async def _get_message(db: AsyncSession, chat_id: str, message_id: int) -> ChatM
 async def resume_stream(chat_id: str, message_id: int, db: AsyncSession = Depends(get_db)):
     """Pick a reply back up after a reload: the text so far, then the rest live. A reply
     that already ended answers with its `start` and its final event at once."""
-    msg = await _get_message(db, chat_id, message_id)
+    await _get_message(db, chat_id, message_id)
     run = chat_runner.get_run(message_id)
     if run is not None:
         return _event_stream(run)
+    # The run may have ended during the read above: read the row again, as it is now.
+    db.expire_all()
+    msg = await _get_message(db, chat_id, message_id)
     final = ChatMessageOut.model_validate(msg).model_dump(mode="json")
     start = {"chat_id": chat_id, "message_id": msg.id, "user_message_id": None, "content": msg.content}
 

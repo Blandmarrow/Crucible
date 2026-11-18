@@ -19,17 +19,19 @@ import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from backend.ml.prompt_generator import _classify
+from backend.ml.prompt_generator import _classify, _status
 
 
 class ChatStreamError(Exception):
     """The call failed. `kind` sorts it; `opened` says whether the server had already
-    accepted the request (and so may have billed for it)."""
+    accepted the request (and so may have billed for it); `refused` says the server
+    answered with an HTTP error status, so it did not run the request."""
 
-    def __init__(self, kind: str, message: str, *, opened: bool):
+    def __init__(self, kind: str, message: str, *, opened: bool, refused: bool = False):
         super().__init__(message)
         self.kind = kind
         self.opened = opened
+        self.refused = refused
 
 
 @dataclass
@@ -68,13 +70,16 @@ async def stream_chat(
     idle_s: float,
     on_text: Callable[[str], None],
     on_open: Callable[[], None] | None = None,
+    on_send: Callable[[], None] | None = None,
 ) -> StreamResult:
     """Stream one reply, handing each piece of text to `on_text` as it arrives.
 
-    `on_open` runs once the server has accepted the request. Raises `ChatStreamError`
-    on a failure or a time limit; a cancel propagates as `CancelledError`, with the
-    stream closed either way.
+    `on_send` runs just before the request goes out, `on_open` once the server has
+    accepted it. Raises `ChatStreamError` on a failure or a time limit; a cancel
+    propagates as `CancelledError`, with the stream closed either way.
     """
+    if on_send is not None:
+        on_send()
     try:
         stream = await asyncio.wait_for(
             client.chat.completions.create(
@@ -91,7 +96,9 @@ async def stream_chat(
     except asyncio.CancelledError:
         raise
     except Exception as exc:  # noqa: BLE001 — sorted, never swallowed
-        raise ChatStreamError(_classify(exc), str(exc) or type(exc).__name__, opened=False) from exc
+        raise ChatStreamError(
+            _classify(exc), str(exc) or type(exc).__name__, opened=False, refused=_status(exc) is not None,
+        ) from exc
 
     if on_open is not None:
         on_open()

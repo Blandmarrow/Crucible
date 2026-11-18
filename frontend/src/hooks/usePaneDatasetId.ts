@@ -1,5 +1,7 @@
+import { useCallback } from "react";
 import { useParams, useSearchParams } from "react-router";
 import { usePaneContext } from "../contexts/PaneContext";
+import { usePaneStore } from "../store/paneStore";
 
 export function usePaneDatasetId(): string | undefined {
   const ctx = usePaneContext();
@@ -53,6 +55,38 @@ export function usePaneGallerySourceVideo(): string | undefined {
   const [params] = useSearchParams();
   if (ctx) return ctx.view.sourceVideoId;
   return params.get("source_video_id") ?? undefined;
+}
+
+/**
+ * The encoded `?filter=` deep link a gallery was opened with (`utils/filterLink.ts`),
+ * and `consume`, which removes it once applied. Same pane-wins-outright rule as the
+ * two hooks above.
+ *
+ * Unlike them, this link is **consumed**: `subfolder` and `source_video_id` stay in
+ * the URL harmlessly, because re-applying a folder is idempotent, but this one resets
+ * every gallery filter on arrival. Left in place, it would be applied again on the
+ * next mount (back from the image detail view) and wipe what the user chose since.
+ * So `consume` strips it from the URL with `replace` (no history entry) or clears it
+ * from the pane's view.
+ */
+export function usePaneGalleryFilter(): { encoded: string | undefined; consume: () => void } {
+  const ctx = usePaneContext();
+  const [params, setParams] = useSearchParams();
+  const setView = usePaneStore((s) => s.setView);
+  const encoded = ctx ? ctx.view.filter : (params.get("filter") ?? undefined);
+  const consume = useCallback(() => {
+    if (ctx) {
+      if (ctx.view.filter !== undefined) setView(ctx.paneId, { ...ctx.view, filter: undefined });
+      return;
+    }
+    setParams((prev) => {
+      if (!prev.has("filter")) return prev;
+      const next = new URLSearchParams(prev);
+      next.delete("filter");
+      return next;
+    }, { replace: true });
+  }, [ctx, setView, setParams]);
+  return { encoded, consume };
 }
 
 /**

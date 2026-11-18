@@ -33,6 +33,10 @@ export interface PaneView {
    *  since chosen — GalleryPage applies it once per change and then leaves its
    *  own state alone. Unlike `subfolder`, "" carries no meaning. */
   sourceVideoId?: string;
+  /** Gallery only: a `filterLink` deep link, encoded as in `?filter=`. Applied once
+   *  on arrival and then cleared from the view, so returning to the gallery later
+   *  in this pane never re-applies it over what the user has since chosen. */
+  filter?: string;
   /** Compare only: the images to compare, in order. Unlike the two deep-link
    *  fields above this is the page's identity — ComparePage keeps it current as
    *  panes are removed or reordered, so a pane always describes what it shows. */

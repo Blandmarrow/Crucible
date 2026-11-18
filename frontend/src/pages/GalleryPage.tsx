@@ -1,6 +1,8 @@
 import { useState, useCallback, useEffect, useRef, useMemo, type CSSProperties } from "react";
 import { ArrowRightFromLine, Copy, Edit2, Folder, FolderInput, Plus, Trash2 } from "lucide-react";
-import { usePaneDatasetId, usePaneGallerySourceVideo, usePaneGallerySubfolder } from "../hooks/usePaneDatasetId";
+import { usePaneDatasetId, usePaneGalleryFilter, usePaneGallerySourceVideo, usePaneGallerySubfolder } from "../hooks/usePaneDatasetId";
+import { decodeFilterLink, sanitizeFilterLink, type FilterLink } from "../utils/filterLink";
+import { filterSpecParams, type FilterSpec } from "../api/health";
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { apiErrorDetail, isNotFound } from "../utils/apiError";
@@ -159,7 +161,7 @@ function loadSavedState(datasetId: string) {
     // every guard in `sanitizeScoreFilters` read as dead code. The two flat strings
     // follow the `labelFilter` precedent — declared concrete, `typeof`-guarded at the
     // read site.
-    if (raw) return JSON.parse(raw) as { page: number; sortIdx: number; captionedFilter: boolean | null; qualityFilter?: string; licenseFilter?: string; labelFilter?: string[]; labelMatch?: string; labelMissing?: boolean; search?: string; detectionLabel?: string; scoreFilters?: unknown; scrollTop: number; activeSubfolder?: string | null; frameVideoId?: string; expandedPaths?: string[] };
+    if (raw) return JSON.parse(raw) as { page: number; sortIdx: number; captionedFilter: boolean | "all" | null; qualityFilter?: string; licenseFilter?: string; labelFilter?: string[]; labelMatch?: string; labelMissing?: boolean; search?: string; detectionLabel?: string; scoreFilters?: unknown; scrollTop: number; activeSubfolder?: string | null; frameVideoId?: string; expandedPaths?: string[]; linkFilter?: unknown };
   } catch {}
   return null;
 }
@@ -189,8 +191,15 @@ export default function GalleryPage() {
   };
   const [page, setPage] = useState(saved?.page ?? 1);
   const [sortIdx, setSortIdx] = useState(saved?.sortIdx ?? getGalleryDefaultSort());
+  // `"all"` in the blob is a remembered "any caption" and wins over the Settings default,
+  // as every other remembered filter does; `null` (older blobs, and Reset) means never
+  // chosen, so the default applies. Writing `null` for "all" let the default replace a
+  // deliberate choice on the next mount, which emptied a deep link's grid on the way
+  // back from the detail view when the default was "Uncaptioned only".
   const [captionedFilter, setCaptionedFilter] = useState<boolean | undefined>(
-    saved?.captionedFilter == null ? getGalleryDefaultCaptionFilter() : saved.captionedFilter
+    saved?.captionedFilter == null
+      ? getGalleryDefaultCaptionFilter()
+      : saved.captionedFilter === "all" ? undefined : saved.captionedFilter
   );
   // "" = no license filter; "__missing__" = only images with no license at
   // either level; anything else = that effective license id.
@@ -364,6 +373,60 @@ export default function GalleryPage() {
     setPage(1);
     dropScrollRestore();
   }
+  // The `?filter=` deep link (M12; `utils/filterLink.ts`): "the images this filter
+  // selects", from a Health finding today and the analyst's buttons later. Keys the
+  // toolbar has a control for go into that control; the rest stay here as one
+  // removable chip, spread into `filterParams`, so the grid, the count, select-all
+  // and the detail view's arrows all describe the same set. Restored from the blob
+  // like any filter, through the same validator the URL goes through.
+  const [linkFilter, setLinkFilter] = useState<FilterLink | null>(() => sanitizeFilterLink(saved?.linkFilter, { asChip: true }));
+  const { encoded: linkedFilter, consume: consumeLinkedFilter } = usePaneGalleryFilter();
+  const [appliedFilter, setAppliedFilter] = useState<string | undefined>(undefined);
+  // Same apply-once-per-value discipline as the two links above, and during render
+  // for the same reason. Unlike them it *replaces* the view: every other filter is
+  // cleared, since a finding promised exactly its images, not its images within
+  // whatever this gallery was last filtered to. A link that fails validation is
+  // ignored whole rather than half-applied.
+  if (linkedFilter !== undefined && appliedFilter !== linkedFilter) {
+    setAppliedFilter(linkedFilter);
+    const link = decodeFilterLink(linkedFilter);
+    if (link) {
+      const { captioned, search: q, quality_flag, license_missing, ...rest } = link.spec;
+      const extra: FilterSpec = { ...rest };
+      // The licence select can say "missing" but not "has one".
+      if (license_missing === false) extra.license_missing = false;
+      setCaptionedFilter(captioned ?? undefined);
+      setSearchInput(q ?? "");
+      setSearch(q ?? "");
+      // `sanitizeFilterLink` admits only the select's own flags, so this always fits.
+      setQualityFilter((quality_flag ?? "") as QualityFilter);
+      setLicenseFilter(license_missing === true ? MISSING_LICENSE : "");
+      setLabelFilter([]);
+      setLabelMatch("any");
+      setLabelMissing(false);
+      setDetectionLabelInput("");
+      setDetectionLabel("");
+      setScoreFilters([]);
+      setActiveSubfolder(undefined);
+      setFrameVideoId(undefined);
+      setLinkFilter(Object.keys(extra).length ? { label: link.label, spec: extra } : null);
+      setPage(1);
+      dropScrollRestore();
+    }
+  }
+  // A consumed link reads `undefined` again, so the same link sent later (the same
+  // finding opened twice) is a change and applies.
+  if (linkedFilter === undefined && appliedFilter !== undefined) setAppliedFilter(undefined);
+  // Then consume it (an effect: it navigates, which a render may not). Left in the URL
+  // or the pane's view, it would be applied again on the next mount — back from the
+  // detail view — over whatever the user has chosen since.
+  useEffect(() => {
+    if (linkedFilter === undefined || appliedFilter !== linkedFilter) return;
+    // A refused link changed nothing; say so, or an unfiltered grid passes for the
+    // finding's images (a link from a newer build with a key this one lacks, say).
+    if (!decodeFilterLink(linkedFilter)) toast.error("That link's filter could not be applied; showing the gallery as it was.");
+    consumeLinkedFilter();
+  }, [linkedFilter, appliedFilter, consumeLinkedFilter]);
   const [showCreateSubfolder, setShowCreateSubfolder] = useState(false);
   const [newSubfolderName, setNewSubfolderName] = useState("");
   const [pendingDeleteSubfolder, setPendingDeleteSubfolder] = useState<SubfolderInfo | null>(null);
@@ -388,8 +451,8 @@ export default function GalleryPage() {
 
   const sortOpt = SORT_OPTIONS[sortIdx];
   const isCustomOrder = sortOpt.sort === "sort_order";
-  const liveStateRef = useRef({ page, sortIdx, captionedFilter, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, search, detectionLabel, scoreFilters, activeSubfolder, frameVideoId, expandedPaths });
-  liveStateRef.current = { page, sortIdx, captionedFilter, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, search, detectionLabel, scoreFilters, activeSubfolder, frameVideoId, expandedPaths };
+  const liveStateRef = useRef({ page, sortIdx, captionedFilter, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, search, detectionLabel, scoreFilters, activeSubfolder, frameVideoId, expandedPaths, linkFilter });
+  liveStateRef.current = { page, sortIdx, captionedFilter, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, search, detectionLabel, scoreFilters, activeSubfolder, frameVideoId, expandedPaths, linkFilter };
   const [showRenumberConfirm, setShowRenumberConfirm] = useState(false);
   const prevSortIdxRef = useRef(sortIdx);
   const imagesRef = useRef<ImageListItem[]>([]);
@@ -536,11 +599,11 @@ export default function GalleryPage() {
       const scrollTop = scrollRef.current?.scrollTop ?? 0;
       localStorage.setItem(
         `gallery-state-${datasetId}`,
-        JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, search, detectionLabel, scoreFilters, scrollTop, activeSubfolder: activeSubfolder ?? null, frameVideoId: frameVideoId ?? "", expandedPaths: [...expandedPaths] })
+        JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? "all", qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, search, detectionLabel, scoreFilters, scrollTop, activeSubfolder: activeSubfolder ?? null, frameVideoId: frameVideoId ?? "", expandedPaths: [...expandedPaths], linkFilter })
       );
     }, PERSIST_DEBOUNCE_MS);
     return () => clearTimeout(t);
-  }, [datasetId, page, sortIdx, captionedFilter, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, search, detectionLabel, scoreFilters, activeSubfolder, frameVideoId, expandedPaths]);
+  }, [datasetId, page, sortIdx, captionedFilter, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, search, detectionLabel, scoreFilters, activeSubfolder, frameVideoId, expandedPaths, linkFilter]);
 
   // Save precise scroll position + current state on unmount via ref — avoids stale localStorage reads
   // and the debounce gap where a <350ms navigation would otherwise lose state changes.
@@ -548,11 +611,11 @@ export default function GalleryPage() {
     return () => {
       if (!datasetId) return;
       const scrollTop = scrollRef.current?.scrollTop ?? 0;
-      const { page, sortIdx, captionedFilter, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, search, detectionLabel, scoreFilters, activeSubfolder, frameVideoId, expandedPaths } = liveStateRef.current;
+      const { page, sortIdx, captionedFilter, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, search, detectionLabel, scoreFilters, activeSubfolder, frameVideoId, expandedPaths, linkFilter } = liveStateRef.current;
       try {
         localStorage.setItem(
           `gallery-state-${datasetId}`,
-          JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? null, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, search, detectionLabel, scoreFilters, scrollTop, activeSubfolder: activeSubfolder ?? null, frameVideoId: frameVideoId ?? "", expandedPaths: [...expandedPaths] })
+          JSON.stringify({ page, sortIdx, captionedFilter: captionedFilter ?? "all", qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, search, detectionLabel, scoreFilters, scrollTop, activeSubfolder: activeSubfolder ?? null, frameVideoId: frameVideoId ?? "", expandedPaths: [...expandedPaths], linkFilter })
         );
       } catch {}
     };
@@ -724,11 +787,14 @@ export default function GalleryPage() {
     label_missing: labelMissing ? true : undefined,
     label_filter: labelFilter.length ? JSON.stringify(labelFilter) : undefined,
     label_match: labelFilter.length > 1 ? labelMatch : undefined,
-  }), [datasetId, captionedFilter, search, qualityFilter, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter, labelFilter, labelMatch, labelMissing, frameVideoId]);
+    // Last, though its keys never overlap the controls' above (the apply block puts
+    // those into their controls): a control's `undefined` must not erase a link key.
+    ...(linkFilter ? filterSpecParams(linkFilter.spec) : {}),
+  }), [datasetId, captionedFilter, search, qualityFilter, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter, labelFilter, labelMatch, labelMissing, frameVideoId, linkFilter]);
 
   const imagesQueryKey = useMemo(
-    () => ["images", datasetId, page, pageSize, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter, labelFilter, labelMatch, labelMissing, frameVideoId],
-    [datasetId, page, pageSize, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter, labelFilter, labelMatch, labelMissing, frameVideoId]
+    () => ["images", datasetId, page, pageSize, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter, labelFilter, labelMatch, labelMissing, frameVideoId, linkFilter],
+    [datasetId, page, pageSize, sortOpt, captionedFilter, qualityFilter, search, scoreFiltersParam, activeSubfolder, detectionLabel, licenseFilter, labelFilter, labelMatch, labelMissing, frameVideoId, linkFilter]
   );
 
   const { data: images = [], isLoading, isPlaceholderData, refetch } = useQuery({
@@ -1317,6 +1383,7 @@ export default function GalleryPage() {
     setScoreFilters([]);
     setActiveSubfolder(undefined);
     setFrameVideoId(undefined);
+    setLinkFilter(null);
     // `expandedPaths` is deliberately not reset. It rides in the same blob the line above
     // removes, but it is the tree's shape, not a filter — collapsing everything is not
     // what "reset filters" promises. The next persist writes the live set back. The
@@ -1738,6 +1805,20 @@ export default function GalleryPage() {
                 <option key={v.id} value={v.id}>Frames from {v.filename}</option>
               ))}
             </select>
+          )}
+
+          {/* A deep link's filter that no toolbar control can show (utils/filterLink.ts). */}
+          {linkFilter && (
+            <span className="badge info" data-testid="link-filter" title="Opened from a link; remove it to see the rest">
+              {linkFilter.label}
+              <button
+                type="button"
+                className="icon-btn"
+                aria-label={`Remove filter: ${linkFilter.label}`}
+                onClick={() => { setLinkFilter(null); resetPage(); }}
+                style={{ marginLeft: 4, width: 16, height: 16, fontSize: 13 }}
+              >×</button>
+            </span>
           )}
 
           <div style={{ position: "relative", display: "flex", alignItems: "center" }}>

@@ -39,7 +39,7 @@ docs included, until the whole feature is done.
 1. **Phase 1b is built**, PR #180 into `feat/analyst`: the Health page, the goal fields, the
    card badge and the user doc `docs/analyst.md` (dev side: `docs/dev/analyst/ui.md`). Once
    it merges, build 1c, the gallery `?filter=` deep link and "Open in gallery"
-   ([§ Phase 1](analyst-plan/README.md#phase-1--health-report-no-llm)), on a branch off
+   ([§ Phase 1](analyst-plan/README.md)), on a branch off
    `feat/analyst` with an Opus review. Then phase 2.
 2. CLAUDE.md is at 6,484 of 6,500 words, so phase 2's key invariant needs room made first.
 3. Merge `main` into `feat/analyst` regularly, and run the branch's migrations only on a
@@ -59,7 +59,7 @@ Plan: [analyst-plan/README.md](analyst-plan/README.md). Gate: every phase below 
   `openai` in CI's install (`docs/dev/backend-tests.md` § The fake LLM server). PR #178
   into `feat/analyst`, 2026-11-18.
 - [ ] Phase 1: the health report, the goal field and dataset notes, with no LLM
-  ([§ Phase 1](analyst-plan/README.md#phase-1--health-report-no-llm)), in three PRs:
+  ([§ Phase 1](analyst-plan/README.md)), in three PRs:
   - [x] 1a, the backend: PR #179 into `feat/analyst`, 2026-11-18.
   - [x] 1b, the Health page, the dialogs' goal fields and the card badge, with the user docs:
     PR #180 into `feat/analyst`, 2026-11-18.

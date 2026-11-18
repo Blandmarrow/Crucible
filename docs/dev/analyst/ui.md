@@ -50,8 +50,10 @@ persisted state, so a body-level key gives the reset without the route remountin
 
 ## The finding row
 
-A finding's buttons come from its data, never from the page: "Show images" only when
-`filter_spec` is set (sent through `filterSpecParams`, which drops unset keys), the fix button
+A finding's buttons come from its data, never from the page: "Show images" and "Open in
+gallery" only when `filter_spec` is set (the first sends it through `filterSpecParams`, which
+drops unset keys, to `FilteredImagesModal`; the second encodes it with the finding's title as a
+`?filter=` deep link, `docs/dev/gallery/state.md` § The `?filter=` deep link), the fix button
 only when `fix` is set (a `PageType` reached through `usePaneNavigate`, or `"datasets"` for the
 Datasets page), and "Dismiss…" always. `numbers` renders generically: known keys get a
 readable label (`HUMAN_KEYS`), arrays of `{tag, count}` read as `tag (count)`, and a `hint`

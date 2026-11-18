@@ -37,7 +37,7 @@ ruling, decision 21). Everything lives on `feat/analyst`:
   analyst call should go through `openai_compat_captioner.make_client`, which the
   `fake_llm` fixture patches.
 - Phase 1, the health report with no LLM, landed in three PRs: the backend (#179), the Health
-  page, goal fields and card badge (#180), and the gallery `?filter=` deep link (1c). Its
+  page, goal fields and card badge (#180), and the gallery `?filter=` deep link (#181). Its
   record is the analyst docs family, `docs/dev/analyst.md`, and the user doc `docs/analyst.md`.
 
 ## Phase 2 — Analyst chat, no tools

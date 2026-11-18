@@ -101,9 +101,10 @@ test.describe('Fix current caption', () => {
   test('a fix whose one image fails says so, and offers no undo', async ({ page, request }) => {
     // The real job this time: the provider's URL refuses the connection, so the job ends
     // `completed` with `failed_count: 1` — the shape a timeout or a refusal takes (PM-023).
-    // How it fails depends on the machine (a refused connection here; an empty caption on
-    // CI, whose e2e install has no `openai` package), so the toast expected is whatever
-    // the job recorded: its `failure_summary`, or the page's fallback when it has none.
+    // How it fails has depended on the machine (an empty caption on a CI install without
+    // the `openai` package, which `main` still lacks until M12 lands), so the toast
+    // expected is whatever the job recorded: its `failure_summary`, or the page's
+    // fallback when it has none.
     const { ds, imageId } = await seed(request)
     await page.goto(`/datasets/${ds.id}/gallery`)
     await page.getByTestId('gallery-tile').first().click()

@@ -31,19 +31,18 @@ restates its stages.
    linking the record that holds the full text.
 5. **Landed**: one line per finished milestone or handoff record.
 
-## Next session (updated 2026-11-18, #129 designed)
+## Next session (updated 2026-11-18, M12 phase 0)
 
 This block lives on `feat/analyst` only: by decision 21 nothing of M12 reaches `main`, the
 docs included, until the whole feature is done.
 
-1. **#129 is designed** as M12, the dataset analyst
-   ([decision 21](decisions/21-dataset-analyst.md), plan
-   [analyst-plan/README.md](analyst-plan/README.md)). Start with phase 0, the fake LLM
-   server, on a branch off `feat/analyst`.
-2. **M11 is archived** with only #48 open, now under Waiting
-   ([roadmap-archive/m11-open-enhancements.md](roadmap-archive/m11-open-enhancements.md)).
-3. Merge `main` into `feat/analyst` regularly, and run the branch's migrations only on a
-   throwaway database. The previous block is in
+1. **Phase 0 is built**, PR #178 into `feat/analyst`: the fake LLM server and
+   `openai` in `requirements-ci.txt` (`docs/dev/backend-tests.md` § The fake LLM server).
+   Once its PR is merged into `feat/analyst`, start phase 1, the health report
+   ([§ Phase 1](analyst-plan/README.md#phase-1--health-report-no-llm)), on a branch off
+   `feat/analyst`.
+2. Merge `main` into `feat/analyst` regularly, and run the branch's migrations only on a
+   throwaway database; phase 1 adds the first. The previous block is in
    [roadmap-archive/handoff-2026-11-18.md](roadmap-archive/handoff-2026-11-18.md).
 
 ## Now
@@ -55,8 +54,9 @@ Plan: [analyst-plan/README.md](analyst-plan/README.md). Gate: every phase below 
 `feat/analyst` with its tests and docs, then one PR to `main`. Each phase is a branch off
 `feat/analyst`, reviewed by Opus before it merges back.
 
-- [ ] Phase 0: the test harness, a fake OpenAI-compatible server for pytest and e2e
-  ([§ Phase 0](analyst-plan/README.md#phase-0--test-harness)).
+- [x] Phase 0: the test harness, a fake OpenAI-compatible server for pytest and e2e, and
+  `openai` in CI's install (`docs/dev/backend-tests.md` § The fake LLM server). PR #178
+  into `feat/analyst`, 2026-11-18.
 - [ ] Phase 1: the health report, the goal field and dataset notes, with no LLM
   ([§ Phase 1](analyst-plan/README.md#phase-1--health-report-no-llm)).
 - [ ] Phase 2: the analyst chat without tools, its privacy filter, budgets and streaming

@@ -119,6 +119,24 @@ class RefusingOpenAIClient:
         await self.close()
 
 
+@pytest.fixture
+def fake_llm(monkeypatch):
+    """A `FakeLLM` (`backend/tests/fake_llm.py`) that `make_client` now returns a real
+    `AsyncOpenAI` for, overriding `_no_real_llm_server`'s refusal for this test. Script
+    replies with `fake_llm.replies.append(Reply(...))` or a `[[fake:…]]` marker, and
+    read what was sent in `fake_llm.requests`. Code that builds its own client
+    (`prompt_generator`, the provider model listing) is not covered."""
+    from backend.ml import openai_compat_captioner
+    from backend.tests.fake_llm import FakeLLM
+
+    fake = FakeLLM()
+    monkeypatch.setattr(
+        openai_compat_captioner, "make_client",
+        lambda base_url, api_key, timeout_s: fake.openai_client(api_key=api_key, timeout=timeout_s),
+    )
+    return fake
+
+
 @pytest.fixture(autouse=True)
 def _fresh_gpu_thread():
     """Give every test its own GPU thread (`device.run_on_gpu`, PM-035).

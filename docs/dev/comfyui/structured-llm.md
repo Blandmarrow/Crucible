@@ -140,7 +140,8 @@ untouched.
     (`{"rewritten": [...]}`) is no answer either.
   - **`finish_reason == "length"` fails the attempt whatever the count.**
 - **Errors are classified by duck typing**, from `status_code` and the class names in the
-  hierarchy, because `openai` is not in `requirements-ci.txt`:
+  hierarchy, so the classifier imports nothing from `openai` (written when CI did not
+  install the package; it now does, for `backend/tests/fake_llm.py`):
   - `transient`: a timeout, a dropped connection, a 429 or a 5xx
   - `mismatch`: no JSON list, or the wrong number of prompts
   - `rejected`: any other 4xx, which is about this request (a 400, 413 or 422)

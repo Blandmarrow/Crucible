@@ -36,7 +36,7 @@ restates its stages.
 This block lives on `feat/analyst` only: by decision 21 nothing of M12 reaches `main`, the
 docs included, until the whole feature is done.
 
-1. **Phase 0 is built** on `feat/analyst-phase0-fake-llm`: the fake LLM server and
+1. **Phase 0 is built**, PR #178 into `feat/analyst`: the fake LLM server and
    `openai` in `requirements-ci.txt` (`docs/dev/backend-tests.md` § The fake LLM server).
    Once its PR is merged into `feat/analyst`, start phase 1, the health report
    ([§ Phase 1](analyst-plan/README.md#phase-1--health-report-no-llm)), on a branch off
@@ -55,8 +55,8 @@ Plan: [analyst-plan/README.md](analyst-plan/README.md). Gate: every phase below 
 `feat/analyst`, reviewed by Opus before it merges back.
 
 - [x] Phase 0: the test harness, a fake OpenAI-compatible server for pytest and e2e, and
-  `openai` in CI's install (`docs/dev/backend-tests.md` § The fake LLM server). Built
-  2026-11-18 on `feat/analyst-phase0-fake-llm`.
+  `openai` in CI's install (`docs/dev/backend-tests.md` § The fake LLM server). PR #178
+  into `feat/analyst`, 2026-11-18.
 - [ ] Phase 1: the health report, the goal field and dataset notes, with no LLM
   ([§ Phase 1](analyst-plan/README.md#phase-1--health-report-no-llm)).
 - [ ] Phase 2: the analyst chat without tools, its privacy filter, budgets and streaming

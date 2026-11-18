@@ -41,6 +41,10 @@ class DatasetVersion(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     source: Mapped[str] = mapped_column(String(32), nullable=False, default="manual")
     is_pinned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # The health report's findings when the snapshot was taken, as
+    # [{"id", "count", "severity"}] (M12). NULL for a snapshot taken before the column
+    # existed, or when the report failed: the Health page then shows "no baseline".
+    findings_summary: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
     branch: Mapped["DatasetBranch | None"] = relationship(
         "DatasetBranch",

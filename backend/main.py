@@ -55,7 +55,7 @@ from backend.services.secrets_service import sync_env
 
 sync_env(None)
 from backend.services import dictionary_service
-from backend.routers import app_data, booru, captions, captioning, comfy, datasets, detection, dictionary, export, filesystem, images, inpaint, jobs, labels, lut, models, providers, quality, run_recipes, runs, settings as settings_router, system, tag_consolidation, upscaling, versioning, videos
+from backend.routers import app_data, booru, captions, captioning, comfy, datasets, detection, dictionary, export, filesystem, health, images, inpaint, jobs, labels, lut, models, notes, providers, quality, run_recipes, runs, settings as settings_router, system, tag_consolidation, upscaling, versioning, videos
 from backend.workers.job_queue import job_queue, mark_interrupted_jobs, sweep_old_jobs
 
 
@@ -264,6 +264,8 @@ app.include_router(comfy.router, prefix=PREFIX)
 app.include_router(runs.router, prefix=PREFIX)
 app.include_router(run_recipes.router, prefix=PREFIX)
 app.include_router(app_data.router, prefix=PREFIX)
+app.include_router(health.router, prefix=PREFIX)
+app.include_router(notes.router, prefix=PREFIX)
 
 _RESTART_SENTINEL = Path(__file__).parent.parent / ".restart"
 _SHUTDOWN_SENTINEL = Path(__file__).parent.parent / ".shutdown"

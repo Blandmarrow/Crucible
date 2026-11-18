@@ -31,18 +31,20 @@ restates its stages.
    linking the record that holds the full text.
 5. **Landed**: one line per finished milestone or handoff record.
 
-## Next session (updated 2026-11-18, M12 phase 0)
+## Next session (updated 2026-11-18, M12 phase 1a)
 
 This block lives on `feat/analyst` only: by decision 21 nothing of M12 reaches `main`, the
 docs included, until the whole feature is done.
 
-1. **Phase 0 is built**, PR #178 into `feat/analyst`: the fake LLM server and
-   `openai` in `requirements-ci.txt` (`docs/dev/backend-tests.md` § The fake LLM server).
-   Once its PR is merged into `feat/analyst`, start phase 1, the health report
-   ([§ Phase 1](analyst-plan/README.md#phase-1--health-report-no-llm)), on a branch off
-   `feat/analyst`.
-2. Merge `main` into `feat/analyst` regularly, and run the branch's migrations only on a
-   throwaway database; phase 1 adds the first. The previous block is in
+1. **Phase 1a is built**, PR #179 into `feat/analyst`: the health report, the goal fields,
+   notes and the snapshot delta, backend only (`docs/dev/analyst.md`). Once it merges,
+   start 1b, the Health page, dialogs and card badge, then 1c, the gallery `?filter=` deep
+   link ([§ Phase 1](analyst-plan/README.md#phase-1--health-report-no-llm)); each on a branch
+   off `feat/analyst` with an Opus review.
+2. 1b carries the user docs (a new analyst page in `docs/`, a README row). CLAUDE.md is at 6,483 of
+   6,500 words, so phase 2's key invariant needs room made first.
+3. Merge `main` into `feat/analyst` regularly, and run the branch's migrations only on a
+   throwaway database. The previous block is in
    [roadmap-archive/handoff-2026-11-18.md](roadmap-archive/handoff-2026-11-18.md).
 
 ## Now
@@ -58,7 +60,10 @@ Plan: [analyst-plan/README.md](analyst-plan/README.md). Gate: every phase below 
   `openai` in CI's install (`docs/dev/backend-tests.md` § The fake LLM server). PR #178
   into `feat/analyst`, 2026-11-18.
 - [ ] Phase 1: the health report, the goal field and dataset notes, with no LLM
-  ([§ Phase 1](analyst-plan/README.md#phase-1--health-report-no-llm)).
+  ([§ Phase 1](analyst-plan/README.md#phase-1--health-report-no-llm)), in three PRs:
+  - [x] 1a, the backend: PR #179 into `feat/analyst`, 2026-11-18.
+  - [ ] 1b, the Health page, the dialogs' goal fields and the card badge, with the user docs.
+  - [ ] 1c, the gallery `?filter=` deep link.
 - [ ] Phase 2: the analyst chat without tools, its privacy filter, budgets and streaming
   ([§ Phase 2](analyst-plan/README.md#phase-2--analyst-chat-no-tools)).
 - [ ] Phase 3: read-only tools for models that handle them

@@ -39,71 +39,10 @@ ruling, decision 21). Everything lives on `feat/analyst`:
 
 ## Phase 1 — Health report (no LLM)
 
-### The goal field
-
-`Dataset.goal`: optional free text saying what the dataset is for ("SDXL style LoRA of
-watercolour landscapes, 1024px"). Separate from `description`, which is shown on the card
-and usually says where the images came from. Needs a migration, `DatasetCreate`,
-`DatasetUpdate`, `DatasetOut`, and the hand-built `DatasetOut` in `list_datasets`, which
-builds the response field by field so an omitted field silently reads as empty — add a test
-that every `DatasetOut` field is populated on that path. Writing it bumps
-`Dataset.updated_at`, which is part of the stats cache validator; that is correct, since the
-goal changes which findings apply.
-
-The goal is free text, read by the LLM. A check that needs a number from it (the target
-resolution) takes an optional structured field beside it (`target_resolution`, an int),
-rather than parsing prose.
-
-### Findings
-
-`health_service.py` in `backend/services/` returns a list of `Finding`:
-
-| Field | Meaning |
-|---|---|
-| `id` | Stable key, e.g. `low_resolution`. The LLM and dismissals refer to it |
-| `severity` | `error`, `warn` or `info` |
-| `title` | One line for the UI |
-| `count`, `total` | Affected images, out of how many |
-| `numbers` | The evidence, a small dict (thresholds used, a median, the worst value) |
-| `filter_spec` | A typed `ImageFilterParams` subset that selects the affected images. Never a URL |
-| `fix` | Which existing tool fixes it: a route plus a label ("Open the duplicate resolver") |
-| `fingerprint` | A coarse summary of the state (bucketed count), so a dismissal can tell when things got worse |
-
-The report is a list plus a summary badge — counts by severity — never a single 0–100
-score: one number hides the reason, and what counts as healthy depends on the goal.
-
-**Cost.** It is built from what the Stats page already computes, and cached the same way:
-key it on `_image_validator` (plus the thresholds row and the dataset's dismissals) through
-`_stats_cache_get`/`_stats_cache_put` in `dataset_service.py`. The stats payload it reads is
-the cached object — never mutate it. Any new `images` statement goes through `_stats_scan`
-and its index pin, or `backend/tests/test_stats_plan.py` fails.
-
-### The catalogue
-
-Thresholds come from `threshold_service.get_thresholds`, so a finding never disagrees with
-the quality flags the user already sees. Where no setting exists the threshold is a constant
-in `health_service.py`, named, and listed in the user doc.
-
-| Finding | Source | New work |
-|---|---|---|
-| Uncaptioned images | `captioned_count` | none; filter `captioned=false` |
-| Very short captions | `caption_token_count` | none; `caption_tokens_max` |
-| Captions over 77 tokens (CLIP truncates) | `caption_token_distribution` | none; `caption_tokens_min` |
-| Below the target resolution | needs a short-side value per image | a `short_side_max` filter and a short-side stat; uses `target_resolution` if set, else a default |
-| Aspect ratios spread across many buckets | `aspect_ratio_fine` | none; `ar_*` |
-| Quality flags (blurry, noisy, uniform, watermarked, NSFW, AI artifacts) | `quality_flag_counts` | none; `quality_flag` |
-| Duplicate groups | `quality_flags.duplicate_of` | a count of distinct roots (`json_extract`, cheap) |
-| Unscored images | `score_coverage` | none; `score_is_null` + `score_field` |
-| Stale scores | `Image.scores_stale` | a count and a `scores_stale` filter |
-| No licence recorded | `license_breakdown` | none; `license_missing` |
-| A tag in nearly every caption | `caption_service.get_tag_stats` | wrap it in a validator-keyed cache; it scans every caption today. Expected for a trigger word — the user dismisses it with that reason |
-| Tags used only once | same | same |
-| Mixed tag-style and prose captions | `similar_captions_service._is_tag_like` / `parse_caption_terms` | an aggregate over the captions; promote the helper to a public name |
-| Style outliers | `get_style_distribution`, `style_similarity_score` | only when a style run exists |
-| Small dataset | `image_count` | none |
-| No goal set | `Dataset.goal` | none; `info`, and it says the chat works better with one |
-
-Images only, like the Stats page: videos are sources and get no findings.
+**The backend is built** (PR 1a into `feat/analyst`): the goal fields, the findings
+catalogue, the cache, dismissals, the snapshot delta and the notes tables and routes. Their
+durable record is the analyst docs family, `docs/dev/analyst.md`. What remains of phase 1 is
+the frontend (PR 1b) and the gallery deep link (PR 1c), below.
 
 ### Links to the images
 
@@ -118,52 +57,6 @@ Each finding's `filter_spec` opens its images:
 
 No id-list filter: every finding is a filter, and an id list breaks on large sets.
 
-### Since the last snapshot
-
-There is no "live state against the latest snapshot" diff today
-(`version_service.diff_versions` compares two stored versions), and diffing every image is
-heavy. Instead, `create_snapshot` stores the findings summary (`id`, `count`, `severity`)
-as JSON on the version row, and the report shows the difference against the branch head's
-summary: "Unscored: 12, was 0 at v3". A snapshot taken before the column existed shows "no
-baseline".
-
-### Dataset notes
-
-A simplified version of how this repository keeps its own context, kept per dataset:
-
-| This repo | Dataset notes section |
-|---|---|
-| `CLAUDE.md` | **Preferences**: standing rules. "Trigger word `zxc` comes first." "The grain is the style." |
-| `decisions.md` | **Decisions**: dated, with the reason. "Removed 30 blurry images, kept 5 with deliberate motion blur." |
-| `roadmap.md` | **Open items**: what is still to do |
-| the user's global `CLAUDE.md` | **About me**: app-wide, shared by every dataset. "I train SDXL LoRAs with kohya." |
-
-Stored as **separate items, not one text blob**: a weak model can manage "add an item to
-Decisions" or "remove item 4"; it cannot reliably rewrite a whole document. The UI renders
-the items as one readable page, and the user can edit any of them by hand.
-
-Tables:
-
-- `dataset_note_items`: `id`, `dataset_id` (FK, cascade), `section` (`preference`,
-  `decision`, `open_item`), `text`, `position`, `decided_at` (decisions), `source_chat_id`
-  (FK to `chats`, **`ON DELETE SET NULL`** — deleting a chat must never delete a note),
-  `finding_id` and `fingerprint` (both nullable; set for a dismissal), `created_at`,
-  `deleted_at` (soft delete).
-- `app_note_items`: the same without the dataset and finding columns.
-- `note_item_history`: `item_id`, scope, `op` (`add`, `edit`, `remove`, `restore`),
-  `before_text`, `after_text`, `actor` (`user`, `llm`), `chat_id`, `at`. Soft delete plus
-  this table is the undo.
-
-Notes cascade with their dataset, are never part of a snapshot, and carry a size cap per
-scope (characters, enforced server-side) so they fit a small model's context. Over the cap,
-the UI offers "condense", which in phase 2 is just a proposal like any other.
-
-**A dismissal is a note item.** Dismissing a finding writes a `preference` item whose text is
-the reason and whose `finding_id` names the finding. One mechanism, not two: the report
-hides the finding (into a collapsed "Dismissed" list), and the chat sees the reason as a
-standing preference. If the finding's fingerprint gets materially worse — its count more
-than doubles, say — it comes back, unless the user dismissed it permanently.
-
 ### Frontend
 
 - **`HealthPage`**, a routed dataset page: the six-site checklist in
@@ -174,10 +67,9 @@ than doubles, say — it comes back, unless the user dismissed it permanently.
 
 ### Tests
 
-One pytest per finding against seeded rows (it fires, it stays quiet, it honours the
-threshold setting); the cache invalidates on an image edit and on a dismissal; the snapshot
-delta; notes cascade with the dataset; dismissal resurfacing. One e2e: open the report,
-dismiss a finding with a reason, open another finding's images.
+The pytest half landed with the backend (`test_health_findings.py`,
+`test_health_cache_snapshot.py`, `test_notes_http.py`). Still to come, with PR 1b, one e2e:
+open the report, dismiss a finding with a reason, open another finding's images.
 
 ## Phase 2 — Analyst chat, no tools
 

@@ -38,6 +38,8 @@ assuming.
 | `file_size_min` / `file_size_max` | `int` | `file_size_bytes` range (bytes), **both bounds inclusive**. A byte count is a whole number, so the Statistics click-through gets a half-open bar without an exclusive param: it sends `ceil(edge × 1 MiB) - 1` as the max (`mkFs` in `StatsPage.tsx`) |
 | `mp_min` / `mp_max` | `float` | `width × height` megapixel range, min **inclusive** / max **exclusive** |
 | `ar_min` / `ar_max` | `float` | Aspect ratio `width / height` range, min **inclusive** / max **exclusive** |
+| `short_side_max` | `int` | `min(width, height) < n`, **exclusive**. The health report's "below the target resolution" link (`docs/dev/analyst/health.md`) |
+| `scores_stale` | `bool` | `true` = only images whose scores predate an in-place pixel rewrite; `false` = only fresh ones (`docs/dev/quality/scores-stale.md`) |
 | `format_filter` | `str` | Exact `Image.format` match (e.g. `PNG`) |
 | `detection_label` | `str` | `EXISTS` subquery: only images that have at least one detection with `label ILIKE '%...%'` (substring — gallery search) |
 | `detection_label_exact` | `str` | Exact `Detection.label == value`; combined with the score params below into **one** `EXISTS` subquery so all conditions apply to the same detection row (Detections & Masks label bar click-through) |

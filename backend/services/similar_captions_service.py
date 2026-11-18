@@ -52,7 +52,11 @@ def _norm_tag(part: str) -> str:
     return _SPACE_RE.sub(" ", part.replace("_", " ")).strip().lower()
 
 
-def _is_tag_like(text: str) -> bool:
+def is_tag_like(text: str) -> bool:
+    """True when `text` reads as comma-separated tags rather than prose: at least two
+    parts, and more than half of them four words or fewer. Public because the health
+    report (`health_service`) counts tag-style and prose captions with the same rule
+    the similar-captions search uses."""
     parts = [p for p in (s.strip() for s in text.split(",")) if p]
     if len(parts) < 2:
         return False
@@ -103,7 +107,7 @@ def _shared_terms(text: str, kind: str, query_set: frozenset[str]) -> tuple[froz
 def parse_caption_terms(text: str) -> tuple[str, list[str]]:
     """``("tags" | "prose", terms)``, terms deduplicated, in caption order."""
     text = text or ""
-    kind = "tags" if _is_tag_like(text) else "prose"
+    kind = "tags" if is_tag_like(text) else "prose"
     return kind, list(_terms_with_spelling(text, kind))
 
 

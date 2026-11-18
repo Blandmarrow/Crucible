@@ -52,6 +52,10 @@ async def _seed(env, dataset_id: str) -> list[str]:
             # (which is unset here, so they read as "missing").
             license="CC-BY-4.0" if i % 3 == 1 else None,
             source_timestamp_ms=i * 100 if i % 5 else None,
+            # Short side 50..200: the first ten are under 150.
+            width=50 + i * 10,
+            height=200,
+            scores_stale=i % 4 == 2,
         ))
     # Names are dataset-scoped strings only so a scenario can seed two datasets:
     # the vocabulary itself is global, and `labels.name` is unique app-wide.
@@ -109,6 +113,9 @@ def filter_shapes(label_ids: list[str]) -> dict[str, dict]:
         "label_any": {"label_filter": json.dumps(label_ids)},
         "label_all": {"label_filter": json.dumps(label_ids), "label_match": "all"},
         "label_missing": {"label_missing": "true"},
+        "short_side_max": {"short_side_max": "150"},
+        "scores_stale": {"scores_stale": "true"},
+        "scores_fresh": {"scores_stale": "false"},
         "combined": {"captioned": "true", "subfolder": "sub/deep", "search": "cat"},
         "matches_nothing": {"search": "no-such-image"},
     }

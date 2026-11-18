@@ -46,6 +46,7 @@ from backend.services.dataset_service import (
     _stats_license_stmt,
     _stats_rows_stmt,
 )
+from backend.services.health_service import _health_captions_stmt, _health_counts_stmt
 from backend.tests.conftest import API, api_env, png_bytes, run, upload_image
 from backend.tests.test_image_sort_plan import _plan, _sql
 
@@ -61,8 +62,12 @@ SCANS = {
     "embedding count": _stats_embedding_count_stmt,
     "license": lambda dataset_id, subfolder: _stats_license_stmt(dataset_id, subfolder, "cc0-1.0"),
     "score values": _score_values_rows_stmt,
+    # The health report's own two (M12), on top of the six `/stats` scans it reuses.
+    "health counts": lambda dataset_id, subfolder: _health_counts_stmt(dataset_id, subfolder, 1024, 0.5),
+    "health captions": _health_captions_stmt,
 }
-STATS_ENDPOINT_SCANS = 6  # all of SCANS but "score values", which is the other endpoint's
+STATS_ENDPOINT_SCANS = 6  # the six `/stats` builders: SCANS less "score values" and the health two
+HEALTH_ENDPOINT_SCANS = STATS_ENDPOINT_SCANS + 2
 
 
 @pytest.fixture()
@@ -130,6 +135,7 @@ def test_the_pin_changes_the_order_of_the_scan_and_not_its_rows(conn):
             "aesthetic_score": float(i % 7), "aesthetic_model": "laion" if i % 2 else None,
             "license": "cc0-1.0" if i % 5 == 0 else None,
             "quality_flags": {"is_blurry": i % 6 == 0},
+            "caption_text": "fox, snow" if i % 2 else "",
         })
     conn.execute(Image.__table__.insert(), rows)
     for name, build in SCANS.items():
@@ -238,3 +244,26 @@ def test_every_scan_the_app_sends_is_pinned_and_only_those(tmp_path, endpoint, s
     assert len(scoped) == len(wide)
     assert not [s for s in scoped if "INDEXED BY" in s], scoped
     assert all("images.subfolder = ?" in s for s in scoped), scoped
+
+
+def test_every_scan_the_health_report_sends_is_pinned(tmp_path):
+    """`/health` reuses the `/stats` scans and adds two of its own; all of them carry
+    the pin, and only the validators go without. No style run here, so
+    `get_style_distribution`'s own (unpinned, index-covered) reads are not sent."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds = await env.create_dataset("d")
+            await upload_image(env, ds["id"], "a.png", png_bytes())
+            sent: list[str] = []
+            _images_statements(env.Session.kw["bind"], sent)
+            dataset_service._stats_cache.clear()
+            r = await env.client.get(f"{API}/datasets/{ds['id']}/health")
+            assert r.status_code == 200, r.text
+            return list(sent)
+
+    sent = run(scenario())
+    validators = [s for s in sent if "max(images.updated_at)" in s]
+    others = [s for s in sent if s not in validators]
+    assert validators and not [v for v in validators if "INDEXED BY" in v], sent
+    assert all(PIN in s for s in others), [s for s in others if PIN not in s]
+    assert len(others) == HEALTH_ENDPOINT_SCANS, others

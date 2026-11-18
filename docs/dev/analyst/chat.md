@@ -4,7 +4,8 @@ Phase 2 of the analyst (M12): a chat about one dataset with an OpenAI-compatible
 no tool calls. This file covers the tables, the privacy settings and `build_context`, the one
 place the LLM's context is built. The family hub is [../analyst.md](../analyst.md); the
 findings the context lists are [health.md](health.md); the notes it numbers are
-[notes.md](notes.md). Sending, streaming and budgets arrive in phase 2b.
+[notes.md](notes.md). Sending, streaming, budgets and cancel are
+[sending.md](sending.md).
 
 ## The tables
 
@@ -141,7 +142,9 @@ of the reply that made it (phase 2d), not against the notes as they are later.
 - `GET /chats/{id}` with its messages; `PATCH /chats/{id}` (title, provider, model,
   `privacy`, where an explicit null clears the override); `DELETE /chats/{id}`.
 - `POST /chats/{id}/preview-context` with an optional `draft`: the exact messages and
-  manifest the next send would use.
+  manifest the next send would use, and the `budget` figures for it.
+- Sending, resuming and cancelling a reply: [sending.md](sending.md) § Events and § Cancel,
+  delete and shutdown.
 
 ## Tests
 

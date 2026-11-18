@@ -11,6 +11,7 @@ from backend.database import get_db
 from backend.licenses import PROVENANCE_FIELDS
 from backend.models import BackgroundJob, Dataset, Image
 from backend.schemas.dataset import CaptionImportRequest, DatasetCreate, DatasetDuplicateRequest, DatasetImportWithOptions, DatasetOut, DatasetRescanRequest, DatasetStats, DatasetUpdate, LicenseUsage, SubfolderCreate, SubfolderInfo, SubfolderRepath, SubfolderRepathResult, TagCooccurrence
+from backend.services import chat_runner
 from backend.services.dataset_busy import ensure_not_busy
 from backend.services.dataset_service import (
     create_dataset,
@@ -199,6 +200,8 @@ async def delete_dataset(dataset_id: str, db: AsyncSession = Depends(get_db)):
     # Deleting a dataset under a running versioning job would pull its rows and
     # folder out from under the job (GPT-015).
     ensure_not_busy(dataset_id)
+    # An analyst reply still streaming would write to chat rows the cascade removes.
+    await chat_runner.cancel_dataset(dataset_id)
     folder = Path(ds.folder_path)
     await db.delete(ds)
     await db.commit()

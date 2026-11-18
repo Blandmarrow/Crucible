@@ -68,6 +68,7 @@ GPU_MODULES_WITHOUT_TORCH = {
 # (`test_every_torch_free_ml_module_is_triaged`).
 CPU_ONLY_MODULES = {
     "__init__": "package marker",
+    "chat_stream": "a streamed HTTP chat completion to an OpenAI-compatible server",
     "download_progress": "tqdm patch and SSE emits",
     "image_utils": "PIL opening and resizing",
     "lut_processor": "numpy colour grading",

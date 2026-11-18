@@ -32,29 +32,10 @@ ruling, decision 21). Everything lives on `feat/analyst`:
 - Run the branch's migrations only on throwaway databases, never the dev DB (a migration
   the dev DB has applied strands it when `main` is checked out again).
 - One final PR takes `feat/analyst` to `main`, and only then is anything released.
-
-## Phase 0 — Test harness
-
-Built first, because streaming, cancel, budgets and the privacy filter are all untestable
-without it.
-
-- **`fake_llm.py`** in `backend/tests/`, on the pattern of `backend/tests/fake_comfy.py`: one
-  `httpx` handler that works in-process as a `MockTransport` and over a socket via `serve()`.
-  It speaks `GET /v1/models` and `POST /v1/chat/completions`, both plain and SSE-streamed,
-  and plays scripted replies: normal prose, malformed note blocks, a refusal, an empty reply,
-  `finish_reason: "length"`, tool calls (for phase 3), and a reply that stalls mid-stream
-  (for the idle timeout and cancel). It records every request body it receives, which is
-  how the privacy tests read what was actually sent.
-- **`serve-llm.mjs`** in `frontend/e2e/` and a `webServer` entry in `playwright.config.ts` on its
-  own port, copying `serve-comfy.mjs` (`findPython`, `tieLifetime`).
-- **The CI gap.** CI's e2e job has no `openai` package, so a provider call fails there
-  differently than locally (the caption job reads "empty" in CI, "refused" on a dev PC).
-  Install `openai` in the e2e job; it is small and torch-free. Decide it here, before any
-  spec depends on it.
-- Backend tests keep using the autouse `_no_real_llm_server` fixture in
-  `backend/tests/conftest.py`, which patches `openai_compat_captioner.make_client`. Every
-  analyst call goes through `make_client`, so the fixture covers it with no new code; a test
-  that wants replies patches in a client wired to `fake_llm`.
+- Phase 0, the test harness, landed: the fake LLM server and `openai` in
+  `requirements-ci.txt`, both in `docs/dev/backend-tests.md` § The fake LLM server. Every
+  analyst call should go through `openai_compat_captioner.make_client`, which the
+  `fake_llm` fixture patches.
 
 ## Phase 1 — Health report (no LLM)
 

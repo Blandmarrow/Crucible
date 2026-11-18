@@ -74,7 +74,7 @@ npm run build                     # refresh dist first — e2e serves it (stale 
 npm run typecheck:e2e             # the specs' only typecheck (see above)
 npx playwright install chromium   # first run only
 npx playwright test               # spins up its own backend on :8199 vs a throwaway DB,
-                                  # and a fake ComfyUI on :8198
+                                  # a fake ComfyUI on :8198 and a fake LLM on :8197
 ```
 
 The full pre-merge sweep (backend pytest → frontend build + e2e typecheck + lint → e2e) is
@@ -228,7 +228,7 @@ substantial edit.
 | `docs/dev/menus-popovers.md` | Working on the right-click menu or an anchored popover/dropdown — `ContextMenu`, `usePopover`, `MenuButton`, `LabelPicker`, the disabled-item focus rule, why `placement` is not a style choice | ~1400 |
 | `docs/dev/backend-infrastructure.md` | Working on `main.py`'s lifespan, the job queue, SSE, job cancellation, retrying a stopped job or a CI workflow — `JobQueue.stop()`'s bounded grace-then-cancel shutdown, the broadcaster's never-dropped terminal events, the Windows CI job, the run hook `_after_terminal`, `job_retry.py`'s handler registry | ~2800 |
 | `docs/dev/http-edge.md` | Working on middleware, `request_guard.py`, the SPA catch-all, an app-level exception handler (the `FileInUseError`/`ModelInUseError` 409s, the 422 redaction), or the shutdown/restart/health endpoints and restart loop — `CRUCIBLE_ALLOWED_HOSTS`, why there is no CORS, the restart poll's missing deadline, Restart and Shutdown under `manage dev`'s `--reload` | ~2300 |
-| `docs/dev/backend-tests.md` | Writing or fixing a backend test, or adding a test/CI dependency — which harness a test drives, what `backend/requirements-ci.txt` installs, the `needs_torch`/`needs_cv2`/`needs_symlinks` gates, the autouse fixture that keeps LLM-server calls off the network, `api_env` foreign keys, coverage and its `.coveragerc`, ruff and the migration drift check | ~650 |
+| `docs/dev/backend-tests.md` | Writing or fixing a backend test, adding a test/CI dependency, or faking an LLM provider (`fake_llm.py`, its `[[fake:…]]` markers, the `fake_llm` fixture) — which harness a test drives, what `backend/requirements-ci.txt` installs, the `needs_torch`/`needs_cv2`/`needs_symlinks` gates, the autouse fixture that keeps LLM-server calls off the network, `api_env` foreign keys, coverage and its `.coveragerc`, ruff and the migration drift check | ~1100 |
 | `docs/dev/database.md` | Working on a model or Alembic migration, an index or FK `ondelete`, deferred columns, `check_migrations.py`, or the startup DB backup — the drift check's `ACCEPTED_DRIFT` and `db_maintenance` rotation, the stripped folder-path migration, index hints (`indexed_by`) and why `ix_images_dataset_id` must stay | ~2300 |
 | `docs/dev/dataset-folders.md` | Working on a dataset's folder on disk — the delete endpoint's `remove_dataset_dir`, the startup orphan sweep and its `.orphaned/` folder, or the datasets root's on-disk spelling (`_settle_root_spelling`) — the sweep's refusals when the DB and the tree disagree, the empty-tree rmdir, the pre-repair backup | ~1450 |
 | `docs/dev/environment-setup.md` | Working on `manage.ps1`/`manage.sh` setup or update, torch wheels, or the setup/update flow — the Node version check and lockfile reset | ~2250 |

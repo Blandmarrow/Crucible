@@ -10,6 +10,10 @@ const baseURL = `http://localhost:${PORT}`
 // backend at. Set on process.env so the spec workers read the same value.
 const COMFY_PORT = process.env.E2E_COMFY_PORT ?? '8198'
 process.env.E2E_COMFY_PORT = COMFY_PORT
+// The fake OpenAI-compatible LLM (e2e/serve-llm.mjs) that fake-llm.spec.ts points a
+// provider at. Set on process.env for the same reason.
+const LLM_PORT = process.env.E2E_LLM_PORT ?? '8197'
+process.env.E2E_LLM_PORT = LLM_PORT
 
 export default defineConfig({
   testDir: 'e2e',
@@ -42,6 +46,15 @@ export default defineConfig({
       stdout: 'pipe',
       stderr: 'pipe',
       env: { E2E_COMFY_PORT: COMFY_PORT },
+    },
+    {
+      command: 'node e2e/serve-llm.mjs',
+      url: `http://127.0.0.1:${LLM_PORT}/v1/models`,
+      reuseExistingServer: false,
+      timeout: 30_000,
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: { E2E_LLM_PORT: LLM_PORT },
     },
   ],
 })

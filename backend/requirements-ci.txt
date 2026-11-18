@@ -40,3 +40,9 @@ sse-starlette>=3.4
 psutil>=5.9
 imagehash>=4.3
 tiktoken>=0.7
+# The OpenAI SDK, which no import needs (every app import of it is lazy), so it is
+# here for the tests: backend/tests/fake_llm.py serves the real SDK, and a fake
+# checked only against a hand-made stand-in could drift from what the SDK parses.
+# It also makes the e2e suite's provider calls reach the network as they do on a
+# dev PC, instead of failing on the missing package. Pure Python, torch-free.
+openai>=1.0

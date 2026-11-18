@@ -5,7 +5,7 @@ any prior state, compare two snapshots (diff), and maintain named branches; ever
 overwrites or deletes an image file in place calls into it first. This file is the family's
 entry point: the tables below route from a code path to whichever file in
 `docs/dev/versioning/` owns it. The subsystems whose data a snapshot carries keep their own
-docs — `docs/dev/provenance.md`, `docs/dev/labels/consumers.md`, `docs/dev/detection.md`.
+docs — `docs/dev/provenance.md`, `docs/dev/labels/consumers.md`, `docs/dev/detection/endpoints.md`.
 
 ## The family
 

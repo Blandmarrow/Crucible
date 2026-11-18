@@ -31,18 +31,20 @@ restates its stages.
    linking the record that holds the full text.
 5. **Landed**: one line per finished milestone or handoff record.
 
-## Next session (updated 2026-11-18, M12 phase 1 done)
+## Next session (updated 2026-11-18, M12 phase 1 done, room made for phase 2)
 
 This block lives on `feat/analyst` only: by decision 21 nothing of M12 reaches `main`, the
 docs included, until the whole feature is done.
 
-1. **Phase 1 is built**: the health report, notes and goal (#179), the Health page (#180) and
-   the gallery `?filter=` deep link (#181, into `feat/analyst`). Once #181 merges, start
+1. **Phase 1 is built and merged**: the health report, notes and goal (#179), the Health
+   page (#180) and the gallery `?filter=` deep link (#181), all into `feat/analyst`. Start
    phase 2, the analyst chat without tools
    ([§ Phase 2](analyst-plan/README.md#phase-2--analyst-chat-no-tools)), on a branch off
    `feat/analyst` with an Opus review; it will want splitting into PRs as phase 1 was.
-2. Before phase 2's key invariant (everything the LLM sees goes through `build_context`),
-   make room in CLAUDE.md: it is at 6,484 of 6,500 words.
+2. **CLAUDE.md has room for phase 2's key invariant** (everything the LLM sees goes through
+   `build_context`): detection and the file browser went behind hubs on `main`, PR #182,
+   merged in here on 2026-11-18, leaving this branch at 6,392 of 6,500 words. Keep the
+   invariant short and put its detail in `docs/dev/analyst.md`.
 3. Merge `main` into `feat/analyst` regularly, and run the branch's migrations only on a
    throwaway database. The previous block is in
    [roadmap-archive/handoff-2026-11-18.md](roadmap-archive/handoff-2026-11-18.md).

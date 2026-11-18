@@ -45,7 +45,7 @@ Ollama and OpenAI-compat have no entry, so the style picker is hidden for them. 
 
 ## `constants/detectionModels.ts`
 
-`frontend/src/constants/detectionModels.ts` — the detection model registry `DetectionRunForm`, `SelectionToolbar` and `ImageDetailPage` pick from (its three importers; `DetectionsPanel` renders existing detections and picks no model), plus `detectionModelFamily`; see `docs/dev/detection.md`.
+`frontend/src/constants/detectionModels.ts` — the detection model registry `DetectionRunForm`, `SelectionToolbar` and `ImageDetailPage` pick from (its three importers; `DetectionsPanel` renders existing detections and picks no model), plus `detectionModelFamily`; see `docs/dev/detection/endpoints.md`.
 
 ## `constants/detectionColors.ts`
 

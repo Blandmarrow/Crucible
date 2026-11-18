@@ -16,8 +16,8 @@ The loading, VRAM accounting and device abstraction these lean on are
 `docs/dev/ml-models.md`, eviction and leases are `docs/dev/model-residency.md`, and the
 registry entries are `docs/dev/model-registry.md`. The bulk jobs that share their loop
 shape are batch resize/crop (`docs/dev/bulk-image-jobs.md`), crop-to-detection
-(`docs/dev/detection-crop.md`) and the `batch_inpaint` job that drives LaMa
-(`docs/dev/inpaint.md`), and the user-facing side of all three pipelines is
+(`docs/dev/detection/crop.md`) and the `batch_inpaint` job that drives LaMa
+(`docs/dev/detection/inpaint.md`), and the user-facing side of all three pipelines is
 `docs/editing.md`.
 
 ## Upscaling

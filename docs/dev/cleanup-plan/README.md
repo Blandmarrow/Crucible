@@ -28,7 +28,7 @@ B1–B4 are fixed on `fix/m8-stage1-bugs`, each with a test that failed first. W
 lives in the topic files: `docs/dev/image-edit-job.md` (the gate, chunking,
 stats refresh and the detail page's outcome read), `docs/dev/frontend-jobs.md` (upscale and LUT
 in the `failed_count` convention, `backend/job_outcome.py`), `docs/dev/shared-utilities.md` (the
-gate-only rule and the rename exemption), `docs/dev/inpaint.md` and CLAUDE.md § Key invariants.
+gate-only rule and the rename exemption), `docs/dev/detection/inpaint.md` and CLAUDE.md § Key invariants.
 
 Two things went differently from the plan above. Inpaint was *not* the model to copy for B4: it
 wrote the resolved path back into the row, which breaks a linked `datasets_dir`, so every site,
@@ -71,7 +71,7 @@ failed first. What stays true lives in the files named beside them:
    `docs/dev/bulk-ops.md`.
 10. **Batch resize and crop, and detection crop, refresh stats on a partway failure** through
     item 5's `_run_with_stats` wrapper. `docs/dev/bulk-image-jobs.md`,
-    `docs/dev/detection-crop.md`.
+    `docs/dev/detection/crop.md`.
 11. **A dataset joins `touched` before its commit** at every replace site, which closes the
     hard-cancel edge. The shutdown edge is accepted rather than fixed:
     `docs/dev/backend-infrastructure.md` § Shutdown: stopping the job queue, and

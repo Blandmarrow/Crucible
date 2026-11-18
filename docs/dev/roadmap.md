@@ -31,16 +31,17 @@ restates its stages.
    linking the record that holds the full text.
 5. **Landed**: one line per finished milestone or handoff record.
 
-## Next session (updated 2026-11-15, captioning and labels hubs)
+## Next session (updated 2026-11-18, detection and file-browser hubs)
 
 1. **#130 Compare landed** in five PRs, #168 to #172 (see Now), and the detail page's
    Compare menu (With selection, With neighbours) followed in PR #173; the tray is under
    Later. All of it shipped as v1.5.0. M11 now holds #129, design first, and #48, waiting
    on its reporter.
-2. **CLAUDE.md is back under budget** (6,396 of 6,500): captioning and labels went behind
-   hubs, `docs/dev/captioning.md` and `docs/dev/labels.md`, on
-   `docs/hub-captioning-labels`, PR #177. The Map has room for three or four new rows; #129's plan
-   should put its docs in one family from the start.
+2. **CLAUDE.md has room again** (6,301 of 6,500): after captioning and labels (PR #177),
+   detection and the file browser went behind hubs too, `docs/dev/detection.md` and
+   `docs/dev/file-browser.md`, on `docs/hub-detection-file-browser` (2026-11-18). The
+   95 words freed are for M12 phase 2's key invariant (everything the LLM sees goes through
+   `build_context`), which lands on `feat/analyst`.
 3. M4 stays held, with its merge checklist under Waiting. The closed items of the
    previous blocks are in
    [roadmap-archive/handoff-2026-11-15.md](roadmap-archive/handoff-2026-11-15.md) and

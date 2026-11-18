@@ -157,7 +157,7 @@ invariants).
 - `duplicate_dataset` carries videos only under `include_videos` (default off, preflighted,
   refused for a snapshot), remapping each copied frame's `source_video_id` onto the clone's
   own video — see the **Dataset duplicate** paragraphs of `docs/dev/dataset-operations.md`.
-- The file browser (`docs/dev/file-browser.md`) reports `media_kind` per entry instead of the
+- The file browser (`docs/dev/file-browser/listing.md`) reports `media_kind` per entry instead of the
   old `is_image` boolean, and its move/rename/delete endpoints sync `Video` rows alongside
   `Image` rows — otherwise a video moved through the browser leaves a dangling row. That
   sync rewrites paths and nothing else, so `/filesystem/move` **refuses with a 409** to move

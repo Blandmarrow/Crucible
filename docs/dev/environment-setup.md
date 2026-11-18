@@ -1,6 +1,6 @@
 # Environment setup: venv, prerequisites & GPU wheels
 
-This file covers everything `manage.ps1` / `manage.sh` do to build a working environment: the venv's ML packages, prerequisite auto-install, Python version discovery, PyTorch GPU auto-detection, the SAM2/SAM3 install steps, the update self-handoff, and the `manage.ps1` encoding constraint. The launch side (the bind address and `--lan`, and the startup splash) is in `docs/dev/server-start.md`. Server control and the request guard live in `docs/dev/http-edge.md`, the job queue and SSE in `docs/dev/backend-infrastructure.md`, the database in `docs/dev/database.md`; the models these packages serve are in `docs/dev/model-registry.md` and `docs/dev/detection.md`.
+This file covers everything `manage.ps1` / `manage.sh` do to build a working environment: the venv's ML packages, prerequisite auto-install, Python version discovery, PyTorch GPU auto-detection, the SAM2/SAM3 install steps, the update self-handoff, and the `manage.ps1` encoding constraint. The launch side (the bind address and `--lan`, and the startup splash) is in `docs/dev/server-start.md`. Server control and the request guard live in `docs/dev/http-edge.md`, the job queue and SSE in `docs/dev/backend-infrastructure.md`, the database in `docs/dev/database.md`; the models these packages serve are in `docs/dev/model-registry.md` and `docs/dev/detection/endpoints.md`.
 
 ### Venv ML packages
 
@@ -55,9 +55,9 @@ After `pip install -r requirements.txt`, both `setup` (SAM2 is step `[5/7]` on b
 
 The next step in both scripts (`setup` `[6/7]`, `update` `[4/6]`) prompts the same way to install SAM 3, run as `pip install git+https://github.com/facebookresearch/sam3.git --no-deps` followed by explicit deps `pip install iopath ftfy pycocotools "setuptools<81"` (`--no-deps` because sam3 pins `numpy<2` and `ftfy==6.1.1`, which conflict with `requirements.txt`).
 
-`manage.ps1` then calls `Install-TritonWindows` (`pip install triton-windows`) — **Windows only, and not optional on GPU**: sam3 imports triton at module load and calls triton kernels on CUDA, and torch's Windows wheels never ship it (its Linux wheels pull it in transitively, so `manage.sh` needs no equivalent). `$sam3Ok` is captured *before* the triton install so a triton failure cannot flip the SAM3 status message, and `Install-TritonWindows` additionally resets `$LASTEXITCODE` to 0 so no later step observes it; see `docs/dev/detection-inference.md` and `docs/dev/postmortems/PM-004-silent-cpu-torch-fallback.md`.
+`manage.ps1` then calls `Install-TritonWindows` (`pip install triton-windows`) — **Windows only, and not optional on GPU**: sam3 imports triton at module load and calls triton kernels on CUDA, and torch's Windows wheels never ship it (its Linux wheels pull it in transitively, so `manage.sh` needs no equivalent). `$sam3Ok` is captured *before* the triton install so a triton failure cannot flip the SAM3 status message, and `Install-TritonWindows` additionally resets `$LASTEXITCODE` to 0 so no later step observes it; see `docs/dev/detection/inference.md` and `docs/dev/postmortems/PM-004-silent-cpu-torch-fallback.md`.
 
-SAM3 additionally needs a checkpoint: `sam3.safetensors` downloaded manually from `https://huggingface.co/1038lab/sam3` into `models/sam3/` (safetensors only — no `.pt`, no gated HF download; see `docs/dev/detection-inference.md`). Declining or a failed install only disables SAM 3 text-prompt segmentation (`backend/ml/sam3_predictor.py`).
+SAM3 additionally needs a checkpoint: `sam3.safetensors` downloaded manually from `https://huggingface.co/1038lab/sam3` into `models/sam3/` (safetensors only — no `.pt`, no gated HF download; see `docs/dev/detection/inference.md`). Declining or a failed install only disables SAM 3 text-prompt segmentation (`backend/ml/sam3_predictor.py`).
 
 Overall, `update` is **6 steps** and `setup` is **7 steps** on both platforms.
 

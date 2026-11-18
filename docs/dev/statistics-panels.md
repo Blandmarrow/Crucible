@@ -1,6 +1,6 @@
 # Statistics page: panels, exports and drill-down
 
-This file covers the browser side of `StatsPage`: how a histogram panel (`HistPanel`) asks for the raw `score-values` lists only when it needs them, editable histogram edges, the two CSV exports, bar click-through into `BucketPanel` and its half-open filter rule, and the Detections & Masks and Licenses panels. The page's queries, live polling, the server-side aggregation and the `DatasetStats` schema these panels read are in `docs/dev/statistics.md`; the `GET /images/` params the clicks send are in `docs/dev/image-filters.md`; the detection endpoint behind the Detections & Masks section is in `docs/dev/detection.md`.
+This file covers the browser side of `StatsPage`: how a histogram panel (`HistPanel`) asks for the raw `score-values` lists only when it needs them, editable histogram edges, the two CSV exports, bar click-through into `BucketPanel` and its half-open filter rule, and the Detections & Masks and Licenses panels. The page's queries, live polling, the server-side aggregation and the `DatasetStats` schema these panels read are in `docs/dev/statistics.md`; the `GET /images/` params the clicks send are in `docs/dev/image-filters.md`; the detection endpoint behind the Detections & Masks section is in `docs/dev/detection/endpoints.md`.
 
 ## The raw lists load on demand
 

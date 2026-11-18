@@ -6,8 +6,8 @@ delete / count / provenance / reorder), and `BulkEditPage`'s tabs. The interesti
 here is **which rows are selected** — `_apply_bulk_filters` and the scope panel that drives it.
 
 The bulk jobs that rewrite pixels or files — batch resize/crop and the thumbnail rebuild —
-are in `docs/dev/bulk-image-jobs.md`; detection-driven cropping is `docs/dev/detection-crop.md`
-and watermark removal `docs/dev/inpaint.md`. Dataset export has its own
+are in `docs/dev/bulk-image-jobs.md`; detection-driven cropping is `docs/dev/detection/crop.md`
+and watermark removal `docs/dev/detection/inpaint.md`. Dataset export has its own
 file — see `docs/dev/export.md`.
 
 ## Bulk caption editing
@@ -78,13 +78,13 @@ This tab behaves like Crop/Upscale for scope (`targetsFlaggedImages` stays `tab 
 
 What pays for the exception is the two-phase filesystem pass. Any row whose target collides with a batch member's *current* files renames to a temp name first and moves to its final name in a second sweep; the rest rename directly. **The collision test covers all three artifacts a rename moves** — the image path, the `{stem}.webp` thumbnail, and the `{stem}.txt` sidecar. Testing only the image path was PM-017: the two derived files are keyed on the stem alone, so a cross-extension collision (`img.jpg` taking the stem `img.png` holds) was invisible, took the direct branch, and destroyed a live sibling's thumbnail and caption while leaving every *filename* correct. Nothing repairs that — `serve_thumbnail` regenerates only a **missing** thumbnail, never a stale one.
 
-Two smaller rules in the same function. Temp names are keyed on the row id (`__renaming__{img_id}`), like the DB half's staging names, so a user typing `__renaming__image` as the new stem cannot collide with a live temp file. And `occupied_thumb_stems` unions in the stems of every non-batch `db_names` entry, not just the `.webp` files present: a row whose thumbnail is missing still owns its stem, since the next view regenerates it there — the same two-term occupancy `docs/dev/file-browser-rename-delete.md` § `POST /rename` defines.
+Two smaller rules in the same function. Temp names are keyed on the row id (`__renaming__{img_id}`), like the DB half's staging names, so a user typing `__renaming__image` as the new stem cannot collide with a live temp file. And `occupied_thumb_stems` unions in the stems of every non-batch `db_names` entry, not just the `.webp` files present: a row whose thumbnail is missing still owns its stem, since the next view regenerates it there — the same two-term occupancy `docs/dev/file-browser/rename-delete.md` § `POST /rename` defines.
 
 ## Bulk jobs that rewrite files
 
 `POST /images/batch/resize`, `POST /images/batch/crop` and `POST /images/bulk-thumbnails` are
 documented in `docs/dev/bulk-image-jobs.md`, `POST /detection/crop` in
-`docs/dev/detection-crop.md` and `POST /inpaint/run` in `docs/dev/inpaint.md`. They share a
+`docs/dev/detection/crop.md` and `POST /inpaint/run` in `docs/dev/detection/inpaint.md`. They share a
 loop shape (PM-013 commit ordering, `thumbnails_stale`) that has nothing to do with the scope
 filtering above. Two parts of it are not shared: only `bulk-thumbnails` and `/inpaint/run`
 gate stored paths through `contained_path`, and only the replace-mode crops run

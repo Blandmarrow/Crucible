@@ -1,42 +1,35 @@
-# File browser
+# File browser — the `/filesystem` router and its page
 
-Covers the `/filesystem` router behind the File Browser page: its eight endpoints, the name-collision 409s, the path-safety posture, the holes still open, and `FileBrowserPage` itself. The DB-sync guards on the three mutations are in two siblings: `POST /move` in `docs/dev/file-browser-move.md`, and `POST /rename` and `POST /delete` in `docs/dev/file-browser-rename-delete.md`. It split out of `docs/dev/workspace.md`, which keeps the other three workspace surfaces — the sidebar hardware meters and `/system`, the Logs page, and Booru tag lookup. The user doc is `docs/file-browser.md`. The dataset folder layout these guards defend is described in `docs/dev/dataset-operations.md` (dataset rename, `DirPickerModal` — the other consumer of `GET /roots` and `GET /list`) and `docs/dev/versioning/storage.md` (`.versions`); the rescan passes whose assumptions the guards protect are in `docs/dev/image-import.md` and `docs/dev/video/storage.md`.
+The File Browser is the app's window onto the whole filesystem: it lists and previews any
+folder, and its three mutations — move, rename and delete — keep the database in step when
+they touch a file a dataset has registered. This file is the family's entry point: the
+tables below route from a code path to whichever file in `docs/dev/file-browser/` owns it.
+The path guards those routes share (`canonical_abs_path`, `within_datasets_dir`) are indexed
+in `docs/dev/shared-utilities.md`, the dataset folder layout they defend is
+`docs/dev/dataset-operations.md`, and the Windows file-lock class the preview panel works
+around is `docs/dev/postmortems/PM-021-served-file-handle-blocked-windows-delete.md`. The
+other workspace surfaces — hardware meters, Logs and Booru — are `docs/dev/workspace.md`.
+The user doc is `docs/file-browser.md`.
 
-## Endpoints
+## The family
 
-Router: `backend/routers/filesystem.py`, prefix `/api/v1/filesystem`, registered in `main.py`.
-
-| Endpoint | Purpose |
+| File | Covers |
 |---|---|
-| `GET /roots` | Windows drive roots (`C:\`, `D:\`, …) |
-| `GET /list?path=` | Directory listing — dirs first, then files, both alphabetical; `media_kind` per entry (`"image"`, `"video"` or null), replacing the older `is_image` boolean |
-| `GET /preview?path=` | Serve any file in `MEDIA_EXTENSIONS` directly (`FileResponse`); videos get `video_mime` as the content type, and the `FileResponse` supplies the Range/206 a `<video>` needs to seek |
-| `GET /image-meta?path=` | `{width, height, format, file_size_bytes, generation_metadata}` — reads file without touching DB. Image-only on purpose: a video container carries no EXIF or generation parameters |
-| `POST /move` | Move file/dir; syncs the `Image` or `Video` row's `file_path`/`filename`, and 409s rather than re-homing a registered file, letting one leave its dataset's canonical `images/`/`videos/` folder, moving a folder holding either, or moving a folder of derived artifacts whose files live elsewhere (`docs/dev/file-browser-move.md`) |
-| `POST /rename` | Rename in place; for a matched `Image` also moves its thumbnail and `.txt` sidecar, and 409s on a name or thumbnail stem a sibling row owns. A **directory** is refused outright whenever it is a dataset's own folder, sits above one, carries a layout name, or holds rows or derived artifacts (`docs/dev/file-browser-rename-delete.md`) |
-| `POST /delete` | Delete file or directory (recursive), with the same care the router deletes take: busy guard, versioning hook, orphaned thumbnail/poster/sidecar cleanup, frame-lineage NULLing, `refresh_stats` (`docs/dev/file-browser-rename-delete.md`) |
-| `POST /mkdir` | Create directory |
+| [listing.md](file-browser/listing.md) | The endpoint table, the listing side (`/roots`, `/list`, `/preview`, `/image-meta`) and `/mkdir`, the name-collision 409s, path safety and `canonical_abs_path`, the router's holes still open, and `FileBrowserPage` with its `released` preview prop |
+| [move.md](file-browser/move.md) | `POST /move`: the file and directory branches, the canonical-media-folder 409, the derived-artifact guard, DB sync and `_find_dataset_for_path` |
+| [rename-delete.md](file-browser/rename-delete.md) | `POST /rename`, with its thumbnail-stem 409 and the guards C/D/A/B over `_DATASET_LAYOUT_DIRS`, and `POST /delete`, with its versioning-hook ordering and `_add_orphan` |
 
-## Name collisions
+## Where things live
 
-Name collisions are 409s, checked before the filesystem is touched: `POST /move` onto an existing name at the destination, `POST /rename` onto an existing sibling, `POST /mkdir` where the name already exists (as a directory *or* a file — the guard is `exists()`, not `is_dir()`). `backend/tests/test_conflict_paths_http.py` asserts each one leaves both sides on disk untouched.
+Each row names the file that **owns** that code. A `+` clause is a second genuine owner,
+not a see-also, and says which part of the code it owns.
 
-## Path safety
-
-Every route takes its client path through `utils.canonical_abs_path(path, settings.datasets_dir)`: `sanitize_abs_path`'s checks (no null bytes, absolute), then **one canonical spelling**. A bare `Path` keeps `..`, so before this `POST /delete {path: "{ds}/images/../images"}` matched no row in `_scope` while `rmtree` resolved the alias — the bytes went, the rows stayed (`GET /file` 404), the snapshot backup was skipped, and a restore reported nothing to restore (GPT-011). It resolves, then rebases anything under `datasets_dir.resolve()` back onto the **unresolved** `datasets_dir`, because stored paths are deliberately unresolved and `datasets_dir` may sit under a symlink, a junction or `subst` — so plain `.resolve()` would match nothing there. A path whose last component is a symlink — or a Windows directory junction, which `is_symlink()` does not report but `resolve()` follows — keeps it (only the parent is resolved), so deleting a link deletes the link. On Windows, full resolution also yields the on-disk case, so a case variant matches the stored string. **One shape resolves out of the tree while spelled inside it**: a link *inside* `datasets_dir`, such as a dataset folder kept on another drive. Its stored paths run through the link, so the resolved target matched no row while `rmtree` removed the bytes behind it. A path spelled under `datasets_dir` with no `..` that resolves outside it therefore comes back as spelled, since that spelling is the stored form.
-
-No further sandbox for the *client-supplied* path — this is a local desktop app with intentional full-filesystem access. A **stored** path is different: every dataset folder is created under `settings.datasets_dir`, so a `thumbnail_path`/`poster_path` outside it was never written by this app, and `POST /delete` runs each one through `utils.within_datasets_dir` before unlinking it as an orphan rather than deleting it on the strength of a request that named a different directory.
-
-## Still open
-
-Recorded rather than fixed: `Image.subfolder` travels unchanged, so a file moved between subfolders of its own dataset keeps the old sidebar grouping. A *dataset's own folder* is now an **asymmetry** rather than a shared hole: `POST /rename` refuses it outright (guard C in `docs/dev/file-browser-rename-delete.md` § Directory branch, empty or not, and refuses any folder *above* one too), while `/move` still only refuses it when it holds a row — so an empty dataset's folder still moves, leaving `Dataset.folder_path` stale, and `POST /delete` of that folder is the symmetric hole. Neither `/move` nor `/delete` has rename's layout-name guard either, which is why `POST /delete {path: "{ds}/.versions"}` still `rmtree`s the object store behind a 200. The canonical-media-root rule is no longer file-branch only — V-21 closed that gap by refusing the directory move outright rather than extending the predicate, since the predicate would have made the branch's path rewrite unreachable; see `docs/dev/file-browser-move.md` § `POST /move`.
-
-## Frontend
-
-Frontend page: `FileBrowserPage.tsx`, route `/file-browser`, sidebar nav item "File Browser". Three-panel layout (`200px | 1fr | 280px`): left = drive roots + quick-access links, middle = breadcrumb + file list + context menu (rename/delete/import), right = a preview panel. That menu is the shared `components/common/ContextMenu.tsx`, not a local one — see `docs/dev/menus-popovers.md` § Context menu; `ctxActions(entry)` here supplies its `actions` and is unchanged by the extraction. That panel branches on `entry.media_kind`: a video renders `<video controls preload="metadata">` against `GET /preview` — `preload="metadata"` so selecting a file in the list does not pull a whole clip off disk, and seeking works because the `FileResponse` supplies Range/206 on its own — while an image renders `<img>` plus the `<GenerationMetadata>` panel. The `["fs-image-meta", path]` query is `enabled: !isVideo`, since `/image-meta` reads EXIF and generation parameters and a container carries neither.
-
-`PreviewPanel` takes a `released` prop, set from **two** sources: `modal !== null || renamingPath !== null`. It has to be both, because rename is not one of the modals — `modal` is `import | mkdir | delete`, while rename fires straight from the inline `RenameInput` under `renamingPath`. Reading only `modal` left `POST /filesystem/rename` racing the open `/filesystem/preview`, which is the same PM-021 failure one page over and a worse one, since `filesystem.py` is unconverted and answers **500** rather than the 409 `videos.py` returns.
-
-It **unmounts** the `<video>` (showing "Preview paused") rather than clearing `src`, so the element is not still holding the file when the mutation request goes out: on Windows a served file cannot be deleted or renamed while any handle has it open, and that handle is routinely this app's own. The whole class is `docs/dev/postmortems/PM-021-served-file-handle-blocked-windows-delete.md`; the same release runs on `VideoDetailPage` (`docs/dev/video/ui.md`). `renameMutation.onSuccess` clears `selectedEntry` when it is the renamed row, for a related reason: the panel holds a whole `FsEntry` rather than a path it re-reads, so otherwise the player remounts against a file that no longer exists — the main real-world way a user reaches the playback-error line below. The panel also classifies an `onError` through the shared `utils/videoPlayback.ts::playbackErrorMessage` and shows a compact line under the filename — no codec is available here (`/image-meta` is image-only), so the message falls back to the extension, and with no codec to match on it is always the *hedged* wording (see `docs/dev/video/ui.md` § Releasing the player, and the unplayable overlay — the two decode/unsupported messages). The failure is reset during render when `entry.path` changes, because the panel is not keyed and survives a change of selection.
-
-API client: `frontend/src/api/filesystem.ts` — thin wrappers over all endpoints; `previewUrl(path)` returns a URL string for use in `<img src>`.
+| Editing… | Read |
+|---|---|
+| `backend/routers/filesystem.py` (`/roots`, `/list`, `/preview`, `/image-meta`, `/mkdir`, the shared path handling) | `docs/dev/file-browser/listing.md` |
+| `backend/routers/filesystem.py` (`move`, `_find_dataset_for_path`) | `docs/dev/file-browser/move.md` |
+| `backend/routers/filesystem.py` (`rename`, `delete`, `_add_orphan`) | `docs/dev/file-browser/rename-delete.md` |
+| `backend/utils.py::canonical_abs_path` | `docs/dev/file-browser/listing.md` § Path safety; + `docs/dev/shared-utilities.md` for the index entry |
+| `frontend/src/pages/FileBrowserPage.tsx`, `frontend/src/api/filesystem.ts` | `docs/dev/file-browser/listing.md` § Frontend |
+| `backend/tests/test_conflict_paths_http.py`, `test_filesystem_path_canonical_http.py` | `docs/dev/file-browser/listing.md` |
+| `backend/tests/test_filesystem_rename_http.py`, `test_filesystem_delete_http.py` | `docs/dev/file-browser/rename-delete.md` |

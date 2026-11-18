@@ -1,86 +1,41 @@
-# Object detection
+# Object detection — the router, the predictors and the jobs that consume detections
 
-This file covers the detection subsystem's request path: the `/detection` router and its management routes, the `DetectionJobRequest` scope, per-model overwrite scoping, mask geometry and `mask_area`, watermark flag sync, storage, and the detection frontend surfaces.
+Detection finds boxes and masks in an image and stores them as `Detection` rows, which two
+jobs later consume: one crops an image down to what was found, the other paints it out.
+This file is the family's entry point: the tables below route from a code path to whichever
+file in `docs/dev/detection/` owns it. Detection models are registered and VRAM-managed like
+every other model — `docs/dev/model-registry.md` for their entries,
+`docs/dev/model-residency.md` for eviction and leases, `docs/dev/ml-models.md` for loading.
+The detection remap every replace-mode crop runs is `docs/dev/bulk-image-jobs.md`, the
+LaMa model the paint job calls is `docs/dev/image-processing-models.md` § LaMa inpainting,
+and the snapshot mirror of detections is `docs/dev/versioning/mirrors.md`. The user doc is
+`docs/detection.md`.
 
-The predictors those routes call — the task matrix per model family, multi-phrase prompts, Florence-2/NudeNet/SAM2/SAM3 inference, and the SAM 3 upstream constraints — are `docs/dev/detection-inference.md`. Detection *models* are registered and VRAM-managed like every other model — see `docs/dev/model-registry.md` for their entries, `docs/dev/model-residency.md` for eviction and leases, and `docs/dev/ml-models.md` for loading. The scoring flags that a detection run can write (`has_watermark`) live in `docs/dev/quality/scoring.md`.
+## The family
 
-Two jobs *consume* detections rather than producing them, each in its own file: `crop_to_detection` crops an image down to what was found (`docs/dev/detection-crop.md`), and `batch_inpaint` paints it out (`docs/dev/inpaint.md`). The second is destructive to this router's own rows — a successful replace-mode paint **deletes** the detections it consumed and clears `has_watermark`, because the region they name no longer contains anything. Copy mode consumes nothing: the parent still has the watermark, so it keeps both.
+| File | Covers |
+|---|---|
+| [endpoints.md](detection/endpoints.md) | The `/detection` router and its management routes, `DetectionJobRequest`, per-model overwrite scoping and its `inference_ok` gate, `model="manual"` rows, `mask_area`, watermark flag sync, storage, and the frontend surfaces (`DetectionsPanel`, the Detect modals, `DETECTION_MODELS`) |
+| [inference.md](detection/inference.md) | The predictors in `backend/ml/`: the task matrix per model family, multi-phrase prompts, Florence-2/NudeNet/SAM2/SAM3 inference, mask refine and merge geometry, the SAM 3 safetensors loader and its upstream limits |
+| [crop.md](detection/crop.md) | Crop to Subject: `POST /detection/crop`, the `crop_to_detection` job, `detection_crop_rect`, `dest_subfolder` and `CropToDetectionForm` |
+| [inpaint.md](detection/inpaint.md) | Watermark removal: `POST /inpaint/run`, the `batch_inpaint` job, the paint mask and `_dilate`, the stored-form `contained_path` gate, replace mode's `has_watermark` rule, copy mode and `InpaintForm` |
 
+## Where things live
 
-Detection runs as a background job, same pattern as quality scoring. Four model families are supported.
+Each row names the file that **owns** that code. A `+` clause is a second genuine owner,
+not a see-also, and says which part of the code it owns.
 
-## Router and endpoints
-
-**Router**: `backend/routers/detection.py`, prefix `/detection`.
-
-| Endpoint | Body / params | Returns |
-|---|---|---|
-| `POST /detection/run` | `DetectionJobRequest` | `{ job_id, total }` |
-| `GET /detection/image/{image_id}` | — | `list[DetectionOut]` |
-| `GET /detection/labels/{dataset_id}` | — | `[{label, image_count}]` — distinct labels in the dataset; feeds the ExportPage loss-mask label chips (see `docs/dev/export.md`) and the bulk-delete label chips |
-| `GET /detection/models/{dataset_id}` | — | `[{model, image_count}]` — distinct models in the dataset; feeds the bulk-delete model chips |
-| `GET /detection/stats/{dataset_id}?subfolder=` | — | Aggregate stats for the Stats "Detections & Masks" section (totals, label/model distributions, score & coverage histograms, detections-per-image); see `docs/dev/statistics-panels.md` § Category panels |
-| `PATCH /detection/{detection_id}` | `DetectionUpdate {label}` | `DetectionOut` — relabel one detection |
-| `DELETE /detection/{detection_id}` | — | 204 — delete one detection (no dialog; regenerable) |
-| `POST /detection/bulk-delete` | `DetectionBulkDeleteRequest` | `{deleted, dry_run}` — scoped delete; `dry_run` returns the match count only |
-| `POST /detection/merge` | `DetectionMergeRequest {detection_ids ≥2}` | `DetectionOut` — merge ≥2 same-image rows into one `model="manual"` row |
-| `POST /detection/manual` | `ManualDetectionRequest` | `DetectionOut` (no SAM) **or** `{job_id}` (with SAM) — hand-drawn box |
-| `POST /detection/{detection_id}/refine` | `DetectionRefineRequest {point_prompts, point_labels}` | `{job_id}` — point-refine an existing mask (400 if the row has no mask) |
-| `POST /detection/crop` | `DetectionCropRequest` | `{job_id, total, skipped}` — batch-crop images to their detection boxes; `skipped` counts images with no matching detection. Documented in full in `docs/dev/detection-crop.md` |
-
-**Management routes are sync/DB-only** except `manual` (with SAM) and `refine`, which enqueue a `job_type="detection"` job. Declare the static paths (`/models`, `/bulk-delete`, `/merge`, `/manual`, `/crop`) before the `/{detection_id}` routes — `/crop` sat below them until 2026-07-31 and was safe only incidentally, there being no `POST /{detection_id}` and `detection_id: int` 422ing on the segment `"crop"`. That is the PM-018 shape; a comment now marks where the parameterized block begins. `bulk-delete` resolves scope like `crop_to_detection` (image_ids > dataset + `normalize_subfolder` + `ALLOWED_FLAG_KEYS` exclusions, as the subquery `image_scope.scope_query`), then optional `label.in_` / `model.in_` / `score < score_below`. SQL `score <` never matches NULL, so unscored/manual rows are immune to a score filter (intended).
-
-**`model="manual"` provenance** — refined, merged, and hand-drawn rows are stored with `model="manual"` so automatic re-runs (which now scope their overwrite delete to the running model) never wipe them. The `task` column records how the row was made: `"manual"` (drawn box, no SAM), `"box_prompt"` (drawn box segmented by SAM), `"refine"` (point-refined mask), `"merge"` (geometry union of ≥2 rows). `_ALLOWED_MODELS`/`_ALLOWED_TASKS` are unchanged — these new tasks are created by the management endpoints, never validated through `/run`.
-
-**`_ALLOWED_MODELS`** (router): `{"florence2_large", "florence2_promptgen", "nudenet", "sam2", "sam3"}`. **`_ALLOWED_TASKS`**: `{"<OD>", "<CAPTION_TO_PHRASE_GROUNDING>", "nudenet", "text_prompt", "points"}`. Which of those combinations each model family actually supports — and how a multi-phrase `custom_prompt` is split — is `docs/dev/detection-inference.md`.
-
-**Per-model overwrite scoping** — each `/run` branch's `overwrite` delete is scoped to its own model (`Detection.model == "nudenet"`/`"sam2"`/`"sam3"`, or `body.model` for Florence), so re-running one model leaves the others' rows — and every `model="manual"` row — intact. Do not revert to the old dataset-wide `delete(Detection).where(image_id == …)`.
-
-**Overwrite replaces a result, never a failure** — every branch's delete is gated on `body.overwrite and inference_ok`, NudeNet included. A failed inference has no result to replace the old rows with, so they stay; before this gate any inference exception — an out-of-memory, a corrupt file, or a model unloaded mid-run before leases existed — silently erased that image's detections for the model. Inserts need no gate, since a failed inference returns an empty list.
-
-**Model leases** — the batch job wraps its body in an `ExitStack` and leases each branch's model immediately after loading it, for the whole loop; manual box and mask refine lease `sam2` around the inference call only, *inside* the existing `try`, so a refused lease falls back like any other SAM failure (the plain box is still saved; the mask is left unchanged). See `docs/dev/model-residency.md` § Leases.
-
-**`Detection.mask_area` (persisted coverage fraction)** — the fraction (0–1) of the image covered by a detection's geometry, computed by `mask_utils.detection_mask_area` (shoelace sum over the normalized polygons, or bbox rectangle area when there is no polygon, clamped to [0, 1]). It is kept in sync by two SQLAlchemy `set` listeners in `backend/models/detection.py` — one on `Detection.mask`, one on `Detection.bbox` — that recompute it on every ORM attribute assignment (including constructor kwargs), so all write paths (run branches, `/manual`, `/merge`, `/refine`'s in-place mutation, and the crop remap `detection_service.remap_detections_for_crop`, which assigns `mask` then `bbox`) update it with zero call-site changes. `bbox` is non-nullable so it is always assigned; when both are set the polygon area wins over the bbox. **Invariant: geometry must always be written via ORM attribute assignment** — a raw `update(Detection)` / SQL write to `mask` or `bbox` bypasses the listeners and leaves `mask_area` stale (mirrors the `Image.caption_token_count` invariant). Stats read this column instead of parsing polygon JSON per request; the migration backfills existing rows with an inlined copy of the math (`c9e2f4a6b8d1`).
-
-**`DetectionJobRequest`** fields:
-
-| Field | Default | Effect |
-|---|---|---|
-| `dataset_id` | required | Target dataset |
-| `image_ids` | `null` | If non-null, only these images (an **empty list matches nothing**); `null` = the whole dataset, optionally narrowed by `subfolder`/`quality_flags` |
-| `subfolder` | `null` | Whole-dataset runs only (ignored when `image_ids` is set): restrict to this subfolder (`normalize_subfolder`) |
-| `quality_flags` | `null` | Whole-dataset runs only: exclude images where any listed flag is `True` (`ALLOWED_FLAG_KEYS`-validated, `as_boolean().is_not(True)`) — same convention as `bulk-delete`/`crop` |
-| `model` | required | `"florence2_large"`, `"florence2_promptgen"`, `"nudenet"`, `"sam2"`, or `"sam3"` |
-| `task` | required | `"<OD>"`, `"<CAPTION_TO_PHRASE_GROUNDING>"`, `"nudenet"`, `"text_prompt"`, or `"points"` |
-| `custom_prompt` | `""` | Phrase to ground (`<CAPTION_TO_PHRASE_GROUNDING>` / SAM2 or SAM3 `text_prompt`) |
-| `use_caption_as_prompt` | `false` | When `true`, each image's `caption_text` is used as the per-image prompt; images without a caption are skipped |
-| `overwrite` | `true` | Delete this model's existing detections for each image before inserting new ones (scoped to the running model — other models' and `manual` rows survive; see Per-model overwrite scoping above) |
-| `min_prob` | `0.5` | NudeNet confidence threshold (ignored for other models) |
-| `point_prompts` | `null` | Normalized `[x, y]` coordinates for SAM2 `points` mode |
-| `point_labels` | `null` | Foreground (1) / background (0) labels matching `point_prompts` |
-| `sync_watermark_flag` | `false` | Set/clear `Image.has_watermark` from per-image results (see below); rejected with 400 for non-grounding tasks |
-
-## Watermark flag sync
-
-**Watermark flag sync** (`sync_watermark_flag`) — grounds watermark phrases (e.g. prompt `"watermark. text. logo."`) and writes the located result back to the CLIP-derived `has_watermark` flag. Eligible only for the text-prompt grounding tasks in `_WATERMARK_SYNC_TASKS` = `{"text_prompt", "<CAPTION_TO_PHRASE_GROUNDING>"}` (so SAM2/SAM3 text_prompt and Florence grounding; the request-path check 400s for `<OD>`, `nudenet`, and SAM2 `points`). Inside each per-image session, immediately before that image's commit, `_apply_watermark_flag(session, img_id, bool(detections))` sets the flag `True` on a hit and `False` when scanned clean — using the in-memory result, never a re-query, and following the copy-then-reassign JSON invariant. It runs **only after successful inference** (`inference_ok` guard): an inference exception leaves the old flag untouched, never silently clearing a never-scanned image. Because it lives inside the run, "last synced run wins" — with `overwrite` off, the flag still reflects only this run's result. Under caption-as-prompt grounding, uncaptioned images are filtered out of the scan set and so are left untouched. Every branch that *can* sync — SAM2, SAM3, Florence — awaits `_finish_watermark_sync()` before its early `return`; the **NudeNet branch does not**, because the request-path check above 400s `sync_watermark_flag` for `task="nudenet"`, so the flag is unreachable there. The invariant is upheld by that validator rather than by the branch, which is worth knowing before adding a fifth. The call is a no-op unless the run synced flags, and it which lazily imports `refresh_stats` (matching `captioning.py`) and refreshes the dataset's cached stats in a fresh session so the Stats flag counts update; a cancelled run may skip it (acceptable).
-
-## Storage
-
-**Storage**: `backend/models/detection.py::Detection` table. Indexed on `image_id` and `label`. `Detection.mask: Text | None` stores polygon JSON: `{"polygons": [[[x,y],...], ...]}` in normalized 0–1 coordinates. `ImageOut.detections: list[DetectionOut]` is populated only in `GET /images/{image_id}` (the detail endpoint) — not in `list_images`.
-
-**Snapshots carry detections** (GPT-026): `VersionImageState.detections` mirrors each image's rows and a restore replaces them, because normalized geometry is only meaningful against the pixels it was measured on. The mirror's shape and the chunked read/replace helpers (`serialize_detection`/`deserialize_detection`, `detections_by_image`, `set_detections`) live in `backend/services/detection_service.py`; the restore builds rows through the ORM constructor so `mask_area` is recomputed by the listeners above. A snapshot row from before the column is NULL and leaves detections alone. Cross-dataset copies and dataset duplication still do not carry detections. See `docs/dev/versioning/mirrors.md`.
-
-## Frontend surfaces
-
-**The model list is one frontend constant.** `frontend/src/constants/detectionModels.ts` exports `DETECTION_MODELS` — the five ids `POST /detection/run` accepts, with their picker labels — imported by all three surfaces that offer a choice: `DetectionRunForm`, `SelectionToolbar` and `ImageDetailPage`. (`DetectionsPanel` renders detections that already exist and picks no model.) It was three hardcoded `<option>` lists that had drifted in both directions a copied list drifts: the same model carried two different labels, and the gallery selection toolbar had lost NudeNet entirely, so it could not be run on a selection at all. Frontend constants rather than an endpoint, unlike the captioning models, because there is no backend list to serve — `_ALLOWED_MODELS` in `routers/detection.py` is the **authority** on what is accepted, and this file is kept in step with it **by hand**, with no test enforcing the mirror (contrast `captionBackend`, whose parity test is described in `docs/dev/captioning/model-picker.md`). The same file's `detectionModelFamily(model)` groups an id into `florence` / `sam` / `nudenet`; the Detect modals reset the task, prompt and use-captions inputs only when the *family* changes, so Florence-2 Large ↔ PromptGen keeps what the user typed.
-
-**Frontend surfaces**:
-- `SelectionToolbar` — "Detect" button opens a modal (model, task, prompt, min_prob slider for NudeNet, overwrite toggle). The model list is `DETECTION_MODELS` in full, NudeNet included; for `sam2`/`sam3` the task dropdown is hidden (fixed `text_prompt`), the use-captions toggle is hidden, and a prompt is required, while `nudenet` hides the task dropdown too (it has one behaviour) and shows the min_prob slider. A **"Sync watermark flag from results"** checkbox renders below Overwrite only when `detectSyncEligible` (sam2/sam3, or Florence grounding); the mutation sends `sync_watermark_flag: detectSyncEligible && detectSyncWatermark` so a stale checkbox state is harmless. **The modal closes immediately on job start** (toast "Detection queued") — progress shows in the global job bar, not in the modal — and the job id is appended to a tracked `detectJobIds: string[]` (the id-list pattern, see `docs/dev/job-invalidation.md`) so the user can reopen and queue another run right away. No extra completion invalidation is needed — the detection-job effect already invalidates `["images", datasetId]` and StatsPage live-polls `"detection"` jobs.
-- `CaptioningPage` — "Object Detection" section when a Florence-2 model is selected; uses the same model as captioning.
-- `ImageDetailPage` — `DetectionsPanel` (`components/detection/DetectionsPanel.tsx`, extracted from the page): collapsible, label chips (visibility toggles filtering both boxes and mask fills via `hiddenLabels: Set<string>`) **plus a per-detection row list** (sorted label, id) — color dot, click-to-rename inline label input (`updateDetection`), score, model chip, Refine button (only when `det.mask`), merge checkbox, and a direct delete icon (no confirm — regenerable). A merge bar appears at ≥2 checked rows (`merge` in selection order → one `model="manual"`, `task="merge"` row). A "Crop from Detections" button shows at ≥1 visible detection. Panel-owned mutations invalidate `["image", imageId]` + `["detection-labels", datasetId]`. The panel stays mounted across arrow-key navigation to a cached neighbour, so a render-time reset on `imageId` (the `frontend/src/components/common/NumberField.tsx` idiom) clears the merge selection and the inline-rename draft. Without it, the neighbour showed "Merge 2 →" naming the previous image's ids, and the click merged them. It is deliberately not a `key=` remount, which would also reset the collapse state.
-  - **Manual box drawing**: toolbar "Draw Box" button (`enterMode("draw")`). A capture div (sibling of the SAM-points div, same normalized `getBoundingClientRect` math) turns mouse drag into a normalized rect finalized at ≥0.005 extent per axis; a toolbar strip then takes a label + optional "Refine with SAM" checkbox and calls `createManual`. Sync response refreshes and keeps draw mode on for multi-box annotation; `{job_id}` (SAM path) is tracked to completion. SAM empty/failure falls back to a plain `task="manual"` box so the drawing is never lost.
-  - **Mask refine**: the panel's Refine button calls `enterMode("refine", det)`; a contextual strip ("Refining {label} — click fg / right-click bg") reuses `samPoints` for its clicks, Apply (disabled at 0 points) calls `refine`. While refining, the overlay dims to just the target detection at higher opacity.
-  - `enterMode("draw"|"points"|"refine"|null)` enforces mutual exclusivity between the three annotation modes; entering crop/upscale/LUT or navigating to another image clears all three. Escape exits draw/refine/pending-box. SAM2 point-prompt mode ("SAM Points" toolbar button, when the detect model is sam2/points) and the detect modal (SAM 3 fixed `text_prompt`, no mode radios) are unchanged; SAM3 mask rows render through the same polygon overlay as SAM2. Like `SelectionToolbar`, the detect modal **closes on job start** (SAM points cleared then, since they were already sent in the payload) and tracks `detectJobIds: string[]` — no in-modal progress bar, run button never disabled by an active job, so a second run can be queued immediately.
-  - **Crop prefill**: "Crop from Detections" (`utils/detectionCrop.ts::detectionCropPrefill`) computes the padded union of visible bboxes, and the crop tool's box is seeded from it (`seedCrop`, grown to a locked aspect); the plain "Crop" button clears the prefill so it never leaks into a manual crop. How the box is held and seeded: `docs/dev/image-detail.md` § The crop box.
-  - Detection jobs (`job_type="detection"`) invalidate detail pages via a dedicated TopBar completion branch (`["image"]` + `invalidateDetectionQueries`: `["detection-labels"|"detection-models"|"detection-stats", ds]`) — deliberately **not** in `IMAGE_MODIFYING_JOB_TYPES` (detections don't change the gallery). The same branch serves `crop_to_detection` and `batch_inpaint` (both rewrite or delete rows) and `restore_snapshot`/`checkout_branch`, which replace each restored image's detections with the snapshot's.
-- `BulkEditPage` — "Detections" tab: a **Run Detection** panel (`components/detection/DetectionRunForm.tsx` — inline, non-modal; runs `POST /detection/run` across the scope; offers every model — Florence-2 Large/PromptGen, NudeNet, SAM2, SAM3 — with SAM2 text-prompt only here since point prompts are per-image) above a **Delete Detections** panel (`components/detection/DetectionBulkDeleteForm.tsx`): label chips + model chips + "Score below" input, a live dry-run count (`bulkDelete({dry_run:true})`), and a danger `ConfirmDialog` before the real delete. See `docs/dev/bulk-ops.md`.
+| Editing… | Read |
+|---|---|
+| `backend/routers/detection.py` (everything but `crop_to_detection`) | `docs/dev/detection/endpoints.md` |
+| `backend/routers/detection.py::crop_to_detection` | `docs/dev/detection/crop.md` |
+| `backend/models/detection.py` (the `mask_area` listeners) | `docs/dev/detection/endpoints.md` § Router and endpoints |
+| `backend/services/detection_service.py` | `docs/dev/detection/endpoints.md` § Storage for the snapshot helpers; + `docs/dev/bulk-image-jobs.md` for `remap_detections_for_crop` |
+| `backend/ml/sam2_predictor.py`, `backend/ml/sam3_predictor.py`, `backend/ml/nudenet_scorer.py`, `backend/ml/florence_captioner.py` (its detection entry) | `docs/dev/detection/inference.md` |
+| `backend/ml/mask_utils.py` | `docs/dev/detection/inference.md` for refine and merge geometry; + `docs/dev/detection/crop.md` for `detection_crop_rect`, + `docs/dev/detection/endpoints.md` for `detection_mask_area` |
+| `backend/routers/inpaint.py` | `docs/dev/detection/inpaint.md` |
+| `frontend/src/constants/detectionModels.ts`, `frontend/src/api/detection.ts` | `docs/dev/detection/endpoints.md` § Frontend surfaces |
+| `frontend/src/components/detection/` (`DetectionsPanel`, `DetectionRunForm`, `DetectionBulkDeleteForm`) | `docs/dev/detection/endpoints.md` § Frontend surfaces |
+| `frontend/src/utils/detectionCrop.ts` | `docs/dev/detection/endpoints.md` § Frontend surfaces; + `docs/dev/image-detail.md` for the crop box it seeds |
+| `frontend/src/components/crop/CropToDetectionForm.tsx` | `docs/dev/detection/crop.md` |
+| `frontend/src/components/inpaint/InpaintForm.tsx`, `frontend/src/api/inpaint.ts` | `docs/dev/detection/inpaint.md` |

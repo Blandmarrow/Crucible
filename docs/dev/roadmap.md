@@ -31,18 +31,18 @@ restates its stages.
    linking the record that holds the full text.
 5. **Landed**: one line per finished milestone or handoff record.
 
-## Next session (updated 2026-11-19, M12 phase 2a in review)
+## Next session (updated 2026-11-19, M12 phase 2b in review)
 
 This block lives on `feat/analyst` only: by decision 21 nothing of M12 reaches `main`, the
 docs included, until the whole feature is done.
 
-1. **2a is PR #183** into `feat/analyst`: the chat tables, budgets, provider privacy and
-   `build_context` (`docs/dev/analyst/chat.md`), Opus-reviewed with every finding fixed.
-   Merge it once the user agrees, then start **2b**, sending: the streaming call, the
-   shared limiter, budgets and cancel (the list under Now).
-2. **Two rulings for phase 2 (user, 2026-11-18)**: the provider's `max_concurrent` becomes
-   one limiter shared by chats and caption jobs, which touches `captioning.py`; and replies
-   render with `react-markdown`, raw HTML off.
+1. **2a merged (#183); 2b is PR #184** into `feat/analyst`: sending, streaming, budgets,
+   cancel and the shared provider limit (`docs/dev/analyst/sending.md`), Opus-reviewed with
+   every finding fixed. Merge it once the user agrees, then start **2c**, the chat page,
+   with `react-markdown` (raw HTML off, the user's ruling of 2026-11-18).
+2. **Reasoning models need Max tokens room**: Gemini 2.5 Flash was cut off at 1,024 and
+   finished at 2,048 (`sending.md` § What is recorded). 2c's Settings Analyst tab or the
+   user doc should say so.
 3. Merge `main` into `feat/analyst` regularly, and run the branch's migrations only on a
    throwaway database. The previous block is in
    [roadmap-archive/handoff-2026-11-19.md](roadmap-archive/handoff-2026-11-19.md).
@@ -70,8 +70,9 @@ Plan: [analyst-plan/README.md](analyst-plan/README.md). Gate: every phase below 
   - [x] 2a, the chat tables, budget settings, provider privacy and `build_context` with the
     preview route (record: `docs/dev/analyst/chat.md`): PR #183 into `feat/analyst`,
     2026-11-19.
-  - [ ] 2b, sending: the streaming call, a per-provider limiter shared with caption jobs,
-    budgets, cancel, the startup sweep and dataset-delete cancel, finding references.
+  - [x] 2b, sending: the streaming call, a per-provider limiter shared with caption jobs,
+    budgets, cancel, the startup sweep and dataset-delete cancel, finding references
+    (record: `docs/dev/analyst/sending.md`): PR #184 into `feat/analyst`, 2026-11-19.
   - [ ] 2c, the chat page: `chatStore`, the components, `react-markdown`, the Settings
     Analyst tab and the user docs.
   - [ ] 2d, note proposals: the `crucible-notes` parser, accept and undo, the notes' chat

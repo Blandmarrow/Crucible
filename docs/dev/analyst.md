@@ -15,6 +15,7 @@ through are `docs/dev/image-filters.md`; the Stats cache and index pin the repor
 | [health.md](analyst/health.md) | `health_service.py`: the findings catalogue and its constants, `FilterSpec`, the cache and its key, the card-badge write-back, dismissals and resurfacing, the snapshot delta |
 | [notes.md](analyst/notes.md) | Dataset and app-wide notes: the three tables, soft delete and history, the size caps, a dismissal as a note, the `/notes` and `/app-notes` routes, the goal fields on `Dataset` |
 | [ui.md](analyst/ui.md) | The frontend: `HealthPage`, the notes editor, the dialogs' goal fields, the card badge, their query keys and routing |
+| [chat.md](analyst/chat.md) | The chat (phase 2): the `chats`, `chat_messages` and `llm_usage` tables, the token budget settings, privacy defaults and overrides, `build_context` and its categories, the preview route |
 
 ## Where things live
 
@@ -26,11 +27,13 @@ through are `docs/dev/image-filters.md`; the Stats cache and index pin the repor
 | `backend/models/dataset.py` (`goal`, `target_resolution`, `health_summary`), `backend/routers/datasets.py` (`_apply_goal_fields`) | `docs/dev/analyst/notes.md` § The goal fields; + `docs/dev/dataset-operations.md` for the rest of the routes |
 | `frontend/src/pages/HealthPage.tsx`, `frontend/src/components/health/`, `frontend/src/api/health.ts`, `frontend/src/api/notes.ts` | `docs/dev/analyst/ui.md` |
 | `frontend/src/components/datasets/GoalFields.tsx`, `HealthBadge.tsx` | `docs/dev/analyst/ui.md`; + `docs/dev/dataset-operations.md` for the dialogs, `docs/dev/datasets-page.md` for the card |
+| `backend/models/chat.py`, `backend/schemas/chat.py`, `backend/routers/chats.py`, `backend/services/analyst_context.py`, `openai_providers.analyst_privacy` | `docs/dev/analyst/chat.md`; + `docs/dev/llm-providers.md` for the rest of the provider |
 | `frontend/src/components/common/FilteredImagesModal.tsx` | `docs/dev/statistics-panels.md`; + `docs/dev/analyst/ui.md` for the Health page's use |
 
 ## The rule a later phase must not break
 
 Crucible finds the problems; the LLM explains them. A finding is computed here, tested here,
 and useful with no LLM at all: a later phase may rank, explain or act on findings, but never
-invent one. Phase 2 adds the second rule, that everything an LLM sees goes through one
-`build_context` and its privacy filter; it gets a CLAUDE.md key invariant when it lands.
+invent one. Phase 2 adds the second rule, a CLAUDE.md key invariant: everything an LLM sees
+about a dataset is built by `analyst_context.build_context`, and its privacy filter is applied
+there and nowhere else (`analyst/chat.md` § `build_context`: the one choke point).

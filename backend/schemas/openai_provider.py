@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field, field_validator
 
 from backend.schemas import UtcDatetime, mask_secret
+from backend.schemas.chat import PRIVACY_CATEGORIES, RESERVED_CATEGORIES, check_privacy
 
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "[::1]"}
 
@@ -28,6 +29,26 @@ def provider_is_billed(row: object) -> bool:
     return billed if billed is not None else _is_remote(row.base_url)
 
 
+def default_privacy(billed: bool) -> dict[str, bool]:
+    """The analyst's defaults when nothing is stored: a billed provider gets numbers
+    only, a free one every category. Reserved categories are always off."""
+    return {
+        c: (c not in RESERVED_CATEGORIES) and (not billed or c == "numbers")
+        for c in PRIVACY_CATEGORIES
+    }
+
+
+def provider_privacy(row: object) -> dict[str, bool]:
+    """What the analyst may send this provider: its stored override over the defaults
+    `provider_is_billed` picks. Flipping `billed` changes the defaults with no migration.
+    `analyst_context.effective_privacy` lays a chat's own override on top of this."""
+    out = default_privacy(provider_is_billed(row))
+    out.update(getattr(row, "analyst_privacy", None) or {})
+    for c in RESERVED_CATEGORIES:
+        out[c] = False
+    return out
+
+
 class OpenAIProviderCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     base_url: str = Field(..., min_length=1, max_length=1024)
@@ -45,11 +66,18 @@ class OpenAIProviderCreate(BaseModel):
     max_concurrent: int = Field(default=1, ge=1, le=MAX_CONCURRENT_REQUESTS)
     # None = unset, follow the URL (NULL in the column).
     billed: bool | None = None
+    # None = follow `billed` (NULL in the column); see OpenAIProvider.analyst_privacy.
+    analyst_privacy: dict[str, bool] | None = None
 
     @field_validator("base_url")
     @classmethod
     def _strip_trailing_slash(cls, v: str) -> str:
         return v.rstrip("/")
+
+    @field_validator("analyst_privacy")
+    @classmethod
+    def _check_privacy(cls, v: dict[str, bool] | None) -> dict[str, bool] | None:
+        return check_privacy(v)
 
 
 class OpenAIProviderUpdate(BaseModel):
@@ -66,11 +94,20 @@ class OpenAIProviderUpdate(BaseModel):
     # None = unchanged (PATCH uses exclude_none), so it can be set true/false but
     # not cleared back to NULL.
     billed: bool | None = None
+    # None = unchanged, like `billed`; `analyst_privacy_reset` is how it goes back to
+    # NULL (follow `billed`). The router pops the flag before its setattr loop.
+    analyst_privacy: dict[str, bool] | None = None
+    analyst_privacy_reset: bool = False
 
     @field_validator("base_url")
     @classmethod
     def _strip_trailing_slash(cls, v: str | None) -> str | None:
         return v.rstrip("/") if v else v
+
+    @field_validator("analyst_privacy")
+    @classmethod
+    def _check_privacy(cls, v: dict[str, bool] | None) -> dict[str, bool] | None:
+        return check_privacy(v)
 
 
 class OpenAIProviderOut(BaseModel):
@@ -86,6 +123,9 @@ class OpenAIProviderOut(BaseModel):
     is_remote: bool
     billed: bool | None
     is_billed: bool
+    # The stored override (None = follow `is_billed`) and what is in force either way.
+    analyst_privacy: dict[str, bool] | None = None
+    analyst_privacy_effective: dict[str, bool]
     created_at: UtcDatetime
 
     model_config = {"from_attributes": True}
@@ -109,5 +149,7 @@ class OpenAIProviderOut(BaseModel):
             is_remote=_is_remote(row.base_url),
             billed=getattr(row, "billed", None),
             is_billed=provider_is_billed(row),
+            analyst_privacy=getattr(row, "analyst_privacy", None),
+            analyst_privacy_effective=provider_privacy(row),
             created_at=row.created_at,
         )

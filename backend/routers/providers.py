@@ -1,10 +1,16 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
+from backend.models.chat import Chat
 from backend.models.openai_provider import OpenAIProvider
-from backend.schemas.openai_provider import OpenAIProviderCreate, OpenAIProviderOut, OpenAIProviderUpdate
+from backend.schemas.openai_provider import (
+    OpenAIProviderCreate,
+    OpenAIProviderOut,
+    OpenAIProviderUpdate,
+    provider_is_billed,
+)
 
 router = APIRouter(prefix="/providers", tags=["providers"])
 
@@ -25,6 +31,7 @@ async def create_provider(body: OpenAIProviderCreate, db: AsyncSession = Depends
     # POST carrying one silently stored the default and needed a follow-up PATCH.
     # OpenAIProviderCreate's fields map 1:1 onto the model's non-generated columns.
     row = OpenAIProvider(**body.model_dump())
+    row.analyst_privacy = row.analyst_privacy or None  # {} is no override
     db.add(row)
     await db.commit()
     await db.refresh(row)
@@ -36,8 +43,17 @@ async def update_provider(provider_id: str, body: OpenAIProviderUpdate, db: Asyn
     row = await db.get(OpenAIProvider, provider_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Provider not found")
-    for field, value in body.model_dump(exclude_none=True).items():
+    data = body.model_dump(exclude_none=True)
+    if data.pop("analyst_privacy_reset", False) or data.get("analyst_privacy") == {}:
+        row.analyst_privacy = None
+        data.pop("analyst_privacy", None)
+    was = (row.base_url, provider_is_billed(row))
+    for field, value in data.items():
         setattr(row, field, value)
+    if (row.base_url, provider_is_billed(row)) != was:
+        # A chat's own privacy toggles were chosen for this provider as it was. A new
+        # server, or a change in whether it bills, must not inherit "send everything".
+        await db.execute(update(Chat).where(Chat.provider_id == row.id).values(privacy=None))
     await db.commit()
     await db.refresh(row)
     return OpenAIProviderOut.from_orm_row(row)

@@ -28,6 +28,10 @@ class ThresholdSettings(Base):
     # provider row, so this is its one app-wide equivalent of a provider's
     # `max_concurrent`.
     ollama_max_concurrent: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    # The analyst chat's token budgets (M12 phase 2), met only by billed providers: per
+    # chat over its whole life, and per local calendar day across every chat.
+    analyst_chat_budget_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default="200000")
+    analyst_daily_budget_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1000000")
 
     # Secrets, editable from Settings -> API Keys. The column names MUST equal the
     # backend.config.Settings field names of the same secrets: secrets_service uses one

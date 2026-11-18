@@ -73,6 +73,8 @@ AR_SPARSE_BUCKET_FRACTION = 0.05
 AR_SPARSE_MIN_IMAGES = 3
 # Style outliers: below Q1 - k * IQR of the dataset's style scores (Tukey's fence).
 STYLE_OUTLIER_IQR_K = 1.5
+# The most-used tags the caption pass keeps, for the analyst's Tags category.
+TOP_TAGS = 30
 
 # Quality flags: stats key -> (finding id, severity, title, flag key, setting name).
 _FLAG_FINDINGS: tuple[tuple[str, str, str, str, str, str | None], ...] = (
@@ -184,7 +186,15 @@ def _aggregate_captions(captions: list[str]) -> dict:
         "singleton_tags": len(singletons),
         "singleton_examples": singletons[:10],
         "everywhere": everywhere,
+        # The analyst's Tags category (backend/services/analyst_context.py).
+        "top": [{"tag": t, "count": n} for t, n in ranked[:TOP_TAGS]],
     }
+
+
+async def caption_summary(db: AsyncSession, dataset_id: str) -> dict:
+    """The cached caption pass for the whole dataset: tag counts over tag-style captions
+    and the tag/prose split. The analyst's Tags category reads it."""
+    return await _caption_stats(db, dataset_id, await _image_validator(db, dataset_id, None))
 
 
 async def _caption_stats(db: AsyncSession, dataset_id: str, image_validator: tuple) -> dict:

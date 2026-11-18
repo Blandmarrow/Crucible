@@ -20,6 +20,8 @@ DEFAULTS = dict(
     comfy_workflow_dir="",
     llm_gpu_handoff=False,
     ollama_max_concurrent=1,
+    analyst_chat_budget_tokens=200_000,
+    analyst_daily_budget_tokens=1_000_000,
     # Secrets: "" means "no DB override, inherit the .env/OS-env value". These belong in
     # DEFAULTS even though "" is also the server_default, because get_thresholds builds a
     # *transient* ThresholdSettings(**DEFAULTS) when no row exists, and an unset attribute

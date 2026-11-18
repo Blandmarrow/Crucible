@@ -22,7 +22,7 @@ This file covers OpenAI-compatible provider configuration: the `/providers` CRUD
 
 ## Schema
 
-`OpenAIProviderOut.from_orm_row` is the remaining hand-maintained field list (the create path was fixed by the `**model_dump()` splat above) — a column added to the model and the schema but forgotten there fails *silently*, leaving the field at its default. `OpenAIProviderOut` masks the API key (last 4 chars visible) and adds a computed `is_remote: bool` and `is_billed: bool` (`provider_is_billed`), with the raw `billed` beside them (all three are in `from_orm_row`'s list). `is_remote` is true when the base URL hostname is not `localhost`/`127.0.0.1`/`::1`; `is_billed` is the explicit `billed` setting, else `is_remote`. Remote providers show a warning banner in the CaptioningPage and Settings form.
+`OpenAIProviderOut.from_orm_row` is the remaining hand-maintained field list (the create path was fixed by the `**model_dump()` splat above) — a column added to the model and the schema but forgotten there fails *silently*, leaving the field at its default. `OpenAIProviderOut` masks the API key (last 4 chars visible) and adds a computed `is_remote: bool` and `is_billed: bool` (`provider_is_billed`), with the raw `billed` beside them (all three are in `from_orm_row`'s list). The analyst's `analyst_privacy` override and the computed `analyst_privacy_effective` are in the list too; they are covered in `docs/dev/analyst/chat.md` § Privacy: three layers. `is_remote` is true when the base URL hostname is not `localhost`/`127.0.0.1`/`::1`; `is_billed` is the explicit `billed` setting, else `is_remote`. Remote providers show a warning banner in the CaptioningPage and Settings form.
 
 ## Captioner
 

@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import Boolean, DateTime, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.database import Base
@@ -24,4 +24,8 @@ class OpenAIProvider(Base):
     # NULL means "follow the URL" (schemas.openai_provider._is_remote); True/False is the
     # user's word on whether this provider bills per call. See provider_is_billed.
     billed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # What the analyst chat may send this provider, {category: bool} (M12 phase 2). NULL
+    # follows `provider_is_billed`: a billed provider gets numbers only, a free one
+    # everything. See backend/services/analyst_context.py.
+    analyst_privacy: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

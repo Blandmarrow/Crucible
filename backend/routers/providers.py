@@ -36,7 +36,11 @@ async def update_provider(provider_id: str, body: OpenAIProviderUpdate, db: Asyn
     row = await db.get(OpenAIProvider, provider_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Provider not found")
-    for field, value in body.model_dump(exclude_none=True).items():
+    data = body.model_dump(exclude_none=True)
+    if data.pop("analyst_privacy_reset", False):
+        row.analyst_privacy = None
+        data.pop("analyst_privacy", None)
+    for field, value in data.items():
         setattr(row, field, value)
     await db.commit()
     await db.refresh(row)

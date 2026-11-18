@@ -38,6 +38,8 @@ class ThresholdsOut(BaseModel):
     comfy_workflow_dir: str = ""
     llm_gpu_handoff: bool = False
     ollama_max_concurrent: int = 1
+    analyst_chat_budget_tokens: int = 200_000
+    analyst_daily_budget_tokens: int = 1_000_000
 
     model_config = {"from_attributes": True}
 
@@ -58,6 +60,9 @@ class ThresholdsUpdate(BaseModel):
     comfy_workflow_dir: str | None = Field(default=None, max_length=1000)
     llm_gpu_handoff: bool | None = Field(default=None)
     ollama_max_concurrent: int | None = Field(default=None, ge=1, le=MAX_CONCURRENT_REQUESTS)
+    # Floors keep a typo from blocking every billed send; the ceiling is the SQLite bind's.
+    analyst_chat_budget_tokens: int | None = Field(default=None, ge=1000, le=2**31 - 1)
+    analyst_daily_budget_tokens: int | None = Field(default=None, ge=1000, le=2**31 - 1)
 
     @field_validator("versioning_mode")
     @classmethod

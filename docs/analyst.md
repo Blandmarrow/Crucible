@@ -37,10 +37,14 @@ is from the last time the report was built, so it can be a little behind; hover 
 when its counts last changed.
 
 Each finding shows its count ("12 of 340 images"), the threshold or values behind it, and up
-to three buttons:
+to four buttons:
 
 - **Show images** opens the affected images, as on the Stats page. Click one for a larger
   view, its details, or to delete it.
+- **Open in gallery** shows them in the gallery instead, where you can select them and use the
+  selection toolbar. The gallery clears its other filters and shows the finding as a chip in the
+  toolbar (or in the matching control, such as the caption filter); remove the chip to see the
+  rest.
 - The **fix** button opens the page that deals with it, such as Captioning or Score Images.
 - **Dismiss…** hides a finding you mean to keep (see below).
 

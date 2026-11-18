@@ -15,7 +15,8 @@
  *  ## Rules
  *
  *  - **`filters` is the raw `ImageFilterParams` memo**, stored unserialized.
- *    Every field is `string | boolean | undefined`, so the JSON round-trip is
+ *    Every field is `string | number | boolean | undefined` (numbers come from a
+ *    `?filter=` deep link's chip), so the JSON round-trip is
  *    lossless apart from `undefined` keys vanishing — which is exactly the
  *    wanted semantics (absent = no filter). `score_filters` is already a JSON
  *    *string*; do not stringify it a second time.

@@ -10,6 +10,7 @@ import { datasetNotesKey, notesApi } from "../api/notes";
 import type { PageType } from "../contexts/PaneContext";
 import type { Dataset } from "../types";
 import { apiErrorDetail } from "../utils/apiError";
+import { encodeFilterLink } from "../utils/filterLink";
 import FilteredImagesModal from "../components/common/FilteredImagesModal";
 import ModalShell from "../components/common/ModalShell";
 import NotesEditor from "../components/health/NotesEditor";
@@ -58,6 +59,15 @@ function HealthBody({ datasetId }: { datasetId: string }) {
     onSuccess: afterChange,
     onError: (err) => toast.error(apiErrorDetail(err, "Could not restore the finding")),
   });
+
+  // The finding's images in the gallery, where they can be selected and acted on
+  // (the modal only previews them). The gallery applies the link once and clears
+  // every other filter: see docs/dev/gallery/state.md.
+  const openInGallery = (f: Finding) => {
+    if (!f.filter_spec) return;
+    const filter = encodeFilterLink({ label: f.title, spec: f.filter_spec });
+    go(`/datasets/${datasetId}/gallery?filter=${filter}`, { page: "gallery", datasetId, filter });
+  };
 
   const openFix = (f: Finding) => {
     if (!f.fix) return;
@@ -110,6 +120,7 @@ function HealthBody({ datasetId }: { datasetId: string }) {
                   key={f.id}
                   finding={f}
                   onShow={() => setShowing(f)}
+                  onOpenGallery={() => openInGallery(f)}
                   onFix={() => openFix(f)}
                   onDismiss={() => setDismissing(f)}
                 />
@@ -211,9 +222,10 @@ const UNIT_LABEL: Record<Finding["unit"], [string, string]> = {
   groups: ["group", "groups"],
 };
 
-function FindingRow({ finding: f, onShow, onFix, onDismiss }: {
+function FindingRow({ finding: f, onShow, onOpenGallery, onFix, onDismiss }: {
   finding: Finding;
   onShow: () => void;
+  onOpenGallery: () => void;
   onFix: () => void;
   onDismiss: () => void;
 }) {
@@ -236,7 +248,10 @@ function FindingRow({ finding: f, onShow, onFix, onDismiss }: {
         )}
         <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
           {f.filter_spec && (
-            <button className="btn sm" onClick={onShow} aria-label={`Show images: ${f.title}`}>Show images</button>
+            <>
+              <button className="btn sm" onClick={onShow} aria-label={`Show images: ${f.title}`}>Show images</button>
+              <button className="btn sm ghost" onClick={onOpenGallery} aria-label={`Open in gallery: ${f.title}`}>Open in gallery</button>
+            </>
           )}
           {f.fix && <button className="btn sm" onClick={onFix}>{f.fix.label}</button>}
           <button className="btn sm ghost" onClick={onDismiss} aria-label={`Dismiss: ${f.title}`}>Dismiss…</button>

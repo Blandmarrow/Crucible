@@ -36,22 +36,9 @@ ruling, decision 21). Everything lives on `feat/analyst`:
   `requirements-ci.txt`, both in `docs/dev/backend-tests.md` § The fake LLM server. Every
   analyst call should go through `openai_compat_captioner.make_client`, which the
   `fake_llm` fixture patches.
-
-## Phase 1 — Health report (no LLM)
-
-**Built except the deep link**: the backend in PR 1a (#179), the Health page, the dialogs'
-goal fields, the card badge, the shared `FilteredImagesModal` and the user docs in PR 1b.
-Their durable record is the analyst docs family, `docs/dev/analyst.md`, and the user doc
-`docs/analyst.md`. What remains is PR 1c:
-
-### The gallery deep link
-
-`?filter=<encoded spec>` on the gallery, applied once at mount over the `gallery-state-*` blob
-and stripped from the URL afterwards (inside a pane it rides on the pane's view, as
-`subfolder` does — see `docs/dev/gallery.md`). Worth building as a general mechanism:
-phase 2's action buttons and phase 3's tools reuse it. The Health page then gets "Open in
-gallery" beside "Show images". No id-list filter: every finding is a filter, and an id list
-breaks on large sets.
+- Phase 1, the health report with no LLM, landed in three PRs: the backend (#179), the Health
+  page, goal fields and card badge (#180), and the gallery `?filter=` deep link (#181). Its
+  record is the analyst docs family, `docs/dev/analyst.md`, and the user doc `docs/analyst.md`.
 
 ## Phase 2 — Analyst chat, no tools
 

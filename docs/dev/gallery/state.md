@@ -1,7 +1,8 @@
 # Gallery persisted state
 
 What `GalleryPage` remembers between visits: the `gallery-state-*` blob, the debounce rules that
-protect it, the save effect and its unmount flush, and **Reset filters**. The sibling key
+protect it, the save effect and its unmount flush, **Reset filters**, and the `?filter=` deep
+link that replaces it on arrival. The sibling key
 `gallery-nav-*` — the ordered id list the detail view's arrows walk — is in
 `docs/dev/gallery/nav.md`. The grid itself is in the rest of the Gallery family — the hub,
 `docs/dev/gallery.md`, routes from a code path to the file that owns it — and the detail view
@@ -13,7 +14,7 @@ in `docs/dev/image-detail.md`.
 
 | Key | Storage | Contents | Purpose |
 |---|---|---|---|
-| `gallery-state-${datasetId}` | `localStorage` | `{ page, sortIdx, captionedFilter, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, search, detectionLabel, scoreFilters, scrollTop, activeSubfolder, frameVideoId, expandedPaths }` | Restores page/sort/filter/scroll when returning from detail view — survives browser restart. `expandedPaths` is the subfolder tree's open branches, a `Set<string>` stored as `string[]` (see `docs/dev/gallery/subfolders.md` § Gallery subfolder sidebar). `scoreFilters` is the chip array **as the component holds it** — `{field, min, max}` with *string* bounds, where `""` means "no bound" and is not `0` — never the `score_filters` request param, which has already parsed those to numbers and collapsed that distinction; it is re-validated on read by `GalleryPage`'s module-local `sanitizeScoreFilters` (see `docs/dev/gallery/filters.md` § Gallery filters) |
+| `gallery-state-${datasetId}` | `localStorage` | `{ page, sortIdx, captionedFilter, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, search, detectionLabel, scoreFilters, scrollTop, activeSubfolder, frameVideoId, expandedPaths, linkFilter }` | Restores page/sort/filter/scroll when returning from detail view — survives browser restart. `expandedPaths` is the subfolder tree's open branches, a `Set<string>` stored as `string[]` (see `docs/dev/gallery/subfolders.md` § Gallery subfolder sidebar). `scoreFilters` is the chip array **as the component holds it** — `{field, min, max}` with *string* bounds, where `""` means "no bound" and is not `0` — never the `score_filters` request param, which has already parsed those to numbers and collapsed that distinction; it is re-validated on read by `GalleryPage`'s module-local `sanitizeScoreFilters` (see `docs/dev/gallery/filters.md` § Gallery filters). `linkFilter` is a deep link's chip (§ The `?filter=` deep link), `null` when there is none, re-validated on read by `sanitizeFilterLink`. `captionedFilter` is `true`/`false`, `"all"` for a remembered "any caption", or `null` for never chosen (older blobs): only `null` falls back to the Settings default caption filter. Writing `null` for "all" let the default replace a deliberate choice, and emptied a deep link's grid on the way back from the detail view |
 
 **The blob is read only in `useState` initializers, so only a remount re-seeds it** — which for the one gesture that changes `datasetId` under a live page (a pane's dataset `<select>`) is guaranteed by `PageRenderer`'s `key={view.datasetId}`; see `docs/dev/panes-routing.md` § A pane's dataset is part of a page's identity.
 
@@ -25,8 +26,51 @@ in `docs/dev/image-detail.md`.
 
 ## The save effect and the unmount flush
 
-The main save effect is a 350ms-debounced write on `[datasetId, page, sortIdx, captionedFilter, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, search, detectionLabel, scoreFilters, activeSubfolder, frameVideoId, expandedPaths]` changes (to `localStorage`). **That array is not optional bookkeeping**: `applyScoreFilter` calls `resetPage()`, a no-op on `page` when it is already 1, so adding the first score chip moves no *other* dep — without `scoreFilters` listed, the write is only ever scheduled by some unrelated later change or by the unmount flush, and a browser reload (this page has no `pagehide` listener) drops it. A separate unmount-only effect rewrites the **whole** key from a live-state ref plus a freshly sampled `scrollTop: scrollRef.current?.scrollTop` — it does not read or merge the existing entry, so a field missing from `liveStateRef` would be silently dropped on unmount, not preserved. Kept separate because scrollTop changes on every scroll event with no tracked state, and debouncing it into the main effect would thrash localStorage. This pair is deliberately **not** on `useDebouncedPersist`: that hook's `value` is computed during render, while `scrollTop` must be sampled at flush time from a DOM ref. See `docs/dev/persistence.md` (§ Three persistence shapes) — this effect is the prior art the hook generalized from.
+The main save effect is a 350ms-debounced write on `[datasetId, page, sortIdx, captionedFilter, qualityFilter, licenseFilter, labelFilter, labelMatch, labelMissing, search, detectionLabel, scoreFilters, activeSubfolder, frameVideoId, expandedPaths, linkFilter]` changes (to `localStorage`). **That array is not optional bookkeeping**: `applyScoreFilter` calls `resetPage()`, a no-op on `page` when it is already 1, so adding the first score chip moves no *other* dep — without `scoreFilters` listed, the write is only ever scheduled by some unrelated later change or by the unmount flush, and a browser reload (this page has no `pagehide` listener) drops it. A separate unmount-only effect rewrites the **whole** key from a live-state ref plus a freshly sampled `scrollTop: scrollRef.current?.scrollTop` — it does not read or merge the existing entry, so a field missing from `liveStateRef` would be silently dropped on unmount, not preserved. Kept separate because scrollTop changes on every scroll event with no tracked state, and debouncing it into the main effect would thrash localStorage. This pair is deliberately **not** on `useDebouncedPersist`: that hook's `value` is computed during render, while `scrollTop` must be sampled at flush time from a DOM ref. See `docs/dev/persistence.md` (§ Three persistence shapes) — this effect is the prior art the hook generalized from.
 
 ## Reset filters
 
-**Reset filters button**: a small ghost/icon button in the gallery toolbar calls `localStorage.removeItem(\`gallery-state-${datasetId}\`)` and resets `page`, `sortIdx`, `captionedFilter`, `qualityFilter`, `licenseFilter`, `labelFilter`/`labelMatch`/`labelMissing`, `search`/`searchInput`, `detectionLabel`/`detectionLabelInput`, `scoreFilters`, `activeSubfolder` and `frameVideoId` to their Settings-configured defaults (`expandedPaths` rides in the same blob and is deliberately left alone — the subfolder tree's open branches are its shape, not a filter, and the next persist writes the live set back; the score form's drafts `showAddScore`/`draftField`/`draftMin`/`draftMax` are left alone for the mirror-image reason, being form state rather than a filter) (`licenseFilter` has no setting — it resets to "no filter"); it calls `dropScrollRestore()` to skip the restore, and additionally zeroes `scrollTop` on the spot, because a direct gesture wants feedback now rather than when the new page renders. **A filter this handler forgets is worse than unreset once it is persisted**: the debounced write re-creates the blob 350 ms after `removeItem` deleted it, so Reset visibly undoes itself. The last three were exactly that oversight while they were still unpersisted, when the omission was merely cosmetic. `frontend/e2e/gallery-restore.spec.ts` guards it by asserting the cleared state twice — immediately and a debounce window later — alongside a case for the search box's × (which clears both halves of its pair synchronously, bypassing the debounce rather than racing it). Follows the per-page "Reset to defaults" pattern — see Persistent page state in `docs/dev/persistence.md`.
+**Reset filters button**: a small ghost/icon button in the gallery toolbar calls `localStorage.removeItem(\`gallery-state-${datasetId}\`)` and resets `page`, `sortIdx`, `captionedFilter`, `qualityFilter`, `licenseFilter`, `labelFilter`/`labelMatch`/`labelMissing`, `search`/`searchInput`, `detectionLabel`/`detectionLabelInput`, `scoreFilters`, `activeSubfolder`, `frameVideoId` and `linkFilter` to their Settings-configured defaults (`expandedPaths` rides in the same blob and is deliberately left alone — the subfolder tree's open branches are its shape, not a filter, and the next persist writes the live set back; the score form's drafts `showAddScore`/`draftField`/`draftMin`/`draftMax` are left alone for the mirror-image reason, being form state rather than a filter) (`licenseFilter` has no setting — it resets to "no filter"); it calls `dropScrollRestore()` to skip the restore, and additionally zeroes `scrollTop` on the spot, because a direct gesture wants feedback now rather than when the new page renders. **A filter this handler forgets is worse than unreset once it is persisted**: the debounced write re-creates the blob 350 ms after `removeItem` deleted it, so Reset visibly undoes itself. The last three were exactly that oversight while they were still unpersisted, when the omission was merely cosmetic. `frontend/e2e/gallery-restore.spec.ts` guards it by asserting the cleared state twice — immediately and a debounce window later — alongside a case for the search box's × (which clears both halves of its pair synchronously, bypassing the debounce rather than racing it). Follows the per-page "Reset to defaults" pattern — see Persistent page state in `docs/dev/persistence.md`.
+
+## The `?filter=` deep link
+
+`?filter=<encoded>` opens the gallery on "the images this filter selects" (M12): today a
+Health finding's **Open in gallery**, later the analyst's buttons. `utils/filterLink.ts`
+encodes a `FilterLink`, `{label, spec}`, where `spec` is a `FilterSpec` (the closed subset of
+`GET /images/` params a finding carries, `docs/dev/analyst/health.md`), as base64url JSON.
+Inside a pane it rides on `PaneView.filter` instead, with the same pane-wins-outright rule as
+`subfolder` (`usePaneGalleryFilter` in `hooks/usePaneDatasetId.ts`).
+
+**Validated whole.** `sanitizeFilterLink` checks every key against `FILTER_SPEC_KINDS` (own
+keys only, so `__proto__` finds nothing) and its value: booleans, bounded integers, finite
+numbers, and for `quality_flag` and `score_field` the backend's own allowlists, since a value
+outside them is a 400 that would leave the grid empty with the chip still on. One bad key
+rejects the whole link, since an ignored key would show more images than the link promised. A
+rejected link changes nothing and says so in a toast: the first `FilterSpec` key a later build
+adds is exactly such a link. The same validator reads `linkFilter` back from the blob with
+`asChip`, which also refuses a key a toolbar control owns, since the chip is spread last and
+would override the control silently.
+
+**Applied once, during render, as a replacement.** Like `subfolder` and `source_video_id`, it is
+applied in a render-phase block guarded by the last applied value, so the previous view's images
+are never fetched first. Unlike them it clears every other filter (captions, flags, licence,
+labels, search, detection label, score chips, subfolder, source video), because a finding
+promised exactly its images. Keys a toolbar control can show go into that control: `captioned`,
+`search`, `quality_flag` (always one of the select's flags, by the validator) and
+`license_missing: true`. The
+rest stay as `linkFilter`, one removable chip in the toolbar, **spread last into
+`filterParams`**, so the grid, the count, select-all and the `writeNavContext` arrows describe
+the same set. Last, because a control's `undefined` would otherwise erase a link key; by
+construction they never overlap. **Reset filters** clears the chip too.
+
+**Then consumed.** `subfolder` and `source_video_id` stay in the URL harmlessly, since applying
+them again is idempotent. This link resets every filter, so left in place it would be applied
+again on the next mount (back from the detail view) over what the user has since chosen. An
+effect therefore strips it, with `setSearchParams(..., {replace: true})` (no history entry), or
+clears `PaneView.filter`. A consumed link reads `undefined`, which resets the applied value, so
+the same finding opened again later applies again. `frontend/e2e/health.spec.ts` covers the
+chip, its removal, the strip surviving a reload, and a malformed link.
+
+The render-phase block calls `dropScrollRestore`, which reads a ref during render, like the two
+deep-link blocks above it; `react-hooks` lint reports all three (the lint backlog, which never
+blocks CI).

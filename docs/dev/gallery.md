@@ -17,7 +17,7 @@ filter sends is `docs/dev/image-filters.md`.
 | [subfolder-rename.md](gallery/subfolder-rename.md) | `PATCH /datasets/{id}/subfolders`, `repath_subfolder`, `repathSubfolderMutation`'s path-keyed bookkeeping, the inline rename, `MoveSubfolderModal` |
 | [filters.md](gallery/filters.md) | The toolbar's two flex groups, every filter control and what it persists, `SORT_OPTIONS` and the server's sort allowlist |
 | [drag-drop.md](gallery/drag-drop.md) | The `DndContext`, droppable-id namespaces and collision detection, dragging cards and folders onto subfolder rows, manual `sort_order` ordering |
-| [state.md](gallery/state.md) | The `gallery-state-*` blob, the debounce rules (PM-012), the save effect and unmount flush, **Reset filters** |
+| [state.md](gallery/state.md) | The `gallery-state-*` blob, the debounce rules (PM-012), the save effect and unmount flush, **Reset filters**, the `?filter=` deep link and its chip |
 | [nav.md](gallery/nav.md) | The `gallery-nav-*` context the detail view's arrows walk, `injectNavId`, `atEnd`, the live refresh and live total |
 | [compare.md](gallery/compare.md) | The Compare page the selection toolbar opens: routing by id list, opening beside the gallery (`neighbourLeafId`), `POST /images/by-ids`, the actions in the view and what was left unbuilt |
 | [compare-viewer.md](gallery/compare-viewer.md) | The Compare viewer: `useLinkedViewport`, the pane (`ComparePane`), the A/B frame (`ABView`) |
@@ -44,7 +44,7 @@ not a see-also, and says which part of the code it owns.
 
 | Editing… | Read |
 |---|---|
-| `frontend/src/pages/GalleryPage.tsx` | `docs/dev/gallery/selection.md` for `handleSelect`, select-all and the pagination row; + `docs/dev/gallery/subfolders.md` for the sidebar, `expandedPaths` and the row menu; + `docs/dev/gallery/subfolder-rename.md` for `repathSubfolderMutation` and the inline rename; + `docs/dev/gallery/filters.md` for the toolbar, the filter state and the sort dropdown; + `docs/dev/gallery/drag-drop.md` for the `DndContext` and every drop; + `docs/dev/gallery/state.md` for the persisted blob and **Reset filters**; + `docs/dev/gallery/nav.md` § The stored context for the `writeNavContext` effect, whose memo a new filter must join |
+| `frontend/src/pages/GalleryPage.tsx` | `docs/dev/gallery/selection.md` for `handleSelect`, select-all and the pagination row; + `docs/dev/gallery/subfolders.md` for the sidebar, `expandedPaths` and the row menu; + `docs/dev/gallery/subfolder-rename.md` for `repathSubfolderMutation` and the inline rename; + `docs/dev/gallery/filters.md` for the toolbar, the filter state and the sort dropdown; + `docs/dev/gallery/drag-drop.md` for the `DndContext` and every drop; + `docs/dev/gallery/state.md` for the persisted blob, **Reset filters** and the `?filter=` deep link; + `docs/dev/gallery/nav.md` § The stored context for the `writeNavContext` effect, whose memo a new filter must join |
 | `frontend/src/components/gallery/ImageCard.tsx` | `docs/dev/gallery/selection.md` for `onSelect`, the memo and selectors, the checkbox click target and the overlay z-order; + `docs/dev/quality/style-match.md` for the style meter; + `docs/dev/image-detail.md` § Gallery generation metadata for the `<Cpu>` button |
 | `frontend/src/components/gallery/GalleryCheckbox.tsx` | `docs/dev/gallery/selection.md` |
 | `frontend/src/components/gallery/MoveSubfolderModal.tsx` | `docs/dev/gallery/subfolder-rename.md` |
@@ -52,7 +52,8 @@ not a see-also, and says which part of the code it owns.
 | `frontend/src/components/gallery/SelectionToolbar.tsx` | outside this family: `docs/dev/frontend-core.md` § Frontend state; + `docs/dev/gallery/compare.md` for the Compare button |
 | `frontend/src/constants/galleryOptions.ts` | `docs/dev/gallery/filters.md` for `SORT_OPTIONS` (append only) and `MISSING_LICENSE`; + `docs/dev/gallery/drag-drop.md` for the droppable and draggable id helpers |
 | `frontend/src/store/selectionStore.ts` | `docs/dev/frontend-core.md` § Frontend state; + `docs/dev/gallery/selection.md` for the additive bulk-select rule and `clearDataset` |
-| `frontend/src/hooks/usePaneDatasetId.ts` (`usePaneGallerySubfolder`) | `docs/dev/panes-routing.md`; + `docs/dev/gallery/subfolders.md` for why a deep link seeds `seenSubfolder` as an arrival |
+| `frontend/src/hooks/usePaneDatasetId.ts` (`usePaneGallerySubfolder`, `usePaneGalleryFilter`) | `docs/dev/panes-routing.md`; + `docs/dev/gallery/subfolders.md` for why a deep link seeds `seenSubfolder` as an arrival; + `docs/dev/gallery/state.md` for the `?filter=` link |
+| `frontend/src/utils/filterLink.ts` | `docs/dev/gallery/state.md` § The `?filter=` deep link |
 | `frontend/src/utils/galleryNav.ts`, `frontend/src/pages/ImageDetailPage.tsx` (the arrows) | `docs/dev/gallery/nav.md` |
 | `frontend/e2e/gallery-select-all.spec.ts` | `docs/dev/gallery/selection.md`; + `docs/dev/frontend-core.md` § Frontend state for the sticky `SelectionToolbar` regression |
 | `frontend/e2e/gallery-subfolders.spec.ts` | `docs/dev/gallery/subfolder-rename.md`; + `docs/dev/gallery/drag-drop.md` for why the drag is verified by hand |

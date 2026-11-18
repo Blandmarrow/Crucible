@@ -110,7 +110,7 @@ non-hub splits left CLAUDE.md at ~99% of `MAX_CLAUDE_WORDS` by the user's choice
 `docs/split-database-statistics`, and was **re-cut on execution**. The recorded seam (§ The raw lists load on
 demand, § CSV export, § Bucket drill-down) measured 484 + 294 + 368 = 1,146 words of 3,458, which
 would have left ~2,310 behind, 66% of budget. § Category panels (429 words) went too: it is the same
-browser-side surface (the Detections & Masks and Licenses panels click through into `BucketPanel`, and
+browser-side surface (the Detections & Masks and Licenses panels click through into `FilteredImagesModal`, and
 `downloadCsv` emits their sections), so the new file took the name `statistics-panels.md` rather than the
 recorded `statistics-histograms.md`. That left ~1,960 (statistics) and ~1,630 (statistics-panels). The
 entry's Watch-for was right; it missed that a paragraph about `activeSubfolder` persistence sat under

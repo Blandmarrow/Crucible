@@ -70,6 +70,7 @@ export default function BulkEditForm({ datasetId, imageIds, qualityFlags, subfol
       qc.invalidateQueries({ queryKey: ["images", datasetId] });
       qc.invalidateQueries({ queryKey: ["dataset-stats", datasetId] });
       qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
+      qc.invalidateQueries({ queryKey: ["dataset-health", datasetId] });
       qc.invalidateQueries({ queryKey: ["score-values", datasetId] });
       qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
       // Captions are rewritten across many images we don't individually track, so

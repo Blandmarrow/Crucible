@@ -25,6 +25,7 @@ export default function BulkDeleteForm({ datasetId, imageIds, qualityFlags, subf
       qc.invalidateQueries({ queryKey: ["images", datasetId] });
       qc.invalidateQueries({ queryKey: ["dataset-stats", datasetId] });
       qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
+      qc.invalidateQueries({ queryKey: ["dataset-health", datasetId] });
       qc.invalidateQueries({ queryKey: ["score-values", datasetId] });
       qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
       clearSelection();

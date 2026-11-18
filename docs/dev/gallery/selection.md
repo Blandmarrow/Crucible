@@ -4,7 +4,7 @@ This file covers how images get selected in `GalleryPage`: the `ImageCard` `onSe
 
 ## Gallery image selection
 
-`ImageCard` accepts an optional `onSelect?: (id: string, shiftKey: boolean, isCheckbox: boolean) => void` prop. When provided it routes both checkbox clicks and shift-clicks on the card body through this callback instead of calling `toggle` directly. `GalleryPage` always provides `handleSelect` as `onSelect`; contexts that render `ImageCard` without it (e.g. `BucketPanel`) fall back to the raw `toggle`.
+`ImageCard` accepts an optional `onSelect?: (id: string, shiftKey: boolean, isCheckbox: boolean) => void` prop. When provided it routes both checkbox clicks and shift-clicks on the card body through this callback instead of calling `toggle` directly. `GalleryPage` always provides `handleSelect` as `onSelect`; contexts that render `ImageCard` without it (e.g. `FilteredImagesModal`) fall back to the raw `toggle`.
 
 **A selection change re-renders one card, not the page.** `ImageCard` and `SortableImageCard` are wrapped in `React.memo`, and the card reads the store through two selectors, `s.selectedIds.has(image.id)` and `s.toggle`, never a bare `useSelectionStore()` (M9 stage 11). A bare call subscribes to the whole store, and every mutation builds a new `Set`, so one click re-rendered all 100 to 200 tiles. The memo holds only while the props keep their identity, so `handleSelect` reads the page through `imagesRef` rather than closing over `images`: with `images` in its dependencies it changed on every refetch, and every card re-rendered even though TanStack's structural sharing had kept each unchanged row's object as it was. A new prop on the card must be stable too — a state setter, a `useCallback`, or a value.
 

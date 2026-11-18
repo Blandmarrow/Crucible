@@ -260,7 +260,7 @@ def _build_findings(
         add(id="long_captions", severity="warn", title=f"Captions over {CLIP_TOKEN_LIMIT} tokens (CLIP truncates)",
             count=over, numbers={"token_limit": CLIP_TOKEN_LIMIT},
             filter_spec=FilterSpec(caption_tokens_min=CLIP_TOKEN_LIMIT),
-            fix=_fix("bulk-edit", "Shorten them"))
+            fix=_fix("captioning", "Re-caption them shorter"))
 
     # Resolution and aspect ratio
     if counts.below_target:
@@ -331,7 +331,9 @@ def _build_findings(
         add(id="no_license", severity="info", title="Images with no licence recorded",
             count=no_license,
             filter_spec=FilterSpec(license_missing=True),
-            fix=_fix("bulk-edit", "Set a licence"))
+            # The dataset's default is the one-step fix: the count reads the
+            # inherited default. Per-image licences are set from the gallery.
+            fix=_fix("datasets", "Set a default licence"))
 
     # Tags and caption style
     tag_like = captions["tag_like"]

@@ -141,3 +141,37 @@ test('create and delete a dataset via the UI', async ({ page }) => {
 
   await expect(page.getByRole('heading', { name })).toHaveCount(0)
 })
+
+// The analyst's goal fields (M12): set in the New dialog, refused out of range, and
+// edited back to blank in the Edit dialog.
+test('the goal and target resolution are set and cleared in the dataset dialogs', async ({ page, request }) => {
+  const name = `e2e-goal-${Date.now()}`
+  await page.goto('/datasets')
+  await page.getByRole('button', { name: 'New Dataset' }).click()
+  const create = page.getByRole('dialog', { name: 'New Dataset' })
+  await create.getByLabel('Name', { exact: true }).fill(name)
+  await create.getByLabel(/^Goal/).fill('watercolour style LoRA')
+  const target = create.getByLabel(/^Target resolution/)
+  await target.fill('12')
+  await expect(create.getByTestId('target-invalid')).toBeVisible()
+  await expect(create.getByRole('button', { name: 'Create', exact: true })).toBeDisabled()
+  await target.fill('768')
+  await create.getByRole('button', { name: 'Create', exact: true }).click()
+  await expect(page.getByRole('heading', { name })).toBeVisible()
+
+  const list = await (await request.get('/api/v1/datasets/')).json()
+  const ds = list.find((d: { name: string }) => d.name === name)
+  expect(ds.goal).toBe('watercolour style LoRA')
+  expect(ds.target_resolution).toBe(768)
+
+  // Clearing the target in the Edit dialog sends an explicit null. Scoped to this
+  // dataset's card: the shared e2e DB holds other specs' datasets too.
+  const card = page.getByTestId(`dataset-card-${ds.id}`)
+  await card.hover()
+  await card.getByTitle('Edit').click()
+  const edit = page.getByRole('dialog', { name: 'Edit Dataset' })
+  await edit.getByLabel(/^Target resolution/).fill('')
+  await edit.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect.poll(async () => (await (await request.get(`/api/v1/datasets/${ds.id}`)).json()).target_resolution).toBeNull()
+  await request.delete(`/api/v1/datasets/${ds.id}`)
+})

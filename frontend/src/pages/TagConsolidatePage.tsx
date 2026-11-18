@@ -42,7 +42,7 @@ function clusterImpact(c: EditCluster): number {
   );
 }
 
-const CACHE_KEYS = ["images", "dataset-stats", "tag-stats", "score-values", "tag-cooccurrence"];
+const CACHE_KEYS = ["images", "dataset-stats", "tag-stats", "score-values", "tag-cooccurrence", "dataset-health"];
 
 export default function TagConsolidatePage() {
   const datasetId = usePaneDatasetId();

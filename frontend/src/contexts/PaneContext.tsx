@@ -6,6 +6,7 @@ export type PageType =
   | "captioning"
   | "quality"
   | "stats"
+  | "health"
   | "export"
   | "file-browser"
   | "image-detail"

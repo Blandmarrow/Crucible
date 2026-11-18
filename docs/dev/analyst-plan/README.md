@@ -39,37 +39,19 @@ ruling, decision 21). Everything lives on `feat/analyst`:
 
 ## Phase 1 — Health report (no LLM)
 
-**The backend is built** (PR 1a into `feat/analyst`): the goal fields, the findings
-catalogue, the cache, dismissals, the snapshot delta and the notes tables and routes. Their
-durable record is the analyst docs family, `docs/dev/analyst.md`. What remains of phase 1 is
-the frontend (PR 1b) and the gallery deep link (PR 1c), below.
+**Built except the deep link**: the backend in PR 1a (#179), the Health page, the dialogs'
+goal fields, the card badge, the shared `FilteredImagesModal` and the user docs in PR 1b.
+Their durable record is the analyst docs family, `docs/dev/analyst.md`, and the user doc
+`docs/analyst.md`. What remains is PR 1c:
 
-### Links to the images
+### The gallery deep link
 
-Each finding's `filter_spec` opens its images:
-
-1. **First, a modal** like the Stats page's `BucketPanel`, which already queries
-   `GET /images/` with a filter object. Cheapest, and it works in every pane.
-2. **Then a gallery deep link**, `?filter=<encoded spec>`, applied once at mount over the
-   `gallery-state-*` blob and stripped from the URL afterwards (inside a pane it rides on the
-   pane's view, as `subfolder` does — see `docs/dev/gallery.md`). This is worth building as a
-   general mechanism: phase 2's action buttons and phase 3's tools reuse it.
-
-No id-list filter: every finding is a filter, and an id list breaks on large sets.
-
-### Frontend
-
-- **`HealthPage`**, a routed dataset page: the six-site checklist in
-  `docs/dev/panes-routing.md`, plus `PAGE_OPTIONS` and `NEEDS_DATASET` so a pane can pick
-  it. It shows the findings, the snapshot delta, the dismissed list, and the notes editor.
-- A severity badge on the dataset card.
-- The goal and target resolution in the New and Edit dataset dialogs.
-
-### Tests
-
-The pytest half landed with the backend (`test_health_findings.py`,
-`test_health_cache_snapshot.py`, `test_notes_http.py`). Still to come, with PR 1b, one e2e:
-open the report, dismiss a finding with a reason, open another finding's images.
+`?filter=<encoded spec>` on the gallery, applied once at mount over the `gallery-state-*` blob
+and stripped from the URL afterwards (inside a pane it rides on the pane's view, as
+`subfolder` does — see `docs/dev/gallery.md`). Worth building as a general mechanism:
+phase 2's action buttons and phase 3's tools reuse it. The Health page then gets "Open in
+gallery" beside "Show images". No id-list filter: every finding is a filter, and an id list
+breaks on large sets.
 
 ## Phase 2 — Analyst chat, no tools
 

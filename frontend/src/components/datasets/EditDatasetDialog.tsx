@@ -9,6 +9,8 @@ import type { Dataset } from "../../types";
 import ModalShell from "../common/ModalShell";
 import ProvenanceFields from "../common/ProvenanceFields";
 import CategoryPicker from "./CategoryPicker";
+import GoalFields from "./GoalFields";
+import { goalDraftOf, parseTarget, type GoalDraft } from "./goalDraft";
 
 // Shared by every mount, so a request still in flight after this dialog
 // closed keeps the reopened one's submit disabled, as when the page owned
@@ -36,6 +38,8 @@ export default function EditDatasetDialog({ dataset, existingCategories, onClose
     license: dataset.license ?? "",
     attribution: dataset.attribution ?? "",
   });
+  const [renameGoal, setRenameGoal] = useState<GoalDraft>(goalDraftOf(dataset.goal, dataset.target_resolution));
+  const target = parseTarget(renameGoal.target);
 
   // Free-text licenses already recorded in the dataset being edited — offered as
   // options for its default.
@@ -49,7 +53,10 @@ export default function EditDatasetDialog({ dataset, existingCategories, onClose
     renameProvenance.source_name !== (dataset.source_name ?? "") ||
     renameProvenance.source_url !== (dataset.source_url ?? "") ||
     renameProvenance.license !== (dataset.license ?? "") ||
-    renameProvenance.attribution !== (dataset.attribution ?? "");
+    renameProvenance.attribution !== (dataset.attribution ?? "") ||
+    renameGoal.goal !== (dataset.goal ?? "") ||
+    target !== (dataset.target_resolution ?? null);
+  const canSave = !!renameName && renameChanged && target !== undefined;
 
   const renameMutation = useMutation({
     mutationKey: MUTATION_KEY,
@@ -61,12 +68,16 @@ export default function EditDatasetDialog({ dataset, existingCategories, onClose
         // Editing these retroactively changes every image that hasn't
         // overridden the field — the intended inheritance behaviour.
         ...renameProvenance,
+        goal: renameGoal.goal,
+        target_resolution: target ?? null,
       }),
     onSuccess: (ds) => {
       // Not just ["datasets"]: the provenance defaults edited here are the
       // effective source/license of every image that has not overridden them, so
       // gallery badges, Stats and any open Export preview are all stale now.
       invalidateProvenanceScope(qc);
+      // The goal and target change which findings apply.
+      qc.invalidateQueries({ queryKey: ["dataset-health", dataset.id] });
       onClose();
       toast.success(`Updated "${ds.name}"`);
     },
@@ -87,7 +98,7 @@ export default function EditDatasetDialog({ dataset, existingCategories, onClose
             autoFocus
             onChange={(e) => setRenameName(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && renameName && renameChanged) renameMutation.mutate();
+              if (e.key === "Enter" && canSave) renameMutation.mutate();
             }}
           />
         </div>
@@ -109,6 +120,7 @@ export default function EditDatasetDialog({ dataset, existingCategories, onClose
           labelNote="(optional — groups datasets into folders)"
           autoFocusNew={false}
         />
+        <GoalFields value={renameGoal} onChange={setRenameGoal} />
         <ProvenanceFields
           value={renameProvenance}
           onChange={setRenameProvenance}
@@ -121,7 +133,7 @@ export default function EditDatasetDialog({ dataset, existingCategories, onClose
         <button
           className="btn primary"
           onClick={() => renameMutation.mutate()}
-          disabled={!renameName || !renameChanged || pending}
+          disabled={!canSave || pending}
         >
           Save
         </button>

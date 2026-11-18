@@ -48,6 +48,7 @@ export default function SidebarVersionPanel({ datasetId, branches, activeBranch,
     qc.invalidateQueries({ queryKey: ["versions", datasetId] });
     qc.invalidateQueries({ queryKey: ["dataset-stats", datasetId] });
     qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
+    qc.invalidateQueries({ queryKey: ["dataset-health", datasetId] });
     qc.invalidateQueries({ queryKey: ["score-values", datasetId] });
     qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
   }

@@ -1334,6 +1334,7 @@ export default function ImageDetailPage() {
     qc.invalidateQueries({ queryKey: ["dataset", datasetId] });
     qc.invalidateQueries({ queryKey: ["dataset-stats", datasetId] });
     qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
+    qc.invalidateQueries({ queryKey: ["dataset-health", datasetId] });
     qc.invalidateQueries({ queryKey: ["score-values", datasetId] });
     qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
     qc.invalidateQueries({ queryKey: similarCaptionsScope(datasetId) });
@@ -1405,6 +1406,7 @@ export default function ImageDetailPage() {
       qc.invalidateQueries({ queryKey: ["images", v.datasetId] });
       qc.invalidateQueries({ queryKey: ["dataset-stats", v.datasetId] });
       qc.invalidateQueries({ queryKey: ["tag-stats", v.datasetId] });
+      qc.invalidateQueries({ queryKey: ["dataset-health", v.datasetId] });
       qc.invalidateQueries({ queryKey: ["tag-cooccurrence", v.datasetId] });
       qc.invalidateQueries({ queryKey: similarCaptionsScope(v.datasetId) });
       if (data.affected === 0) toast("No redundant tags found");

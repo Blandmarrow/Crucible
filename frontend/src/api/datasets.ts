@@ -31,15 +31,25 @@ export interface DatasetProvenance {
   attribution: string;
 }
 
+/** The analyst's goal fields (M12). `target_resolution: null` clears it on update;
+ *  leaving the key out leaves it unchanged. */
+export interface DatasetGoal {
+  goal: string;
+  target_resolution: number | null;
+}
+
 export const datasetsApi = {
   list: () => client.get<Dataset[]>("/datasets/").then((r) => r.data),
   get: (id: string) => client.get<Dataset>(`/datasets/${id}`).then((r) => r.data),
-  create: (name: string, description = "", category = "", provenance?: DatasetProvenance) =>
-    client.post<Dataset>("/datasets/", { name, description, category, ...provenance }).then((r) => r.data),
+  create: (
+    name: string, description = "", category = "", provenance?: DatasetProvenance, goal?: DatasetGoal,
+  ) =>
+    client.post<Dataset>("/datasets/", { name, description, category, ...provenance, ...goal }).then((r) => r.data),
   update: (
     id: string,
     // Provenance fields: omit to leave unchanged, "" to clear the default.
-    data: { name?: string; description?: string; category?: string } & Partial<DatasetProvenance>,
+    data: { name?: string; description?: string; category?: string }
+      & Partial<DatasetProvenance> & Partial<DatasetGoal>,
   ) => client.patch<Dataset>(`/datasets/${id}`, data).then((r) => r.data),
   delete: (id: string) => client.delete(`/datasets/${id}`),
   // includeVideos is opt-in for the same reason as importFolder's: the footage

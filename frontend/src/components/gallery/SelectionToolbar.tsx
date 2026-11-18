@@ -293,6 +293,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
       qc.invalidateQueries({ queryKey: ["images", datasetId] });
       qc.invalidateQueries({ queryKey: ["dataset-stats", datasetId] });
       qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
+      qc.invalidateQueries({ queryKey: ["dataset-health", datasetId] });
       qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
       qc.invalidateQueries({ queryKey: ["caption"] });
       qc.invalidateQueries({ queryKey: ["image"] });
@@ -415,6 +416,7 @@ export default function SelectionToolbar({ datasetId, subfolders = [] }: Props) 
       qc.invalidateQueries({ queryKey: ["dataset", data.target_dataset_id] });
       qc.invalidateQueries({ queryKey: ["dataset-stats", data.target_dataset_id] });
       qc.invalidateQueries({ queryKey: ["tag-stats", data.target_dataset_id] });
+      qc.invalidateQueries({ queryKey: ["dataset-health", data.target_dataset_id] });
       qc.invalidateQueries({ queryKey: ["score-values", data.target_dataset_id] });
       qc.invalidateQueries({ queryKey: ["tag-cooccurrence", data.target_dataset_id] });
       setShowCopyDataset(false);

@@ -10,6 +10,7 @@ import { usePaneNavigate } from "../hooks/usePaneNavigate";
 import toast from "react-hot-toast";
 import { datasetsApi } from "../api/datasets";
 import SharedLicenseBadge from "../components/common/LicenseBadge";
+import HealthBadge from "../components/datasets/HealthBadge";
 import { licenseInfo } from "../constants/licenses";
 import { imagesApi } from "../api/images";
 import { jobsApi } from "../api/jobs";
@@ -704,6 +705,9 @@ export default function DatasetsPage() {
                 {ds.video_count} {ds.video_count === 1 ? "video" : "videos"}
               </span>
             )}
+            {/* The last health report's worst level; hidden until one is built.
+                Kept in step with the compact row renderer below. */}
+            <HealthBadge summary={ds.health_summary} />
             {ds.source_name && (
               <span style={{
                 minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
@@ -778,6 +782,7 @@ export default function DatasetsPage() {
           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
         }}>{ds.description}</span>
 
+        <HealthBadge summary={ds.health_summary} />
         <LicenseBadge ds={ds} />
 
         <span className="mono" style={{

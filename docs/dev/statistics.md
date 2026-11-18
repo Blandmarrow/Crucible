@@ -1,6 +1,6 @@
 # Statistics page
 
-This file covers `StatsPage`'s page shell: its queries and live polling, and server-side stats aggregation with the `DatasetStats` schema. The panels that draw that data (editable histograms, the raw lists, CSV export, bar click-through into `BucketPanel`, the Detections & Masks and Licenses panels) are `docs/dev/statistics-panels.md`. The `GET /images/` params those clicks send are `docs/dev/image-filters.md`.
+This file covers `StatsPage`'s page shell: its queries and live polling, and server-side stats aggregation with the `DatasetStats` schema. The panels that draw that data (editable histograms, the raw lists, CSV export, bar click-through into `FilteredImagesModal`, the Detections & Masks and Licenses panels) are `docs/dev/statistics-panels.md`. The `GET /images/` params those clicks send are `docs/dev/image-filters.md`.
 
 
 `frontend/src/pages/StatsPage.tsx` renders the dataset analytics dashboard. A compact subfolder dropdown in the page header (shown only when subfolders exist) scopes all five subfolder-aware queries to a specific subfolder.
@@ -25,7 +25,7 @@ It makes seven queries:
 
 **Query error states**: each query surfaces its own failure rather than rendering silently — the main `dataset-stats` query shows a full-page error block with a `refetch()` Retry button (before the `!stats → "No data"` branch), while `tag-stats`, `tag-cooccurrence`, `score-values`, and `detection-stats` each render a one-line `var(--bad)` notice inside their consuming panel. For `score-values` that panel is each `HistPanel` that needs the lists (its `rawError` prop; the three forms are in `docs/dev/statistics-panels.md` § The raw lists load on demand); nothing else on the page reads the lists, so a failure there no longer touches the page header or **Export Stats CSV**.
 
-All five subfolder-aware stat endpoints accept `subfolder: str | None = Query(None)`. `activeSubfolder` is persisted per-dataset via `STATS_FILTERS_PREFIX` + `loadPersisted` / `useDebouncedPersist` so the chosen subfolder survives navigation. On dataset change (without remount — pane mode) a `prevDatasetId` ref guard effect reloads the per-dataset blob and updates `activeSubfolder`. `BucketPanel` receives `subfolder` as a prop and passes it to `GET /images/`.
+All five subfolder-aware stat endpoints accept `subfolder: str | None = Query(None)`. `activeSubfolder` is persisted per-dataset via `STATS_FILTERS_PREFIX` + `loadPersisted` / `useDebouncedPersist` so the chosen subfolder survives navigation. On dataset change (without remount — pane mode) a `prevDatasetId` ref guard effect reloads the per-dataset blob and updates `activeSubfolder`. `FilteredImagesModal` receives `subfolder` as a prop and passes it to `GET /images/`.
 
 ## Backend aggregation
 

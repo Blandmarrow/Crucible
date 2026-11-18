@@ -52,6 +52,7 @@ const PAGE_LABELS: Record<string, string> = {
   captioning: "Captioning",
   quality: "Score images",
   stats: "Stats",
+  health: "Health",
   export: "Export",
   image: "Image detail",
   comfy: "ComfyUI",
@@ -346,6 +347,9 @@ export default function TopBar() {
           qc.invalidateQueries({ queryKey: ["tag-stats", progress.dataset_id] });
           qc.invalidateQueries({ queryKey: ["score-values", progress.dataset_id] });
           qc.invalidateQueries({ queryKey: ["tag-cooccurrence", progress.dataset_id] });
+          // The health report counts these rows. The card badge follows when the
+          // report is next built (HealthPage refreshes the list itself then).
+          qc.invalidateQueries({ queryKey: ["dataset-health", progress.dataset_id] });
           if (progress.job_type === "quality_score") {
             qc.invalidateQueries({ queryKey: ["duplicates", progress.dataset_id] });
           }

@@ -8,6 +8,7 @@ import {
   CaptioningPage,
   QualityPage,
   StatsPage,
+  HealthPage,
   ExportPage,
   BulkEditPage,
   TagConsolidatePage,
@@ -49,6 +50,9 @@ function renderPage(view: PaneView) {
     case "captioning":   return <CaptioningPage />;
     case "quality":      return <QualityPage />;
     case "stats":        return <StatsPage />;
+    // Unkeyed: HealthPage keys its own body on the dataset, so its drafts reset on a
+    // switch without remounting the route.
+    case "health":       return <HealthPage />;
     case "export":       return <ExportPage />;
     case "bulk-edit":    return <BulkEditPage />;
     case "consolidate":  return <TagConsolidatePage key={view.datasetId} />;

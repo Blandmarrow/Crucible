@@ -115,6 +115,10 @@ export interface ImageListParams {
   mp_max?: number;
   ar_min?: number;
   ar_max?: number;
+  /** Exclusive: `min(width, height) < short_side_max`. */
+  short_side_max?: number;
+  /** true = only images whose scores predate an in-place pixel rewrite. */
+  scores_stale?: boolean;
   format_filter?: string;
   score_filters?: string;
   subfolder?: string;

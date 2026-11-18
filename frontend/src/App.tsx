@@ -13,6 +13,7 @@ import {
   CaptioningPage,
   QualityPage,
   StatsPage,
+  HealthPage,
   ExportPage,
   BulkEditPage,
   TagConsolidatePage,
@@ -95,6 +96,7 @@ function MainContent() {
         <Route path="/datasets/:datasetId/captioning" element={<ErrorBoundary><CaptioningPage /></ErrorBoundary>} />
         <Route path="/datasets/:datasetId/quality" element={<ErrorBoundary><QualityPage /></ErrorBoundary>} />
         <Route path="/datasets/:datasetId/stats" element={<ErrorBoundary><StatsPage /></ErrorBoundary>} />
+        <Route path="/datasets/:datasetId/health" element={<ErrorBoundary><HealthPage /></ErrorBoundary>} />
         <Route path="/datasets/:datasetId/export" element={<ErrorBoundary><ExportPage /></ErrorBoundary>} />
         <Route path="/datasets/:datasetId/bulk-edit" element={<ErrorBoundary><BulkEditPage /></ErrorBoundary>} />
         <Route path="/datasets/:datasetId/consolidate" element={<ErrorBoundary><TagConsolidatePage /></ErrorBoundary>} />

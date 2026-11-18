@@ -68,6 +68,20 @@ export interface Dataset {
   source_url: string;
   license: string;
   attribution: string;
+  /** What the dataset is for (M12); "" means no goal set. */
+  goal: string;
+  /** The short side the dataset trains at; null means the health report's default. */
+  target_resolution: number | null;
+  /** The last health report's severity counts, for the card badge; null until one
+   *  has been built. Can lag until the Health page is next opened. */
+  health_summary: HealthSummaryStored | null;
+}
+
+export interface HealthSummaryStored {
+  error: number;
+  warn: number;
+  info: number;
+  computed_at: string;
 }
 
 export interface DatasetStats {

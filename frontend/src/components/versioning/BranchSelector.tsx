@@ -155,6 +155,7 @@ export default function BranchSelector({ datasetId, branches, activeBranchId, cu
       qc.invalidateQueries({ queryKey: ["caption"] });
       qc.invalidateQueries({ queryKey: ["dataset-stats", datasetId] });
       qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
+      qc.invalidateQueries({ queryKey: ["dataset-health", datasetId] });
       qc.invalidateQueries({ queryKey: ["score-values", datasetId] });
       qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
       // Checkout is a restore underneath, and a partial one still switches

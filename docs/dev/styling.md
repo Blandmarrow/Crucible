@@ -107,7 +107,8 @@ Adopted by every extracted modal in `common/`, `gallery/`, `versioning/`, `comfy
 - `ImageDetailPage`: the Run Detection, Crop to Detection and Remove Watermark modals (inline).
 - `GalleryPage`: the generation-metadata modal (inline; closes on backdrop).
 - `FileBrowserPage`: `ImportModal`, `MkdirModal`, `DeleteConfirm` (already components).
-- `StatsPage`: `SettingsDrawer`, `ImageLightbox`, `BucketPanel` (components, each with a hand-rolled `window` Escape).
+- `StatsPage`: `SettingsDrawer` (a component with a hand-rolled `window` Escape).
+- `components/common/FilteredImagesModal.tsx`: `FilteredImagesModal` and its `ImageLightbox`, each with a hand-rolled `window` Escape; moved out of `StatsPage` as they were, since the Health page opens them too.
 - `ComfyDefaultsStrip`'s run-default editor and `ComfyRowsTable`'s bulk column edit (inline; close on backdrop). `ComfyPage`'s paste-prompts modal moved onto `ModalShell` in M6 §8d.
 
 Not dialogs, and correctly without the hook: `TopBar`'s full-screen restart overlay, and `ImportFolderModal`'s transparent click-catcher behind its subfolder dropdown.

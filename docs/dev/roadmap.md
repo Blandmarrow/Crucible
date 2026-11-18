@@ -31,18 +31,17 @@ restates its stages.
    linking the record that holds the full text.
 5. **Landed**: one line per finished milestone or handoff record.
 
-## Next session (updated 2026-11-18, M12 phase 1a)
+## Next session (updated 2026-11-18, M12 phase 1b)
 
 This block lives on `feat/analyst` only: by decision 21 nothing of M12 reaches `main`, the
 docs included, until the whole feature is done.
 
-1. **Phase 1a is built**, PR #179 into `feat/analyst`: the health report, the goal fields,
-   notes and the snapshot delta, backend only (`docs/dev/analyst.md`). Once it merges,
-   start 1b, the Health page, dialogs and card badge, then 1c, the gallery `?filter=` deep
-   link ([§ Phase 1](analyst-plan/README.md#phase-1--health-report-no-llm)); each on a branch
-   off `feat/analyst` with an Opus review.
-2. 1b carries the user docs (a new analyst page in `docs/`, a README row). CLAUDE.md is at 6,483 of
-   6,500 words, so phase 2's key invariant needs room made first.
+1. **Phase 1b is built**, PR #180 into `feat/analyst`: the Health page, the goal fields, the
+   card badge and the user doc `docs/analyst.md` (dev side: `docs/dev/analyst/ui.md`). Once
+   it merges, build 1c, the gallery `?filter=` deep link and "Open in gallery"
+   ([§ Phase 1](analyst-plan/README.md#phase-1--health-report-no-llm)), on a branch off
+   `feat/analyst` with an Opus review. Then phase 2.
+2. CLAUDE.md is at 6,484 of 6,500 words, so phase 2's key invariant needs room made first.
 3. Merge `main` into `feat/analyst` regularly, and run the branch's migrations only on a
    throwaway database. The previous block is in
    [roadmap-archive/handoff-2026-11-18.md](roadmap-archive/handoff-2026-11-18.md).
@@ -62,7 +61,8 @@ Plan: [analyst-plan/README.md](analyst-plan/README.md). Gate: every phase below 
 - [ ] Phase 1: the health report, the goal field and dataset notes, with no LLM
   ([§ Phase 1](analyst-plan/README.md#phase-1--health-report-no-llm)), in three PRs:
   - [x] 1a, the backend: PR #179 into `feat/analyst`, 2026-11-18.
-  - [ ] 1b, the Health page, the dialogs' goal fields and the card badge, with the user docs.
+  - [x] 1b, the Health page, the dialogs' goal fields and the card badge, with the user docs:
+    PR #180 into `feat/analyst`, 2026-11-18.
   - [ ] 1c, the gallery `?filter=` deep link.
 - [ ] Phase 2: the analyst chat without tools, its privacy filter, budgets and streaming
   ([§ Phase 2](analyst-plan/README.md#phase-2--analyst-chat-no-tools)).

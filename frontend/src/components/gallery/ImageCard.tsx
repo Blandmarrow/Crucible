@@ -88,6 +88,7 @@ function ImageCardInner({ image, onShowGenMeta, onSelect, isDraggable, isActiveD
         qc.invalidateQueries({ queryKey: ["dataset", datasetId] });
         qc.invalidateQueries({ queryKey: ["dataset-stats", datasetId] });
         qc.invalidateQueries({ queryKey: ["tag-stats", datasetId] });
+        qc.invalidateQueries({ queryKey: ["dataset-health", datasetId] });
         qc.invalidateQueries({ queryKey: ["tag-cooccurrence", datasetId] });
       })
       .catch(() => toast.error("Failed to apply caption"));

@@ -51,6 +51,8 @@ const PROVENANCE_SCOPE = [
   // set of values in use, so a provenance write can add one — and the point of
   // typing a custom license is to filter/apply it immediately afterwards.
   ["licenses-in-use"],
+  // The health report's "no licence recorded" finding counts effective licenses.
+  ["dataset-health"],
 ] as const;
 
 export function invalidateProvenanceScope(qc: QueryClient) {
@@ -98,6 +100,8 @@ const DATASET_CONTENT_SCOPE = [
   // survives the very run that fixes it — the counts it reads are per-column
   // aggregates over exactly these rows.
   "embedding-coverage",
+  // The Health page's report (M12): every finding is a count over these rows.
+  "dataset-health",
 ] as const;
 
 /**

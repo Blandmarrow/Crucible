@@ -8,6 +8,8 @@ import type { Dataset } from "../../types";
 import ModalShell from "../common/ModalShell";
 import ProvenanceFields from "../common/ProvenanceFields";
 import CategoryPicker from "./CategoryPicker";
+import GoalFields from "./GoalFields";
+import { goalDraftOf, parseTarget, type GoalDraft } from "./goalDraft";
 
 // Shared by every mount, so a request still in flight after this dialog
 // closed keeps the reopened one's submit disabled, as when the page owned
@@ -32,10 +34,17 @@ export default function NewDatasetDialog({ existingCategories, onCreated, onClos
   const [newDesc, setNewDesc] = useState("");
   const [newCategory, setNewCategory] = useState("");
   const [newProvenance, setNewProvenance] = useState<DatasetProvenance>(EMPTY_PROVENANCE);
+  const [newGoal, setNewGoal] = useState<GoalDraft>(goalDraftOf("", null));
+  const target = parseTarget(newGoal.target);
+  const canCreate = !!newName && target !== undefined;
 
   const createMutation = useMutation({
     mutationKey: MUTATION_KEY,
-    mutationFn: () => datasetsApi.create(newName, newDesc, newCategory, newProvenance),
+    mutationFn: () =>
+      datasetsApi.create(newName, newDesc, newCategory, newProvenance, {
+        goal: newGoal.goal,
+        target_resolution: target ?? null,
+      }),
     onSuccess: (ds) => {
       qc.invalidateQueries({ queryKey: ["datasets"] });
       onClose();
@@ -55,7 +64,7 @@ export default function NewDatasetDialog({ existingCategories, onCreated, onClos
           <label className="label" htmlFor={`${uid}-new-name`}>Name</label>
           <input id={`${uid}-new-name`} className="input" placeholder="my_dataset" value={newName} autoFocus
             onChange={(e) => setNewName(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && newName && createMutation.mutate()} />
+            onKeyDown={(e) => e.key === "Enter" && canCreate && createMutation.mutate()} />
         </div>
         <div>
           <label className="label" htmlFor={`${uid}-new-desc`}>Description <span style={{ fontWeight: 400, color: "var(--fg-mute)", fontSize: 11 }}>(optional)</span></label>
@@ -69,6 +78,7 @@ export default function NewDatasetDialog({ existingCategories, onCreated, onClos
           labelNote="(optional)"
           autoFocusNew={false}
         />
+        <GoalFields value={newGoal} onChange={setNewGoal} />
         <ProvenanceFields
           value={newProvenance}
           onChange={setNewProvenance}
@@ -77,7 +87,7 @@ export default function NewDatasetDialog({ existingCategories, onCreated, onClos
       </div>
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
         <button className="btn ghost" onClick={onClose}>Cancel</button>
-        <button className="btn primary" onClick={() => createMutation.mutate()} disabled={!newName || pending}>Create</button>
+        <button className="btn primary" onClick={() => createMutation.mutate()} disabled={!canCreate || pending}>Create</button>
       </div>
     </ModalShell>
   );

@@ -61,3 +61,21 @@
 - **Revisit when:** panes prove too awkward for an always-visible chat (the overlay), local
   models turn out unable to use the output protocol, or users ask for one chat across
   several datasets.
+- **Amendments:**
+  - **2026-11-19, by the user: phase 3's tool calls.** Three rulings made while planning the
+    read-only tools, all built in PRs #189 to #194:
+    - **A tool call is a row of its own table, `chat_tool_calls`, hung off the reply**, not
+      `role=tool` rows in `chat_messages` as the plan first said. The reply row is stored
+      before the first call, so rows between it and the user's would move it mid-turn and
+      break resume, the "since your last reply" delta and the message count. One reply row
+      per turn stays true, and the transcript still replays exactly.
+    - **A later turn does not resend earlier tool results.** History carries the reply's
+      text only, and the model calls a tool again if it needs the data. That keeps the
+      context small for local models; and so that tool data cannot reach the model through
+      history after a privacy toggle goes off, each reply's manifest records the categories
+      its tools sent, which the history rule reads.
+    - **The image filter builder stays in `routers/images.py`.** `feat/m4-rating-port`
+      edits its body, so moving it into a service now would clash with the held branch; the
+      captions tool imports it late, and M8 stage 8 (split `images.py`) gives it a home.
+    - Rejected: `role=tool` rows; replaying earlier tool exchanges within the history
+      budget, withheld per category.

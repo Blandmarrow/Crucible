@@ -5,7 +5,7 @@ components, the `chatStore` that owns a reply's stream, how a reply is rendered,
 Settings → Analyst tab. The routes it calls are [chat.md](chat.md) (chats, privacy,
 `build_context`, the preview) and [sending.md](sending.md) (sending, the events, cancel,
 budgets); the family hub is [../analyst.md](../analyst.md). How a user reads the page is
-`docs/analyst.md` § The analyst chat.
+`docs/analyst-chat.md`.
 
 ## Files and query keys
 

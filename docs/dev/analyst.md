@@ -6,7 +6,7 @@ what to do. This file is the family's entry point; the tables below route from a
 the file in `docs/dev/analyst/` that owns it. The design and the phases still to build are in
 [analyst-plan/README.md](analyst-plan/README.md). The `GET /images/` filters a finding links
 through are `docs/dev/image-filters.md`; the Stats cache and index pin the report reuses are
-`docs/dev/statistics.md`; the snapshot row it records on is `docs/dev/versioning/storage.md`. How a user reads the page is `docs/analyst.md`.
+`docs/dev/statistics.md`; the snapshot row it records on is `docs/dev/versioning/storage.md`. How a user reads the pages is `docs/analyst.md` (health and notes) and `docs/analyst-chat.md` (the chat).
 
 ## The family
 

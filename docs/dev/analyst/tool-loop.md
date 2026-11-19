@@ -30,7 +30,7 @@ send. A toggle changed while the reply is being written applies from the next se
 ## One turn, several calls
 
 The reply row is stored before the first call, as in phase 2, and stays the turn's one
-reply row (the user's ruling, `docs/dev/analyst-plan/README.md` § Phase 3). Each call to
+reply row (the user's ruling, decision 21's amendment of 2026-11-19). Each call to
 the model is a **round**:
 
 1. **Before every round after the first, the budget is checked again** (`_budget_stop`),

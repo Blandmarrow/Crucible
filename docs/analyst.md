@@ -188,7 +188,9 @@ new text below it.
 **Nothing changes until you accept.** **Accept** applies one suggestion, **Reject** sets it
 aside, and **Undo** reverses either: an added note is removed again, a changed one is put
 back, a removed one returns. A note you have edited by hand since is not undone over your
-edit. A suggestion about a note that has since been removed shows as out of date.
+edit. A suggestion about a note you have since removed or reworded shows as out of date,
+since accepting it would change something you have not seen. A suggestion to remove a note
+that dismisses a health finding says that removing it brings the finding back.
 
 If the analyst agrees to something but suggests no notes, **Ask it to note this**, under the
 latest reply, asks it to write them. Deleting a chat keeps the notes it added.

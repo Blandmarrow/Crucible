@@ -30,12 +30,17 @@ remove open_item 3
 The sections are `preference`, `decision`, `open_item` and `about_me`. The model may be a
 small local one, so the parser is **forgiving about form and strict about meaning**:
 
-- **Forgiving**: case, a list marker before a line (`-`, `*`, `1.`), a colon or none after
-  the section, `#` before a number, a plural or spaced section name ("Open items",
+- **Forgiving**: case, a list marker before a line (`-`, `*`, `1.`), a colon or a space
+  after the section, `#` before a number, a plural or spaced section name ("Open items",
   "about me"), and a block whose closing fence never came.
 - **Strict**: an unknown op or section, a number that is not digits ("three"), or an op with
   no text is dropped, never guessed at. A misspelt section is dropped rather than matched
-  to the nearest one, since a wrong section is a wrong note.
+  to the nearest one, since a wrong section is a wrong note. The section ends at a word
+  boundary ("preferenceful" is no section), a number takes all its digits, and the text
+  needs a separator and cannot be a bare colon: without those, `edit decision 23` with its
+  text left out read as item 2 with the text "3".
+- **A closing fence counts only at the start of a line**, so a ``` inside a note's text
+  does not end the block and drop the lines after it.
 - At most `MAX_PROPOSALS` (20) per reply, each text cut to `MAX_TEXT_CHARS` (2,000), the
   size of one note.
 
@@ -63,28 +68,40 @@ proposals rather than failing the store.
 
 **The stored reply keeps its block**, as the model wrote it, and the history sends it back
 that way. Only the display hides it: `stripNoteBlocks` in the frontend removes closed and
-unclosed blocks alike, so a block never flashes as text while it streams.
+unclosed blocks alike, and while a reply is being written it also hides a last line that
+starts a fence and has not yet reached its newline ("```crucible-no"), so a block does not
+flash as text while it streams. A reply whose block held nothing readable, and no other
+text, says so rather than showing an empty bubble.
 
 ## Accept, reject and undo
 
-A proposal is `pending`, `accepted`, `rejected` or `stale`. Each action is one commit.
+A proposal is `pending`, `accepted`, `rejected` or `stale`. Each action is one commit, and
+**each starts by claiming the proposal** with a conditional `UPDATE … WHERE status = :from`
+(`_claim`). SQLite's write lock serialises two requests at once (two panes on one chat, a
+retry), and the second finds the status already moved and gets a 409. A plain read of the
+status first let two accepts both see `pending` and add the note twice. When the change
+then fails, `_abandon` rolls back the claim with it. A rollback expires the session's
+objects, so nothing after it reads the proposal's attributes; `stale` is written by id.
 
 - **Accept** applies the change through `notes_service` with `actor="llm"` and the chat's
   id, on the user's say-so. An add creates the item (a decision is dated now, as the notes
   editor does), and the item's `source_chat_id` names the chat. An edit or a removal first
-  checks that its target still exists, is live and belongs to this chat's dataset; if not,
-  the proposal turns `stale` (committed) and the request is a 409. The notes' own rules
+  checks that its target still exists, is live, belongs to this chat's dataset and **still
+  reads `target_text`**; if not, the proposal turns `stale` and the request is a 409. The
+  text check matters: the card shows `target_text` struck out, so accepting over a note
+  reworded by hand since would replace text the user never reviewed. The notes' own rules
   still hold: past the size cap is a 422 and the proposal stays pending.
 - **Reject** marks it `rejected`. Nothing else changes.
 - **Undo** goes back to `pending`. On a rejected proposal it only changes the status. On an
   accepted one it reverses the change first, as the user: an add is removed, an edit put
-  back to `applied_before`, a removal restored. **An edit changed by hand since is not
-  undone over the top**: the undo is a 409 when the note's text is no longer the proposal's.
+  back to `applied_before`, a removal restored. **A note changed by hand since is not
+  undone over the top**: undoing an add or an edit is a 409 when the note's text is no
+  longer the proposal's.
   A restore keeps its own refusals (the cap, a newer dismissal of the same finding).
 
-A second accept, or a reject of anything not pending, is a 409, so a double click cannot
-apply a change twice. Removing a dismissal note un-dismisses its finding, as removing it
-by hand does; the card's refresh invalidates the health report for that reason.
+Removing a dismissal note un-dismisses its finding, as removing it by hand does. The card
+says so on a pending removal of one, since the model sees the dismissal in its context and a
+caption could argue for removing it; the card's refresh invalidates the health report.
 
 ## The chat columns on the notes
 
@@ -103,8 +120,8 @@ an item gone since is exactly what `stale` reports.
 `ProposalList` renders a reply's proposals under its text: the section, the old text struck
 out for an edit or a removal, the new text, and Accept and Reject, or the outcome and Undo.
 A pending edit or removal whose note is no longer among the live notes
-(`datasetNotesKey`, `APP_NOTES_KEY`) shows as out of date with no buttons, before the server
-has said so. Each action invalidates the chat, the notes scope it touched, the health report
+(`datasetNotesKey`, `APP_NOTES_KEY`), or reads differently from `target_text`, shows as out
+of date with no buttons, as the server would refuse it. Each action invalidates the chat, the notes scope it touched, the health report
 and the preview, since the notes are context.
 
 **"Ask it to note this"** sits under the latest reply when it finished with no proposals. It
@@ -114,9 +131,11 @@ agreed to something but wrote no block.
 ## Tests
 
 - `backend/tests/test_note_proposals.py`: the parser (forgiving forms, the malformed corpus,
-  other fences, an unclosed block, the count cap); proposals from a notes reply, accept,
+  numbers and words it must not split, other fences, a fence inside a line, an unclosed
+  block, the count cap); three accepts at once applying the change once; proposals from a notes reply, accept,
   reject and undo with the history's actor and chat; numbers resolved through the manifest
-  despite a reorder; an edit changed by hand refusing its undo; `stale`; the cap; `about_me`
+  despite a reorder; hand edits never overwritten (accept goes stale, the undo of an edit or
+  an add is refused); `stale`; the cap; `about_me`
   going to the app notes; a cut-off reply proposing nothing; and deleting the chat keeping
   its notes with the links nulled.
 - `frontend/e2e/chat-notes.spec.ts`: "Ask it to note this", then the notes reply's two

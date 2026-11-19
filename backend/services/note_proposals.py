@@ -23,14 +23,19 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from fastapi import HTTPException
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.chat import Chat, ChatMessage, ChatProposal
 from backend.models.notes import AppNoteItem, DatasetNoteItem
 from backend.services import notes_service
 
-# The block: the fence's info string, then everything to the closing fence or the end.
-BLOCK_RE = re.compile(r"```[ \t]*crucible-notes[ \t]*\r?\n(.*?)(?:\r?\n?```|\Z)", re.DOTALL | re.IGNORECASE)
+# The block: the fence's info string, then everything to a closing fence at the start of
+# a line, or the end. A ``` inside a line does not close it.
+BLOCK_RE = re.compile(
+    r"```[ \t]*crucible-notes[ \t]*\r?\n(.*?)(?:^[ \t]*```|\Z)",
+    re.DOTALL | re.IGNORECASE | re.MULTILINE,
+)
 
 # Keyed on the name lower-cased, with runs of spaces, `_` and `-` read as one space.
 SECTION_ALIASES = {
@@ -39,9 +44,12 @@ SECTION_ALIASES = {
     "open item": "open_item", "open items": "open_item",
     "about me": "about_me",
 }
-_SECTION = r"(?P<section>open[ _-]+items?|about[ _-]+me|preferences?|decisions?)"
-_NUMBER = r"#?(?P<n>\d{1,4})"
-_TEXT = r"\s*:?\s*(?P<text>.*\S)"
+# The section ends at a word boundary ("preferenceful" is not a section), the number is
+# all of its digits ("23" is never item 2 with text "3"), and the text needs a separator
+# before it and cannot be a bare colon.
+_SECTION = r"(?P<section>open[ _-]+items?|about[ _-]+me|preferences?|decisions?)\b"
+_NUMBER = r"#?(?P<n>\d{1,4})(?!\d)"
+_TEXT = r"(?:\s*:\s*|\s+)(?P<text>[^\s:](?:.*\S)?)"
 _LINE_RES = {
     "add": re.compile(rf"^add\s+{_SECTION}{_TEXT}$", re.IGNORECASE),
     "edit": re.compile(rf"^edit\s+{_SECTION}\s+{_NUMBER}{_TEXT}$", re.IGNORECASE),
@@ -65,7 +73,7 @@ class ParsedOp:
 def strip_blocks(text: str) -> str:
     """The reply without its blocks. The frontend strips the same way for display; the
     stored reply keeps them, as the model wrote it."""
-    return re.sub(r"\n{3,}", "\n\n", BLOCK_RE.sub("", text)).rstrip()
+    return re.sub(r"\n{3,}", "\n\n", BLOCK_RE.sub("", text)).strip()
 
 
 def parse(text: str) -> list[ParsedOp]:
@@ -124,54 +132,90 @@ def _model(section: str):
 
 
 async def _target(db: AsyncSession, chat: Chat, p: ChatProposal):
-    """The live item an edit or removal points at, or None when it has gone."""
+    """The item an edit or removal points at, if it is live, in this chat's dataset, and
+    still reads as the reply saw it. Otherwise None: the suggestion is out of date, and
+    accepting it would overwrite or remove something the user has not reviewed."""
     item = await db.get(_model(p.section), p.target_item_id) if p.target_item_id else None
     if item is None or item.deleted_at is not None:
         return None
     if isinstance(item, DatasetNoteItem) and item.dataset_id != chat.dataset_id:
         return None
+    if item.text != p.target_text:
+        return None
     return item
 
 
-async def _stale(db: AsyncSession, p: ChatProposal) -> None:
-    p.status = "stale"
-    await db.commit()
-    raise HTTPException(409, "That note has been removed or moved since the reply; this suggestion is out of date.")
+async def _claim(db: AsyncSession, p: ChatProposal, from_status: str, to_status: str) -> None:
+    """Move the proposal's status with a conditional UPDATE, so two requests at once (two
+    panes, a retry) cannot both act on it: SQLite's write lock serialises them, and the
+    second finds the status already moved. Its change follows in the same transaction."""
+    res = await db.execute(
+        update(ChatProposal)
+        .where(ChatProposal.id == p.id, ChatProposal.status == from_status)
+        .values(status=to_status, updated_at=datetime.utcnow())
+        .execution_options(synchronize_session=False)
+    )
+    if res.rowcount != 1:
+        await db.rollback()
+        raise HTTPException(409, "This suggestion has changed since; reload the chat.")
+    p.status = to_status
+
+
+async def _abandon(db: AsyncSession, pid: int, *, stale: bool, error: Exception) -> None:
+    """Undo the claim and the half-made change, then re-raise. A rollback expires the
+    session's objects, so nothing here reads the proposal's attributes again."""
+    await db.rollback()
+    if stale:
+        await db.execute(
+            update(ChatProposal).where(ChatProposal.id == pid, ChatProposal.status == "pending")
+            .values(status="stale", updated_at=datetime.utcnow())
+            .execution_options(synchronize_session=False)
+        )
+        await db.commit()
+    raise error
+
+
+class _Stale(HTTPException):
+    def __init__(self) -> None:
+        super().__init__(409, "That note has been removed or changed since the reply; this suggestion is out of date.")
 
 
 async def accept(db: AsyncSession, chat: Chat, p: ChatProposal) -> ChatProposal:
     """Apply a pending proposal to the notes, as the analyst (`actor="llm"`) on the
-    user's say-so, in one commit with its new status."""
-    if p.status != "pending":
-        raise HTTPException(409, f"This suggestion is already {p.status}.")
+    user's say-so, in one commit with its new status. A refusal (the cap, a note gone or
+    changed since) leaves it pending, or `stale` for the second."""
+    pid = p.id
+    await _claim(db, p, "pending", "accepted")
     model = _model(p.section)
     dataset_id = chat.dataset_id if model is DatasetNoteItem else None
-    if p.op == "add":
-        item = await notes_service.add_item(
-            db, model, section=p.section, text=p.new_text or "", dataset_id=dataset_id,
-            # A decision is dated when it is made, as the notes editor does.
-            decided_at=datetime.utcnow() if p.section == "decision" else None,
-            actor="llm", chat_id=chat.id, commit=False,
-        )
-        p.applied_item_id, p.applied_before = item.id, None
-    else:
-        item = await _target(db, chat, p)
-        if item is None:
-            await _stale(db, p)
-        p.applied_item_id, p.applied_before = item.id, item.text
-        if p.op == "edit":
-            await notes_service.edit_item(db, item, text=p.new_text, actor="llm", chat_id=chat.id, commit=False)
+    try:
+        if p.op == "add":
+            item = await notes_service.add_item(
+                db, model, section=p.section, text=p.new_text or "", dataset_id=dataset_id,
+                # A decision is dated when it is made, as the notes editor does.
+                decided_at=datetime.utcnow() if p.section == "decision" else None,
+                actor="llm", chat_id=chat.id, commit=False,
+            )
+            p.applied_item_id, p.applied_before = item.id, None
         else:
-            await notes_service.remove_item(db, item, actor="llm", chat_id=chat.id, commit=False)
-    p.status = "accepted"
+            item = await _target(db, chat, p)
+            if item is None:
+                await _abandon(db, pid, stale=True, error=_Stale())
+            p.applied_item_id, p.applied_before = item.id, item.text
+            if p.op == "edit":
+                await notes_service.edit_item(db, item, text=p.new_text, actor="llm", chat_id=chat.id, commit=False)
+            else:
+                await notes_service.remove_item(db, item, actor="llm", chat_id=chat.id, commit=False)
+    except HTTPException as e:
+        if isinstance(e, _Stale):
+            raise
+        await _abandon(db, pid, stale=False, error=e)
     await db.commit()
     return p
 
 
 async def reject(db: AsyncSession, p: ChatProposal) -> ChatProposal:
-    if p.status != "pending":
-        raise HTTPException(409, f"This suggestion is already {p.status}.")
-    p.status = "rejected"
+    await _claim(db, p, "pending", "rejected")
     await db.commit()
     return p
 
@@ -180,26 +224,31 @@ async def undo(db: AsyncSession, chat: Chat, p: ChatProposal) -> ChatProposal:
     """Back to pending. An accepted proposal's change is reversed first, as the user:
     an add is removed, an edit put back, a removal restored. A note changed by hand
     since is left alone and the undo refused."""
-    if p.status == "rejected":
-        p.status = "pending"
-        await db.commit()
-        return p
-    if p.status != "accepted":
+    pid, was = p.id, p.status
+    if was not in ("accepted", "rejected"):
         raise HTTPException(409, "Only an accepted or rejected suggestion can be undone.")
-    item = await db.get(_model(p.section), p.applied_item_id) if p.applied_item_id else None
-    if p.op == "add":
-        if item is not None:
-            await notes_service.remove_item(db, item, chat_id=chat.id, commit=False)
-    elif p.op == "edit":
-        if item is None or item.deleted_at is not None or item.text != (p.new_text or "").strip():
-            raise HTTPException(409, "That note has changed since; edit it by hand instead.")
-        await notes_service.edit_item(db, item, text=p.applied_before, chat_id=chat.id, commit=False)
-    else:  # remove
-        if item is None:
-            raise HTTPException(409, "That note no longer exists.")
-        if item.deleted_at is not None:
-            await notes_service.restore_item(db, item, chat_id=chat.id, commit=False)
-    p.status = "pending"
+    op, section, applied_id = p.op, p.section, p.applied_item_id
+    new_text, before = (p.new_text or "").strip(), p.applied_before
+    await _claim(db, p, was, "pending")
+    if was == "accepted":
+        try:
+            item = await db.get(_model(section), applied_id) if applied_id else None
+            if op == "add":
+                if item is not None and item.deleted_at is None:
+                    if item.text != new_text:
+                        raise HTTPException(409, "That note has been edited since; remove it by hand instead.")
+                    await notes_service.remove_item(db, item, chat_id=chat.id, commit=False)
+            elif op == "edit":
+                if item is None or item.deleted_at is not None or item.text != new_text:
+                    raise HTTPException(409, "That note has changed since; edit it by hand instead.")
+                await notes_service.edit_item(db, item, text=before, chat_id=chat.id, commit=False)
+            else:  # remove
+                if item is None:
+                    raise HTTPException(409, "That note no longer exists.")
+                if item.deleted_at is not None:
+                    await notes_service.restore_item(db, item, chat_id=chat.id, commit=False)
+        except HTTPException as e:
+            await _abandon(db, pid, stale=False, error=e)
     p.applied_item_id = p.applied_before = None
     await db.commit()
     return p

@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { chatKey, chatPreviewKey, chatsApi, NOTE_SECTION_LABELS, type Proposal } from "../../api/chats";
-import { APP_NOTES_KEY, datasetNotesKey } from "../../api/notes";
+import { APP_NOTES_KEY, datasetNotesKey, type NoteItem } from "../../api/notes";
 import { apiErrorDetail } from "../../utils/apiError";
 
 const OP_LABEL: Record<Proposal["op"], string> = { add: "Add to", edit: "Change in", remove: "Remove from" };
@@ -10,13 +10,13 @@ const DONE_LABEL: Record<Proposal["op"], string> = { add: "Added", edit: "Change
 /** A reply's suggested changes to the notes, each waiting for the user. Nothing
  *  changes until Accept; Undo reverses an accepted change, or brings back a rejected
  *  suggestion. See docs/dev/analyst/proposals.md. */
-export default function ProposalList({ chatId, datasetId, proposals, liveNoteIds }: {
+export default function ProposalList({ chatId, datasetId, proposals, liveNotes }: {
   chatId: string;
   datasetId: string;
   proposals: Proposal[];
-  /** Ids of the notes that exist now, or null while they load: an edit or removal
-   *  whose note has gone is shown as out of date before the server says so. */
-  liveNoteIds: Set<string> | null;
+  /** The notes as they are now, by id, or null while they load: an edit or removal
+   *  whose note has gone or changed is shown as out of date before the server says so. */
+  liveNotes: Map<string, NoteItem> | null;
 }) {
   if (!proposals.length) return null;
   return (
@@ -26,18 +26,18 @@ export default function ProposalList({ chatId, datasetId, proposals, liveNoteIds
       </div>
       <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 6 }}>
         {proposals.map((p) => (
-          <ProposalRow key={p.id} chatId={chatId} datasetId={datasetId} proposal={p} liveNoteIds={liveNoteIds} />
+          <ProposalRow key={p.id} chatId={chatId} datasetId={datasetId} proposal={p} liveNotes={liveNotes} />
         ))}
       </ul>
     </section>
   );
 }
 
-function ProposalRow({ chatId, datasetId, proposal: p, liveNoteIds }: {
+function ProposalRow({ chatId, datasetId, proposal: p, liveNotes }: {
   chatId: string;
   datasetId: string;
   proposal: Proposal;
-  liveNoteIds: Set<string> | null;
+  liveNotes: Map<string, NoteItem> | null;
 }) {
   const qc = useQueryClient();
   const act = useMutation({
@@ -52,8 +52,12 @@ function ProposalRow({ chatId, datasetId, proposal: p, liveNoteIds }: {
     onError: (err) => toast.error(apiErrorDetail(err, "Could not apply the suggestion")),
   });
 
-  const gone = p.status === "pending" && p.op !== "add" && !!liveNoteIds && !!p.target_item_id && !liveNoteIds.has(p.target_item_id);
-  const stale = p.status === "stale" || gone;
+  const target = p.target_item_id ? liveNotes?.get(p.target_item_id) : undefined;
+  // Gone, or reworded by hand: the server would refuse it as out of date too.
+  const changed = p.status === "pending" && p.op !== "add" && !!liveNotes && (!target || target.text !== p.target_text);
+  const stale = p.status === "stale" || changed;
+  // Removing a dismissal brings its health finding back: say so on the card.
+  const dismissal = p.op === "remove" && p.status === "pending" && !!target?.finding_id;
   const muted = p.status === "rejected" || stale;
 
   return (
@@ -77,9 +81,14 @@ function ProposalRow({ chatId, datasetId, proposal: p, liveNoteIds }: {
             <span aria-hidden>+ </span>{p.new_text}
           </div>
         )}
+        {dismissal && !stale && (
+          <div style={{ fontSize: 11.5, color: "var(--warn)", marginTop: 3 }}>
+            This note dismisses a health finding; removing it brings the finding back.
+          </div>
+        )}
         {stale && (
           <div style={{ fontSize: 11.5, color: "var(--warn)", marginTop: 3 }}>
-            Out of date: that note has been removed since.
+            Out of date: that note has been removed or changed since.
           </div>
         )}
       </div>

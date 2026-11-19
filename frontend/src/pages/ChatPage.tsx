@@ -128,8 +128,8 @@ function ChatView({ chat, datasetId, providers }: { chat: Chat; datasetId: strin
   // The notes as they are now, so a suggestion whose note has gone shows as out of date.
   const { data: datasetNotes } = useQuery({ queryKey: datasetNotesKey(datasetId), queryFn: () => notesApi.dataset(datasetId).list() });
   const { data: appNotes } = useQuery({ queryKey: APP_NOTES_KEY, queryFn: () => notesApi.app().list() });
-  const liveNoteIds = useMemo(
-    () => (datasetNotes && appNotes ? new Set([...datasetNotes.items, ...appNotes.items].map((n) => n.id)) : null),
+  const liveNotes = useMemo(
+    () => (datasetNotes && appNotes ? new Map([...datasetNotes.items, ...appNotes.items].map((n) => [n.id, n])) : null),
     [datasetNotes, appNotes],
   );
   const findings = useMemo(
@@ -240,7 +240,7 @@ function ChatView({ chat, datasetId, providers }: { chat: Chat; datasetId: strin
       <MessageList
         chatId={chat.id}
         datasetId={datasetId}
-        liveNoteIds={liveNoteIds}
+        liveNotes={liveNotes}
         onAskForNotes={!blockedReason && !stream ? () => void sendMessage(qc, datasetId, chat.id, ASK_FOR_NOTES) : undefined}
         messages={detail?.messages ?? []}
         stream={stream}

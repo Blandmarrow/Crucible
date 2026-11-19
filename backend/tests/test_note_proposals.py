@@ -46,6 +46,27 @@ def test_the_parser_drops_what_it_cannot_read():
     assert parse("```\nadd decision: x\n```\n```python\nadd decision: y\n```") == []
 
 
+def test_the_parser_never_splits_a_number_or_a_word():
+    # A missing text must not turn the number's last digit into the note.
+    lines = [
+        "edit decision 23",
+        "edit decision 15",
+        "edit decision 2 :",
+        "add decisions2: x",
+        "add preferenceful thing",
+        "add decision :",
+    ]
+    assert parse("```crucible-notes\n" + "\n".join(lines) + "\n```") == []
+    (p,) = parse("```crucible-notes\nedit decision 23: keep 768\n```")
+    assert (p.number, p.text) == (23, "keep 768")
+
+
+def test_a_fence_inside_a_line_does_not_close_the_block():
+    text = "```crucible-notes\nadd decision: use ```code``` style\nadd open_item: next\n```\nAfter."
+    assert [p.text for p in parse(text)] == ["use ```code``` style", "next"]
+    assert strip_blocks(text) == "After."
+
+
 def test_the_parser_reads_an_unclosed_block_and_caps_the_count():
     assert [p.text for p in parse("```crucible-notes\nadd decision: cut off here")] == ["cut off here"]
     many = "```crucible-notes\n" + "\n".join(f"add open_item: item {i}" for i in range(50)) + "\n```"
@@ -222,4 +243,53 @@ def test_deleting_the_chat_keeps_its_notes(fake_llm, tmp_path):
             async with env.Session() as db:
                 assert [h.chat_id for h in (await db.execute(select(NoteItemHistory))).scalars().all()] == [None]
                 assert (await db.execute(select(ChatProposal))).scalars().all() == []
+    run(scenario())
+
+
+def test_two_accepts_at_once_apply_the_change_once(fake_llm, tmp_path):
+    import asyncio
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds, _prov, chat_id = await _setup(env)
+            _r, events = await _send(env, chat_id, "[[fake:notes]] note it")
+            p = events[-1][1]["proposals"][0]
+            results = await asyncio.gather(*(_act(env, chat_id, p["id"], "accept") for _ in range(3)))
+            assert sorted(r.status_code for r in results) == [200, 409, 409]
+            live = [n for n in await _notes(env, ds["id"]) if n["deleted_at"] is None]
+            assert len(live) == 1
+            # And Undo then removes the one copy there is.
+            assert (await _act(env, chat_id, p["id"], "undo")).status_code == 200
+            assert not [n for n in await _notes(env, ds["id"]) if n["deleted_at"] is None]
+    run(scenario())
+
+
+def test_a_hand_edit_is_never_overwritten(fake_llm, tmp_path):
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            ds, _prov, chat_id = await _setup(env)
+            r = await env.client.post(f"{API}/datasets/{ds['id']}/notes", json={"section": "preference", "text": "Old"})
+            pref_id = r.json()["id"]
+            fake_llm.replies.append(Reply(text="```crucible-notes\nedit preference 1: New\nadd open_item: Re-tag\n```"))
+            _r, events = await _send(env, chat_id, "Tidy")
+            edit, add = events[-1][1]["proposals"]
+
+            # Edited by hand after the suggestion: accepting would replace text the user
+            # has not seen in the card, so it is out of date instead.
+            await env.client.patch(f"{API}/datasets/{ds['id']}/notes/{pref_id}", json={"text": "Mine"})
+            assert (await _act(env, chat_id, edit["id"], "accept")).status_code == 409
+            async with env.Session() as db:
+                assert (await db.get(ChatProposal, edit["id"])).status == "stale"
+            texts = {n["text"] for n in await _notes(env, ds["id"]) if n["deleted_at"] is None}
+            assert texts == {"Mine"}
+
+            # An added note edited by hand is not removed by Undo.
+            assert (await _act(env, chat_id, add["id"], "accept")).status_code == 200
+            added = [n for n in await _notes(env, ds["id"]) if n["section"] == "open_item"][0]
+            await env.client.patch(f"{API}/datasets/{ds['id']}/notes/{added['id']}", json={"text": "Re-tag the hands"})
+            assert (await _act(env, chat_id, add["id"], "undo")).status_code == 409
+            async with env.Session() as db:
+                assert (await db.get(ChatProposal, add["id"])).status == "accepted"
+            texts = {n["text"] for n in await _notes(env, ds["id"]) if n["deleted_at"] is None}
+            assert texts == {"Mine", "Re-tag the hands"}
     run(scenario())

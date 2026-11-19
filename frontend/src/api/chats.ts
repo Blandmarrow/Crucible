@@ -74,10 +74,15 @@ export const NOTE_SECTION_LABELS: Record<Proposal["section"], string> = {
 
 /** A reply's `crucible-notes` blocks, closed or not, as
  *  `backend/services/note_proposals.py::BLOCK_RE`: hidden from the displayed text,
- *  which shows the parsed proposals instead. */
-const NOTES_BLOCK = /```[ \t]*crucible-notes[ \t]*\r?\n[\s\S]*?(?:\r?\n?```|$)/gi;
-export function stripNoteBlocks(text: string): string {
-  return text.replace(NOTES_BLOCK, "").replace(/\n{3,}/g, "\n\n").trimEnd();
+ *  which shows the parsed proposals instead. A closing fence counts only at the start
+ *  of a line; the end of the text closes an unclosed block. */
+const NOTES_BLOCK = /```[ \t]*crucible-notes[ \t]*\r?\n[\s\S]*?(?:^[ \t]*```|(?![\s\S]))/gim;
+/** A fence line still arriving at the end of a reply being written, such as
+ *  "```crucible-no": hidden until its newline shows what it opens. */
+const PARTIAL_FENCE = /(^|\n)[ \t]*```[^\n]*$/;
+export function stripNoteBlocks(text: string, writing = false): string {
+  const shown = writing ? text.replace(PARTIAL_FENCE, "$1") : text;
+  return shown.replace(NOTES_BLOCK, "").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 /** What "Ask it to note this" sends: a narrow follow-up for a model that agreed to

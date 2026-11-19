@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { stripNoteBlocks, type ChatMessage } from "../../api/chats";
+import type { NoteItem } from "../../api/notes";
 import type { Finding } from "../../api/health";
 import type { ChatStream } from "../../store/chatStore";
 import FindingCard from "../health/FindingCard";
@@ -43,13 +44,13 @@ function mergeRows(messages: ChatMessage[], stream: ChatStream | undefined): Row
   return rows;
 }
 
-export default function MessageList({ chatId, datasetId, messages, stream, findings, liveNoteIds, onAskForNotes, onShowFinding, onOpenGallery, onFix }: {
+export default function MessageList({ chatId, datasetId, messages, stream, findings, liveNotes, onAskForNotes, onShowFinding, onOpenGallery, onFix }: {
   chatId: string;
   datasetId: string;
   messages: ChatMessage[];
   stream: ChatStream | undefined;
   findings: Map<string, Finding>;
-  liveNoteIds: Set<string> | null;
+  liveNotes: Map<string, NoteItem> | null;
   /** Absent while a send is not possible. */
   onAskForNotes?: () => void;
   onShowFinding: (f: Finding) => void;
@@ -92,7 +93,7 @@ export default function MessageList({ chatId, datasetId, messages, stream, findi
             key={r.key}
             chatId={chatId}
             datasetId={datasetId}
-            liveNoteIds={liveNoteIds}
+            liveNotes={liveNotes}
             onAskForNotes={r.key === lastReply ? onAskForNotes : undefined}
             row={r}
             stream={r.live || (stream && r.message?.id === stream.messageId) ? stream : undefined}
@@ -108,10 +109,10 @@ export default function MessageList({ chatId, datasetId, messages, stream, findi
   );
 }
 
-function Reply({ chatId, datasetId, liveNoteIds, onAskForNotes, row, stream, findings, stripOpen, onShowFinding, onOpenGallery, onFix }: {
+function Reply({ chatId, datasetId, liveNotes, onAskForNotes, row, stream, findings, stripOpen, onShowFinding, onOpenGallery, onFix }: {
   chatId: string;
   datasetId: string;
-  liveNoteIds: Set<string> | null;
+  liveNotes: Map<string, NoteItem> | null;
   onAskForNotes?: () => void;
   row: Row;
   stream: ChatStream | undefined;
@@ -126,7 +127,7 @@ function Reply({ chatId, datasetId, liveNoteIds, onAskForNotes, row, stream, fin
   // Ids the current report no longer knows are left out, not shown as dead cards.
   const related = (m?.related_findings ?? []).map((id) => findings.get(id)).filter((f): f is Finding => !!f);
   // The block is shown as the proposals below it, never as text: even mid-stream.
-  const text = stripNoteBlocks(row.content);
+  const text = stripNoteBlocks(row.content, writing);
   const proposals = m?.proposals ?? [];
 
   return (
@@ -140,9 +141,14 @@ function Reply({ chatId, datasetId, liveNoteIds, onAskForNotes, row, stream, fin
       ) : null}
       {writing && text && <span className="chat-cursor" aria-hidden />}
 
+      {!writing && !text && row.content && proposals.length === 0 && (
+        <span style={{ color: "var(--fg-mute)", fontSize: 12.5 }}>
+          The reply held only suggested notes, and none of them could be read.
+        </span>
+      )}
       {!writing && m && <Ending message={m} />}
 
-      {!writing && <ProposalList chatId={chatId} datasetId={datasetId} proposals={proposals} liveNoteIds={liveNoteIds} />}
+      {!writing && <ProposalList chatId={chatId} datasetId={datasetId} proposals={proposals} liveNotes={liveNotes} />}
       {!writing && onAskForNotes && m?.status === "complete" && proposals.length === 0 && (
         <button className="btn sm ghost" style={{ marginTop: 8 }} onClick={onAskForNotes} title="Ask the analyst to write what you agreed as suggested notes">
           Ask it to note this

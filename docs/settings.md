@@ -1,6 +1,6 @@
 # Settings
 
-Route: `/settings` — accessible from the sidebar. Settings are grouped into nine tabs. The Labels tab is covered in [labels.md](labels.md).
+Route: `/settings` — accessible from the sidebar. Settings are grouped into ten tabs. The Labels tab is covered in [labels.md](labels.md).
 
 The line under the page title shows which version of Crucible you are running, such as
 "Crucible 1.5.0", with a **Release notes** link to that version's page on GitHub. The same
@@ -81,6 +81,14 @@ Add, edit, and delete OpenAI-compatible API provider configurations for use as c
 - Billed — tick it for a provider that charges per call. An automated run caps LLM calls only on billed providers. Until you tick or untick it, it follows the URL: any address that is not this machine (`localhost`, `127.0.0.1` or `::1`) counts as billed. That guess is wrong for a LAN server such as LM Studio on another machine, so untick it there. Once saved, the setting cannot be reset to "follow the URL"; it stays on whatever you chose
 
 Below the providers, the **Ollama** panel has one setting with its own Save button: Max concurrent requests (1–16, default 1), the same setting for Ollama, which has no provider entry. Raise it only if Ollama runs with `OLLAMA_NUM_PARALLEL` above 1.
+
+## Analyst
+
+Settings for the analyst chat on each dataset's Analyst page ([details](analyst.md#the-analyst-chat)):
+
+- Token budgets — per chat (default 200,000) and per day (default 1,000,000), at least 1,000 each, saved with **Save budgets**. Only a billed provider meets them. Before each message Crucible adds the context to a full-length reply, and refuses to send it if that could pass either budget
+- What each provider may be sent — one row per provider, with a box for each kind of information (numbers, name and goal, notes, tags, captions, file names). A billed provider starts with numbers only, a free one with everything. A change saves at once; **Back to the defaults** undoes it. A chat can still make its own choice under **What gets sent**. The default follows the provider's **Billed** box, not its address: a paid service reached through a tunnel on `localhost` looks local, so tick Billed on it, or it is sent everything
+- A note on reasoning models: they spend their thinking from the provider's Max tokens. If replies end with "cut off at Max tokens", raise it on the LLM Providers tab
 
 ## ComfyUI
 

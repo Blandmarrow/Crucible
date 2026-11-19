@@ -1,6 +1,6 @@
 # Settings page
 
-This file covers `SettingsPage` and the `/settings` router: the `ThresholdSettings` singleton row, and every tab (Gallery, Captioning, UI Behavior, Quality Thresholds, Versioning, LLM Providers, ComfyUI, API Keys).
+This file covers `SettingsPage` and the `/settings` router: the `ThresholdSettings` singleton row, and every tab (Gallery, Captioning, UI Behavior, Quality Thresholds, Versioning, LLM Providers, ComfyUI, API Keys). The Analyst tab, the analyst chat's budgets and provider privacy, is in `docs/dev/analyst/chat-ui.md` § Settings → Analyst.
 
 
 `frontend/src/pages/SettingsPage.tsx`, route `/settings`, sidebar nav item "Settings". Exposes all eight scoring thresholds — the six quality-flag thresholds plus the Grounding DINO box-confidence and SAM 3 confidence thresholds — as editable number inputs.

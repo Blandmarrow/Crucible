@@ -31,26 +31,21 @@ restates its stages.
    linking the record that holds the full text.
 5. **Landed**: one line per finished milestone or handoff record.
 
-## Next session (updated 2026-11-19, M12 phase 2c next)
+## Next session (updated 2026-11-19, M12 phase 2c in review)
 
 This block lives on `feat/analyst` only: by decision 21 nothing of M12 reaches `main`, the
 docs included, until the whole feature is done.
 
-1. **Build 2c, the chat page** (the user's plan for the next session), on a branch off
-   `feat/analyst` with an Opus review. The backend is done: 2a (#183, `analyst/chat.md`)
-   and 2b (#184, `analyst/sending.md`).
-2. **Streaming in the browser**: `useJobSSE` keeps its `EventSource` inside a `useEffect`,
-   so it is no template. Put `fetch` + the stream reader in a module-level map behind a
-   zustand `chatStore`. `EventSource` cannot POST, and `fetch` errors need their own
-   `detail` parsing to match `apiErrorDetail`.
-3. **The page**: `chat` routed like Health (`analyst/ui.md`), **unkeyed** in
-   `PageRenderer`. Extract `FindingCard` from `HealthPage`'s `FindingRow`. Use
-   `react-markdown`, pinned, raw HTML off (the user's ruling of 2026-11-18).
-4. **Settings Analyst tab and user docs**: the two budgets, per-provider privacy
-   (`analyst_privacy`, `analyst_privacy_reset`), and the `billed`-overrides-localhost copy.
-   Note that reasoning models need Max tokens room: Gemini 2.5 Flash was cut off at 1,024
-   and finished at 2,048. Write `docs/analyst.md` § Chat and the e2e against `fake_llm`.
-5. Merge `main` into `feat/analyst` regularly; migrations only on a throwaway database.
+1. **2c is PR #185** into `feat/analyst`: the chat page, `chatStore`, `react-markdown` and
+   Settings → Analyst (`docs/dev/analyst/chat-ui.md`), Opus-reviewed with its lifecycle
+   findings fixed. Merge it once the user agrees.
+2. **Then 2d, note proposals** (the list under Now). First check what 2a already built for
+   it: the plan's `chat_proposals` table and the notes' chat columns. The fake LLM's `notes`
+   and `notes-malformed` presets are ready, and a reply's manifest carries `note_numbers`.
+3. **2e must key the open chat by pane.** `chatStore.openChat` is keyed by dataset, so two
+   panes on one dataset show the same chat (`chat-ui.md` § The stream lives outside React).
+   "Open chat beside" puts exactly two such panes side by side.
+4. Merge `main` into `feat/analyst` regularly; migrations only on a throwaway database.
    The previous block is in
    [roadmap-archive/handoff-2026-11-19.md](roadmap-archive/handoff-2026-11-19.md).
 
@@ -80,8 +75,9 @@ Plan: [analyst-plan/README.md](analyst-plan/README.md). Gate: every phase below 
   - [x] 2b, sending: the streaming call, a per-provider limiter shared with caption jobs,
     budgets, cancel, the startup sweep and dataset-delete cancel, finding references
     (record: `docs/dev/analyst/sending.md`): PR #184 into `feat/analyst`, 2026-11-19.
-  - [ ] 2c, the chat page: `chatStore`, the components, `react-markdown`, the Settings
-    Analyst tab and the user docs.
+  - [x] 2c, the chat page: `chatStore`, the components, `react-markdown`, the Settings
+    Analyst tab and the user docs (record: `docs/dev/analyst/chat-ui.md`): PR #185 into
+    `feat/analyst`, 2026-11-19.
   - [ ] 2d, note proposals: the `crucible-notes` parser, accept and undo, the notes' chat
     columns.
   - [ ] 2e, "Open chat beside" with the pane layout persisted, then scripted trials against

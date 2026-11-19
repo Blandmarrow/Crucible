@@ -52,6 +52,11 @@ const IcoHealth = () => (
     <path d="M1.5 8.5h3l1.5-3 2.5 6 1.5-3h4.5"/>
   </svg>
 );
+const IcoChat = () => (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round">
+    <path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/>
+  </svg>
+);
 const IcoExport = () => (
   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
     <path d="M8 2v8M5 7l3 3 3-3M2.5 13.5h11"/>
@@ -332,6 +337,7 @@ export default function Sidebar() {
             <NavItem to={`/datasets/${datasetId}/quality`} icon={<IcoQuality />} label="Score images" />
             <NavItem to={`/datasets/${datasetId}/stats`} icon={<IcoStats />} label="Stats" />
             <NavItem to={`/datasets/${datasetId}/health`} icon={<IcoHealth />} label="Health" />
+            <NavItem to={`/datasets/${datasetId}/chat`} icon={<IcoChat />} label="Analyst" />
             <NavItem to={`/datasets/${datasetId}/bulk-edit`} icon={<IcoBulkEdit />} label="Bulk Edit" />
             <NavItem to={`/datasets/${datasetId}/consolidate`} icon={<IcoConsolidate />} label="Consolidate Tags" />
             <NavItem to={`/datasets/${datasetId}/versions`} icon={<IcoVersions />} label="Versions" />

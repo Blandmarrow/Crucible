@@ -8,11 +8,14 @@ interface ModelPickerProps {
   providerId?: string;
   baseUrl?: string;
   placeholder?: string;
+  /** When set, blank is a real choice (e.g. "the provider's default"), always offered
+   *  under this label; otherwise blank is only a "select a model" prompt. */
+  emptyLabel?: string;
 }
 
 const CUSTOM_SENTINEL = "__custom__";
 
-export default function ModelPicker({ value, onChange, providerId, baseUrl, placeholder }: ModelPickerProps) {
+export default function ModelPicker({ value, onChange, providerId, baseUrl, placeholder, emptyLabel }: ModelPickerProps) {
   const [fetchedModels, setFetchedModels] = useState<string[]>([]);
   const [isFetching, setIsFetching] = useState(false);
   const [fetchError, setFetchError] = useState(false);
@@ -133,7 +136,7 @@ export default function ModelPicker({ value, onChange, providerId, baseUrl, plac
           onChange={handleSelectChange}
           style={{ flex: 1, minWidth: 0, overflow: "hidden" }}
         >
-          {!value && <option value="">— select model —</option>}
+          {emptyLabel !== undefined ? <option value="">{emptyLabel}</option> : !value && <option value="">— select model —</option>}
           {allModels.map((m) => (
             <option key={m} value={m}>{m}</option>
           ))}

@@ -3,20 +3,17 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { RefreshCw } from "lucide-react";
 import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
-import { usePaneNavigate } from "../hooks/usePaneNavigate";
 import { datasetsApi } from "../api/datasets";
 import { filterSpecParams, healthApi, type Finding, type HealthReport, type Severity } from "../api/health";
 import { datasetNotesKey, notesApi } from "../api/notes";
-import type { PageType } from "../contexts/PaneContext";
-import type { Dataset } from "../types";
 import { apiErrorDetail } from "../utils/apiError";
-import { encodeFilterLink } from "../utils/filterLink";
 import FilteredImagesModal from "../components/common/FilteredImagesModal";
 import ModalShell from "../components/common/ModalShell";
+import FindingCard from "../components/health/FindingCard";
 import NotesEditor from "../components/health/NotesEditor";
-
-const SEVERITY_LABEL: Record<Severity, string> = { error: "Error", warn: "Warning", info: "Note" };
-const SEVERITY_CLASS: Record<Severity, string> = { error: "bad", warn: "warn", info: "info" };
+import { SEVERITY_CLASS, SEVERITY_LABEL } from "../components/health/severity";
+import { useFindingActions } from "../components/health/useFindingActions";
+import { useHealthReport } from "../components/health/useHealthReport";
 
 /** The Health page (M12): what Crucible finds wrong with a dataset, with no AI.
  *  The body is keyed on the dataset so its drafts and open dialogs reset on a switch
@@ -29,26 +26,12 @@ export default function HealthPage() {
 
 function HealthBody({ datasetId }: { datasetId: string }) {
   const qc = useQueryClient();
-  const { go } = usePaneNavigate();
+  const { openInGallery, openFix } = useFindingActions(datasetId);
   const [showing, setShowing] = useState<Finding | null>(null);
   const [dismissing, setDismissing] = useState<Finding | null>(null);
 
   const { data: dataset } = useQuery({ queryKey: ["dataset", datasetId], queryFn: () => datasetsApi.get(datasetId) });
-  const { data: report, isLoading, isFetching, error } = useQuery<HealthReport>({
-    queryKey: ["dataset-health", datasetId],
-    queryFn: async () => {
-      const r = await healthApi.get(datasetId);
-      // Building the report is what writes the card badge's counts, so the list is
-      // refetched only now, after the write, and only when the counts moved.
-      // Invalidating both at once raced: the list came back first, still old.
-      const listed = qc.getQueryData<Dataset[]>(["datasets"])?.find((d) => d.id === datasetId);
-      const s = listed?.health_summary;
-      if (listed && (!s || s.error !== r.summary.error || s.warn !== r.summary.warn || s.info !== r.summary.info)) {
-        qc.invalidateQueries({ queryKey: ["datasets"] });
-      }
-      return r;
-    },
-  });
+  const { data: report, isLoading, isFetching, error } = useHealthReport(datasetId);
 
   const afterChange = () => {
     qc.invalidateQueries({ queryKey: ["dataset-health", datasetId] });
@@ -59,21 +42,6 @@ function HealthBody({ datasetId }: { datasetId: string }) {
     onSuccess: afterChange,
     onError: (err) => toast.error(apiErrorDetail(err, "Could not restore the finding")),
   });
-
-  // The finding's images in the gallery, where they can be selected and acted on
-  // (the modal only previews them). The gallery applies the link once and clears
-  // every other filter: see docs/dev/gallery/state.md.
-  const openInGallery = (f: Finding) => {
-    if (!f.filter_spec) return;
-    const filter = encodeFilterLink({ label: f.title, spec: f.filter_spec });
-    go(`/datasets/${datasetId}/gallery?filter=${filter}`, { page: "gallery", datasetId, filter });
-  };
-
-  const openFix = (f: Finding) => {
-    if (!f.fix) return;
-    if (f.fix.page === "datasets") go("/", { page: "datasets" });
-    else go(`/datasets/${datasetId}/${f.fix.page}`, { page: f.fix.page as PageType, datasetId });
-  };
 
   return (
     <div style={{ padding: "24px 28px", overflowY: "auto", flex: 1 }}>
@@ -116,7 +84,7 @@ function HealthBody({ datasetId }: { datasetId: string }) {
           ) : (
             <ul aria-label="Findings" style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 8 }}>
               {report.findings.map((f) => (
-                <FindingRow
+                <FindingCard
                   key={f.id}
                   finding={f}
                   onShow={() => setShowing(f)}
@@ -214,100 +182,6 @@ function BaselineLine({ report }: { report: HealthReport }) {
   const name = b.version_name ?? "the last snapshot";
   if (b.missing) return <div>Compared with {name}: no baseline, since it was taken before findings were recorded.</div>;
   return <div>Compared with {name}, taken {new Date(b.created_at).toLocaleString()}.</div>;
-}
-
-const UNIT_LABEL: Record<Finding["unit"], [string, string]> = {
-  images: ["image", "images"],
-  tags: ["tag", "tags"],
-  groups: ["group", "groups"],
-};
-
-function FindingRow({ finding: f, onShow, onOpenGallery, onFix, onDismiss }: {
-  finding: Finding;
-  onShow: () => void;
-  onOpenGallery: () => void;
-  onFix: () => void;
-  onDismiss: () => void;
-}) {
-  const [one, many] = UNIT_LABEL[f.unit];
-  const delta = f.was === null ? null : f.count - f.was;
-  return (
-    <li className="card" data-testid={`finding-${f.id}`} style={{ padding: "10px 14px", display: "flex", flexDirection: "column", gap: 6 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <span className={`badge dot ${SEVERITY_CLASS[f.severity]}`}>{SEVERITY_LABEL[f.severity]}</span>
-        <strong style={{ fontSize: 13.5 }}>{f.title}</strong>
-        {f.total > 0 && (
-          <span className="mono" style={{ fontSize: 12, color: "var(--fg-mute)" }}>
-            {f.count.toLocaleString()} of {f.total.toLocaleString()} {f.total === 1 ? one : many}
-          </span>
-        )}
-        {delta !== null && delta !== 0 && (
-          <span style={{ fontSize: 11.5, color: delta > 0 ? "var(--bad)" : "var(--good)" }} title="Against the snapshot">
-            was {f.was!.toLocaleString()}
-          </span>
-        )}
-        <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
-          {f.filter_spec && (
-            <>
-              <button className="btn sm" onClick={onShow} aria-label={`Show images: ${f.title}`}>Show images</button>
-              <button className="btn sm ghost" onClick={onOpenGallery} aria-label={`Open in gallery: ${f.title}`}>Open in gallery</button>
-            </>
-          )}
-          {f.fix && <button className="btn sm" onClick={onFix}>{f.fix.label}</button>}
-          <button className="btn sm ghost" onClick={onDismiss} aria-label={`Dismiss: ${f.title}`}>Dismiss…</button>
-        </span>
-      </div>
-      {f.resurfaced && f.dismissal && (
-        <div style={{ fontSize: 12, color: "var(--warn)" }}>
-          Back after a dismissal (“{f.dismissal.reason}”): it was {f.dismissal.count_then ?? "?"} then and has more than doubled.
-        </div>
-      )}
-      <Numbers numbers={f.numbers} />
-    </li>
-  );
-}
-
-const HUMAN_KEYS: Record<string, string> = {
-  min_images: "minimum",
-  under_tokens: "under (tokens)",
-  token_limit: "token limit",
-  target_short_side: "target short side (px)",
-  target_from: "target from",
-  smallest_short_side: "smallest short side (px)",
-  bucket_share_under: "bucket share under",
-  buckets_used: "buckets used",
-  duplicate_copies: "copies",
-  below_score: "below score",
-  iqr_k: "IQR factor",
-  tag_style: "tag-style",
-};
-
-function formatValue(v: unknown): string {
-  if (Array.isArray(v)) {
-    return v
-      .map((x) => (x && typeof x === "object" && "tag" in x ? `${(x as { tag: string }).tag} (${(x as { count: number }).count})` : String(x)))
-      .join(", ");
-  }
-  if (v && typeof v === "object") return Object.entries(v).map(([k, n]) => `${k}: ${n}`).join(", ");
-  return String(v);
-}
-
-/** The evidence behind a finding: its thresholds and the values found. A `hint`
- *  is shown as plain guidance rather than a value. */
-function Numbers({ numbers }: { numbers: Record<string, unknown> }) {
-  const entries = Object.entries(numbers).filter(([k, v]) => k !== "hint" && v !== null && v !== undefined);
-  const hint = typeof numbers.hint === "string" ? numbers.hint : null;
-  if (!entries.length && !hint) return null;
-  return (
-    <div style={{ fontSize: 11.5, color: "var(--fg-dim)", display: "flex", gap: 14, flexWrap: "wrap" }}>
-      {entries.map(([k, v]) => (
-        <span key={k}>
-          <span style={{ color: "var(--fg-mute)" }}>{HUMAN_KEYS[k] ?? k.replace(/_/g, " ")}:</span> {formatValue(v)}
-        </span>
-      ))}
-      {hint && <em>{hint}</em>}
-    </div>
-  );
 }
 
 function DismissDialog({ finding, onClose, onDismiss }: {

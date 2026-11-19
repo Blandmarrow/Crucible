@@ -10,6 +10,8 @@ dataset dialogs and the card badge. The report and the routes they call are
 | File | What |
 |---|---|
 | `frontend/src/pages/HealthPage.tsx` | The page: header counts, goal and baseline lines, findings, resolved, Dismissed, the dismiss dialog, and the two notes editors |
+| `frontend/src/components/health/FindingCard.tsx` | One finding as a card, shared with the chat's related-findings strip (`compact` there); `severity.ts` holds the labels and badge classes |
+| `frontend/src/components/health/useFindingActions.ts`, `useHealthReport.ts` | The "Open in gallery" and fix navigation, and the report's query, both shared with the chat (`chat-ui.md`) |
 | `frontend/src/components/health/NotesEditor.tsx` | One scope of notes, as sections of items: add, edit in place, reorder, remove with an Undo toast |
 | `frontend/src/components/common/FilteredImagesModal.tsx` | A finding's images ("Show images"), shared with the Stats page's bar click-through (`docs/dev/statistics-panels.md`) |
 | `frontend/src/components/datasets/GoalFields.tsx`, `goalDraft.ts` | The goal and target resolution fields in `NewDatasetDialog` and `EditDatasetDialog`, and the draft's parsing |
@@ -30,7 +32,8 @@ Query keys:
   old counts until "Check again". The Edit dialog invalidates it too, since the goal changes
   which findings apply.
 - **The card badge refreshes after the report, not with it.** Building the report is what
-  writes `health_summary`, so `HealthPage`'s query function refetches `["datasets"]` itself,
+  writes `health_summary`, so the report's one query function (`useHealthReport`, which the
+  Health page and the chat both call) refetches `["datasets"]` itself,
   after the report arrives and only when its counts differ from the list's. Invalidating both
   together raced: the list came back first, still old, and stayed fresh for 30 s.
 - `["dataset-notes", datasetId]` and `["app-notes"]`, the two note scopes (`datasetNotesKey`,
@@ -50,7 +53,7 @@ persisted state, so a body-level key gives the reset without the route remountin
 
 ## The finding row
 
-A finding's buttons come from its data, never from the page: "Show images" and "Open in
+The row is `FindingCard`, shared with the chat. A finding's buttons come from its data, never from the page: "Show images" and "Open in
 gallery" only when `filter_spec` is set (the first sends it through `filterSpecParams`, which
 drops unset keys, to `FilteredImagesModal`; the second encodes it with the finding's title as a
 `?filter=` deep link, `docs/dev/gallery/state.md` § The `?filter=` deep link), the fix button

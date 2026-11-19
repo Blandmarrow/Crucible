@@ -16,6 +16,10 @@ export interface ProviderOut {
   billed: boolean | null;
   /** The effective value: billed, else is_remote. */
   is_billed: boolean;
+  /** What the analyst may send this provider: the stored override (null = follow
+   *  `billed`), and the result laid over the defaults. */
+  analyst_privacy: Partial<Record<string, boolean>> | null;
+  analyst_privacy_effective: Record<string, boolean>;
   created_at: string;
 }
 
@@ -41,6 +45,9 @@ export interface ProviderUpdate {
   timeout_s?: number;
   max_concurrent?: number;
   billed?: boolean;
+  analyst_privacy?: Partial<Record<string, boolean>>;
+  /** Back to NULL: follow `billed` again. */
+  analyst_privacy_reset?: boolean;
 }
 
 export const providersApi = {

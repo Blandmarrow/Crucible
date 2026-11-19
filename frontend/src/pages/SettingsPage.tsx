@@ -28,6 +28,7 @@ import ConfirmDialog from "../components/common/ConfirmDialog";
 import DirPickerModal from "../components/common/DirPickerModal";
 import ModelPicker from "../components/providers/ModelPicker";
 import LabelsPanel from "../components/settings/LabelsPanel";
+import AnalystPanel from "../components/settings/AnalystPanel";
 import SecretField from "../components/settings/SecretField";
 import SynonymsSetting from "../components/settings/SynonymsSetting";
 import { releaseNotesUrl, useAppVersion } from "../hooks/useAppVersion";
@@ -48,6 +49,8 @@ const DEFAULTS: Thresholds = {
   comfy_workflow_dir: "",
   llm_gpu_handoff: false,
   ollama_max_concurrent: 1,
+  analyst_chat_budget_tokens: 200_000,
+  analyst_daily_budget_tokens: 1_000_000,
 };
 
 interface ThresholdField {
@@ -231,7 +234,7 @@ export default function SettingsPage() {
       form.auto_rescan_on_open !== thresholds.auto_rescan_on_open ||
       form.auto_unload_after_scoring !== thresholds.auto_unload_after_scoring);
 
-  const [activeTab, setActiveTab] = useState<"gallery" | "captioning" | "labels" | "ui" | "quality" | "versioning" | "providers" | "comfyui" | "secrets">("gallery");
+  const [activeTab, setActiveTab] = useState<"gallery" | "captioning" | "labels" | "ui" | "quality" | "versioning" | "providers" | "analyst" | "comfyui" | "secrets">("gallery");
 
   // Gallery checkbox size lives in uiPrefsStore (not local state) so dragging the
   // slider re-renders gallery cards live, including a GalleryPage in another pane.
@@ -412,9 +415,16 @@ export default function SettingsPage() {
         <button className={`tab${activeTab === "quality" ? " active" : ""}`} onClick={() => setActiveTab("quality")}>Quality Thresholds</button>
         <button className={`tab${activeTab === "versioning" ? " active" : ""}`} onClick={() => setActiveTab("versioning")}>Versioning</button>
         <button className={`tab${activeTab === "providers" ? " active" : ""}`} onClick={() => setActiveTab("providers")}>LLM Providers</button>
+        <button className={`tab${activeTab === "analyst" ? " active" : ""}`} onClick={() => setActiveTab("analyst")}>Analyst</button>
         <button className={`tab${activeTab === "comfyui" ? " active" : ""}`} onClick={() => setActiveTab("comfyui")}>ComfyUI</button>
         <button className={`tab${activeTab === "secrets" ? " active" : ""}`} onClick={() => setActiveTab("secrets")}>API Keys</button>
       </div>
+
+      {activeTab === "analyst" && (
+        <div className="panel">
+          <AnalystPanel />
+        </div>
+      )}
 
       {activeTab === "labels" && (
         <div className="panel">

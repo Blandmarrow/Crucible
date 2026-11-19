@@ -11,6 +11,7 @@ const PAGE_OPTIONS: { value: PageType; label: string }[] = [
   { value: "quality",      label: "Score Images" },
   { value: "stats",        label: "Stats" },
   { value: "health",       label: "Health" },
+  { value: "chat",         label: "Analyst" },
   { value: "export",       label: "Export" },
   { value: "bulk-edit",    label: "Bulk Edit" },
   { value: "consolidate",  label: "Consolidate Tags" },
@@ -30,7 +31,7 @@ const UNPICKABLE_LABELS: Partial<Record<PageType, string>> = {
   compare: "Compare",
 };
 
-const NEEDS_DATASET = new Set<PageType>(["gallery", "captioning", "quality", "stats", "health", "export", "bulk-edit", "consolidate", "versions", "comfy", "runs"]);
+const NEEDS_DATASET = new Set<PageType>(["gallery", "captioning", "quality", "stats", "health", "chat", "export", "bulk-edit", "consolidate", "versions", "comfy", "runs"]);
 
 interface Props {
   paneId: string;

@@ -7,6 +7,7 @@ export type PageType =
   | "quality"
   | "stats"
   | "health"
+  | "chat"
   | "export"
   | "file-browser"
   | "image-detail"

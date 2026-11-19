@@ -319,7 +319,7 @@ def _build_findings(
             numbers = {setting: getattr(thresholds, setting)} if setting else {}
             add(id=fid, severity=severity, title=title, count=n, numbers=numbers,
                 filter_spec=FilterSpec(quality_flag=flag_key),
-                fix=_fix("quality", "Review on the Quality page"))
+                fix=_fix("quality", "Review on Score images"))
     if counts.dup_groups:
         add(id="duplicates", severity="warn", title="Duplicate groups",
             unit="groups", count=int(counts.dup_groups), total=total,
@@ -349,7 +349,7 @@ def _build_findings(
             count=int(counts.style_outliers),
             numbers={"below_score": round(style_fence, 4), "iqr_k": STYLE_OUTLIER_IQR_K},
             filter_spec=FilterSpec(score_field="style_similarity_score", max_score_lt=style_fence),
-            fix=_fix("quality", "Review on the Quality page"))
+            fix=_fix("quality", "Review on Score images"))
 
     # Licence
     no_license = int(counts.unlicensed)

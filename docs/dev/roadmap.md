@@ -38,8 +38,8 @@ docs included, until the whole feature is done.
 
 1. **Phase 2 is complete** (PR #188 merged). **Phase 3 is planned** in six PRs with three
    rulings ([§ Phase 3](analyst-plan/README.md#phase-3--read-only-tools)).
-2. **3a**, the system prompt naming the fix pages, is on `feat/analyst-p3a-prompt`: open its
-   PR into `feat/analyst`, Opus-review it, merge.
+2. **3a**, the system prompt naming the fix pages, is PR #189 into `feat/analyst`:
+   Opus-review it, merge once its checks pass.
 3. **Then 3b**, the streamed tool calls and the per-model probe, on a new branch off
    `feat/analyst`.
 4. Merge `main` into `feat/analyst` regularly; migrations only on a throwaway database.

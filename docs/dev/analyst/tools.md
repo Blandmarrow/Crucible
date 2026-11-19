@@ -16,15 +16,28 @@ that was never probed sees exactly the phase 2 request.
 
 The OpenAI stream sends a call in pieces: the id and name first, then the arguments in
 fragments, each piece keyed by `index`. `ToolCallBuffer` puts them back together and
-`StreamResult.tool_calls` returns them as `ToolCallOut(id, name, arguments)`, the arguments
-still raw JSON for the caller to parse. Servers differ at the edges, so the buffer is
-lenient there:
+`StreamResult.tool_calls` returns them as `ToolCallOut(id, name, arguments, extra_content)`,
+the arguments still raw JSON for the caller to parse. Servers differ at the edges, and the
+buffer leans towards keeping two calls apart, since two calls merged into one give
+arguments that are not JSON:
 
-- A piece with no `index` continues the last call, unless it carries a different id,
-  which starts a new one.
-- A name sent again whole is not doubled.
+- A piece whose id differs from its call's id starts a new call, whatever its `index`
+  says: some servers put every parallel call on index 0.
+- A piece with no `index` continues the last call, unless it starts a new one: a different
+  id, or, with no id, a name when the last call already has its name and some arguments
+  (a server that sends each call whole in one piece). A piece that only repeats the name
+  is not a new call.
+- A name sent again whole is not doubled, and a name sent growing (`cru`, then
+  `crucible_echo`) is replaced, not appended.
 - A call that never got an id is given `call_<n>`, since the next request has to name the
   call it answers.
+
+**Whatever else the server attached to a call is kept and sent back.** Fields beyond the
+standard ones land in `ToolCallOut.extra_content`, and `as_message_call()` builds the
+assistant message's `tool_calls` entry with them. Gemini's OpenAI-compatible endpoint
+carries a thought signature there (`extra_content.google.thought_signature`), and Gemini 3
+refuses a tool answer whose request drops it. Every request that answers a tool call
+builds its entry through `as_message_call()`.
 
 **A tool-call piece ends the first-token limit**, as text does. A reply that is only tool
 calls would otherwise run on `FIRST_TOKEN_S` (180 s) throughout instead of switching to
@@ -49,14 +62,23 @@ loop the chat will run:
 
 That catches every way a model can fail at tools: answering in text, calling a tool that
 was not offered, arguments that are not the JSON asked for, the wrong word, calling the
-tool again, or ignoring the result.
+tool again, or ignoring the result. Every named call is answered in the second request; a
+call with no name is left out of it, since a strict server refuses one.
 
-**A verdict or nothing.** A pass, a fail, and a server that refuses a request offering
-tools (a `rejected` 4xx, in `prompt_generator._classify`'s terms) are stored. Anything else
-says nothing about tool support and is a 502 that stores nothing: a timeout, a 5xx, a bad
-key (401, 403, 404 are `fatal`), or a reply cut off at Max tokens, whose message says to
-raise it. A reasoning model needs room for its thinking ([sending.md](sending.md) § The
-order of a send).
+**A verdict or nothing.** A pass or a fail is stored, and so is a server that refuses the
+first request, the one offering tools, with a `rejected` 4xx (`prompt_generator._classify`'s
+term for a 4xx other than 401, 403, 404 and 429). That 4xx is not always about tools:
+Gemini answers a bad key with a 400, and some servers an unknown model. So the stored
+detail carries the server's own message, and a later probe replaces the verdict. Anything
+else says nothing about tool support and is a 502 that stores nothing:
+
+- a timeout, a 5xx, or a 401, 403 or 404 (`fatal`);
+- a refusal of the second request, the tool's answer, of any kind: the model did call the
+  tool, and the refusal is as likely to be about how Crucible sent the answer;
+- a reply cut off at Max tokens, before the call or inside its arguments, whose message
+  says to raise it. A reasoning model needs room for its thinking
+  ([sending.md](sending.md) § The order of a send);
+- the whole probe passing its deadline (below).
 
 **It is a real call, so it follows the chat's rules.**
 
@@ -70,7 +92,8 @@ order of a send).
 - A billed provider's probe is refused (409) before it starts when today's budget could not
   cover both calls at full length. `chat_runner.billed_used` is the sum both checks read.
 - Error text goes through `chat_runner.scrub`, so the key never reaches the response.
-- A second probe of the same model while one runs is a 409.
+- A second probe of the same model while one runs is a 409. The guard is taken before the
+  first await, the budget read, so a double-click cannot slip a second probe in.
 - **The whole probe has a deadline**, `PROBE_TOTAL_S` (300 s), past which it ends with no
   verdict. The chat's limits are per chunk, and a reasoning model's hidden thinking
   arrives as chunks that are not text, so they never stop it. On 2026-11-19, with the GPU
@@ -91,7 +114,11 @@ change in whether the provider bills; a rename or a new default model keeps it. 
 ends its read transaction before the calls, which can take minutes, and re-reads the row
 before storing. If the address or billing changed meanwhile, the stale verdict is
 returned but not stored. The stored dict is copied before it is changed (CLAUDE.md § Never
-mutate a loaded JSON column in place).
+mutate a loaded JSON column in place). Two probes of different models on one provider that
+finish within moments of each other can lose one verdict to the other's write; a re-probe
+puts it back. **A stored entry that does not validate is skipped**, by `tools_ok` and by
+`OpenAIProviderOut`, so a hand edit or an older shape never turns every provider listing
+into a 500.
 
 ## The fake LLM
 
@@ -109,7 +136,10 @@ for. The second is what lets e2e, which cannot script replies, see a probe pass.
   carrying neither key, and a tool-call piece handing over to the idle limit.
 - The probe passing, both calls' requests and its usage rows.
 - Each way of failing stored, and a later pass replacing it.
-- No verdict storing nothing, with the key scrubbed from the 502.
+- No verdict storing nothing, with the key scrubbed from the 502: a 5xx, a 401, a cut-off
+  before the call and inside its arguments, a refused tool answer, the deadline.
+- A double-click running one probe, and malformed stored verdicts skipped.
+- `ToolCallBuffer` keeping calls apart, and `extra_content` kept and sent back.
 - The billed daily budget refusing before any call, the model choice and the 404/422s.
 - The verdicts cleared on an address or billing change and kept on a rename.
 

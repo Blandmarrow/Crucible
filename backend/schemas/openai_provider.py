@@ -55,8 +55,26 @@ def tools_ok(row: object, model: str | None) -> bool:
     tools, as in phase 2. See services/tool_probe.py."""
     if not model:
         return False
-    entry = (getattr(row, "tools_probe", None) or {}).get(model)
+    entry = _probe_dict(row).get(model)
     return bool(isinstance(entry, dict) and entry.get("ok") is True)
+
+
+def _probe_dict(row: object) -> dict:
+    """The stored verdicts, or {} when the column holds anything but a dict."""
+    stored = getattr(row, "tools_probe", None)
+    return stored if isinstance(stored, dict) else {}
+
+
+def _probe_entries(row: object) -> dict[str, "ToolProbeEntry"]:
+    """The stored verdicts that validate. A malformed one (a hand edit, or an older
+    shape) is skipped, never a 500 on every provider listing."""
+    out = {}
+    for model, entry in _probe_dict(row).items():
+        try:
+            out[model] = ToolProbeEntry.model_validate(entry)
+        except Exception:  # noqa: BLE001 — skip what does not validate
+            continue
+    return out
 
 
 class ToolProbeEntry(BaseModel):
@@ -178,8 +196,6 @@ class OpenAIProviderOut(BaseModel):
             is_billed=provider_is_billed(row),
             analyst_privacy=getattr(row, "analyst_privacy", None),
             analyst_privacy_effective=provider_privacy(row),
-            tools_probe={
-                m: e for m, e in (getattr(row, "tools_probe", None) or {}).items() if isinstance(e, dict)
-            },
+            tools_probe=_probe_entries(row),
             created_at=row.created_at,
         )

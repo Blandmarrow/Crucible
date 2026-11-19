@@ -8,10 +8,12 @@ will run, so a model that passes can be trusted with it, and one that answers in
 calls the wrong tool, garbles the arguments or ignores the result cannot.
 
 **A verdict or nothing.** A pass or a fail is stored per model in
-`openai_providers.tools_probe`, and so is a server that refuses a request offering tools
-(a `rejected` 4xx). A call that fails for any other reason (a timeout, a 5xx, a bad key, a
-reply cut off at Max tokens) says nothing about tool support: it is reported as
-`ProbeInconclusive` and nothing is stored.
+`openai_providers.tools_probe`, and so is a server that refuses the first request, the one
+offering tools, with a `rejected` 4xx. That 4xx is not always about tools (Gemini answers a
+bad key with a 400), so the stored detail carries the server's message. Anything else says
+nothing about tool support and is reported as `ProbeInconclusive`, storing nothing: a
+timeout, a 5xx, a 401/403/404, a refusal of the tool's answer, a reply cut off at Max
+tokens, or the whole probe passing `PROBE_TOTAL_S`.
 
 **It is a real call**, so it follows the chat's rules: it holds one of the provider's
 shared slots for each call (`llm_limiter`), builds its client with `make_client`, uses the
@@ -166,29 +168,37 @@ async def _verdict(cfg, model: str) -> tuple[bool, str]:
     if echo is None:
         return False, f"The model called a tool that was not offered ({first.tool_calls[0].name[:60]!r})."
     word = _word(echo.arguments)
+    if word is None and first.finish_reason == "length":
+        # Cut off inside the arguments: Max tokens ran out, which says nothing about tools.
+        raise ProbeInconclusive(
+            "The reply was cut off by the provider's Max tokens while it called the tool. "
+            "Raise Max tokens and check again.")
     if word is None:
         return False, "The model called the tool, but its arguments were not the JSON the tool asks for."
     if word.lower() != PROBE_WORD:
         return False, "The model called the tool with the wrong word."
 
     code = secrets.token_hex(3)
+    # Every named call is sent back with its answer, extra fields included (Gemini's
+    # thought signature, `ToolCallOut.extra_content`); a call with no name is left out,
+    # since a strict server refuses one.
+    named = [c for c in first.tool_calls if c.name]
     messages.append({
         "role": "assistant",
         "content": text or None,
-        "tool_calls": [
-            {"id": c.id, "type": "function", "function": {"name": c.name, "arguments": c.arguments}}
-            for c in first.tool_calls
-        ],
+        "tool_calls": [c.as_message_call() for c in named],
     })
-    for c in first.tool_calls:
+    for c in named:
         answer = f"Check code: {code}" if c is echo else "No such tool."
         messages.append({"role": "tool", "tool_call_id": c.id, "content": answer})
     try:
         reply, second = await _round(cfg, model, messages)
     except ChatStreamError as exc:
-        if exc.kind == "rejected":
-            return False, "The server refused the tool's answer: " + chat_runner.scrub(str(exc), cfg.api_key)
-        raise ProbeInconclusive(f"The call failed ({exc.kind}): {chat_runner.scrub(str(exc), cfg.api_key)}") from exc
+        # Even a `rejected` here is no verdict: the model did call the tool, and a refusal
+        # of the answer is as likely to be about how Crucible sent it as about the model.
+        raise ProbeInconclusive(
+            f"The server refused the tool's answer ({exc.kind}): {chat_runner.scrub(str(exc), cfg.api_key)}"
+        ) from exc
     if code in reply:
         return True, PASSED
     if second.finish_reason == "length":
@@ -213,23 +223,23 @@ async def probe(db: AsyncSession, provider_id: str, model: str | None) -> ToolPr
     key = (row.id, model)
     if key in _probing:
         raise HTTPException(status_code=409, detail="A check of this model is already running.")
-
-    if cfg.billed:
-        # Both calls at their most: the prompt (twice, plus the tool's answer) and two
-        # full-length replies.
-        estimate = 2 * (chat_runner.estimate_tokens(_chars([{"content": PROBE_PROMPT}]) * 2) + cfg.max_tokens)
-        settings = await get_thresholds(db)
-        used = await chat_runner.billed_used(db)
-        if used + estimate > settings.analyst_daily_budget_tokens:
-            raise HTTPException(status_code=409, detail=(
-                f"Checking could use about {estimate:,} tokens, and {used:,} of today's "
-                f"{settings.analyst_daily_budget_tokens:,} are used. Raise the daily budget in "
-                "Settings → Analyst, or check tomorrow."))
-    # End the read transaction: the calls can take minutes.
-    await db.commit()
-
+    # Taken before the first await, so a double-click cannot slip a second probe in while
+    # the first is still reading the budget.
     _probing.add(key)
     try:
+        if cfg.billed:
+            # Both calls at their most: the prompt (twice, plus the tool's answer) and two
+            # full-length replies.
+            estimate = 2 * (chat_runner.estimate_tokens(_chars([{"content": PROBE_PROMPT}]) * 2) + cfg.max_tokens)
+            settings = await get_thresholds(db)
+            used = await chat_runner.billed_used(db)
+            if used + estimate > settings.analyst_daily_budget_tokens:
+                raise HTTPException(status_code=409, detail=(
+                    f"Checking could use about {estimate:,} tokens, and {used:,} of today's "
+                    f"{settings.analyst_daily_budget_tokens:,} are used. Raise the daily budget in "
+                    "Settings → Analyst, or check tomorrow."))
+        # End the read transaction: the calls can take minutes.
+        await db.commit()
         try:
             ok, detail = await asyncio.wait_for(_verdict(cfg, model), PROBE_TOTAL_S)
         except asyncio.TimeoutError:

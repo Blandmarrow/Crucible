@@ -11,7 +11,7 @@ from types import SimpleNamespace as NS
 
 from sqlalchemy import select
 
-from backend.ml.chat_stream import ToolCallBuffer, stream_chat
+from backend.ml.chat_stream import ToolCallBuffer, ToolCallOut, stream_chat
 from backend.models import LlmUsage, OpenAIProvider
 from backend.schemas.openai_provider import tools_ok
 from backend.services import tool_probe
@@ -56,6 +56,44 @@ def test_buffer_edges_servers_differ_on():
     b = ToolCallBuffer()
     b.add([_piece(0, None, "a", "{}")])
     assert b.calls()[0].id == "call_0"
+
+
+def test_buffer_keeps_calls_apart():
+    """Two calls merged into one give arguments that are not JSON, so the buffer leans
+    towards splitting."""
+    # Every parallel call on index 0, told apart only by id.
+    b = ToolCallBuffer()
+    b.add([_piece(0, "a1", "crucible_echo", '{"word": "ember"}')])
+    b.add([_piece(0, "a2", "crucible_echo", '{"word": "ember"}')])
+    assert [(c.id, c.arguments) for c in b.calls()] == [("a1", '{"word": "ember"}'), ("a2", '{"word": "ember"}')]
+    # Whole calls with no index and no id: a name after a finished call starts a new one.
+    b = ToolCallBuffer()
+    b.add([_piece(None, None, "tool_a", "{}")])
+    b.add([_piece(None, None, "tool_b", '{"x": 1}')])
+    assert [(c.name, c.arguments) for c in b.calls()] == [("tool_a", "{}"), ("tool_b", '{"x": 1}')]
+    assert [c.id for c in b.calls()] == ["call_0", "call_1"]
+    # A name sent growing is replaced, not appended.
+    b = ToolCallBuffer()
+    b.add([_piece(0, "c", "cru", None)])
+    b.add([_piece(0, None, "crucible_echo", "{}")])
+    assert b.calls()[0].name == "crucible_echo"
+
+
+def test_extra_content_is_kept_and_sent_back():
+    """Gemini's thought signature rides in a call's `extra_content`; the next request
+    must carry it back."""
+    sig = {"google": {"thought_signature": "c2ln"}}
+    piece = _piece(0, "g1", "crucible_echo", ECHO)
+    piece.model_extra = {"extra_content": sig}
+    b = ToolCallBuffer()
+    b.add([piece])
+    call = b.calls()[0]
+    assert call.extra_content == sig
+    assert call.as_message_call() == {
+        "id": "g1", "type": "function", "function": {"name": "crucible_echo", "arguments": ECHO},
+        "extra_content": sig}
+    # A call with nothing extra sends no such key.
+    assert "extra_content" not in ToolCallOut("i", "n", "{}").as_message_call()
 
 
 # --- stream_chat with tools -----------------------------------------------------------
@@ -238,7 +276,55 @@ def test_no_verdict_stores_nothing(fake_llm, tmp_path):
             fake_llm.replies.append(Reply(text="Let me think", finish_reason="length"))
             r = await _probe(env, p["id"])
             assert r.status_code == 502 and "Max tokens" in r.json()["detail"]
+            # Cut off inside the arguments: Max tokens, not a verdict on tools.
+            fake_llm.replies.append(Reply(text="", finish_reason="length", tool_calls=[
+                ToolCall(tool_probe.PROBE_TOOL_NAME, '{"word": "em')]))
+            r = await _probe(env, p["id"])
+            assert r.status_code == 502 and "Max tokens" in r.json()["detail"]
+            # A refusal of the tool's answer: the model did call the tool, so no verdict.
+            fake_llm.replies.extend([
+                Reply(text="", finish_reason="tool_calls", tool_calls=[ToolCall(tool_probe.PROBE_TOOL_NAME, ECHO)]),
+                Reply(status=400, error={"error": {"message": "bad tool message", "type": "x", "param": None,
+                                                   "code": None}})])
+            r = await _probe(env, p["id"])
+            assert r.status_code == 502 and "refused the tool's answer" in r.json()["detail"]
             assert (await _row(env, p["id"])).tools_probe is None
+
+    run(scenario())
+
+
+def test_a_double_click_runs_one_probe(fake_llm, tmp_path):
+    """The guard is taken before the first await, so a second probe of the same model
+    while the first runs is a 409, not a second pair of calls."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            p = await _provider(env, billed=True)  # billed: the budget read is the await that raced
+            fake_llm.replies.append(Reply(
+                text="hmm " * 20, chunk_size=2, chunk_delay=0.02, finish_reason="tool_calls",
+                tool_calls=[ToolCall(tool_probe.PROBE_TOOL_NAME, ECHO)]))
+            a, b = await asyncio.gather(_probe(env, p["id"]), _probe(env, p["id"]))
+            assert sorted([a.status_code, b.status_code]) == [200, 409]
+            assert len([q for q in fake_llm.requests if q["path"].endswith("/chat/completions")]) == 2
+            assert not tool_probe._probing
+
+    run(scenario())
+
+
+def test_malformed_stored_verdicts_are_skipped(fake_llm, tmp_path):
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            p = await _provider(env)
+            for junk in ({"fake-chat": {"ok": True, "checked_at": "x", "detail": "y"}, "b": "junk", "c": {"ok": 1}},
+                         ["not", "a", "dict"]):
+                async with env.Session() as db:
+                    row = await db.get(OpenAIProvider, p["id"])
+                    row.tools_probe = junk
+                    await db.commit()
+                r = await env.client.get(f"{API}/providers/")
+                assert r.status_code == 200
+                listed = r.json()[0]["tools_probe"]
+                assert set(listed) <= {"fake-chat"}
+                assert tools_ok(await _row(env, p["id"]), "fake-chat") == isinstance(junk, dict)
 
     run(scenario())
 

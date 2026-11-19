@@ -41,10 +41,22 @@ class ChatStreamError(Exception):
 @dataclass
 class ToolCallOut:
     """One tool call the model made, put back together from its stream pieces.
-    `arguments` is the raw JSON text as sent; the caller parses and validates it."""
+    `arguments` is the raw JSON text as sent; the caller parses and validates it.
+    `extra_content` is whatever the server attached to the call beyond the standard
+    fields, which the next request must send back with it: Gemini's OpenAI-compatible
+    endpoint carries a thought signature there (`extra_content.google.thought_signature`)
+    and refuses a tool answer that drops it."""
     id: str
     name: str
     arguments: str
+    extra_content: dict | None = None
+
+    def as_message_call(self) -> dict:
+        """The call as an assistant message's `tool_calls` entry, for the next request."""
+        out = {"id": self.id, "type": "function", "function": {"name": self.name, "arguments": self.arguments}}
+        if self.extra_content:
+            out["extra_content"] = self.extra_content
+        return out
 
 
 @dataclass
@@ -60,41 +72,68 @@ class ToolCallBuffer:
     """Puts streamed `delta.tool_calls` pieces back together.
 
     The OpenAI stream sends each call's id and name in its first piece and the arguments
-    in fragments after, all keyed by `index`. Servers differ at the edges, so: a piece
-    with no `index` continues the last call, unless it carries a different id, which
-    starts a new one; a name sent again whole is not doubled; a call that never got an
-    id is given `call_<n>`, since the next request must name it to answer it."""
+    in fragments after, all keyed by `index`. Servers differ at the edges, and the rules
+    below lean towards keeping two calls apart, since two calls merged into one give
+    arguments that are not JSON:
+
+    - A piece whose id differs from its call's id starts a new call, whatever its
+      `index` says (some servers put every parallel call on index 0).
+    - A piece with no `index` continues the last call, unless it starts a new one: a
+      different id, or, with no id, a name when the last call already has its name and
+      some arguments (a server that sends each call whole in one piece), unless the piece
+      only repeats that name.
+    - A name sent again whole is not doubled, and a name sent growing (`cru`, then
+      `crucible_echo`) is replaced, not appended.
+    - A call that never got an id is given `call_<n>`, since the next request has to
+      name the call it answers.
+    """
 
     def __init__(self) -> None:
-        self._calls: dict[int, dict] = {}
+        self._calls: list[dict] = []
+        # The server's `index` -> the position in `_calls` it currently feeds.
+        self._by_index: dict[int, int] = {}
+
+    def _new(self, index: int | None) -> dict:
+        entry = {"id": None, "name": "", "arguments": "", "extra_content": None}
+        self._calls.append(entry)
+        if index is not None:
+            self._by_index[index] = len(self._calls) - 1
+        return entry
 
     def add(self, pieces) -> None:
         for tc in pieces or []:
             index = getattr(tc, "index", None)
-            tc_id = getattr(tc, "id", None)
-            if index is None:
-                last = max(self._calls) if self._calls else None
-                if last is None:
-                    index = 0
-                elif tc_id and self._calls[last]["id"] not in (None, tc_id):
-                    index = last + 1
-                else:
-                    index = last
-            entry = self._calls.setdefault(index, {"id": None, "name": "", "arguments": ""})
+            tc_id = getattr(tc, "id", None) or None
+            fn = getattr(tc, "function", None)
+            name = (getattr(fn, "name", None) if fn is not None else None) or None
+            args = (getattr(fn, "arguments", None) if fn is not None else None) or ""
+            if index is not None:
+                pos = self._by_index.get(index)
+                entry = self._calls[pos] if pos is not None else None
+            else:
+                entry = self._calls[-1] if self._calls else None
+                repeat = name == entry["name"] and not args if entry is not None else False
+                if entry is not None and tc_id is None and name and entry["name"] and entry["arguments"] and not repeat:
+                    entry = None
+            if entry is None or (tc_id and entry["id"] and tc_id != entry["id"]):
+                entry = self._new(index)
             if tc_id and not entry["id"]:
                 entry["id"] = tc_id
-            fn = getattr(tc, "function", None)
-            name = getattr(fn, "name", None) if fn is not None else None
-            if name and name != entry["name"]:
-                entry["name"] = entry["name"] + name
-            args = getattr(fn, "arguments", None) if fn is not None else None
-            if args:
-                entry["arguments"] += args
+            if name:
+                if not entry["name"] or name.startswith(entry["name"]):
+                    entry["name"] = name
+                elif not entry["name"].startswith(name):
+                    entry["name"] += name
+            entry["arguments"] += args
+            extra = getattr(tc, "model_extra", None)
+            if isinstance(extra, dict) and isinstance(extra.get("extra_content"), dict):
+                entry["extra_content"] = extra["extra_content"]
 
-    def calls(self) -> list["ToolCallOut"]:
+    def calls(self) -> list[ToolCallOut]:
         return [
-            ToolCallOut(id=c["id"] or f"call_{n}", name=c["name"], arguments=c["arguments"])
-            for n, c in sorted(self._calls.items())
+            ToolCallOut(id=c["id"] or f"call_{n}", name=c["name"], arguments=c["arguments"],
+                        extra_content=c["extra_content"])
+            for n, c in enumerate(self._calls)
         ]
 
 

@@ -166,6 +166,9 @@ lets you choose what this chat may share:
 | Images | Not sent yet |
 
 A provider marked **billed** gets only Numbers by default, and a free one gets everything.
+With Numbers alone the analyst sees the findings but not your goal or your notes, so its
+advice is more generic and it cannot act on a note by number. Turn on **Name and goal** and
+**Notes** if you are happy to send them.
 You can change those defaults per provider in Settings → [Analyst](settings.md#analyst). A
 change in **What gets sent** applies to this chat only, and **Follow the provider's defaults
 again** undoes it. Switching the chat to another provider also undoes it, so a choice made
@@ -175,6 +178,17 @@ If you turn something off, earlier replies that saw it are left out of what is s
 on, since a reply can quote captions and names. Tags, captions and file names are sent marked
 as data, never as instructions. A caption can still argue for something, which is why the
 analyst only ever suggests.
+
+### Which model to use
+
+The analyst has been tried on two models, with three fixed conversations: ranking what to
+fix, recording a decision, and removing an open item. Both passed all three:
+
+- **Gemini 2.5 Flash**, a hosted model, through its OpenAI-compatible address.
+- **Qwen 3.8 27B**, a local model in LM Studio.
+
+Smaller local models have not been tried yet. A model that reasons before it answers
+needs a generous Max tokens; both above ran at 16,000.
 
 ### Budgets
 

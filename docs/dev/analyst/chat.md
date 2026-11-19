@@ -65,7 +65,10 @@ turn it on is a 422 (`schemas.chat.check_privacy`), as is an unknown category.
 messages, a `ContextManifest` and the effective privacy. **It is the only code that assembles
 what an LLM sees about a dataset**, and the privacy filter is applied there and nowhere else.
 The send path (2b) and `POST /chats/{id}/preview-context` both call it, so the preview cannot
-drift from what is sent. A new category, or a phase 3 tool, goes through it too.
+drift from what is sent. A new category goes through it too. A phase 3 tool's result goes
+through its sibling in the same module, `render_tool_result`, which applies the same
+categories, `_clean` and data block to the items a tool returns
+([tool-registry.md](tool-registry.md)).
 
 The messages are one system message (the fixed prompt, then the context), then the history,
 then the draft. One system message rather than two, because some local chat templates refuse

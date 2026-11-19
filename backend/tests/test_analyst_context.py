@@ -419,6 +419,6 @@ def test_finding_line_names_its_fix():
         fix=FindingFix(page="quality", label="Open the duplicate resolver"),
         fingerprint={"count": 3, "bucket": 1},
     )
-    line = analyst_context._finding_line(f)
+    line = analyst_context.finding_line(f)
     assert 'Fix: Score images ("Open the duplicate resolver").' in line
-    assert "Fix:" not in analyst_context._finding_line(f.model_copy(update={"fix": None}))
+    assert "Fix:" not in analyst_context.finding_line(f.model_copy(update={"fix": None}))

@@ -2,8 +2,9 @@
 
 **Status: living.** Phase 3 of the analyst (M12): models that handle tool calls can look
 things up during a reply. This file covers the stream's tool calls and the per-model
-probe that decides whether a model gets tools at all (3b). The tools, their privacy filter
-and the loop in the send path are later PRs, planned in
+probe that decides whether a model gets tools at all (3b). The tools and their privacy
+filter are [tool-registry.md](tool-registry.md) (3c); the loop in the send path is a
+later PR, planned in
 [../analyst-plan/README.md](../analyst-plan/README.md) § Phase 3. The send path the loop
 will extend is [sending.md](sending.md); the provider rows are
 `docs/dev/llm-providers.md`; the family hub is [../analyst.md](../analyst.md).

@@ -20,6 +20,7 @@ through are `docs/dev/image-filters.md`; the Stats cache and index pin the repor
 | [proposals.md](analyst/proposals.md) | Note proposals: the `crucible-notes` block and its parser, numbers resolved through the reply's manifest, `chat_proposals`, accept, reject and undo, the notes' chat columns, the suggestion cards and "Ask it to note this" |
 | [trials.md](analyst/trials.md) | The model trials: `scripts/analyst_trials.py`, its three conversations and what passes, the results per model, what the trials showed |
 | [tools.md](analyst/tools.md) | Tool calls (phase 3): the stream's `tools` and `ToolCallBuffer`, the per-model tool-call probe, `tools_probe` and `tools_ok`, when a verdict is stored and when it is cleared |
+| [tool-registry.md](analyst/tool-registry.md) | The tools (phase 3c): `ContextItem` and `render_tool_result`, the tools' privacy filter; the registry, `offered`, `tool_specs` and `run_tool`; each tool and what it sends; adding a tool |
 | [chat-ui.md](analyst/chat-ui.md) | The chat page: `chatStore` and the stream outside React, resume, rendering a reply (markdown, no images, finding chips, the strip), the controls that save as you use them, Settings → Analyst |
 
 ## Where things live
@@ -36,6 +37,7 @@ through are `docs/dev/image-filters.md`; the Stats cache and index pin the repor
 | `backend/services/chat_runner.py`, `backend/ml/chat_stream.py`, `backend/services/llm_limiter.py` | `docs/dev/analyst/sending.md`; + `docs/dev/captioning/jobs.md` for the caption side of the limiter |
 | `backend/services/note_proposals.py`, `backend/models/chat.py` (`ChatProposal`), `frontend/src/components/chat/ProposalList.tsx` | `docs/dev/analyst/proposals.md` |
 | `scripts/analyst_trials.py` | `docs/dev/analyst/trials.md` |
+| `backend/services/analyst_tools.py`, `render_tool_result` and `ContextItem` in `backend/services/analyst_context.py` | `docs/dev/analyst/tool-registry.md` |
 | `backend/services/tool_probe.py`, `POST /providers/{id}/probe-tools`, `openai_providers.tools_probe`, the tool calls in `backend/ml/chat_stream.py` | `docs/dev/analyst/tools.md` |
 | `frontend/src/pages/ChatPage.tsx`, `frontend/src/components/chat/`, `frontend/src/store/chatStore.ts`, `frontend/src/api/chats.ts`, `frontend/src/components/settings/AnalystPanel.tsx` | `docs/dev/analyst/chat-ui.md` |
 | `frontend/src/components/health/FindingCard.tsx`, `useFindingActions.ts`, `useHealthReport.ts` (shared by Health and the chat) | `docs/dev/analyst/ui.md`; + `docs/dev/analyst/chat-ui.md` for the chat's use |

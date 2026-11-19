@@ -73,9 +73,8 @@ fix, recording a decision, and removing an open item. Both passed all three:
 - **Gemini 2.5 Flash**, a hosted model, through its OpenAI-compatible address.
 - **Qwen 3.8 27B**, a local model in LM Studio.
 
-Both also pass **Check tool support** (see Tools below). Qwen 3.8 27B was also tried on a
-fourth conversation that needs a lookup, reading the captions behind a finding, and
-passed: it looked the captions up and described them correctly.
+Qwen 3.8 27B was also tried on a fourth conversation that asks it to look up the captions
+behind a finding, and passed: it looked them up and described them correctly.
 
 Smaller local models have not been tried yet. A model that reasons before it answers
 needs a generous Max tokens; both above ran at 16,000.

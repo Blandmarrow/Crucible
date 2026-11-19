@@ -6,7 +6,7 @@ in-process against a throwaway database (the backend tests' `api_env`), and repo
 how a model copes with what the analyst asks of it: finishing a reply inside its
 Max tokens, naming real findings and no invented ones, and writing a readable
 `crucible-notes` block when asked. The result decides the "minimum model we
-recommend" line in docs/analyst.md. See docs/dev/analyst/trials.md.
+recommend" line in docs/analyst-chat.md. See docs/dev/analyst/trials.md.
 
 Nothing touches the real database or datasets folder. The dataset is synthetic:
 made-up captions and plain coloured squares, so nothing private reaches a remote
@@ -69,8 +69,9 @@ CONVERSATIONS = [
     ("note-remove",
      "The open item about re-tagging the forest images is done. Please remove it from the notes.",
      "notes-remove"),
-    # The one conversation that needs a tool: the captions of one finding's images are not
-    # in the context (the context's sample is the whole dataset's), so the model must look.
+    # The one conversation that asks for a tool, and passes only with a call. On this small
+    # dataset the captions are in the context too: it tests that the model uses its tools
+    # when asked, not that it has to.
     ("tools",
      "Use your tools to read the captions of the images in [[finding:low_resolution]], then tell "
      "me in two sentences what you notice about those captions.", "tools"),

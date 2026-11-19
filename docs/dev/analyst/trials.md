@@ -37,7 +37,7 @@ a guess Crucible rightly drops, and the first Gemini run failed that way (2026-1
 | `rank` | What to fix first, and why | The reply finished, names at least one real finding as `[[finding:id]]`, and invents none |
 | `note-decision` | Record a decision the user states | A finished reply yields an `add decision` proposal |
 | `note-remove` | Remove an open item the user names in words | A finished reply yields a `remove open_item` proposal, which needs the model to map the words onto the numbered listing |
-| `tools` | Read the captions behind `[[finding:low_resolution]]` with its tools, and say what it notices | A finished reply made at least one tool call that ran, and invents no finding. The context's caption sample is the whole dataset's, so the model has to look; a model that did not pass the probe is offered no tools and fails it |
+| `tools` | Read the captions behind `[[finding:low_resolution]]` with its tools, and say what it notices | A finished reply made at least one tool call that ran, and invents no finding. The message asks for a lookup and the pass rule requires one; on this small dataset the captions are in the context too, so it tests that the model uses its tools when asked, not that it must. A model that did not pass the probe is offered no tools and fails it |
 
 Each run starts with the tool-call probe ([tools.md](tools.md) § The probe), whose verdict
 heads the report; the report lists each reply's tool calls.
@@ -56,7 +56,6 @@ The `tools` conversation came in phase 3f; earlier runs have no result for it.
 | 2026-11-19 | Qwen 3.8 27B, local (LM Studio, `qwen3.8-27b`) | 16,000 | pass | pass | pass | — | Three valid references in `rank`; 19 s for the first reply, about 2 s for the short ones, on one desktop GPU |
 | 2026-11-19 | Qwen 3.8 27B, LM Studio, tools offered (phase 3d) | 16,000 | pass | pass | pass | — | Probe passed in 1.9 s. No tool called: each reply answered from the context in one call, about 2,660 tokens in with the five tool schemas against about 1,340 without them |
 | 2026-11-19 | Gemini 2.5 Flash, after phase 3a's prompt | 16,000 | pass | pass | pass | — | `rank` names the real fix, the Gallery page's "Review or upscale them", and no page that does not exist |
-
 | 2026-11-19 | Qwen 3.8 27B, LM Studio, phase 3f | 16,000 | pass | pass | pass | pass | The first live replies to call a tool. In `tools` it called `sample_captions` and described the captions it read: two empty, two of one or two words, four tag-style with the trigger word first, all true. It also called `sample_captions` unasked in `note-decision`. About 5,600 tokens in for a reply with one tool round |
 | 2026-11-19 | Gemini 2.5 Flash, phase 3f | 16,000 | — | — | — | — | Probe passed in 1.8 s, then every conversation got a 429: the free tier's quota was spent by the day's runs. Not a result |
 

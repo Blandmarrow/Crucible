@@ -48,6 +48,7 @@ is not usable as configured.
 |---|---|---|---|---|---|---|
 | 2026-11-19 | Gemini 2.5 Flash (OpenAI-compatible endpoint) | 16,000 | pass | pass | pass | Hidden reasoning: about 500 output tokens for a short ranked answer |
 | 2026-11-19 | Qwen 3.8 27B, local (LM Studio, `qwen3.8-27b`) | 16,000 | pass | pass | pass | Three valid references in `rank`; 19 s for the first reply, about 2 s for the short ones, on one desktop GPU |
+| 2026-11-19 | Qwen 3.8 27B, LM Studio, tools offered (phase 3d) | 16,000 | pass | pass | pass | Probe passed in 1.9 s. No tool called: each reply answered from the context in one call, about 2,660 tokens in with the five tool schemas against about 1,340 without them |
 | 2026-11-19 | Gemini 2.5 Flash, after phase 3a's prompt | 16,000 | pass | pass | pass | `rank` names the real fix, the Gallery page's "Review or upscale them", and no page that does not exist |
 
 Smaller local models are untested so far. The user doc's model line names what passed and

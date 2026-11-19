@@ -21,6 +21,7 @@ through are `docs/dev/image-filters.md`; the Stats cache and index pin the repor
 | [trials.md](analyst/trials.md) | The model trials: `scripts/analyst_trials.py`, its three conversations and what passes, the results per model, what the trials showed |
 | [tools.md](analyst/tools.md) | Tool calls (phase 3): the stream's `tools` and `ToolCallBuffer`, the per-model tool-call probe, `tools_probe` and `tools_ok`, when a verdict is stored and when it is cleared |
 | [tool-registry.md](analyst/tool-registry.md) | The tools (phase 3c): `ContextItem` and `render_tool_result`, the tools' privacy filter; the registry, `offered`, `tool_specs` and `run_tool`; each tool and what it sends; adding a tool |
+| [tool-loop.md](analyst/tool-loop.md) | The tool loop (phase 3d): who gets tools, rounds and their caps, usage per round, the budget between rounds, `chat_tool_calls`, the manifest merge that history reads, the `tool_call` and `tool_result` events |
 | [chat-ui.md](analyst/chat-ui.md) | The chat page: `chatStore` and the stream outside React, resume, rendering a reply (markdown, no images, finding chips, the strip), the controls that save as you use them, Settings → Analyst |
 
 ## Where things live
@@ -34,7 +35,8 @@ through are `docs/dev/image-filters.md`; the Stats cache and index pin the repor
 | `frontend/src/pages/HealthPage.tsx`, `frontend/src/components/health/`, `frontend/src/api/health.ts`, `frontend/src/api/notes.ts` | `docs/dev/analyst/ui.md` |
 | `frontend/src/components/datasets/GoalFields.tsx`, `HealthBadge.tsx` | `docs/dev/analyst/ui.md`; + `docs/dev/dataset-operations.md` for the dialogs, `docs/dev/datasets-page.md` for the card |
 | `backend/models/chat.py`, `backend/schemas/chat.py`, `backend/routers/chats.py`, `backend/services/analyst_context.py`, `openai_providers.analyst_privacy` | `docs/dev/analyst/chat.md`; + `docs/dev/llm-providers.md` for the rest of the provider |
-| `backend/services/chat_runner.py`, `backend/ml/chat_stream.py`, `backend/services/llm_limiter.py` | `docs/dev/analyst/sending.md`; + `docs/dev/captioning/jobs.md` for the caption side of the limiter |
+| `backend/services/chat_runner.py`, `backend/ml/chat_stream.py`, `backend/services/llm_limiter.py` | `docs/dev/analyst/sending.md`; + `docs/dev/captioning/jobs.md` for the caption side of the limiter; + `docs/dev/analyst/tool-loop.md` for the tool loop in `_execute` |
+| `backend/models/chat.py` (`ChatToolCall`), `TOOLS_PROMPT` and `tools_offered` in `build_context` | `docs/dev/analyst/tool-loop.md` |
 | `backend/services/note_proposals.py`, `backend/models/chat.py` (`ChatProposal`), `frontend/src/components/chat/ProposalList.tsx` | `docs/dev/analyst/proposals.md` |
 | `scripts/analyst_trials.py` | `docs/dev/analyst/trials.md` |
 | `backend/services/analyst_tools.py`, `render_tool_result` and `ContextItem` in `backend/services/analyst_context.py` | `docs/dev/analyst/tool-registry.md` |

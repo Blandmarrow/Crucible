@@ -167,17 +167,19 @@ async def stream_chat(
     on_open: Callable[[], None] | None = None,
     on_send: Callable[[], None] | None = None,
     tools: list[dict] | None = None,
+    tool_choice: str = "auto",
 ) -> StreamResult:
     """Stream one reply, handing each piece of text to `on_text` as it arrives.
 
     `on_send` runs just before the request goes out, `on_open` once the server has
-    accepted it. With `tools`, the request offers them (`tool_choice="auto"`) and the
-    result carries any calls the model made. Raises `ChatStreamError` on a failure or a
+    accepted it. With `tools`, the request offers them under `tool_choice` ("auto", or
+    "none" to send them without letting the model call one) and the result carries any
+    calls the model made. Raises `ChatStreamError` on a failure or a
     time limit; a cancel propagates as `CancelledError`, with the stream closed either way.
     """
     if on_send is not None:
         on_send()
-    extra = {"tools": tools, "tool_choice": "auto"} if tools else {}
+    extra = {"tools": tools, "tool_choice": tool_choice} if tools else {}
     try:
         stream = await asyncio.wait_for(
             client.chat.completions.create(

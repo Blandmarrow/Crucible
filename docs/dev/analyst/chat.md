@@ -155,7 +155,9 @@ reply.
 The manifest records each category's `sent`, `chars` and `items`, where the privacy came from
 (`chat`, `provider` or `none`), how much history was kept and dropped, a character estimate of
 the tokens (`CHARS_PER_TOKEN`, 4), and `note_numbers`: per section, the note ids in the order
-the context numbered them. A proposal's "remove open_item 3" is resolved against the manifest
+the context numbered them. Phase 3 adds `tools_offered`, the tools the request offered, and
+`tool_calls`, how many the reply made; a reply's tools merge the categories they sent into
+its `categories` as they run ([tool-loop.md](tool-loop.md)). A proposal's "remove open_item 3" is resolved against the manifest
 of the reply that made it (phase 2d), not against the notes as they are later.
 
 ## Routes

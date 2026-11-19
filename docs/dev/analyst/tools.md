@@ -114,7 +114,7 @@ Through `scripts/analyst_trials.py --probe-only` ([trials.md](trials.md)), 2026-
 | Model | Verdict |
 |---|---|
 | Gemini 2.5 Flash (OpenAI-compatible endpoint) | passed, 2 s |
-| Qwen 3.8 27B, LM Studio | no verdict: the GPU was fully loaded by other work, and the first reasoning chunk took 125 s. Re-run on an idle GPU |
+| Qwen 3.8 27B, LM Studio | passed, 1.9 s, on an idle GPU. Two earlier runs reached no verdict: the GPU was fully loaded by other work, and then LM Studio was still generating a request the first run had given up on (it does not stop when the client disconnects), so the next waited behind it |
 
 **The verdict is stored only against the server that was probed.** `PATCH /providers/{id}`
 sets `tools_probe` to NULL whenever it clears the chats' privacy, on a new `base_url` or a

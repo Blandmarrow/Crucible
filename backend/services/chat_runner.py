@@ -18,12 +18,21 @@ The order of a send, each step for a reason:
    records what it used (the paid-call cap's rule, `docs/dev/comfyui/run-budgets.md`),
    estimated from characters when the server reported nothing.
 
+**Tools (M12 phase 3d).** When the chat's model passed the tool-call probe, a reply may
+take several calls to the model: each round that ends in tool calls has its usage
+committed at once, its calls run through `analyst_tools.run_tool` and stored as
+`ChatToolCall` rows, and the results go back in the next call. A cap on rounds and on
+result characters ends with one last call that may not use tools; the budget is checked
+again before every round. See docs/dev/analyst/tool-loop.md.
+
 Live events go to whoever is listening, through one queue per listener: `start` (with
-the text so far, so a reconnect resumes), `delta`, `usage`, then `done` or `error`. The
+the text so far, and the tool calls so far, so a reconnect resumes), `delta`,
+`tool_call`, `tool_result`, `usage`, then `done` or `error`. The
 API key is loaded from the provider row at send time and never enters a log line, an
 event or a stored row; an error message is scrubbed of it. See docs/dev/analyst/sending.md.
 """
 import asyncio
+import json
 import logging
 import math
 import re
@@ -36,11 +45,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.ml import openai_compat_captioner
 from backend.ml.chat_stream import ChatStreamError, stream_chat
-from backend.models import Chat, ChatMessage, LlmUsage, OpenAIProvider
-from backend.schemas.chat import BudgetOut, ChatMessageOut
+from backend.models import Chat, ChatMessage, ChatToolCall, Dataset, LlmUsage, OpenAIProvider
+from backend.schemas.chat import BudgetOut, ChatMessageOut, ToolCallOut
 from backend.schemas.openai_provider import provider_is_billed
-from backend.services import health_service, llm_limiter, note_proposals
-from backend.services.analyst_context import CHARS_PER_TOKEN, build_context
+from backend.services import analyst_tools, health_service, llm_limiter, note_proposals
+from backend.services.analyst_context import CHARS_PER_TOKEN, build_context, render_tool_result
 from backend.services.threshold_service import get_thresholds
 
 logger = logging.getLogger(__name__)
@@ -56,6 +65,15 @@ FLUSH_EVERY_S = 1.0
 RELATED_MIN = 3
 RELATED_MAX = 6
 TITLE_MAX = 60
+# The tool loop (phase 3d). Rounds that may call tools, then one that may not; that last
+# one also comes once the turn's tool results reach `TOOL_TURN_MAX_CHARS`. Calls past
+# `MAX_CALLS_PER_ROUND` in one round are answered with an error, not run. Module
+# constants so a test can shorten them.
+MAX_TOOL_ROUNDS = 4
+TOOL_TURN_MAX_CHARS = 24_000
+MAX_CALLS_PER_ROUND = 5
+# The most of a call's raw arguments stored on its row.
+ARGUMENTS_MAX_CHARS = 20_000
 
 # A fixed pattern, so stdlib `re` is safe (CLAUDE.md § client-supplied regex).
 FINDING_REF_RE = re.compile(r"\[\[finding:([a-z0-9_]+)\]\]")
@@ -100,6 +118,9 @@ class _Run:
     # delete or a shutdown waits for the store instead of cancelling it.
     ending: bool = False
     final: tuple[str, dict] | None = None
+    # The stored tool calls so far, as `ToolCallOut` payloads, for a listener that joins
+    # mid-reply.
+    tool_calls: list[dict] = field(default_factory=list)
 
     @property
     def text(self) -> str:
@@ -111,6 +132,7 @@ class _Run:
             "message_id": self.message_id,
             "user_message_id": self.user_message_id,
             "content": self.text,
+            "tool_calls": list(self.tool_calls),
         }
 
     def emit(self, event: str, data: dict) -> None:
@@ -244,7 +266,7 @@ async def _start(db: AsyncSession, chat: Chat, content: str, provider: OpenAIPro
     run = _Run(chat_id=chat.id, dataset_id=chat.dataset_id, message_id=reply.id, user_message_id=user_msg.id)
     _runs[reply.id] = run
     messages = [m.model_dump() for m in built.messages]
-    run.task = asyncio.create_task(_execute(run, cfg, model, messages, built.manifest.total_chars))
+    run.task = asyncio.create_task(_execute(run, cfg, model, messages, built.tools, built.privacy))
     return run
 
 
@@ -272,10 +294,122 @@ async def _flush_loop(run: _Run) -> None:
             logger.warning("Could not save the partial reply of chat message %s", run.message_id, exc_info=True)
 
 
-async def _execute(run: _Run, cfg: _Provider, model: str, messages: list[dict], prompt_chars: int) -> None:
-    opened = sent = refused = False
+def _request_chars(messages: list[dict], tools: list[dict]) -> int:
+    """A character count of a request, for a token estimate when the server reports none
+    and for the budget check between rounds."""
+    # `ensure_ascii=False`: a `\uXXXX` escape would count one character as six.
+    return len(json.dumps(messages, ensure_ascii=False)) + (
+        len(json.dumps(tools, ensure_ascii=False)) if tools else 0)
+
+
+async def _budget_stop(run: _Run, cfg: _Provider, chars: int) -> str | None:
+    """Before a round after the first: why it may not run, or None. Only a billed
+    provider meets the budgets, as at the send."""
+    from backend.database import AsyncSessionLocal
+
+    if not cfg.billed:
+        return None
+    estimate = estimate_tokens(chars) + cfg.max_tokens
+    async with AsyncSessionLocal() as s:
+        settings = await get_thresholds(s)
+        chat_used = await billed_used(s, chat_id=run.chat_id)
+        day_used = await billed_used(s)
+    if (chat_used + estimate <= settings.analyst_chat_budget_tokens
+            and day_used + estimate <= settings.analyst_daily_budget_tokens):
+        return None
+    return (
+        f"The reply stopped before its next step, which could use about {estimate:,} tokens: this chat "
+        f"has used {chat_used:,} of {settings.analyst_chat_budget_tokens:,}, and today's chats {day_used:,} "
+        f"of {settings.analyst_daily_budget_tokens:,}. Raise the budgets in Settings → Analyst."
+    )
+
+
+async def _record_round(run: _Run, cfg: _Provider, tokens: tuple[int, int, bool], totals: list) -> None:
+    """Commit one finished tool round's usage at once, before its tools run: a crash or
+    a Stop later in the turn must not lose a call that may have been billed."""
+    from backend.database import AsyncSessionLocal
+
+    tokens_in, tokens_out, estimated = tokens
+    async with AsyncSessionLocal() as s:
+        s.add(LlmUsage(
+            day=local_day(), chat_id=run.chat_id, message_id=run.message_id, provider_id=cfg.id,
+            tokens_in=tokens_in, tokens_out=tokens_out, estimated=estimated, billed=cfg.billed,
+        ))
+        await s.commit()
+    totals[0] += tokens_in
+    totals[1] += tokens_out
+    totals[2] = totals[2] or estimated
+    totals[3] += 1
+    run.emit("usage", {"tokens_in": totals[0], "tokens_out": totals[1], "estimated": totals[2]})
+
+
+async def _run_tools(run: _Run, rnd: int, calls: list, privacy: dict[str, bool]) -> list[tuple]:
+    """Run one round's calls, store each as a `ChatToolCall` row, and merge the
+    categories their results carried into the reply's manifest in the same commit, so
+    the history rule withholds this reply once one of them is turned off. Returns
+    (call, result text) pairs, in order, for the next request."""
+    from backend.database import AsyncSessionLocal
+
+    out: list[tuple] = []
+    rows: list[ChatToolCall] = []
+    sent: dict[str, int] = {}
+    async with AsyncSessionLocal() as s:
+        ds = await s.get(Dataset, run.dataset_id)
+        for i, call in enumerate(calls):
+            run.emit("tool_call", {"round": rnd, "call_id": call.id, "name": call.name, "arguments": call.arguments})
+            title = f"Result of {call.name}"
+            if i >= MAX_CALLS_PER_ROUND:
+                render = render_tool_result(title, [], privacy, error=(
+                    f"Only {MAX_CALLS_PER_ROUND} tool calls run in one step; this one did not. "
+                    "Call it again if you still need it."))
+            elif ds is None:
+                render = render_tool_result(title, [], privacy, error="The dataset no longer exists.")
+            else:
+                render = await analyst_tools.run_tool(s, ds, call.name, call.arguments, privacy)
+            for c in render.categories:
+                sent[c] = sent.get(c, 0) + render.chars
+            rows.append(ChatToolCall(
+                message_id=run.message_id, round=rnd, call_id=call.id[:128], name=call.name[:64],
+                arguments=call.arguments[:ARGUMENTS_MAX_CHARS], status="error" if render.error else "ok",
+                result_text=render.text, categories=render.categories, chars=render.chars,
+            ))
+            out.append((call, render.text))
+        msg = await s.get(ChatMessage, run.message_id)
+        if msg is not None:
+            s.add_all(rows)
+            # A copy: an in-place edit of a loaded JSON column is not seen as a change.
+            manifest = dict(msg.context_manifest or {})
+            categories = {k: dict(v) for k, v in (manifest.get("categories") or {}).items()}
+            for c, chars in sent.items():
+                entry = categories.setdefault(c, {"sent": False, "chars": 0, "items": 0})
+                entry["sent"] = True
+                entry["chars"] = int(entry.get("chars") or 0) + chars
+                entry["items"] = int(entry.get("items") or 0) + 1
+            manifest["categories"] = categories
+            manifest["tool_calls"] = int(manifest.get("tool_calls") or 0) + len(rows)
+            msg.context_manifest = manifest
+            await s.commit()
+            for row in rows:
+                payload = ToolCallOut.model_validate(row).model_dump(mode="json")
+                run.tool_calls.append(payload)
+                run.emit("tool_result", payload)
+    return out
+
+
+async def _execute(
+    run: _Run, cfg: _Provider, model: str, messages: list[dict], tools: list[dict], privacy: dict[str, bool],
+) -> None:
     status, error_kind, detail = "complete", None, None
-    tokens_in = tokens_out = None
+    # The current call's state, reset when a tool round's usage is recorded.
+    opened = sent = refused = False
+    result = None
+    round_start = 0  # len(run.parts) when the current call began
+    prompt_chars = _request_chars(messages, tools)
+    # The tool rounds already recorded: tokens in, tokens out, any estimated, how many.
+    totals: list = [0, 0, False, 0]
+    rnd = 0
+    tool_chars = 0
+    gap = False  # the next text starts a new round's: separate it from the last
 
     def on_send() -> None:
         nonlocal sent
@@ -286,31 +420,94 @@ async def _execute(run: _Run, cfg: _Provider, model: str, messages: list[dict], 
         opened = True
 
     def on_text(piece: str) -> None:
+        nonlocal gap
+        if gap:
+            gap = False
+            if run.text.strip():
+                run.parts.append("\n\n")
+                run.emit("delta", {"text": "\n\n"})
         run.parts.append(piece)
         run.emit("delta", {"text": piece})
 
     flusher = asyncio.create_task(_flush_loop(run))
     try:
-        async with llm_limiter.slot(cfg.id, cfg.max_concurrent):
-            client = openai_compat_captioner.make_client(cfg.base_url, cfg.api_key, cfg.timeout_s)
-            if client is None:
-                raise ChatStreamError("fatal", "The openai package is not installed on this server.", opened=False)
+        while True:
+            offer = bool(tools) and rnd < MAX_TOOL_ROUNDS and tool_chars < TOOL_TURN_MAX_CHARS
+            prompt_chars = _request_chars(messages, tools)
+            if rnd:
+                stop = await _budget_stop(run, cfg, prompt_chars)
+                if stop is not None:
+                    error_kind, detail = "budget", stop
+                    if not run.text.strip():
+                        status = "error"
+                    break
+            opened = sent = refused = False
+            result = None
+            round_start = len(run.parts)
+            async with llm_limiter.slot(cfg.id, cfg.max_concurrent):
+                client = openai_compat_captioner.make_client(cfg.base_url, cfg.api_key, cfg.timeout_s)
+                if client is None:
+                    raise ChatStreamError("fatal", "The openai package is not installed on this server.", opened=False)
+                try:
+                    # Past the caps the tools are still sent, as "none": some servers refuse
+                    # tool messages in a request that offers no tools.
+                    result = await stream_chat(
+                        client, model=model, messages=messages, max_tokens=cfg.max_tokens,
+                        first_token_s=FIRST_TOKEN_S, idle_s=IDLE_S, on_text=on_text, on_open=on_open,
+                        on_send=on_send, tools=tools or None, tool_choice="auto" if offer else "none",
+                    )
+                finally:
+                    await client.close()
+            calls = [c for c in result.tool_calls if c.name]
+            if not (offer and calls and result.finish_reason != "length"):
+                break
+            # A tool round: its usage first, then its tools.
+            round_text = "".join(run.parts[round_start:])
+            tokens = (
+                result.tokens_in if result.tokens_in is not None else estimate_tokens(prompt_chars),
+                result.tokens_out if result.tokens_out is not None
+                else estimate_tokens(len(round_text) + sum(len(c.arguments) for c in calls)),
+                result.tokens_in is None or result.tokens_out is None,
+            )
+            # Shielded, so a Stop cannot cut the commit short; and on a Stop, wait for it
+            # and mark the round recorded when it landed, or `_finish` would record it again.
+            recording = asyncio.ensure_future(_record_round(run, cfg, tokens, totals))
             try:
-                result = await stream_chat(
-                    client, model=model, messages=messages, max_tokens=cfg.max_tokens,
-                    first_token_s=FIRST_TOKEN_S, idle_s=IDLE_S, on_text=on_text, on_open=on_open,
-                    on_send=on_send,
-                )
-            finally:
-                await client.close()
-        tokens_in, tokens_out = result.tokens_in, result.tokens_out
-        if result.finish_reason == "length":
-            error_kind = "length"
-            detail = "The reply was cut off by the provider's Max tokens (Settings → LLM Providers)."
-            if not run.text.strip():
-                status = "error"
-        elif not run.text.strip():
-            status, error_kind, detail = "error", "empty", "The model sent back an empty reply."
+                await asyncio.shield(recording)
+            except asyncio.CancelledError:
+                await asyncio.wait({recording})
+                if not recording.cancelled() and recording.exception() is None:
+                    opened = sent = refused = False
+                    result = None
+                    round_start = len(run.parts)
+                raise
+            opened = sent = refused = False
+            result = None
+            round_start = len(run.parts)
+            answers = await _run_tools(run, rnd, calls, privacy)
+            messages.append({
+                "role": "assistant",
+                "content": round_text.strip() or None,
+                "tool_calls": [c.as_message_call() for c in calls],
+            })
+            for call, text in answers:
+                messages.append({"role": "tool", "tool_call_id": call.id, "content": text})
+                tool_chars += len(text)
+            rnd += 1
+            gap = True
+        if status == "complete" and error_kind is None and result is not None:
+            # The last call's text: earlier rounds' "Let me look." is no answer.
+            answer = "".join(run.parts[round_start:])
+            if result.finish_reason == "length":
+                error_kind = "length"
+                detail = "The reply was cut off by the provider's Max tokens (Settings → LLM Providers)."
+                if not run.text.strip():
+                    status = "error"
+            elif not answer.strip() and result.tool_calls:
+                status, error_kind = "error", "tools"
+                detail = "The model kept asking for tools after its limit and wrote no answer."
+            elif not answer.strip():
+                status, error_kind, detail = "error", "empty", "The model sent back an empty reply."
     except ChatStreamError as exc:
         status, error_kind, detail = "error", exc.kind, scrub(str(exc), cfg.api_key)
         opened = opened or exc.opened
@@ -332,19 +529,22 @@ async def _execute(run: _Run, cfg: _Provider, model: str, messages: list[dict], 
         flusher.cancel()
         await asyncio.wait({flusher})
 
+    # The last call: recorded once the server accepted it or text arrived, or, for a billed
+    # provider, once it was sent and not refused (it may have been billed). Only an HTTP
+    # refusal is known to have run nothing. Tool rounds were recorded as they ended.
+    last_text = "".join(run.parts[round_start:])
+    record = opened or bool(last_text) or (cfg.billed and sent and not refused)
+    tokens_in = result.tokens_in if result is not None else None
+    tokens_out = result.tokens_out if result is not None else None
     estimated = tokens_in is None or tokens_out is None
-    # Recorded once the server accepted the request or text arrived. A billed request that
-    # was sent but cut short before any answer (a Stop or a time limit while the server
-    # was still working) is recorded too, as an estimate: it may have been billed. Only an
-    # HTTP refusal is known to have run nothing.
-    record = opened or bool(run.parts) or (cfg.billed and sent and not refused)
     if record:
         tokens_in = tokens_in if tokens_in is not None else estimate_tokens(prompt_chars)
-        tokens_out = tokens_out if tokens_out is not None else estimate_tokens(len(run.text))
+        tokens_out = tokens_out if tokens_out is not None else estimate_tokens(len(last_text))
     try:
         # Shielded: nothing that cancels this task can leave the row `partial` and the
         # listeners waiting. `_stop` no longer cancels once `ending` is set.
-        await asyncio.shield(_finish(run, cfg, status, error_kind, detail, tokens_in, tokens_out, estimated, record))
+        await asyncio.shield(_finish(
+            run, cfg, status, error_kind, detail, tokens_in, tokens_out, estimated, record, totals))
     except Exception:  # noqa: BLE001 — the store failed: still end the run for its listeners
         logger.error("Analyst chat %s: could not store the reply", run.chat_id, exc_info=True)
         await _finish_failed(run)
@@ -394,10 +594,14 @@ async def _related(db: AsyncSession, dataset_id: str, text: str) -> list[str]:
 async def _finish(
     run: _Run, cfg: _Provider, status: str, error_kind: str | None, detail: str | None,
     tokens_in: int | None, tokens_out: int | None, estimated: bool, record: bool,
+    totals: list | None = None,
 ) -> None:
+    """Store the last call's usage, then the reply. `totals` are the tool rounds' tokens,
+    already recorded; the message carries the sum of every call in the turn."""
     from backend.database import AsyncSessionLocal
 
     text = run.text
+    prior_in, prior_out, prior_est, rounds_before = totals or (0, 0, False, 0)
     async with AsyncSessionLocal() as s:
         msg = await s.get(ChatMessage, run.message_id)
         if record:
@@ -410,8 +614,12 @@ async def _finish(
             ))
             # Usage before the reply: a failure writing the reply must not lose it.
             await s.commit()
+        if record or rounds_before:
+            sum_in = prior_in + (tokens_in if record else 0)
+            sum_out = prior_out + (tokens_out if record else 0)
+            sum_est = bool(prior_est or (record and estimated))
         if record:
-            run.emit("usage", {"tokens_in": tokens_in, "tokens_out": tokens_out, "estimated": estimated})
+            run.emit("usage", {"tokens_in": sum_in, "tokens_out": sum_out, "estimated": sum_est})
         if msg is None:
             payload = {"message_id": run.message_id, "status": status}
         else:
@@ -419,8 +627,8 @@ async def _finish(
             msg.status = status
             msg.error_kind = error_kind
             msg.error_detail = detail
-            if record:
-                msg.tokens_in, msg.tokens_out, msg.tokens_estimated = tokens_in, tokens_out, estimated
+            if record or rounds_before:
+                msg.tokens_in, msg.tokens_out, msg.tokens_estimated = sum_in, sum_out, sum_est
             if status != "error" or text:
                 try:
                     msg.related_findings = await _related(s, run.dataset_id, text)

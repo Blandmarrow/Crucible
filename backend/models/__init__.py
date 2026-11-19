@@ -13,6 +13,6 @@ from backend.models.app_data import CaptionPromptPreset, DeclaredCategory, Promp
 from backend.models.run import Run
 from backend.models.run_recipe import SavedRunRecipe
 from backend.models.notes import AppNoteItem, DatasetNoteItem, NoteItemHistory
-from backend.models.chat import Chat, ChatMessage, LlmUsage
+from backend.models.chat import Chat, ChatMessage, ChatProposal, LlmUsage
 
-__all__ = ["Dataset", "Image", "Video", "BackgroundJob", "Detection", "Label", "ImageLabel", "ThresholdSettings", "DatasetBranch", "DatasetVersion", "VersionImageState", "OpenAIProvider", "ComfyPlan", "ComfyRow", "ComfyLibraryPrompt", "ComfyBlueprint", "ComfyLeaf", "StyleSimilarityRun", "CaptionPromptPreset", "DeclaredCategory", "PromptGenPreset", "Run", "SavedRunRecipe", "DatasetNoteItem", "AppNoteItem", "NoteItemHistory", "Chat", "ChatMessage", "LlmUsage"]
+__all__ = ["Dataset", "Image", "Video", "BackgroundJob", "Detection", "Label", "ImageLabel", "ThresholdSettings", "DatasetBranch", "DatasetVersion", "VersionImageState", "OpenAIProvider", "ComfyPlan", "ComfyRow", "ComfyLibraryPrompt", "ComfyBlueprint", "ComfyLeaf", "StyleSimilarityRun", "CaptionPromptPreset", "DeclaredCategory", "PromptGenPreset", "Run", "SavedRunRecipe", "DatasetNoteItem", "AppNoteItem", "NoteItemHistory", "Chat", "ChatMessage", "ChatProposal", "LlmUsage"]

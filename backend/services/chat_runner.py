@@ -39,7 +39,7 @@ from backend.ml.chat_stream import ChatStreamError, stream_chat
 from backend.models import Chat, ChatMessage, LlmUsage, OpenAIProvider
 from backend.schemas.chat import BudgetOut, ChatMessageOut
 from backend.schemas.openai_provider import provider_is_billed
-from backend.services import health_service, llm_limiter
+from backend.services import health_service, llm_limiter, note_proposals
 from backend.services.analyst_context import CHARS_PER_TOKEN, build_context
 from backend.services.threshold_service import get_thresholds
 
@@ -413,6 +413,13 @@ async def _finish(
                     msg.related_findings = await _related(s, run.dataset_id, text)
                 except Exception:  # noqa: BLE001 — the strip is a nicety
                     logger.warning("Could not pick related findings for chat %s", run.chat_id, exc_info=True)
+            # Only a reply that finished: a stopped or cut-off one may hold half a block.
+            if status == "complete" and error_kind is None:
+                try:
+                    await note_proposals.store(s, msg)
+                except Exception:  # noqa: BLE001 — a reply without its proposals still stands
+                    logger.warning("Could not read the note proposals of chat %s", run.chat_id, exc_info=True)
+                    msg.proposals.clear()
             await s.commit()
             payload = ChatMessageOut.model_validate(msg).model_dump(mode="json")
     run.final = ("error" if status == "error" else "done", payload)

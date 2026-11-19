@@ -13,8 +13,9 @@ an item" or "remove item 4" without rewriting a document (see `docs/dev/analyst/
 - **Notes are not dataset content.** They cascade with their dataset, are never part of a
   snapshot, and `duplicate_dataset` does not copy them.
 
-Phase 2 adds the chat columns (`source_chat_id`, the history's `chat_id`) once the
-`chats` table they point at exists.
+The chat columns (phase 2d): `source_chat_id` on an item a chat's proposal added, and
+`chat_id` on a history row a proposal wrote. Both are `SET NULL`: deleting a chat must
+never delete a note.
 """
 from datetime import datetime
 from uuid import uuid4
@@ -47,6 +48,10 @@ class DatasetNoteItem(Base):
     fingerprint: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # A permanent dismissal stays hidden however much worse the finding gets.
     permanent: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="0")
+    # The chat whose accepted proposal added this item; NULL when the user wrote it.
+    source_chat_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("chats.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
@@ -61,6 +66,9 @@ class AppNoteItem(Base):
     section: Mapped[str] = mapped_column(String(32), nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
     position: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    source_chat_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("chats.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
@@ -88,6 +96,10 @@ class NoteItemHistory(Base):
     before_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     after_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     actor: Mapped[str] = mapped_column(String(16), nullable=False)
+    # The chat whose proposal made the change (accepting it, or undoing it).
+    chat_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("chats.id", ondelete="SET NULL"), nullable=True
+    )
     at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     __table_args__ = (

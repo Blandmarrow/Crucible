@@ -17,6 +17,7 @@ through are `docs/dev/image-filters.md`; the Stats cache and index pin the repor
 | [ui.md](analyst/ui.md) | The frontend: `HealthPage`, the notes editor, the dialogs' goal fields, the card badge, their query keys and routing |
 | [chat.md](analyst/chat.md) | The chat (phase 2): the `chats`, `chat_messages` and `llm_usage` tables, the token budget settings, privacy defaults and overrides, `build_context` and its categories, the preview route |
 | [sending.md](analyst/sending.md) | Sending a message: the order of a send, the streamed call and its two time limits, usage before the reply, the SSE events and resume, budgets, cancel and the sweeps, the provider limit shared with captioning |
+| [proposals.md](analyst/proposals.md) | Note proposals: the `crucible-notes` block and its parser, numbers resolved through the reply's manifest, `chat_proposals`, accept, reject and undo, the notes' chat columns, the suggestion cards and "Ask it to note this" |
 | [chat-ui.md](analyst/chat-ui.md) | The chat page: `chatStore` and the stream outside React, resume, rendering a reply (markdown, no images, finding chips, the strip), the controls that save as you use them, Settings → Analyst |
 
 ## Where things live
@@ -31,6 +32,7 @@ through are `docs/dev/image-filters.md`; the Stats cache and index pin the repor
 | `frontend/src/components/datasets/GoalFields.tsx`, `HealthBadge.tsx` | `docs/dev/analyst/ui.md`; + `docs/dev/dataset-operations.md` for the dialogs, `docs/dev/datasets-page.md` for the card |
 | `backend/models/chat.py`, `backend/schemas/chat.py`, `backend/routers/chats.py`, `backend/services/analyst_context.py`, `openai_providers.analyst_privacy` | `docs/dev/analyst/chat.md`; + `docs/dev/llm-providers.md` for the rest of the provider |
 | `backend/services/chat_runner.py`, `backend/ml/chat_stream.py`, `backend/services/llm_limiter.py` | `docs/dev/analyst/sending.md`; + `docs/dev/captioning/jobs.md` for the caption side of the limiter |
+| `backend/services/note_proposals.py`, `backend/models/chat.py` (`ChatProposal`), `frontend/src/components/chat/ProposalList.tsx` | `docs/dev/analyst/proposals.md` |
 | `frontend/src/pages/ChatPage.tsx`, `frontend/src/components/chat/`, `frontend/src/store/chatStore.ts`, `frontend/src/api/chats.ts`, `frontend/src/components/settings/AnalystPanel.tsx` | `docs/dev/analyst/chat-ui.md` |
 | `frontend/src/components/health/FindingCard.tsx`, `useFindingActions.ts`, `useHealthReport.ts` (shared by Health and the chat) | `docs/dev/analyst/ui.md`; + `docs/dev/analyst/chat-ui.md` for the chat's use |
 | `frontend/src/components/common/FilteredImagesModal.tsx` | `docs/dev/statistics-panels.md`; + `docs/dev/analyst/ui.md` for the Health page's use |

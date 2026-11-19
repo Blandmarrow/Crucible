@@ -127,6 +127,8 @@ class NoteItemOut(BaseModel):
     decided_at: UtcDatetime | None = None
     finding_id: str | None = None
     permanent: bool = False
+    # The chat whose accepted proposal added it; null when the user wrote it.
+    source_chat_id: str | None = None
     created_at: UtcDatetime
     updated_at: UtcDatetime
     deleted_at: UtcDatetime | None = None

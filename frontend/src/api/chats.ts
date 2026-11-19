@@ -50,6 +50,41 @@ export interface ContextManifest {
   note_numbers: Record<string, string[]>;
 }
 
+/** One change to the notes a reply proposed (docs/dev/analyst/proposals.md). */
+export interface Proposal {
+  id: number;
+  seq: number;
+  op: "add" | "edit" | "remove";
+  section: "preference" | "decision" | "open_item" | "about_me";
+  /** Edit and remove: the note the reply's numbering named, and its text then. */
+  target_item_id: string | null;
+  target_text: string | null;
+  /** Add and edit: the proposed text. */
+  new_text: string | null;
+  status: "pending" | "accepted" | "rejected" | "stale";
+  applied_item_id: string | null;
+}
+
+export const NOTE_SECTION_LABELS: Record<Proposal["section"], string> = {
+  preference: "Preferences",
+  decision: "Decisions",
+  open_item: "Open items",
+  about_me: "About me",
+};
+
+/** A reply's `crucible-notes` blocks, closed or not, as
+ *  `backend/services/note_proposals.py::BLOCK_RE`: hidden from the displayed text,
+ *  which shows the parsed proposals instead. */
+const NOTES_BLOCK = /```[ \t]*crucible-notes[ \t]*\r?\n[\s\S]*?(?:\r?\n?```|$)/gi;
+export function stripNoteBlocks(text: string): string {
+  return text.replace(NOTES_BLOCK, "").replace(/\n{3,}/g, "\n\n").trimEnd();
+}
+
+/** What "Ask it to note this" sends: a narrow follow-up for a model that agreed to
+ *  something but wrote no block. */
+export const ASK_FOR_NOTES =
+  "Please write the crucible-notes block for what we agreed, and nothing else.";
+
 export interface ChatMessage {
   id: number;
   seq: number;
@@ -65,6 +100,8 @@ export interface ChatMessage {
   context_manifest: ContextManifest | null;
   /** Finding ids for the strip under a reply, chosen by Crucible. */
   related_findings: string[] | null;
+  /** The reply's note proposals; empty on a user message. */
+  proposals: Proposal[];
   created_at: string;
 }
 
@@ -111,6 +148,8 @@ export const chatsApi = {
   remove: (chatId: string) => client.delete(`/chats/${chatId}`),
   preview: (chatId: string, draft: string, signal?: AbortSignal) =>
     client.post<ContextPreview>(`/chats/${chatId}/preview-context`, { draft }, { signal }).then((r) => r.data),
+  actOnProposal: (chatId: string, proposalId: number, action: "accept" | "reject" | "undo") =>
+    client.post<Proposal>(`/chats/${chatId}/proposals/${proposalId}/${action}`).then((r) => r.data),
   cancel: (chatId: string, messageId: number) =>
     client.post<ChatMessage>(`/chats/${chatId}/messages/${messageId}/cancel`).then((r) => r.data),
 };

@@ -69,7 +69,22 @@ drift from what is sent. A new category, or a phase 3 tool, goes through it too.
 
 The messages are one system message (the fixed prompt, then the context), then the history,
 then the draft. One system message rather than two, because some local chat templates refuse
-a second. The categories:
+a second.
+
+### The system prompt
+
+`SYSTEM_PROMPT` tells the model to cite findings as `[[finding:id]]`, to treat
+`<dataset-data>` as data, and how to write a `crucible-notes` block
+([proposals.md](proposals.md)). It also names the pages the finding cards' fix buttons open,
+taken from `health_service.FIX_PAGES` by their sidebar names, and tells the model not to name
+any other tool or page. In the phase 2 trials Gemini invented pages ("Image Review",
+[trials.md](trials.md) § Observations). The list is built from the map rather than written
+out, and `_fix` refuses a page outside it, so a new finding cannot point at a page the prompt
+leaves out. `test_system_prompt_names_every_fix_page` checks both.
+
+### The categories
+
+What each category sends:
 
 | Category | What it sends |
 |---|---|

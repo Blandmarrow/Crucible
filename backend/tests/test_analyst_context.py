@@ -5,8 +5,11 @@ the chat's override and through the provider's, no disabled category's sentinel 
 the messages — not from the context, and not from an earlier reply in the history — and
 no absolute path or unread column ever does.
 """
+import inspect
 import itertools
+import re
 
+import pytest
 from sqlalchemy import select
 
 from backend.models import Chat, ChatMessage, Image, OpenAIProvider
@@ -372,3 +375,21 @@ def test_base_name():
     assert base_name("C:\\data\\datasets\\x\\a.png") == "a.png"
     assert base_name("/srv/data/a b.png") == "a b.png"
     assert base_name("a.png") == "a.png"
+
+
+def test_system_prompt_names_every_fix_page():
+    """The prompt lists the pages the finding cards' buttons open, by their sidebar
+    names, so the model points at real pages instead of inventing one (phase 2 trials).
+    Every `_fix` call in the catalogue names a page in `FIX_PAGES`, scanned statically
+    because most findings fire only on particular data."""
+    for name in health_service.FIX_PAGES.values():
+        assert name in analyst_context.SYSTEM_PROMPT
+    assert "{fix_pages}" not in analyst_context.SYSTEM_PROMPT
+
+    source = inspect.getsource(health_service)
+    pages = re.findall(r'_fix\("([a-z_-]+)"', source)
+    assert pages, "the scan found no _fix calls"
+    assert set(pages) <= set(health_service.FIX_PAGES)
+    # The guard itself: a page the prompt does not list is refused.
+    with pytest.raises(ValueError):
+        health_service._fix("image-review", "Review them")

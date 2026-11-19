@@ -36,15 +36,13 @@ restates its stages.
 This block lives on `feat/analyst` only: by decision 21 nothing of M12 reaches `main`, the
 docs included, until the whole feature is done.
 
-1. **The trials are PR #188** into `feat/analyst` (`docs/dev/analyst/trials.md`): Gemini
-   2.5 Flash and Qwen 3.8 27B pass all three conversations. Merge it once its checks pass,
-   and phase 2 is complete.
-2. **Next is phase 3, read-only tools**
-   ([§ Phase 3](analyst-plan/README.md#phase-3--read-only-tools)): split it into PRs as
-   phase 2 was, on branches off `feat/analyst`, each Opus-reviewed. A small prompt change
-   can come first: the system prompt does not list Crucible's pages, and Gemini invented
-   some in the trials (the plan's § Open questions).
-3. Merge `main` into `feat/analyst` regularly; migrations only on a throwaway database.
+1. **Phase 2 is complete** (PR #188 merged). **Phase 3 is planned** in six PRs with three
+   rulings ([§ Phase 3](analyst-plan/README.md#phase-3--read-only-tools)).
+2. **3a**, the system prompt naming the fix pages, is on `feat/analyst-p3a-prompt`: open its
+   PR into `feat/analyst`, Opus-review it, merge.
+3. **Then 3b**, the streamed tool calls and the per-model probe, on a new branch off
+   `feat/analyst`.
+4. Merge `main` into `feat/analyst` regularly; migrations only on a throwaway database.
    The previous block is in
    [roadmap-archive/handoff-2026-11-19.md](roadmap-archive/handoff-2026-11-19.md).
 

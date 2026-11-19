@@ -88,7 +88,8 @@ The PRs, each a branch off `feat/analyst` with an Opus review:
   `sample_captions` (a finding or a `FilterSpec`), `tag_stats`, `compare_snapshot` (the
   findings delta against now, image counts between the snapshot and the branch head). The
   phase 2 sentinel test extends to every tool.
-- **3d**, the loop in `chat_runner`, only when the chat's model passed the probe: usage
+- **3d**, on `feat/analyst-p3d-loop` (record: `docs/dev/analyst/tool-loop.md`): the loop in
+  `chat_runner`, only when the chat's model passed the probe: usage
   committed per round, the budget re-checked before each round, a cap on rounds and on result
   characters and then one last round with no tools, the provider slot per round, `tool_call`
   and `tool_result` events. The reply's manifest takes in every category a tool sent, so the

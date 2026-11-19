@@ -3,7 +3,9 @@
 Phase 2b of the analyst (M12): what happens between the user pressing Send and the reply
 being stored. It covers budgets, the streamed call, cancel, the startup sweep, and the
 provider limit shared with caption jobs. The context the call sends is
-[chat.md](chat.md); the family hub is [../analyst.md](../analyst.md).
+[chat.md](chat.md); the family hub is [../analyst.md](../analyst.md). A reply that uses
+tools (phase 3) takes several calls, each run as this file describes; the loop between
+them is [tool-loop.md](tool-loop.md).
 
 ## Where things live
 
@@ -110,10 +112,15 @@ provider snapshot `_Provider` keeps the key out of its `repr`.
 stream uses). The browser reads them with `fetch` and a stream reader, since `EventSource`
 cannot send a body:
 
-- `start`: `chat_id`, `message_id`, `user_message_id`, and `content`, the text so far.
+- `start`: `chat_id`, `message_id`, `user_message_id`, `content`, the text so far, and
+  `tool_calls`, the stored tool calls so far.
 - `delta`: `text`, one piece.
-- `usage`: `tokens_in`, `tokens_out`, `estimated`, when the call was recorded.
-- `done` or `error`: the stored assistant message (`ChatMessageOut`), the last event.
+- `tool_call` and `tool_result`: a reply that uses tools ([tool-loop.md](tool-loop.md)
+  § Events).
+- `usage`: `tokens_in`, `tokens_out`, `estimated`, when a call was recorded: the turn's
+  running totals.
+- `done` or `error`: the stored assistant message (`ChatMessageOut`, with its
+  `tool_calls`), the last event.
 
 Each listener has its own queue (`chat_runner.listen`), added when the stream's generator
 first runs, so a client gone before then leaves none behind. Leaving stops the listening,

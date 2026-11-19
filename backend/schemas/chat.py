@@ -55,6 +55,21 @@ class ProposalOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ToolCallOut(BaseModel):
+    """One tool call a reply made and exactly what its result sent (phase 3d)."""
+    id: int
+    round: int
+    call_id: str
+    name: str
+    arguments: str
+    status: str
+    result_text: str
+    categories: list[str] | None = None
+    chars: int = 0
+
+    model_config = {"from_attributes": True}
+
+
 class ChatMessageOut(BaseModel):
     id: int
     seq: int
@@ -70,6 +85,7 @@ class ChatMessageOut(BaseModel):
     context_manifest: dict | None = None
     related_findings: list | None = None
     proposals: list[ProposalOut] = Field(default_factory=list)
+    tool_calls: list[ToolCallOut] = Field(default_factory=list)
     created_at: UtcDatetime
 
     model_config = {"from_attributes": True}
@@ -132,6 +148,12 @@ class ContextManifest(BaseModel):
     estimated_tokens: int = 0
     # Section -> the note item ids in the order the context numbered them (1-based).
     note_numbers: dict[str, list[str]] = Field(default_factory=dict)
+    # The tools offered with this context (phase 3), by name; empty when the chat's model
+    # has not passed the tool-call probe or its privacy offers none.
+    tools_offered: list[str] = Field(default_factory=list)
+    # The tool calls the reply made, counted when it is stored. Each one's categories are
+    # merged into `categories`, so the history rule sees what a tool sent.
+    tool_calls: int = 0
 
 
 class BudgetOut(BaseModel):

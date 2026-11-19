@@ -99,8 +99,42 @@ class ChatMessage(Base):
         "ChatProposal", order_by="ChatProposal.seq", lazy="selectin",
         cascade="all, delete-orphan", passive_deletes=True,
     )
+    # The tool calls the reply made (phase 3d), loaded with it for the same reason.
+    tool_calls: Mapped[list["ChatToolCall"]] = relationship(
+        "ChatToolCall", order_by="ChatToolCall.id", lazy="selectin",
+        cascade="all, delete-orphan", passive_deletes=True,
+    )
 
     __table_args__ = (UniqueConstraint("chat_id", "seq", name="uq_chat_messages_chat_seq"),)
+
+
+class ChatToolCall(Base):
+    """One tool call a reply made, and exactly what its result sent the model (M12
+    phase 3d, docs/dev/analyst/tool-loop.md).
+
+    Hung off the reply's row rather than stored as `role=tool` messages, so a turn keeps
+    one reply row (the user's ruling of 2026-11-19). Later turns do not resend these:
+    history carries the reply text only. `arguments` is the raw text the model sent,
+    valid JSON or not; `categories` are the privacy categories `result_text` carries.
+    """
+
+    __tablename__ = "chat_tool_calls"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    message_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("chat_messages.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    # 0 for the first call to the model in the turn, 1 for the second, and so on.
+    round: Mapped[int] = mapped_column(Integer, nullable=False)
+    call_id: Mapped[str] = mapped_column(String(128), nullable=False, default="", server_default="")
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    arguments: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    # `ok` or `error`: whether the tool ran, not whether it found anything.
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    result_text: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    categories: Mapped[list | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    chars: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
 class ChatProposal(Base):

@@ -5,12 +5,16 @@ the chat's override and through the provider's, no disabled category's sentinel 
 the messages — not from the context, and not from an earlier reply in the history — and
 no absolute path or unread column ever does.
 """
+import ast
+import inspect
 import itertools
 
+import pytest
 from sqlalchemy import select
 
 from backend.models import Chat, ChatMessage, Image, OpenAIProvider
 from backend.schemas.chat import PRIVACY_CATEGORIES, ContextMessage
+from backend.schemas.health import Finding, FindingFix
 from backend.services import analyst_context, health_service
 from backend.services.analyst_context import (
     CAPTION_MAX_CHARS,
@@ -372,3 +376,49 @@ def test_base_name():
     assert base_name("C:\\data\\datasets\\x\\a.png") == "a.png"
     assert base_name("/srv/data/a b.png") == "a b.png"
     assert base_name("a.png") == "a.png"
+
+
+def test_system_prompt_names_every_fix_page():
+    """The prompt lists the pages the finding cards' buttons open, by their sidebar
+    names, plus the few other pages the analyst may point at, so the model names real
+    pages instead of inventing one (phase 2 trials)."""
+    for name in [*health_service.FIX_PAGES.values(), *analyst_context.OTHER_PAGES]:
+        assert name in analyst_context.SYSTEM_PROMPT
+    assert "{fix_pages}" not in analyst_context.SYSTEM_PROMPT
+
+
+def test_every_fix_call_names_a_listed_page():
+    """Every `_fix` call in the catalogue names a page in `FIX_PAGES`, as a string
+    literal, positional or keyword. Scanned on the AST because most findings fire only
+    on particular data, so a bad page would otherwise surface as a failing report on
+    some user's dataset rather than here."""
+    tree = ast.parse(inspect.getsource(health_service))
+    calls = [
+        n for n in ast.walk(tree)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "_fix"
+    ]
+    assert calls, "the scan found no _fix calls"
+    for call in calls:
+        page = call.args[0] if call.args else next(
+            (k.value for k in call.keywords if k.arg == "page"), None)
+        assert isinstance(page, ast.Constant) and isinstance(page.value, str), (
+            f"_fix at line {call.lineno} must name its page as a string literal")
+        assert page.value in health_service.FIX_PAGES, (
+            f"_fix at line {call.lineno} names {page.value!r}, not in FIX_PAGES")
+    # The guard itself: a page the prompt does not list is refused.
+    with pytest.raises(ValueError):
+        health_service._fix("image-review", "Review them")
+
+
+def test_finding_line_names_its_fix():
+    """Each finding's line in the context carries its fix page, by its sidebar name,
+    and the button text, so the model can tie a finding to the page that fixes it."""
+    f = Finding(
+        id="duplicates", severity="warn", title="Duplicate groups", unit="groups",
+        count=3, total=40, numbers={}, filter_spec=None,
+        fix=FindingFix(page="quality", label="Open the duplicate resolver"),
+        fingerprint={"count": 3, "bucket": 1},
+    )
+    line = analyst_context._finding_line(f)
+    assert 'Fix: Score images ("Open the duplicate resolver").' in line
+    assert "Fix:" not in analyst_context._finding_line(f.model_copy(update={"fix": None}))

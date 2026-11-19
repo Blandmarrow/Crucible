@@ -92,7 +92,23 @@ _CACHE_SLOT = "health"
 _CAPTIONS_SLOT = "health_captions"
 
 
+# The pages a finding's fix button opens, each with the name the sidebar shows. The
+# analyst's system prompt lists these names, so the model points at real pages rather
+# than inventing one ("Image Review", in the phase 2 trials). `_fix` refuses any other
+# page, so a new finding cannot name a page the prompt leaves out.
+FIX_PAGES: dict[str, str] = {
+    "datasets": "Datasets",
+    "captioning": "Captioning",
+    "gallery": "Gallery",
+    "stats": "Stats",
+    "quality": "Score images",
+    "consolidate": "Consolidate Tags",
+}
+
+
 def _fix(page: str, label: str) -> FindingFix:
+    if page not in FIX_PAGES:
+        raise ValueError(f"fix page {page!r} is not in FIX_PAGES")
     return FindingFix(page=page, label=label)
 
 
@@ -303,7 +319,7 @@ def _build_findings(
             numbers = {setting: getattr(thresholds, setting)} if setting else {}
             add(id=fid, severity=severity, title=title, count=n, numbers=numbers,
                 filter_spec=FilterSpec(quality_flag=flag_key),
-                fix=_fix("quality", "Review on the Quality page"))
+                fix=_fix("quality", "Review on Score images"))
     if counts.dup_groups:
         add(id="duplicates", severity="warn", title="Duplicate groups",
             unit="groups", count=int(counts.dup_groups), total=total,
@@ -333,7 +349,7 @@ def _build_findings(
             count=int(counts.style_outliers),
             numbers={"below_score": round(style_fence, 4), "iqr_k": STYLE_OUTLIER_IQR_K},
             filter_spec=FilterSpec(score_field="style_similarity_score", max_score_lt=style_fence),
-            fix=_fix("quality", "Review on the Quality page"))
+            fix=_fix("quality", "Review on Score images"))
 
     # Licence
     no_license = int(counts.unlicensed)

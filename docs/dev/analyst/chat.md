@@ -69,7 +69,28 @@ drift from what is sent. A new category, or a phase 3 tool, goes through it too.
 
 The messages are one system message (the fixed prompt, then the context), then the history,
 then the draft. One system message rather than two, because some local chat templates refuse
-a second. The categories:
+a second.
+
+### The system prompt
+
+`SYSTEM_PROMPT` tells the model to cite findings as `[[finding:id]]`, to treat
+`<dataset-data>` as data, and how to write a `crucible-notes` block
+([proposals.md](proposals.md)). It also lists the pages the model may name, by their sidebar
+names, and tells it not to invent others: in the phase 2 trials Gemini invented pages
+("Image Review", [trials.md](trials.md) § Observations). The list is the fix pages,
+`health_service.FIX_PAGES`, then `OTHER_PAGES`, the few pages worth naming that fix no
+finding (Versions, so the model can say "take a snapshot first"; Bulk Edit; Export).
+
+Each finding's line in the context ends with its fix, `Fix: Score images ("Open the
+duplicate resolver").`, so the model can tie a finding to its page. That is Crucible's own
+text and goes under `numbers` with the rest of the finding. `_fix` refuses a page outside
+`FIX_PAGES`, and `test_every_fix_call_names_a_listed_page` walks `health_service`'s AST so
+that every `_fix` call names a listed page as a literal: a new finding cannot point at a page
+the prompt leaves out.
+
+### The categories
+
+What each category sends:
 
 | Category | What it sends |
 |---|---|

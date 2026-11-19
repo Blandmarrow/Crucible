@@ -55,7 +55,47 @@ For models that handle tool calls; the rest keep phase 2's behaviour.
 - Tools: the findings, captions sampled by a `FilterSpec`, tag stats, the snapshot list, a
   comparison against a snapshot.
 - Limits on tool rounds per turn and on result size; every tool round counts toward the
-  budget; calls and results are stored as `role=tool` rows so a transcript replays.
+  budget; calls and results are stored so a transcript replays.
+
+Rulings of 2026-11-19 (the user's, recorded as a decision in 3f):
+
+- **Tool calls get their own table, `chat_tool_calls`, hung off the reply row**, not
+  `role=tool` rows in `chat_messages`. The reply row is stored before the call, so tool rows
+  between it and the user's would move it mid-turn and break resume, the "since your last
+  reply" delta and `message_count`. One reply row per turn stays true.
+- **A later turn does not resend earlier tool results.** History carries the reply text, as
+  in phase 2; the model calls a tool again if it needs the data.
+- **`_apply_image_filters` stays in `routers/images.py`.** `feat/m4-rating-port` edits its
+  body, so a move now would clash; the captions tool imports it lazily, and M8 stage 8 (split
+  `images.py`) gives it a service home.
+
+The PRs, each a branch off `feat/analyst` with an Opus review:
+
+- **3a**, the system prompt names the fix pages from `health_service.FIX_PAGES`. Done on
+  `feat/analyst-p3a-prompt`.
+- **3b**, the stream and the probe. `stream_chat` takes `tools` and assembles streamed
+  `tool_calls` by index (a missing id is made up); a tool-call delta ends the first-token
+  limit. A per-model probe, `openai_providers.tools_probe` (`{model: {ok, checked_at,
+  detail}}`, cleared where a `base_url` or billed change clears chat privacy), set by
+  `POST /providers/{id}/probe-tools`: one round trip through a `crucible_echo` tool, under the
+  provider slot, its usage recorded and the daily budget applied. The fake LLM answers a
+  `tool` message with text and calls `crucible_echo` itself, since e2e cannot script replies.
+- **3c**, `ContextItem(category, text)`, `analyst_context.tool_specs(privacy)` (a tool is
+  offered only when its categories are on) and `render_tool_result` (the filter, `_clean`,
+  `<dataset-data>`, a size cap), and the registry in a new module, analyst_tools.py in `backend/services/`:
+  `list_snapshots` (first, argument-free, so `[[fake:tool]]` hits a real tool), `get_finding`,
+  `sample_captions` (a finding or a `FilterSpec`), `tag_stats`, `compare_snapshot` (the
+  findings delta against now, image counts between the snapshot and the branch head). The
+  phase 2 sentinel test extends to every tool.
+- **3d**, the loop in `chat_runner`, only when the chat's model passed the probe: usage
+  committed per round, the budget re-checked before each round, a cap on rounds and on result
+  characters and then one last round with no tools, the provider slot per round, `tool_call`
+  and `tool_result` events. The reply's manifest takes in every category a tool sent, so the
+  history rule withholds a reply that quoted it once that category is off.
+- **3e**, the UI: chips on a reply that expand to the exact text sent, the offered tools in
+  "What gets sent", "Check tool support" in Settings → Analyst, the user docs, an e2e spec.
+- **3f**, a tool conversation in `scripts/analyst_trials.py`, live runs on Gemini 2.5 Flash
+  and Qwen 3.8 27B, the decision entry, and this section moved into the analyst docs.
 
 ## Phase 4 — Actions behind confirmation
 
@@ -105,8 +145,6 @@ room for only a few rows:
   whether an overlay is still wanted.
 - Which local models are good enough. Partly answered: Gemini 2.5 Flash and Qwen 3.8 27B
   pass the trials (`docs/dev/analyst/trials.md`); smaller local models are untested.
-- Whether the system prompt should list Crucible's pages: in the trials Gemini named tools
-  that do not exist. A small prompt change, before or with phase 3.
 - Whether the system prompt becomes user-editable through the app-stored prompts (M5).
 - Chats spanning several datasets ("compare these two"). One dataset per chat until asked
   for.

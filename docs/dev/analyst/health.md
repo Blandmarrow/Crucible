@@ -21,7 +21,10 @@ A `Finding` (`backend/schemas/health.py`) carries:
 - `filter_spec`: a `FilterSpec`, the closed subset of `ImageFilterParams` that selects the
   affected images. `None` when no single filter does (aspect-ratio spread, tags used once, a
   tag in nearly every caption).
-- `fix`: a dataset page (a pane `PageType`) and button text.
+- `fix`: a dataset page (a pane `PageType`) and button text. The page must be a key of
+  `health_service.FIX_PAGES`, which `_fix` enforces. The analyst's system prompt lists those
+  pages by their sidebar names ([chat.md](chat.md) § The system prompt), so a new page needs
+  a new entry there, with the name the sidebar shows.
 - `fingerprint`: `{count, bucket}`, stored with a dismissal.
 - `was`, `dismissal`, `resurfaced`: see below.
 

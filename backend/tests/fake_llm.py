@@ -165,6 +165,23 @@ def _first_tool(body: dict) -> Reply:
     return Reply(text="", tool_calls=[ToolCall(name)], finish_reason="tool_calls")
 
 
+# The tool-call probe's tool (`services/tool_probe.py`) and how its prompt names the word.
+PROBE_TOOL = "crucible_echo"
+_PROBE_WORD_RE = re.compile(r"with the word '([^']*)'")
+
+
+def _probe_call(body: dict, prompt: str) -> Reply | None:
+    """When the request offers the probe's tool, call it with the word the prompt asks
+    for, as a model that handles tools would. e2e cannot script replies, so this is what
+    lets the probe pass against the fake."""
+    names = [(t.get("function") or {}).get("name") for t in body.get("tools") or [] if isinstance(t, dict)]
+    if PROBE_TOOL not in names:
+        return None
+    found = _PROBE_WORD_RE.search(prompt)
+    word = found.group(1) if found else ""
+    return Reply(text="", tool_calls=[ToolCall(PROBE_TOOL, json.dumps({"word": word}))], finish_reason="tool_calls")
+
+
 PRESETS: dict[str, Callable[[dict], Reply]] = {
     "refusal": lambda _b: Reply(text=REFUSAL_TEXT),
     "empty": lambda _b: Reply(text=""),
@@ -234,11 +251,17 @@ class FakeLLM:
     def _pick(self, body: dict) -> Reply:
         if self.replies:
             return self.replies.popleft()
-        last_user = next((m for m in reversed(body.get("messages") or [])
-                          if isinstance(m, dict) and m.get("role") == "user"), None)
+        messages = [m for m in body.get("messages") or [] if isinstance(m, dict)]
+        # A tool's answer is answered in text quoting it, so a tool round trip ends
+        # without scripting. Ahead of the markers: the user's `[[fake:tool]]` is still
+        # the last user message, and would call the tool again forever.
+        if messages and messages[-1].get("role") == "tool":
+            return Reply(text="The tool returned: " + _text_of(messages[-1].get("content")))
+        last_user = next((m for m in reversed(messages) if m.get("role") == "user"), None)
         found = _MARKER_RE.search(_text_of((last_user or {}).get("content")))
         if found is None:
-            return Reply()
+            probe = _probe_call(body, _text_of((last_user or {}).get("content")))
+            return probe if probe is not None else Reply()
         preset = PRESETS.get(found.group(1))
         if preset is None:
             return _error(400, f"unknown fake marker [[fake:{found.group(1)}]]", "invalid_request_error", None)

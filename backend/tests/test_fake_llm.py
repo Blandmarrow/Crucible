@@ -151,6 +151,35 @@ def test_a_scripted_tool_call_streams_its_arguments_in_fragments():
     assert len(frags) == 2 and "".join(frags) == args
 
 
+def test_a_tool_answer_is_answered_in_text_even_under_the_tool_marker():
+    """A trailing `tool` message gets text quoting it, ahead of the user's marker, so a
+    `[[fake:tool]]` round trip ends instead of calling the tool forever."""
+    fake = FakeLLM()
+    messages = [
+        {"role": "user", "content": "[[fake:tool]]"},
+        {"role": "assistant", "content": None, "tool_calls": [
+            {"id": "call_fake_0", "type": "function", "function": {"name": "get_findings", "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": "call_fake_0", "content": "3 findings"},
+    ]
+    resp = asyncio.run(_complete(fake.openai_client(), messages, tools=TOOLS))
+    assert resp.choices[0].message.content == "The tool returned: 3 findings"
+    assert not resp.choices[0].message.tool_calls
+
+
+def test_the_probe_tool_is_called_with_the_word_asked_for():
+    """The analyst's tool-call probe passes against the fake with no scripting, since
+    e2e cannot script replies: an offered `crucible_echo` is called with the prompt's word."""
+    fake = FakeLLM()
+    echo = [{"type": "function", "function": {"name": "crucible_echo", "parameters": {"type": "object"}}}]
+    resp = asyncio.run(_complete(
+        fake.openai_client(), _say("Call the crucible_echo tool with the word 'ember'."), tools=echo))
+    call = resp.choices[0].message.tool_calls[0]
+    assert (call.function.name, call.function.arguments) == ("crucible_echo", '{"word": "ember"}')
+    # Without the probe's tool on offer, an unmarked message is the plain reply.
+    resp = asyncio.run(_complete(fake.openai_client(), _say("with the word 'ember'"), tools=TOOLS))
+    assert resp.choices[0].message.content == FAKE_REPLY
+
+
 @pytest.mark.parametrize(("marker", "exc"), [
     ("429", openai.RateLimitError),
     ("500", openai.InternalServerError),

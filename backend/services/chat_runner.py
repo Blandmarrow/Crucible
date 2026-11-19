@@ -76,6 +76,16 @@ class _Provider:
     billed: bool = False
 
 
+def provider_snapshot(provider: OpenAIProvider) -> _Provider:
+    """What a call needs from the provider row, read once before it starts. The tool-call
+    probe (`services/tool_probe.py`) takes the same snapshot."""
+    return _Provider(
+        id=provider.id, base_url=provider.base_url, api_key=provider.api_key or "",
+        timeout_s=float(provider.timeout_s), max_tokens=int(provider.max_tokens),
+        max_concurrent=int(provider.max_concurrent), billed=provider_is_billed(provider),
+    )
+
+
 @dataclass
 class _Run:
     chat_id: str
@@ -142,14 +152,21 @@ def estimate_tokens(chars: int) -> int:
 # --- Budgets -------------------------------------------------------------------------
 
 
+async def billed_used(db: AsyncSession, *, chat_id: str | None = None) -> int:
+    """Billed tokens used by one chat, or today (`local_day`) when `chat_id` is None.
+    Summed from `llm_usage` rows each time; there is no counter to drift."""
+    total = func.coalesce(func.sum(LlmUsage.tokens_in + LlmUsage.tokens_out), 0)
+    where = LlmUsage.chat_id == chat_id if chat_id is not None else LlmUsage.day == local_day()
+    return int(await db.scalar(select(total).where(where, LlmUsage.billed.is_(True))) or 0)
+
+
 async def budget_status(db: AsyncSession, chat: Chat, provider: OpenAIProvider | None, estimate: int) -> BudgetOut:
     """Where this chat and today stand against the budgets, for a send of about
     `estimate` tokens. Only billed providers meet them; billed usage alone counts."""
     settings = await get_thresholds(db)
     billed = provider is not None and provider_is_billed(provider)
-    total = func.coalesce(func.sum(LlmUsage.tokens_in + LlmUsage.tokens_out), 0)
-    chat_used = int(await db.scalar(select(total).where(LlmUsage.chat_id == chat.id, LlmUsage.billed.is_(True))) or 0)
-    day_used = int(await db.scalar(select(total).where(LlmUsage.day == local_day(), LlmUsage.billed.is_(True))) or 0)
+    chat_used = await billed_used(db, chat_id=chat.id)
+    day_used = await billed_used(db)
     over = billed and (
         chat_used + estimate > settings.analyst_chat_budget_tokens
         or day_used + estimate > settings.analyst_daily_budget_tokens
@@ -223,11 +240,7 @@ async def _start(db: AsyncSession, chat: Chat, content: str, provider: OpenAIPro
     db.add(reply)
     await db.commit()
 
-    cfg = _Provider(
-        id=provider.id, base_url=provider.base_url, api_key=provider.api_key or "",
-        timeout_s=float(provider.timeout_s), max_tokens=int(provider.max_tokens),
-        max_concurrent=int(provider.max_concurrent), billed=provider_is_billed(provider),
-    )
+    cfg = provider_snapshot(provider)
     run = _Run(chat_id=chat.id, dataset_id=chat.dataset_id, message_id=reply.id, user_message_id=user_msg.id)
     _runs[reply.id] = run
     messages = [m.model_dump() for m in built.messages]

@@ -49,6 +49,31 @@ def provider_privacy(row: object) -> dict[str, bool]:
     return out
 
 
+def tools_ok(row: object, model: str | None) -> bool:
+    """Whether the analyst may offer `model` on this provider tools: only when that model
+    passed the tool-call probe. Never probed, or failed, means the chat runs without
+    tools, as in phase 2. See services/tool_probe.py."""
+    if not model:
+        return False
+    entry = (getattr(row, "tools_probe", None) or {}).get(model)
+    return bool(isinstance(entry, dict) and entry.get("ok") is True)
+
+
+class ToolProbeEntry(BaseModel):
+    ok: bool
+    checked_at: str
+    detail: str
+
+
+class ToolProbeRequest(BaseModel):
+    # None probes the provider's default model.
+    model: str | None = Field(default=None, max_length=255)
+
+
+class ToolProbeOut(ToolProbeEntry):
+    model: str
+
+
 class OpenAIProviderCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     base_url: str = Field(..., min_length=1, max_length=1024)
@@ -126,6 +151,8 @@ class OpenAIProviderOut(BaseModel):
     # The stored override (None = follow `is_billed`) and what is in force either way.
     analyst_privacy: dict[str, bool] | None = None
     analyst_privacy_effective: dict[str, bool]
+    # The tool-call probe's verdict per model; see OpenAIProvider.tools_probe.
+    tools_probe: dict[str, ToolProbeEntry] = Field(default_factory=dict)
     created_at: UtcDatetime
 
     model_config = {"from_attributes": True}
@@ -151,5 +178,8 @@ class OpenAIProviderOut(BaseModel):
             is_billed=provider_is_billed(row),
             analyst_privacy=getattr(row, "analyst_privacy", None),
             analyst_privacy_effective=provider_privacy(row),
+            tools_probe={
+                m: e for m, e in (getattr(row, "tools_probe", None) or {}).items() if isinstance(e, dict)
+            },
             created_at=row.created_at,
         )

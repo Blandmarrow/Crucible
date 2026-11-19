@@ -71,8 +71,8 @@ Rulings of 2026-11-19 (the user's, recorded as a decision in 3f):
 
 The PRs, each a branch off `feat/analyst` with an Opus review:
 
-- **3a**, the system prompt names the fix pages from `health_service.FIX_PAGES`. Done on
-  `feat/analyst-p3a-prompt`.
+- **3a**, the system prompt names the fix pages from `health_service.FIX_PAGES`. Merged as
+  PR #189 (record: `docs/dev/analyst/chat.md` § The system prompt).
 - **3b**, the stream and the probe. `stream_chat` takes `tools` and assembles streamed
   `tool_calls` by index (a missing id is made up); a tool-call delta ends the first-token
   limit. A per-model probe, `openai_providers.tools_probe` (`{model: {ok, checked_at,

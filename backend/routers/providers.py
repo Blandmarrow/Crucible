@@ -5,11 +5,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.database import get_db
 from backend.models.chat import Chat
 from backend.models.openai_provider import OpenAIProvider
-from backend.services import llm_limiter
+from backend.services import llm_limiter, tool_probe
 from backend.schemas.openai_provider import (
     OpenAIProviderCreate,
     OpenAIProviderOut,
     OpenAIProviderUpdate,
+    ToolProbeOut,
+    ToolProbeRequest,
     provider_is_billed,
 )
 
@@ -55,11 +57,20 @@ async def update_provider(provider_id: str, body: OpenAIProviderUpdate, db: Asyn
         # A chat's own privacy toggles were chosen for this provider as it was. A new
         # server, or a change in whether it bills, must not inherit "send everything".
         await db.execute(update(Chat).where(Chat.provider_id == row.id).values(privacy=None))
+        # The tool-call verdicts were for that server too (services/tool_probe.py).
+        row.tools_probe = None
     await db.commit()
     # The shared limit in use, if any, takes the new size now (services/llm_limiter.py).
     llm_limiter.resize(row.id, row.max_concurrent)
     await db.refresh(row)
     return OpenAIProviderOut.from_orm_row(row)
+
+
+@router.post("/{provider_id}/probe-tools", response_model=ToolProbeOut)
+async def probe_tools(provider_id: str, body: ToolProbeRequest, db: AsyncSession = Depends(get_db)):
+    """Check whether a model handles tool calls, and store the verdict (M12 phase 3b).
+    A real call, so it can take a while and, on a billed provider, costs tokens."""
+    return await tool_probe.probe(db, provider_id, body.model)
 
 
 @router.get("/{provider_id}/models")

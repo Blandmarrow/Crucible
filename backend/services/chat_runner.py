@@ -297,7 +297,9 @@ async def _flush_loop(run: _Run) -> None:
 def _request_chars(messages: list[dict], tools: list[dict]) -> int:
     """A character count of a request, for a token estimate when the server reports none
     and for the budget check between rounds."""
-    return len(json.dumps(messages)) + (len(json.dumps(tools)) if tools else 0)
+    # `ensure_ascii=False`: a `\uXXXX` escape would count one character as six.
+    return len(json.dumps(messages, ensure_ascii=False)) + (
+        len(json.dumps(tools, ensure_ascii=False)) if tools else 0)
 
 
 async def _budget_stop(run: _Run, cfg: _Provider, chars: int) -> str | None:
@@ -467,14 +469,25 @@ async def _execute(
                 else estimate_tokens(len(round_text) + sum(len(c.arguments) for c in calls)),
                 result.tokens_in is None or result.tokens_out is None,
             )
-            await asyncio.shield(_record_round(run, cfg, tokens, totals))
+            # Shielded, so a Stop cannot cut the commit short; and on a Stop, wait for it
+            # and mark the round recorded when it landed, or `_finish` would record it again.
+            recording = asyncio.ensure_future(_record_round(run, cfg, tokens, totals))
+            try:
+                await asyncio.shield(recording)
+            except asyncio.CancelledError:
+                await asyncio.wait({recording})
+                if not recording.cancelled() and recording.exception() is None:
+                    opened = sent = refused = False
+                    result = None
+                    round_start = len(run.parts)
+                raise
             opened = sent = refused = False
             result = None
             round_start = len(run.parts)
             answers = await _run_tools(run, rnd, calls, privacy)
             messages.append({
                 "role": "assistant",
-                "content": round_text or None,
+                "content": round_text.strip() or None,
                 "tool_calls": [c.as_message_call() for c in calls],
             })
             for call, text in answers:
@@ -483,15 +496,17 @@ async def _execute(
             rnd += 1
             gap = True
         if status == "complete" and error_kind is None and result is not None:
+            # The last call's text: earlier rounds' "Let me look." is no answer.
+            answer = "".join(run.parts[round_start:])
             if result.finish_reason == "length":
                 error_kind = "length"
                 detail = "The reply was cut off by the provider's Max tokens (Settings → LLM Providers)."
                 if not run.text.strip():
                     status = "error"
-            elif not run.text.strip() and result.tool_calls:
+            elif not answer.strip() and result.tool_calls:
                 status, error_kind = "error", "tools"
                 detail = "The model kept asking for tools after its limit and wrote no answer."
-            elif not run.text.strip():
+            elif not answer.strip():
                 status, error_kind, detail = "error", "empty", "The model sent back an empty reply."
     except ChatStreamError as exc:
         status, error_kind, detail = "error", exc.kind, scrub(str(exc), cfg.api_key)

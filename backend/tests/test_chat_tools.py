@@ -279,3 +279,60 @@ def test_cancel_and_resume_in_the_second_round(fake_llm, tmp_path):
             assert len(await _rows(env, ChatToolCall)) == 1
 
     run(scenario())
+
+
+def test_a_stop_during_a_rounds_usage_commit_records_it_once(fake_llm, tmp_path, monkeypatch):
+    """The round's usage commit is shielded, so a Stop cannot cut it short; the Stop
+    then waits for it and marks the round recorded, or `_finish` would record it again."""
+    original = chat_runner._record_round
+    gate = asyncio.Event()
+    entered: list[int] = []
+
+    async def held(*args, **kwargs):
+        entered.append(1)
+        await gate.wait()
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(chat_runner, "_record_round", held)
+
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            _ds, _p, chat_id = await _setup(env, privacy=SHARE_ALL)
+            fake_llm.replies.append(_call("list_snapshots", text="Look."))
+            run_ = await _start_direct(env, chat_id)
+            await _until(lambda: entered)
+            stopper = asyncio.create_task(chat_runner.cancel(run_.message_id))
+            await asyncio.sleep(0.05)
+            gate.set()
+            await stopper
+            # Unfixed, the orphaned commit lands just after the Stop returns: give it time.
+            await asyncio.sleep(0.3)
+            usage = [u for u in await _rows(env, LlmUsage) if u.message_id == run_.message_id]
+            assert len(usage) == 1
+            async with env.Session() as db:
+                msg = await db.get(ChatMessage, run_.message_id)
+                assert msg.status == "cancelled"
+                assert (msg.tokens_in, msg.tokens_out) == (usage[0].tokens_in, usage[0].tokens_out)
+
+    run(scenario())
+
+
+def test_an_empty_answer_after_a_tool_round_is_an_error(fake_llm, tmp_path):
+    """Earlier rounds' text is no answer: the endings read the last call's text."""
+    async def scenario():
+        async with api_env(tmp_path) as env:
+            _ds, _p, chat_id = await _setup(env, privacy=SHARE_ALL)
+            fake_llm.replies.extend([_call("list_snapshots", text="Let me look."), Reply(text="")])
+            _r, events = await _send(env, chat_id, "Go")
+            final = events[-1][1]
+            assert (final["status"], final["error_kind"]) == ("error", "empty")
+            assert final["content"] == "Let me look."
+            # The text sent back with the round's calls has no leading blank line.
+            assistant = _chat_requests(fake_llm)[-1]["messages"][-2]
+            assert assistant["content"] == "Let me look."
+            # An ended reply's replayed `start` carries its tool calls too.
+            r = await env.client.get(f"{API}/chats/{chat_id}/messages/{final['id']}/stream")
+            start = _events(r.text)[0]
+            assert start[0] == "start" and [c["name"] for c in start[1]["tool_calls"]] == ["list_snapshots"]
+
+    run(scenario())

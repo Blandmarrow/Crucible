@@ -189,7 +189,8 @@ async def resume_stream(chat_id: str, message_id: int, db: AsyncSession = Depend
     db.expire_all()
     msg = await _get_message(db, chat_id, message_id)
     final = ChatMessageOut.model_validate(msg).model_dump(mode="json")
-    start = {"chat_id": chat_id, "message_id": msg.id, "user_message_id": None, "content": msg.content}
+    start = {"chat_id": chat_id, "message_id": msg.id, "user_message_id": None, "content": msg.content,
+             "tool_calls": final["tool_calls"]}
 
     async def generate():
         yield {"event": "start", "data": json.dumps(start)}

@@ -48,7 +48,9 @@ the model is a **round**:
    its calls, through `ToolCallOut.as_message_call`, so a Gemini thought signature goes
    back) and one `tool` message per call.
 4. **Any other ending ends the turn**, and the last call's usage and the reply are stored
-   by `_finish`, as in phase 2. The message's tokens are the sum of every round.
+   by `_finish`, as in phase 2. The message's tokens are the sum of every round. The
+   endings read the last call's text, not the turn's: an earlier round's "Let me look."
+   followed by an empty answer is `error: empty`, its text kept.
 
 **The caps.** `MAX_TOOL_ROUNDS` (4) rounds may call tools. After them, or once the turn's
 tool results reach `TOOL_TURN_MAX_CHARS` (24,000), one last round runs under
@@ -87,14 +89,20 @@ Beside phase 2's (`start`, `delta`, `usage`, `done`, `error`, [sending.md](sendi
 - `tool_result`: the stored call, a `ToolCallOut`, once the round's calls are committed.
 - `usage` comes after each tool round as well as at the end, always the turn's running
   totals.
-- `start` carries `tool_calls`, the stored calls so far.
+- `start` carries `tool_calls`, the stored calls so far, also when it is replayed for a
+  reply that has ended.
+- Key a call on its row `id`, not its `call_id`: a server that sends no ids gets
+  `call_<n>`, which repeats across rounds.
 
 ## Cancel, shutdown and errors
 
 A Stop or a shutdown during a round or while tools run ends the turn as in phase 2:
 `cancelled` or `error: interrupted`, the text so far kept. The tool rounds already
 recorded stay recorded; the cut-short call is recorded under phase 2's rule, counting only
-its own text, so nothing is counted twice. A tool call cut off before its round committed
+its own text, so nothing is counted twice. **A Stop that lands while a tool round's usage
+is being committed** waits for that commit, which is shielded, and when it landed marks
+the round recorded; otherwise `_finish` would record the same call again (the review of
+PR #192 caught this). A tool call cut off before its round committed
 leaves no row. A tool's own failure is an error result for the model
 ([tool-registry.md](tool-registry.md) § The registry), never the reply's.
 
@@ -105,4 +113,5 @@ call, both requests' messages, one usage row per call, summed tokens, `tools_off
 only a probed model getting tools, privacy choosing the tools, the round cap and the
 `tools` ending, the result-size cap, the per-round call cap answering every call, a bad
 call as an error row, the budget stopping between rounds, a reply withheld once a tool's
-category is off, and a Stop and a late listener in the second round.
+category is off, a Stop and a late listener in the second round, a Stop during a round's
+usage commit recording it once, and an empty answer after a tool round.

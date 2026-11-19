@@ -31,23 +31,23 @@ restates its stages.
    linking the record that holds the full text.
 5. **Landed**: one line per finished milestone or handoff record.
 
-## Next session (updated 2026-11-19, M12 phase 3c in review)
+## Next session (updated 2026-11-19, M12 phase 3d in review)
 
 This block lives on `feat/analyst` only: by decision 21 nothing of M12 reaches `main`, the
 docs included, until the whole feature is done.
 
 1. **Phase 3** runs in six PRs with three rulings
-   ([§ Phase 3](analyst-plan/README.md#phase-3--read-only-tools)); 3a merged as PR #189,
-   3b as PR #190.
-2. **3c**, the read-only tools and their privacy filter, is PR #191 into `feat/analyst`
-   (record: `docs/dev/analyst/tool-registry.md`): Opus-review it, merge once its checks
-   pass.
-3. **Re-run the Qwen 3.8 27B probe on an idle GPU** (`scripts/analyst_trials.py
-   --probe-only`): the first run met a GPU fully loaded by other work and reached no
-   verdict. Record it in `docs/dev/analyst/tools.md` § Live results.
-4. **Then 3d**, the tool loop in the send path, on a new branch off `feat/analyst`.
-   CLAUDE.md sits at exactly its 6,500-word budget, so a 3d addition there needs a split
-   first (the `doc-maintenance` skill).
+   ([§ Phase 3](analyst-plan/README.md#phase-3--read-only-tools)); 3a to 3c merged as PRs
+   #189 to #191.
+2. **3d**, the tool loop in the send path, is PR #192 into `feat/analyst` (record:
+   `docs/dev/analyst/tool-loop.md`): Opus-review it, merge once its checks pass.
+3. **Then 3e**, the UI: tool chips on a reply, the offered tools in "What gets sent",
+   "Check tool support" in Settings → Analyst, the user docs and an e2e spec. Until it
+   lands, a reply that used tools shows only its text. Also: show `error_detail` for a
+   `complete` reply with any `error_kind` (a `budget` stop now looks like a finished
+   reply; only `length` has a notice), and key tool calls on their row `id`.
+4. CLAUDE.md sits at exactly its 6,500-word budget: an addition there needs a split first
+   (the `doc-maintenance` skill).
 5. Merge `main` into `feat/analyst` regularly; migrations only on a throwaway database.
    The previous block is in
    [roadmap-archive/handoff-2026-11-19.md](roadmap-archive/handoff-2026-11-19.md).

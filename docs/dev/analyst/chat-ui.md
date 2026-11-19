@@ -142,8 +142,31 @@ reply's strip starts open, older ones closed.
 
 A reply's ending reads `status` and `error_kind` (`sending.md` § The call and its time
 limits): `cancelled` shows "Stopped", an `error` shows the stored `error_detail`, and a
-`complete` reply with `error_kind: "length"` shows its cut-off warning. The model and the
-token counts sit under it.
+`complete` reply with any `error_kind` shows a warning: `length`, cut off at Max tokens, or
+`budget`, stopped before a tool round that could pass a budget, which until phase 3e
+looked like a reply that had simply finished. The model and the token counts sit under it.
+
+## Tool calls
+
+`ToolCalls` sits above a reply's text (M12 phase 3, `tool-loop.md`). Each stored call is a
+`<details>` keyed on its row `id`, never its `call_id`, which a server that sends no ids
+repeats across rounds. Its summary says in words what was looked up ("Read captions for
+low_resolution", from the tool's name and arguments; an unknown tool shows its name). A
+failed call says so. Opened, it shows the exact `result_text` sent to the model and the
+categories it carried, so the transparency of "What gets sent" reaches the tools. The
+model's arguments are shown as text, quoted and cut to 60 characters, never trusted.
+
+While a reply runs, the stream holds the calls stored so far (`toolCalls`, from `start`
+and each `tool_result`) and the calls whose results have not arrived (`running`, from each
+`tool_call`), shown as "Read the finding blurry…". A `tool_result` takes the first running
+call with its `call_id` off the list. A resume gets the stored calls in `start`, so a
+reload mid-reply keeps them. Once the reply has ended the stored message's `tool_calls`
+take over.
+
+"What gets sent" says which tools the chat may call (the manifest's `tools_offered`), or
+why it has none: the chat's model has not passed the check, or the privacy allows none.
+With none offered it also shows `ToolCheck` for the chat's own model (its `model`, else the
+provider's default), since Settings → Analyst checks only each provider's default model.
 
 ## Controls that save as you use them
 
@@ -176,7 +199,32 @@ sends `analyst_privacy_reset`. The tab's copy states the two facts a user cannot
 boxes: the defaults follow the provider's `billed` box rather than its address, and a
 reasoning model needs Max tokens room.
 
+Each row also has `ToolSupport`: `ToolCheck` for the provider's default model, and the
+other models checked on it. `ToolCheck` (`frontend/src/components/providers/`, shared with
+"What gets sent") shows the verdict from `tools_probe` ("supported", "not supported" or "not
+checked", with the detail and when) and **Check tool support**, which posts to
+`POST /providers/{id}/probe-tools` with the model (`tools.md` § The probe). A pass or a fail
+refetches the providers and every chat's preview, since it changes which tools those chats
+are offered.
+
+- **"Checking…" is read from the mutation cache**, by the key `["probe-tools", provider,
+  model]` through `useIsMutating`, not from the component's own mutation. A check can take
+  minutes; leaving the tab and coming back must still show it running, and must not let a
+  second click start another (the server would answer 409).
+- **A 502 or 409, no verdict, shows its reason and changes nothing**, until a newer verdict
+  lands: the reason is kept with the verdict it was made against, and hidden once that
+  changes.
+
 ## Tests
+
+`frontend/e2e/chat-tools.spec.ts`, against the fake LLM: Settings → Analyst checks the
+provider (the fake calls the probe's tool itself); a chat sends `[[fake:tool]]`, and the
+reply shows the `list_snapshots` call, opening to its exact result; the two requests went
+out with the tools and then the tool's answer; "What gets sent" lists the tools, and turning
+Numbers off drops the ones that read it; a reload keeps the stored call. `chat.spec.ts`
+checks an unchecked model from "What gets sent" and sees the tools appear. Not covered: a
+call still running, a failed call's styling, the `budget` notice, and "Checking…" across
+leaving the tab.
 
 `frontend/e2e/chat.spec.ts`, against the fake LLM: a reply streams in, gets its strip and
 names the chat; the request went out as a stream; a `[[fake:stall]]` reply is stopped with its

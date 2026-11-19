@@ -6,14 +6,16 @@ import { providersApi, type ProviderOut } from "../../api/providers";
 import { settingsApi, type Thresholds } from "../../api/settings";
 import { apiErrorDetail } from "../../utils/apiError";
 import NumberField from "../common/NumberField";
+import ToolCheck from "../providers/ToolCheck";
 
 const MIN_BUDGET = 1_000;
 const MAX_BUDGET = 2 ** 31 - 1;
 const clampBudget = (n: number) => Math.min(MAX_BUDGET, Math.max(MIN_BUDGET, Math.round(n)));
 
-/** Settings → Analyst: the two token budgets, and what each provider may be sent by
- *  default. The rules behind both are docs/dev/analyst/chat.md § Privacy: three layers
- *  and docs/dev/analyst/sending.md § Budgets. */
+/** Settings → Analyst: the two token budgets, what each provider may be sent by
+ *  default, and whether its model may call tools. The rules behind them are
+ *  docs/dev/analyst/chat.md § Privacy: three layers, docs/dev/analyst/sending.md
+ *  § Budgets and docs/dev/analyst/tools.md § The probe. */
 export default function AnalystPanel() {
   return (
     <div className="panel-b" style={{ display: "flex", flexDirection: "column", gap: 24 }}>
@@ -107,6 +109,13 @@ function ProviderPrivacy() {
         paid service reached through a tunnel on <code style={{ fontSize: 11 }}>localhost</code> looks
         local, so tick <em>billed</em> on it, or it is sent everything.
       </p>
+      <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "0 0 10px" }}>
+        <strong style={{ color: "var(--fg)" }}>Tools.</strong> A model that passes “Check tool support”
+        can look things up during a reply, such as the captions behind a finding, within what the boxes
+        allow. Each row checks the provider's default model; a chat on another model checks its own under
+        “What gets sent”. The check makes two short calls to the model; on a billed provider they count
+        toward today's budget. A model that has not passed it chats without tools.
+      </p>
       {isLoading && <div style={{ fontSize: 12.5, color: "var(--fg-dim)" }}>Loading…</div>}
       {providers && providers.length === 0 && (
         <div style={{ fontSize: 12.5, color: "var(--fg-dim)" }}>No providers yet. Add one on the LLM Providers tab.</div>
@@ -181,6 +190,30 @@ function ProviderRow({ provider: p }: { provider: ProviderOut }) {
           ))}
         </div>
       </fieldset>
+      <ToolSupport provider={p} />
+    </div>
+  );
+}
+
+/** Whether the provider's default model may call tools (`ToolCheck`), and the other
+ *  models checked on it. A chat on another model checks its own from "What gets sent". */
+function ToolSupport({ provider: p }: { provider: ProviderOut }) {
+  const model = p.default_model;
+  const others = Object.entries(p.tools_probe ?? {}).filter(([m]) => m !== model);
+  return (
+    <div style={{ marginTop: 10 }} data-testid={`analyst-tools-${p.id}`}>
+      {model ? (
+        <ToolCheck providerId={p.id} model={model} verdict={p.tools_probe?.[model]} />
+      ) : (
+        <div style={{ fontSize: 11.5, color: "var(--fg-dim)" }}>
+          Set a default model on the LLM Providers tab to check it for tools.
+        </div>
+      )}
+      {others.length > 0 && (
+        <div style={{ fontSize: 11.5, color: "var(--fg-dim)", marginTop: 4, overflowWrap: "anywhere" }}>
+          Other models checked: {others.map(([m, v]) => `${m} (${v.ok ? "supported" : "not supported"})`).join(", ")}.
+        </div>
+      )}
     </div>
   );
 }

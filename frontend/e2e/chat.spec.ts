@@ -91,6 +91,11 @@ test('analyst chat: a reply streams, a stalled one is stopped, privacy is the ch
     await dialog.getByRole('button', { name: 'Follow the provider\'s defaults again' }).click()
     await expect(dialog).toContainText('follows the provider')
     await expect(captions).toBeChecked()
+    // No tools yet: the chat's model was never checked. Checking it here offers them.
+    await expect(dialog.getByTestId('context-tools')).toContainText('No tools')
+    await expect(dialog.getByTestId('tool-check-verdict')).toHaveText('not checked')
+    await dialog.getByRole('button', { name: 'Check tool support' }).click()
+    await expect(dialog.getByTestId('context-tools')).toContainText('list_snapshots')
     await dialog.getByRole('button', { name: 'Close' }).click()
 
     // The stored chat agrees with the page.

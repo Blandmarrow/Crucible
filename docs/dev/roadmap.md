@@ -31,23 +31,22 @@ restates its stages.
    linking the record that holds the full text.
 5. **Landed**: one line per finished milestone or handoff record.
 
-## Next session (updated 2026-11-19, M12 phase 3d in review)
+## Next session (updated 2026-11-19, M12 phase 3e in review)
 
 This block lives on `feat/analyst` only: by decision 21 nothing of M12 reaches `main`, the
 docs included, until the whole feature is done.
 
 1. **Phase 3** runs in six PRs with three rulings
-   ([§ Phase 3](analyst-plan/README.md#phase-3--read-only-tools)); 3a to 3c merged as PRs
-   #189 to #191.
-2. **3d**, the tool loop in the send path, is PR #192 into `feat/analyst` (record:
-   `docs/dev/analyst/tool-loop.md`): Opus-review it, merge once its checks pass.
-3. **Then 3e**, the UI: tool chips on a reply, the offered tools in "What gets sent",
-   "Check tool support" in Settings → Analyst, the user docs and an e2e spec. Until it
-   lands, a reply that used tools shows only its text. Also: show `error_detail` for a
-   `complete` reply with any `error_kind` (a `budget` stop now looks like a finished
-   reply; only `length` has a notice), and key tool calls on their row `id`.
-4. CLAUDE.md sits at exactly its 6,500-word budget: an addition there needs a split first
-   (the `doc-maintenance` skill).
+   ([§ Phase 3](analyst-plan/README.md#phase-3--read-only-tools)); 3a to 3d merged as PRs
+   #189 to #192.
+2. **3e**, the UI for tool calls and the "Check tool support" button, is PR #193 into
+   `feat/analyst` (record: `docs/dev/analyst/chat-ui.md` § Tool calls): Opus-review it,
+   merge once its checks pass.
+3. **Then 3f**: a tools conversation in `scripts/analyst_trials.py` that makes the model
+   call a tool, run live; the rulings as a decision entry; § Phase 3 moved out of the plan.
+4. **Two docs at their budget.** `docs/analyst.md` is 56 words over, its split recorded in
+   `docs/dev/pending-splits.md`: do it first in the next session that adds to it. CLAUDE.md
+   sits at exactly 6,500 words.
 5. Merge `main` into `feat/analyst` regularly; migrations only on a throwaway database.
    The previous block is in
    [roadmap-archive/handoff-2026-11-19.md](roadmap-archive/handoff-2026-11-19.md).

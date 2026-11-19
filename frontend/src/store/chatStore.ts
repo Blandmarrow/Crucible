@@ -9,6 +9,7 @@ import {
   SendRefused,
   type ChatMessage,
   type ReplyEvent,
+  type ToolCall,
 } from "../api/chats";
 import { apiErrorDetail } from "../utils/apiError";
 
@@ -27,6 +28,10 @@ export interface ChatStream {
   phase: "connecting" | "streaming" | "ended";
   stopping: boolean;
   usage: { tokens_in: number; tokens_out: number; estimated: boolean } | null;
+  /** The reply's tool calls stored so far (phase 3), from `start` and `tool_result`. */
+  toolCalls: ToolCall[];
+  /** Calls the model made whose results have not arrived: the tools running now. */
+  running: { call_id: string; name: string; arguments: string }[];
 }
 
 interface ChatStore {
@@ -87,17 +92,31 @@ function onEvent(chatId: string, e: ReplyEvent) {
         userMessageId: e.data.user_message_id ?? cur.userMessageId,
         text: e.data.content,
         phase: "streaming",
+        toolCalls: e.data.tool_calls ?? [],
+        running: [],
       });
       break;
     case "delta":
       patch(chatId, { text: cur.text + e.data.text });
       break;
+    case "tool_call":
+      patch(chatId, { running: [...cur.running, { call_id: e.data.call_id, name: e.data.name, arguments: e.data.arguments }] });
+      break;
+    case "tool_result": {
+      // The first running call with this id: ids can repeat across rounds, not within one.
+      const i = cur.running.findIndex((r) => r.call_id === e.data.call_id);
+      patch(chatId, {
+        toolCalls: [...cur.toolCalls, e.data],
+        running: i < 0 ? cur.running : [...cur.running.slice(0, i), ...cur.running.slice(i + 1)],
+      });
+      break;
+    }
     case "usage":
       patch(chatId, { usage: e.data });
       break;
     case "done":
     case "error":
-      patch(chatId, { text: e.data.content, phase: "ended" });
+      patch(chatId, { text: e.data.content, phase: "ended", toolCalls: e.data.tool_calls ?? cur.toolCalls, running: [] });
       break;
   }
 }
@@ -172,7 +191,7 @@ export function sendMessage(qc: QueryClient, datasetId: string, chatId: string, 
   if (useChatStore.getState().streams[chatId]) return Promise.resolve(false);
   return run(qc, {
     chatId, datasetId, userText: content, userMessageId: null, messageId: null,
-    text: "", phase: "connecting", stopping: false, usage: null,
+    text: "", phase: "connecting", stopping: false, usage: null, toolCalls: [], running: [],
   }, `/chats/${chatId}/messages`, "POST", { content });
 }
 
@@ -186,7 +205,7 @@ export function resumeReply(qc: QueryClient, datasetId: string, chatId: string, 
   resumed.add(messageId);
   void run(qc, {
     chatId, datasetId, userText: null, userMessageId: null, messageId,
-    text: "", phase: "connecting", stopping: false, usage: null,
+    text: "", phase: "connecting", stopping: false, usage: null, toolCalls: [], running: [],
   }, `/chats/${chatId}/messages/${messageId}/stream`, "GET");
 }
 

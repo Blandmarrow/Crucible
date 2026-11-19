@@ -1,5 +1,7 @@
 import { useId, useState } from "react";
 import ModalShell from "../common/ModalShell";
+import ToolCheck from "../providers/ToolCheck";
+import type { ProviderOut } from "../../api/providers";
 import {
   PRIVACY_CATEGORIES,
   PRIVACY_LABELS,
@@ -12,20 +14,24 @@ import {
 /** What this chat may send, and exactly what the next send would send. The preview is
  *  `POST /chats/{id}/preview-context`, which calls the same `build_context` as a real
  *  send, so what is shown here cannot drift from what goes out. */
-export default function ContextDialog({ chat, preview, loading, busy, providerPrivacy, providerName, onPrivacy, onClose }: {
+export default function ContextDialog({ chat, preview, loading, busy, provider, onPrivacy, onClose }: {
   chat: Chat;
   preview: ContextPreview | undefined;
   loading: boolean;
   busy: boolean;
-  /** What the provider allows, for showing a pending return to its defaults. */
-  providerPrivacy: Record<string, boolean> | null;
-  providerName: string | null;
+  /** The chat's provider: its name, what it allows (for showing a pending return to its
+   *  defaults), and its tool-check verdicts. */
+  provider: ProviderOut | null | undefined;
   /** A new override for the chat, or null to follow the provider again; `done` runs
    *  once the save has settled, whatever its outcome. */
   onPrivacy: (p: Privacy | null, done: () => void) => void;
   onClose: () => void;
 }) {
   const uid = useId();
+  const providerPrivacy = provider?.analyst_privacy_effective ?? null;
+  const providerName = provider?.name ?? null;
+  // The model this chat sends to: its own, or the provider's default.
+  const model = chat.model || provider?.default_model || "";
   // The choice being saved (null: back to the provider's), shown from the click until
   // the save and its refetches land. State, not the mutation's variables: React puts
   // a controlled checkbox back at the end of the click, before those arrive.
@@ -91,6 +97,26 @@ export default function ContextDialog({ chat, preview, loading, busy, providerPr
           </button>
         )}
       </fieldset>
+
+      {preview && (
+        <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "0 0 8px" }} data-testid="context-tools">
+          {preview.manifest.tools_offered?.length ? (
+            <>
+              Tools it may call: <span className="mono">{preview.manifest.tools_offered.join(", ")}</span>. A
+              tool's result is held to the boxes above too, and shown under the reply that asked for it.
+            </>
+          ) : (
+            <>
+              No tools: this chat's model has not passed the check below, or the boxes above allow none.
+            </>
+          )}
+        </p>
+      )}
+      {preview && provider && model && !preview.manifest.tools_offered?.length && (
+        <div style={{ margin: "0 0 10px" }}>
+          <ToolCheck providerId={provider.id} model={model} verdict={provider.tools_probe?.[model]} />
+        </div>
+      )}
 
       {preview && (
         <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "0 0 8px" }}>

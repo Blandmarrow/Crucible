@@ -94,7 +94,7 @@ The PRs, each a branch off `feat/analyst` with an Opus review:
   characters and then one last round with no tools, the provider slot per round, `tool_call`
   and `tool_result` events. The reply's manifest takes in every category a tool sent, so the
   history rule withholds a reply that quoted it once that category is off.
-- **3e**, the UI: chips on a reply that expand to the exact text sent, the offered tools in
+- **3e**, on `feat/analyst-p3e-ui` (record: `docs/dev/analyst/chat-ui.md` § Tool calls), the UI: chips on a reply that expand to the exact text sent, the offered tools in
   "What gets sent", "Check tool support" in Settings → Analyst, the user docs, an e2e spec.
 - **3f**, a tool conversation in `scripts/analyst_trials.py`, live runs on Gemini 2.5 Flash
   and Qwen 3.8 27B, the decision entry, and this section moved into the analyst docs.

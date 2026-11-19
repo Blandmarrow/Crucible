@@ -20,6 +20,18 @@ export type PageType =
   | "runs"
   | "compare";
 
+/** Every page, for checking a pane layout read back from storage. A record rather than
+ *  an array so a new `PageType` that is missing here fails the build. */
+const PAGE_TYPE_SET: Record<PageType, true> = {
+  datasets: true, gallery: true, captioning: true, quality: true, stats: true, health: true,
+  chat: true, export: true, "file-browser": true, "image-detail": true, "video-detail": true,
+  booru: true, "bulk-edit": true, consolidate: true, versions: true, comfy: true, runs: true,
+  compare: true,
+};
+export function isPageType(v: unknown): v is PageType {
+  return typeof v === "string" && Object.prototype.hasOwnProperty.call(PAGE_TYPE_SET, v);
+}
+
 export interface PaneView {
   page: PageType;
   datasetId?: string;
@@ -45,6 +57,9 @@ export interface PaneView {
   /** Compare only: where the set came from. "dups" (a Quality page duplicate
    *  group) offers Keep this one while the comparison is still that whole group. */
   compareFrom?: "dups";
+  /** Chat only: the chat this pane shows. Per pane, so two panes on one dataset can
+   *  show two chats; persisted with the layout, so a pinned chat survives a reload. */
+  chatId?: string;
 }
 
 interface PaneContextValue {

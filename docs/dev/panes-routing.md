@@ -22,7 +22,8 @@ PaneLeaf  { type: "leaf"; id: string; view: PaneView }
 PaneSplit { type: "split"; id: string; direction: "horizontal"|"vertical";
             sizes: [number, number]; children: [PaneTree, PaneTree] }
 PaneView  { page: PageType; datasetId?: string; imageId?: string;
-            videoId?: string; subfolder?: string; sourceVideoId?: string; filter?: string }
+            videoId?: string; subfolder?: string; sourceVideoId?: string; filter?: string;
+            compareIds?: string[]; compareFrom?: "dups"; chatId?: string }
 ```
 
 All tree mutations (`splitNode`, `closeNode`, `updateLeafView`, `updateSplitSizes`, `updateFirstLeaf`) are pure functions — the store holds a single immutable `layout: PaneTree` root. `syncFromRoute(view)` updates only the first leaf (left-to-top traversal) when URL navigation occurs, preserving all other panes.
@@ -91,6 +92,35 @@ gallery case.
 - `MainContent` renders `<PaneContainer node={layout}>` when `paneStore.enabled`, otherwise the normal `<Routes>` tree.
 - `RouteSyncer` (child of `BrowserRouter`) uses `useEffect` on `location.pathname` to call `syncFromRoute()` when pane mode is active — keeps the primary pane in sync with sidebar/URL navigation.
 - Toggle: `<Columns2>` icon button in `TopBar` calls `paneStore.toggleEnabled()`.
+
+#### The layout survives a reload
+
+`paneStore` saves `enabled`, the tree and the active pane under `PANE_LAYOUT_KEY`
+(`docs/dev/persistence.md`), debounced 250 ms because a divider drag updates the sizes on
+every frame, and restores them when the store is created. It was added for M12 phase 2e,
+so a chat pinned beside the work comes back after a reload (`docs/dev/analyst/chat-ui.md`
+§ Open beside). Three rules:
+
+- **One-shot deep-link targets are not saved**: `subfolder`, `sourceVideoId` and `filter`
+  are each applied once per change, so restoring one would re-apply it over what the user
+  has chosen since. Identities are saved: `datasetId`, `imageId`, `videoId`,
+  `compareIds`, `chatId`.
+- **A saved tree is checked node by node and dropped whole if anything is off**, including
+  a page this build does not know (`isPageType`, whose record of every `PageType` fails the
+  build when a new page is missing). A dev and a production install on one origin share the
+  key, and may not know the same pages.
+- **The first pane still follows the route.** `RouteSyncer` overwrites the first leaf from
+  the URL as usual, so after a reload it shows what the address bar says, and the other
+  panes show what they did.
+
+A saved dataset that has since been deleted is the page's to handle, as when a dataset is
+deleted under an open pane.
+
+`openBeside(fromPaneId, view)` is the store's "show this next to that" action: the
+neighbouring pane (`neighbourLeafId`) when there is one, otherwise a new pane split off
+`fromPaneId` at 62/38, and with split view off it turns it on with a placeholder left pane
+that `RouteSyncer` fills from the route. It returns the pane it used. `useOpenBeside`
+predates it and only reuses or replaces; `useOpenChatBeside` is its first caller.
 
 ### Route-level code splitting
 

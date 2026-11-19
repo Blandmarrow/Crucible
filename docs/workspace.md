@@ -37,6 +37,8 @@ Split the main content area into two independently operating panes:
 - Each pane has its own page selector and dataset selector — run Gallery in one pane and Stats in another, for example
 - Drag the resize handle between panes to adjust the split ratio
 - Close all panes to return to single-view
+- The layout, and what each pane shows, comes back when you reload the page. The first pane
+  always shows what the address bar says; the sidebar's links change that pane only
 
 ## Logs
 

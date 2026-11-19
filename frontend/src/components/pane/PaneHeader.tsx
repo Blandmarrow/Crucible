@@ -57,7 +57,8 @@ export default function PaneHeader({ paneId, view, isOnly }: Props) {
   };
 
   const handleDatasetChange = (datasetId: string) => {
-    setView(paneId, { ...view, datasetId });
+    // A chat belongs to one dataset: the new one opens on its own newest chat.
+    setView(paneId, { ...view, datasetId, chatId: undefined });
   };
 
   return (
@@ -94,6 +95,11 @@ export default function PaneHeader({ paneId, view, isOnly }: Props) {
           onChange={(e) => handleDatasetChange(e.target.value)}
         >
           {!view.datasetId && <option value="">— select dataset —</option>}
+          {/* A restored pane can name a dataset deleted since, or one from another
+              install sharing this browser: say so rather than show the first name. */}
+          {view.datasetId && !datasets.some((ds) => ds.id === view.datasetId) && (
+            <option value={view.datasetId} disabled>— missing dataset —</option>
+          )}
           {datasets.map((ds) => (
             <option key={ds.id} value={ds.id}>{ds.name}</option>
           ))}

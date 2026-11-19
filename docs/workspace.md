@@ -39,6 +39,8 @@ Split the main content area into two independently operating panes:
 - Close all panes to return to single-view
 - The layout, and what each pane shows, comes back when you reload the page. The first pane
   always shows what the address bar says; the sidebar's links change that pane only
+- Settings and Logs open full width over split view; the panes come back on the next
+  dataset page
 
 ## Logs
 

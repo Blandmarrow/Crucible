@@ -218,7 +218,7 @@ substantial edit.
 | `docs/dev/frontend-constants.md` | Working on a shared `frontend/src/constants/` module — the caption style table, license vocabulary, `queryKeys.ts` invalidation helpers, `apiErrorDetail` | ~1750 |
 | `docs/dev/frontend-jobs.md` | Working on `useJobSSE`/`useAllJobsSSE`, reconciling after an SSE gap, or job reporting — the partial-failure line, the stale-thumbnail warning and the terminal-emit ordering rule | ~1650 |
 | `docs/dev/job-invalidation.md` | Adding a job-triggering UI or changing what a finished job invalidates — the single-job and id-list patterns, `TopBar`'s global watcher, `IMAGE_MODIFYING_JOB_TYPES` | ~2050 |
-| `docs/dev/panes-routing.md` | Working on panes, adding a routed page, or lazy page loading — sidebar layout, `usePaneNavigate`, the saved layout and `openBeside` | ~1950 |
+| `docs/dev/panes-routing.md` | Working on panes, adding a routed page, or lazy page loading — sidebar layout, `usePaneNavigate`, the saved layout and `openBeside` | ~2200 |
 | `docs/dev/persistence.md` | Adding a storage key or persisting page configuration | ~3300 |
 | `docs/dev/app-stored-data.md` | Working on the `/app-data` routes, a form whose saved state lives on the server, or the one-time browser import — `ServerStateGate`, `writeToServer`, the conflict dialog, NULL meaning never saved | ~950 |
 | `docs/dev/styling.md` | Working on Tailwind/CSS, a colour token, light mode, the brand mark or a modal dialog — the two themes and `data-theme`, `--accent-text`/`--on-accent`, `useModalBehavior` and `ModalShell` | ~2650 |

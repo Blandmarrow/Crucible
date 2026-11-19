@@ -1,4 +1,5 @@
 import { useCallback } from "react";
+import { useLocation } from "react-router";
 import { usePaneContext } from "../contexts/PaneContext";
 import { findLeafWhere, usePaneStore } from "../store/paneStore";
 
@@ -11,9 +12,12 @@ import { findLeafWhere, usePaneStore } from "../store/paneStore";
  */
 export function useOpenChatBeside() {
   const ctx = usePaneContext();
+  const { pathname } = useLocation();
   return useCallback(
     (datasetId: string) => {
       const store = usePaneStore.getState();
+      // Already reading this dataset's chat, routed: there is nothing to open beside.
+      if (!store.enabled && pathname.startsWith(`/datasets/${datasetId}/chat`)) return;
       const open = store.enabled
         ? findLeafWhere(store.layout, (v) => v.page === "chat" && v.datasetId === datasetId)
         : null;
@@ -22,6 +26,6 @@ export function useOpenChatBeside() {
       // wrapper makes itself active on click, and would otherwise win.
       queueMicrotask(() => usePaneStore.getState().setActivePaneId(target));
     },
-    [ctx],
+    [ctx, pathname],
   );
 }

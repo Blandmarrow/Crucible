@@ -97,7 +97,8 @@ gallery case.
 
 `paneStore` saves `enabled`, the tree and the active pane under `PANE_LAYOUT_KEY`
 (`docs/dev/persistence.md`), debounced 250 ms because a divider drag updates the sizes on
-every frame, and restores them when the store is created. It was added for M12 phase 2e,
+every frame and flushed on `pagehide`, so a change just before a reload or a Restart is
+kept. It restores them when the store is created. It was added for M12 phase 2e,
 so a chat pinned beside the work comes back after a reload (`docs/dev/analyst/chat-ui.md`
 § Open beside). Three rules:
 
@@ -105,21 +106,37 @@ so a chat pinned beside the work comes back after a reload (`docs/dev/analyst/ch
   are each applied once per change, so restoring one would re-apply it over what the user
   has chosen since. Identities are saved: `datasetId`, `imageId`, `videoId`,
   `compareIds`, `chatId`.
-- **A saved tree is checked node by node and dropped whole if anything is off**, including
-  a page this build does not know (`isPageType`, whose record of every `PageType` fails the
+- **A saved tree is checked node by node and dropped whole if anything is off**: each
+  node's shape, the id fields' types, `compareIds` as a list of strings, and a page this
+  build does not know (`isPageType`, whose record of every `PageType` fails the
   build when a new page is missing). A dev and a production install on one origin share the
   key, and may not know the same pages.
 - **The first pane still follows the route.** `RouteSyncer` overwrites the first leaf from
   the URL as usual, so after a reload it shows what the address bar says, and the other
-  panes show what they did.
+  panes show what they did. The route carries no chat id, so `updateFirstLeaf` keeps the
+  leaf's `chatId` when the sync leaves it on the same page and dataset, and `RouteSyncer`
+  seeds it from `chatStore.openChat` for the routed chat page as split view turns on.
 
-A saved dataset that has since been deleted is the page's to handle, as when a dataset is
-deleted under an open pane.
+**Settings and Logs step outside split view.** They have no `PageType`, so with split
+view on they could not be reached at all (`routeToView` maps them to Datasets), and a
+restored layout would keep it that way across reloads. `MainContent` renders the routed
+tree for `/settings` and `/logs` whatever `enabled` says (`isRoutedOnly`), and `RouteSyncer`
+does not sync from them; the panes are back on the next dataset page.
+
+A saved dataset that has since been deleted, or one from another install sharing the
+origin, is the page's to handle, as when a dataset is deleted under an open pane. The pane
+header's dataset select shows "— missing dataset —" for it rather than the first name in
+the list, and a dataset switch clears the pane's `chatId`, since a chat belongs to one
+dataset.
 
 `openBeside(fromPaneId, view)` is the store's "show this next to that" action: the
 neighbouring pane (`neighbourLeafId`) when there is one, otherwise a new pane split off
 `fromPaneId` at 62/38, and with split view off it turns it on with a placeholder left pane
-that `RouteSyncer` fills from the route. It returns the pane it used. `useOpenBeside`
+that `RouteSyncer` fills from the route. It returns the pane it used. **It never uses the
+first pane**: the sidebar drives that one, so anything opened there would be replaced by
+the next click. With no `fromPaneId` (a caller outside any pane, like the sidebar) it opens
+beside the first pane, not the active one; a neighbour that is the first pane means a split
+instead. `useOpenBeside`
 predates it and only reuses or replaces; `useOpenChatBeside` is its first caller.
 
 ### Route-level code splitting

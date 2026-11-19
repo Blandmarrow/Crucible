@@ -104,8 +104,10 @@ so a streamed piece re-renders the messages and not the list.
 The chat is meant to stay visible while the user works elsewhere, and panes are how
 (the plan's first attempt, `docs/dev/analyst-plan/README.md`). `useOpenChatBeside(datasetId)` calls `paneStore.openBeside`
 (`docs/dev/panes-routing.md` § The layout survives a reload): the neighbouring pane, or a
-new pane split off the current one, turning split view on if it is off. **A pane already
-showing that dataset's chat is focused instead**, so asking twice never stacks two chats.
+new pane split off the current one, turning split view on if it is off, and never in the
+first pane, which the sidebar drives. **A pane already showing that dataset's chat is
+focused instead**, so asking twice never stacks two chats, and on the routed chat page with
+split view off the button does nothing, since the chat is already the page.
 The active pane is set in a microtask, as `useOpenBeside` does, because the calling pane
 makes itself active on the same click.
 
@@ -113,7 +115,8 @@ Two callers: the button beside the sidebar's Analyst item ("Open the analyst bes
 page"), from outside any pane, where the active pane is the one beside which it opens; and
 "Ask the analyst" on the Health page. `RouteSyncer` only drives the first pane, so the
 sidebar's links move the page on the left and leave the chat alone. The layout, and with it
-the pane's chat, is saved and restored on reload.
+each pane's chat, is saved and restored on reload, the first pane's included
+(`docs/dev/panes-routing.md` § The layout survives a reload).
 
 ## Rendering a reply
 
@@ -182,5 +185,7 @@ captions off for the chat and back. Not covered: rendering safety (no fake prese
 with markdown images or HTML), a refused send keeping its draft, and a delete mid-reply.
 `frontend/e2e/chat-beside.spec.ts` opens the chat beside the gallery, picks a chat in that
 pane, follows the sidebar to Stats on the left, asks again without stacking, and reloads
-back onto the same chat; and opens it from the Health page. A second test drives
+back onto the same chat; opens it from the Health page; reaches Settings with a restored
+split view; opens beside the routed pane when another is active; and, on the routed chat
+page, opens nothing and carries the chat being read into split view and across a reload. A second test drives
 Settings → Analyst: a provider's privacy and its reset, and a budget.

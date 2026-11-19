@@ -34,6 +34,7 @@ import LegacyConflictsDialog from "./components/common/LegacyConflictsDialog";
 import FileDropGuard from "./components/common/FileDropGuard";
 import { usePaneStore } from "./store/paneStore";
 import type { PaneView, PageType } from "./contexts/PaneContext";
+import { useChatStore } from "./store/chatStore";
 
 /** Shared fallback while a lazily-loaded page chunk is in flight. */
 const pageFallback = <div style={{ padding: 40, color: "var(--fg-mute)" }}>Loading…</div>;
@@ -64,19 +65,30 @@ function routeToView(pathname: string): PaneView {
   return { page: "datasets" };
 }
 
+/** Pages with no pane form (no `PageType`): split view steps aside for them, or they
+ *  could not be reached at all while it is on, and a restored layout keeps it on. */
+function isRoutedOnly(pathname: string): boolean {
+  return /^\/(settings|logs)(\/|$)/.test(pathname);
+}
+
 function RouteSyncer() {
   const location = useLocation();
   const { enabled, syncFromRoute } = usePaneStore();
   useEffect(() => {
-    if (enabled) syncFromRoute(routeToView(location.pathname));
+    if (!enabled || isRoutedOnly(location.pathname)) return;
+    const view = routeToView(location.pathname);
+    // The routed chat page's chat, carried into its pane as split view takes over.
+    if (view.page === "chat" && view.datasetId) view.chatId = useChatStore.getState().openChat[view.datasetId];
+    syncFromRoute(view);
   }, [location.pathname, enabled, syncFromRoute]);
   return null;
 }
 
 function MainContent() {
   const { enabled, layout } = usePaneStore();
+  const location = useLocation();
 
-  if (enabled) {
+  if (enabled && !isRoutedOnly(location.pathname)) {
     return (
       <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
         <PaneContainer node={layout} isOnly={layout.type === "leaf"} />

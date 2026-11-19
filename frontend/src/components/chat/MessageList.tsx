@@ -6,6 +6,7 @@ import type { ChatStream } from "../../store/chatStore";
 import FindingCard from "../health/FindingCard";
 import ChatMarkdown from "./ChatMarkdown";
 import ProposalList from "./ProposalList";
+import ToolCalls from "./ToolCalls";
 
 /** What a reply that did not finish normally says under its text. */
 const ERROR_TEXT: Record<string, string> = {
@@ -15,6 +16,9 @@ const ERROR_TEXT: Record<string, string> = {
   transient: "The provider could not answer just now. Try again.",
   rejected: "The provider refused the request.",
   fatal: "The request failed.",
+  tools: "The model kept asking for tools after its limit and wrote no answer.",
+  budget: "The reply stopped before its next step: it could have passed a token budget.",
+  length: "Cut off at the provider's Max tokens.",
 };
 
 /** One row as shown: a stored message, or the reply being written. */
@@ -129,9 +133,13 @@ function Reply({ chatId, datasetId, liveNotes, onAskForNotes, row, stream, findi
   // The block is shown as the proposals below it, never as text: even mid-stream.
   const text = stripNoteBlocks(row.content, writing);
   const proposals = m?.proposals ?? [];
+  // The stream's calls while it is the live copy; the stored ones after.
+  const toolCalls = stream ? (stream.toolCalls.length || !m ? stream.toolCalls : m.tool_calls ?? []) : m?.tool_calls ?? [];
+  const running = stream && stream.phase !== "ended" ? stream.running : [];
 
   return (
     <div className="chat-msg assistant" data-testid="chat-reply" data-status={writing ? "writing" : m?.status}>
+      <ToolCalls calls={toolCalls} running={running} />
       {text ? (
         <ChatMarkdown text={text} findings={findings} />
       ) : writing ? (
@@ -194,9 +202,11 @@ function Ending({ message: m }: { message: ChatMessage }) {
           {m.error_detail || ERROR_TEXT[m.error_kind ?? ""] || "The reply failed."}
         </div>
       )}
-      {m.status === "complete" && m.error_kind === "length" && (
-        <div style={{ fontSize: 12, color: "var(--warn)", marginTop: 6 }}>
-          {m.error_detail || "Cut off at the provider's Max tokens."}
+      {/* A reply that kept its text but did not end normally: cut off at Max tokens, or
+          stopped by a budget before its next tool round. */}
+      {m.status === "complete" && m.error_kind && (
+        <div style={{ fontSize: 12, color: "var(--warn)", marginTop: 6 }} data-testid="chat-ended-early">
+          {m.error_detail || ERROR_TEXT[m.error_kind] || "The reply ended early."}
         </div>
       )}
       {(m.model || tokens) && (

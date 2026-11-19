@@ -93,6 +93,22 @@ export default function ContextDialog({ chat, preview, loading, busy, providerPr
       </fieldset>
 
       {preview && (
+        <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "0 0 8px" }} data-testid="context-tools">
+          {preview.manifest.tools_offered?.length ? (
+            <>
+              Tools it may call: <span className="mono">{preview.manifest.tools_offered.join(", ")}</span>. A
+              tool's result is held to the boxes above too, and shown under the reply that asked for it.
+            </>
+          ) : (
+            <>
+              No tools: this model has not passed “Check tool support” (Settings → Analyst), or the boxes
+              above allow none.
+            </>
+          )}
+        </p>
+      )}
+
+      {preview && (
         <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "0 0 8px" }}>
           About {preview.manifest.estimated_tokens.toLocaleString()} tokens ({preview.manifest.total_chars.toLocaleString()} characters).
           History: {preview.manifest.history_messages} message{preview.manifest.history_messages === 1 ? "" : "s"}

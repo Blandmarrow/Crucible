@@ -11,9 +11,10 @@ const MIN_BUDGET = 1_000;
 const MAX_BUDGET = 2 ** 31 - 1;
 const clampBudget = (n: number) => Math.min(MAX_BUDGET, Math.max(MIN_BUDGET, Math.round(n)));
 
-/** Settings → Analyst: the two token budgets, and what each provider may be sent by
- *  default. The rules behind both are docs/dev/analyst/chat.md § Privacy: three layers
- *  and docs/dev/analyst/sending.md § Budgets. */
+/** Settings → Analyst: the two token budgets, what each provider may be sent by
+ *  default, and whether its model may call tools. The rules behind them are
+ *  docs/dev/analyst/chat.md § Privacy: three layers, docs/dev/analyst/sending.md
+ *  § Budgets and docs/dev/analyst/tools.md § The probe. */
 export default function AnalystPanel() {
   return (
     <div className="panel-b" style={{ display: "flex", flexDirection: "column", gap: 24 }}>
@@ -107,6 +108,12 @@ function ProviderPrivacy() {
         paid service reached through a tunnel on <code style={{ fontSize: 11 }}>localhost</code> looks
         local, so tick <em>billed</em> on it, or it is sent everything.
       </p>
+      <p style={{ fontSize: 12, color: "var(--fg-mute)", margin: "0 0 10px" }}>
+        <strong style={{ color: "var(--fg)" }}>Tools.</strong> A model that passes “Check tool support”
+        can look things up during a reply, such as the captions behind a finding, within what the boxes
+        allow. The check makes two short calls to the model; on a billed provider they count toward
+        today's budget. A model that has not passed it chats without tools.
+      </p>
       {isLoading && <div style={{ fontSize: 12.5, color: "var(--fg-dim)" }}>Loading…</div>}
       {providers && providers.length === 0 && (
         <div style={{ fontSize: 12.5, color: "var(--fg-dim)" }}>No providers yet. Add one on the LLM Providers tab.</div>
@@ -181,6 +188,65 @@ function ProviderRow({ provider: p }: { provider: ProviderOut }) {
           ))}
         </div>
       </fieldset>
+      <ToolSupport provider={p} />
+    </div>
+  );
+}
+
+/** Whether the provider's default model may call tools, and the button that checks it
+ *  (`POST /providers/{id}/probe-tools`). A check that reaches no verdict (the server is
+ *  busy, the key is wrong) stores nothing and says why here. */
+function ToolSupport({ provider: p }: { provider: ProviderOut }) {
+  const qc = useQueryClient();
+  const model = p.default_model;
+  const verdict = model ? p.tools_probe?.[model] : undefined;
+  const others = Object.entries(p.tools_probe ?? {}).filter(([m]) => m !== model);
+  const [noVerdict, setNoVerdict] = useState<string | null>(null);
+
+  const check = useMutation({
+    mutationFn: () => providersApi.probeTools(p.id),
+    onMutate: () => setNoVerdict(null),
+    // A new verdict changes which tools every chat on this provider is offered.
+    onSuccess: () => Promise.all([
+      qc.invalidateQueries({ queryKey: ["providers"] }),
+      qc.invalidateQueries({ queryKey: ["chat-preview"] }),
+    ]),
+    onError: (err) => setNoVerdict(apiErrorDetail(err, "The check could not finish.")),
+  });
+
+  return (
+    <div style={{ marginTop: 10, fontSize: 12.5 }} data-testid={`analyst-tools-${p.id}`}>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <span>
+          Tools{model ? <> for <span className="mono">{model}</span></> : null}
+        </span>
+        <span className={`badge ${verdict ? (verdict.ok ? "good" : "warn") : ""}`}>
+          {verdict ? (verdict.ok ? "supported" : "not supported") : "not checked"}
+        </span>
+        <button className="btn sm" disabled={!model || check.isPending} onClick={() => check.mutate()}>
+          {check.isPending ? "Checking…" : "Check tool support"}
+        </button>
+      </div>
+      {!model && (
+        <div style={{ fontSize: 11.5, color: "var(--fg-dim)", marginTop: 4 }}>
+          Set a default model on the LLM Providers tab to check it.
+        </div>
+      )}
+      {verdict && (
+        <div style={{ fontSize: 11.5, color: "var(--fg-dim)", marginTop: 4 }}>
+          {verdict.detail} Checked {new Date(verdict.checked_at).toLocaleString()}.
+        </div>
+      )}
+      {noVerdict && (
+        <div role="alert" style={{ fontSize: 11.5, color: "var(--warn)", marginTop: 4 }}>
+          No verdict, so nothing changed: {noVerdict}
+        </div>
+      )}
+      {others.length > 0 && (
+        <div style={{ fontSize: 11.5, color: "var(--fg-dim)", marginTop: 4 }}>
+          Other models checked: {others.map(([m, v]) => `${m} (${v.ok ? "supported" : "not supported"})`).join(", ")}.
+        </div>
+      )}
     </div>
   );
 }

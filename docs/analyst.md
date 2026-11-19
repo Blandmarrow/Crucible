@@ -190,6 +190,24 @@ fix, recording a decision, and removing an open item. Both passed all three:
 Smaller local models have not been tried yet. A model that reasons before it answers
 needs a generous Max tokens; both above ran at 16,000.
 
+### Tools
+
+A model that passes **Check tool support** in Settings → [Analyst](settings.md#analyst) can
+look things up while it answers, instead of working only from what was sent up front:
+
+- the detail of one finding, dismissed ones included;
+- the captions behind a finding or a filter, up to 20 at a time;
+- tag counts, or the tags containing some text;
+- the dataset's snapshots, and what changed since one.
+
+Each lookup shows above the reply, such as "Read captions for low_resolution". Click it to
+see exactly what was sent. The boxes in **What gets sent** apply to lookups too, and the
+dialog lists the tools this chat may use. With Captions off the analyst cannot read
+captions, and a search by text is refused while File names are off, since it would match
+them. A reply looks things up four times at most, and every lookup counts toward the
+budgets. A model that has not passed the check chats without tools. Gemini 2.5 Flash and
+Qwen 3.8 27B pass it.
+
 ### Budgets
 
 For a billed provider, two token budgets apply: one per chat and one per day, set in
@@ -224,3 +242,7 @@ latest reply, asks it to write them. Deleting a chat keeps the notes it added.
   Crucible stopped waiting. What arrived is kept.
 - **An error from the provider** (a rate limit, a wrong key) is shown under the message. Try
   again, or check the provider's settings.
+- **Stopped by a budget**: a reply that looked something up stops before its next step if
+  that step could pass a budget. What it wrote is kept.
+- **Kept asking for tools**: the model wanted more lookups after its limit and wrote no
+  answer. Ask again, more narrowly.

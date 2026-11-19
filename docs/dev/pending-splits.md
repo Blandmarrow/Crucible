@@ -291,3 +291,18 @@ utilities → `docs/dev/shared-utilities.md`.
   it is the index doc for the same material, so anything § Features says that the topic docs
   do not is a fact to move *there* rather than lose. A handful of Features bullets name
   things with no topic doc at all (verify each against the Docs table before cutting).
+
+## docs/analyst.md
+
+- **Moves:** § The analyst chat and all its `###` sections (What gets sent, Which model to
+  use, Tools, Budgets, Suggested notes, When a reply goes wrong), about 1,250 of its 2,530
+  words.
+- **New file:** docs/analyst-chat.md, with a README Docs-table row beside the Analyst one.
+- **Why here:** the file covers two things a user meets separately: the health report,
+  goal and notes, which need no LLM, and the chat, which needs a provider. The chat half
+  grows with every M12 phase (phase 4's actions next), so it is the half to move. Recorded
+  2026-11-19, when phase 3e's § Tools took it 30 words over.
+- **Watch for:** the inbound anchors `analyst.md#the-analyst-chat` (`docs/features.md`,
+  `docs/settings.md`) and `analyst.md#tools` (`docs/settings.md`); the chat sections link
+  `settings.md#analyst` and `workspace.md#split-view`. M12 docs live on `feat/analyst`
+  only (decision 21), so the split is done there.

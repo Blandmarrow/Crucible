@@ -142,8 +142,29 @@ reply's strip starts open, older ones closed.
 
 A reply's ending reads `status` and `error_kind` (`sending.md` § The call and its time
 limits): `cancelled` shows "Stopped", an `error` shows the stored `error_detail`, and a
-`complete` reply with `error_kind: "length"` shows its cut-off warning. The model and the
-token counts sit under it.
+`complete` reply with any `error_kind` shows a warning: `length`, cut off at Max tokens, or
+`budget`, stopped before a tool round that could pass a budget, which until phase 3e
+looked like a reply that had simply finished. The model and the token counts sit under it.
+
+## Tool calls
+
+`ToolCalls` sits above a reply's text (M12 phase 3, `tool-loop.md`). Each stored call is a
+`<details>` keyed on its row `id`, never its `call_id`, which a server that sends no ids
+repeats across rounds. Its summary says in words what was looked up ("Read captions for
+low_resolution", from the tool's name and arguments; an unknown tool shows its name). A
+failed call says so. Opened, it shows the exact `result_text` sent to the model and the
+categories it carried, so the transparency of "What gets sent" reaches the tools. The
+model's arguments are shown as text, quoted and cut to 60 characters, never trusted.
+
+While a reply runs, the stream holds the calls stored so far (`toolCalls`, from `start`
+and each `tool_result`) and the calls whose results have not arrived (`running`, from each
+`tool_call`), shown as "Read the finding blurry…". A `tool_result` takes the first running
+call with its `call_id` off the list. A resume gets the stored calls in `start`, so a
+reload mid-reply keeps them. Once the reply has ended the stored message's `tool_calls`
+take over.
+
+"What gets sent" says which tools the chat may call (the manifest's `tools_offered`), or
+why it has none: the model has not passed the check, or the privacy allows none.
 
 ## Controls that save as you use them
 
@@ -176,7 +197,23 @@ sends `analyst_privacy_reset`. The tab's copy states the two facts a user cannot
 boxes: the defaults follow the provider's `billed` box rather than its address, and a
 reasoning model needs Max tokens room.
 
+Each row also has `ToolSupport`: the verdict for the provider's default model from
+`tools_probe` ("supported", "not supported" or "not checked", with the detail and when),
+any other models checked, and **Check tool support**, which posts to
+`POST /providers/{id}/probe-tools` (`tools.md` § The probe). A pass or a fail refetches the
+providers and every chat's preview, since it changes which tools those chats are offered.
+A 502 or 409, no verdict, shows its reason under the button and changes nothing. With no
+default model the button is disabled; the API can probe any model, but the tab checks only
+the default one.
+
 ## Tests
+
+`frontend/e2e/chat-tools.spec.ts`, against the fake LLM: Settings → Analyst checks the
+provider (the fake calls the probe's tool itself); a chat sends `[[fake:tool]]`, and the
+reply shows the `list_snapshots` call, opening to its exact result; the two requests went
+out with the tools and then the tool's answer; "What gets sent" lists the tools, and turning
+Numbers off drops the ones that read it; a reload keeps the stored call. Not covered: a
+call still running, a failed call's styling, and the `budget` notice.
 
 `frontend/e2e/chat.spec.ts`, against the fake LLM: a reply streams in, gets its strip and
 names the chat; the request went out as a stream; a `[[fake:stall]]` reply is stopped with its

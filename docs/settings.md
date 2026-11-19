@@ -88,6 +88,7 @@ Settings for the analyst chat on each dataset's Analyst page ([details](analyst.
 
 - Token budgets — per chat (default 200,000) and per day (default 1,000,000), at least 1,000 each, saved with **Save budgets**. Only a billed provider meets them. Before each message Crucible adds the context to a full-length reply, and refuses to send it if that could pass either budget
 - What each provider may be sent — one row per provider, with a box for each kind of information (numbers, name and goal, notes, tags, captions, file names). A billed provider starts with numbers only, a free one with everything. A change saves at once; **Back to the defaults** undoes it. A chat can still make its own choice under **What gets sent**. The default follows the provider's **Billed** box, not its address: a paid service reached through a tunnel on `localhost` looks local, so tick Billed on it, or it is sent everything
+- Tool support — on each provider's row, **Check tool support** tests whether its default model can look things up during a reply ([details](analyst.md#tools)). It makes two short calls to the model, which count toward today's budget on a billed provider, and shows supported, not supported, or not checked. A check that cannot finish (the server is busy, the key is wrong) changes nothing and says why. A new address for the provider, or a change to its Billed box, clears the results
 - A note on reasoning models: they spend their thinking from the provider's Max tokens. If replies end with "cut off at Max tokens", raise it on the LLM Providers tab
 
 ## ComfyUI

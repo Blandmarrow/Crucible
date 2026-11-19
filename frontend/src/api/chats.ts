@@ -48,6 +48,26 @@ export interface ContextManifest {
   total_chars: number;
   estimated_tokens: number;
   note_numbers: Record<string, string[]>;
+  /** The tools the request offered (phase 3); absent on a reply stored before them. */
+  tools_offered?: string[];
+  /** How many tool calls the reply made. */
+  tool_calls?: number;
+}
+
+/** One tool call a reply made and exactly what its result sent the model
+ *  (docs/dev/analyst/tool-loop.md). Key it on `id`: `call_id` can repeat across rounds. */
+export interface ToolCall {
+  id: number;
+  round: number;
+  call_id: string;
+  name: string;
+  /** The raw text the model sent, valid JSON or not. */
+  arguments: string;
+  /** Whether the tool ran, not whether it found anything. */
+  status: "ok" | "error";
+  result_text: string;
+  categories: string[] | null;
+  chars: number;
 }
 
 /** One change to the notes a reply proposed (docs/dev/analyst/proposals.md). */
@@ -107,6 +127,8 @@ export interface ChatMessage {
   related_findings: string[] | null;
   /** The reply's note proposals; empty on a user message. */
   proposals: Proposal[];
+  /** The reply's tool calls, in order; empty when it made none. */
+  tool_calls: ToolCall[];
   created_at: string;
 }
 
@@ -161,8 +183,12 @@ export const chatsApi = {
 
 /** One server-sent event from a reply's stream (`docs/dev/analyst/sending.md` § Events). */
 export type ReplyEvent =
-  | { event: "start"; data: { chat_id: string; message_id: number; user_message_id: number | null; content: string } }
+  | { event: "start"; data: { chat_id: string; message_id: number; user_message_id: number | null; content: string; tool_calls?: ToolCall[] } }
   | { event: "delta"; data: { text: string } }
+  /** A tool call the model made, before it runs. */
+  | { event: "tool_call"; data: { round: number; call_id: string; name: string; arguments: string } }
+  /** The call stored, with what its result sent. */
+  | { event: "tool_result"; data: ToolCall }
   | { event: "usage"; data: { tokens_in: number; tokens_out: number; estimated: boolean } }
   | { event: "done" | "error"; data: ChatMessage };
 

@@ -68,7 +68,9 @@ async def list_items(db: AsyncSession, model, dataset_id: str | None = None, *, 
     return list((await db.execute(q)).scalars().all())
 
 
-def _history(item: NoteItem, op: str, before: str | None, after: str | None, actor: str) -> NoteItemHistory:
+def _history(
+    item: NoteItem, op: str, before: str | None, after: str | None, actor: str, chat_id: str | None = None,
+) -> NoteItemHistory:
     is_dataset = isinstance(item, DatasetNoteItem)
     return NoteItemHistory(
         dataset_item_id=item.id if is_dataset else None,
@@ -77,6 +79,7 @@ def _history(item: NoteItem, op: str, before: str | None, after: str | None, act
         before_text=before,
         after_text=after,
         actor=actor,
+        chat_id=chat_id,
     )
 
 
@@ -98,6 +101,7 @@ async def add_item(
     fingerprint: dict | None = None,
     permanent: bool = False,
     actor: str = "user",
+    chat_id: str | None = None,
     commit: bool = True,
 ) -> NoteItem:
     text = text.strip()
@@ -108,6 +112,7 @@ async def add_item(
         section=section,
         text=text,
         position=await _next_position(db, model, section, dataset_id),
+        source_chat_id=chat_id,
     )
     if model is DatasetNoteItem:
         fields.update(
@@ -120,7 +125,7 @@ async def add_item(
     item = model(**fields)
     db.add(item)
     await db.flush()
-    db.add(_history(item, "add", None, text, actor))
+    db.add(_history(item, "add", None, text, actor, chat_id))
     if commit:
         await db.commit()
         await db.refresh(item)
@@ -143,6 +148,8 @@ async def edit_item(
     decided_at: datetime | None = None,
     set_decided_at: bool = False,
     actor: str = "user",
+    chat_id: str | None = None,
+    commit: bool = True,
 ) -> NoteItem:
     if item.deleted_at is not None:
         raise HTTPException(409, "Restore the note before editing it")
@@ -154,14 +161,15 @@ async def edit_item(
             raise HTTPException(422, "A note cannot be empty")
         if text != item.text:
             await _ensure_fits(db, model, dataset_id, len(text), removing=len(item.text))
-            db.add(_history(item, "edit", item.text, text, actor))
+            db.add(_history(item, "edit", item.text, text, actor, chat_id))
             item.text = text
     if position is not None and position != item.position:
         await _move(db, item, position)
     if set_decided_at and isinstance(item, DatasetNoteItem) and item.section == "decision":
         item.decided_at = _naive_utc(decided_at)
-    await db.commit()
-    await db.refresh(item)
+    if commit:
+        await db.commit()
+        await db.refresh(item)
     return item
 
 
@@ -180,17 +188,21 @@ async def _move(db: AsyncSession, item: NoteItem, position: int) -> None:
             s.position = i
 
 
-async def remove_item(db: AsyncSession, item: NoteItem, *, actor: str = "user", commit: bool = True) -> NoteItem:
+async def remove_item(
+    db: AsyncSession, item: NoteItem, *, actor: str = "user", chat_id: str | None = None, commit: bool = True,
+) -> NoteItem:
     if item.deleted_at is None:
         item.deleted_at = datetime.utcnow()
-        db.add(_history(item, "remove", item.text, None, actor))
+        db.add(_history(item, "remove", item.text, None, actor, chat_id))
     if commit:
         await db.commit()
         await db.refresh(item)
     return item
 
 
-async def restore_item(db: AsyncSession, item: NoteItem, *, actor: str = "user") -> NoteItem:
+async def restore_item(
+    db: AsyncSession, item: NoteItem, *, actor: str = "user", chat_id: str | None = None, commit: bool = True,
+) -> NoteItem:
     if item.deleted_at is not None:
         model = type(item)
         if isinstance(item, DatasetNoteItem) and item.finding_id:
@@ -206,9 +218,10 @@ async def restore_item(db: AsyncSession, item: NoteItem, *, actor: str = "user")
         await _ensure_fits(db, model, getattr(item, "dataset_id", None), len(item.text))
         item.deleted_at = None
         item.position = await _next_position(db, model, item.section, getattr(item, "dataset_id", None))
-        db.add(_history(item, "restore", None, item.text, actor))
-    await db.commit()
-    await db.refresh(item)
+        db.add(_history(item, "restore", None, item.text, actor, chat_id))
+    if commit:
+        await db.commit()
+        await db.refresh(item)
     return item
 
 

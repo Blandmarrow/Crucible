@@ -1,9 +1,11 @@
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
-import type { ChatMessage } from "../../api/chats";
+import { stripNoteBlocks, type ChatMessage } from "../../api/chats";
+import type { NoteItem } from "../../api/notes";
 import type { Finding } from "../../api/health";
 import type { ChatStream } from "../../store/chatStore";
 import FindingCard from "../health/FindingCard";
 import ChatMarkdown from "./ChatMarkdown";
+import ProposalList from "./ProposalList";
 
 /** What a reply that did not finish normally says under its text. */
 const ERROR_TEXT: Record<string, string> = {
@@ -42,10 +44,15 @@ function mergeRows(messages: ChatMessage[], stream: ChatStream | undefined): Row
   return rows;
 }
 
-export default function MessageList({ messages, stream, findings, onShowFinding, onOpenGallery, onFix }: {
+export default function MessageList({ chatId, datasetId, messages, stream, findings, liveNotes, onAskForNotes, onShowFinding, onOpenGallery, onFix }: {
+  chatId: string;
+  datasetId: string;
   messages: ChatMessage[];
   stream: ChatStream | undefined;
   findings: Map<string, Finding>;
+  liveNotes: Map<string, NoteItem> | null;
+  /** Absent while a send is not possible. */
+  onAskForNotes?: () => void;
   onShowFinding: (f: Finding) => void;
   onOpenGallery: (f: Finding) => void;
   onFix: (f: Finding) => void;
@@ -84,6 +91,10 @@ export default function MessageList({ messages, stream, findings, onShowFinding,
         ) : (
           <Reply
             key={r.key}
+            chatId={chatId}
+            datasetId={datasetId}
+            liveNotes={liveNotes}
+            onAskForNotes={r.key === lastReply ? onAskForNotes : undefined}
             row={r}
             stream={r.live || (stream && r.message?.id === stream.messageId) ? stream : undefined}
             findings={findings}
@@ -98,7 +109,11 @@ export default function MessageList({ messages, stream, findings, onShowFinding,
   );
 }
 
-function Reply({ row, stream, findings, stripOpen, onShowFinding, onOpenGallery, onFix }: {
+function Reply({ chatId, datasetId, liveNotes, onAskForNotes, row, stream, findings, stripOpen, onShowFinding, onOpenGallery, onFix }: {
+  chatId: string;
+  datasetId: string;
+  liveNotes: Map<string, NoteItem> | null;
+  onAskForNotes?: () => void;
   row: Row;
   stream: ChatStream | undefined;
   findings: Map<string, Finding>;
@@ -111,19 +126,34 @@ function Reply({ row, stream, findings, stripOpen, onShowFinding, onOpenGallery,
   const writing = row.live || (!stream && m?.status === "partial");
   // Ids the current report no longer knows are left out, not shown as dead cards.
   const related = (m?.related_findings ?? []).map((id) => findings.get(id)).filter((f): f is Finding => !!f);
+  // The block is shown as the proposals below it, never as text: even mid-stream.
+  const text = stripNoteBlocks(row.content, writing);
+  const proposals = m?.proposals ?? [];
 
   return (
     <div className="chat-msg assistant" data-testid="chat-reply" data-status={writing ? "writing" : m?.status}>
-      {row.content ? (
-        <ChatMarkdown text={row.content} findings={findings} />
+      {text ? (
+        <ChatMarkdown text={text} findings={findings} />
       ) : writing ? (
         <span style={{ color: "var(--fg-mute)", fontSize: 12.5 }}>
           {stream?.phase === "connecting" ? "Sending…" : "Waiting for the first words…"}
         </span>
       ) : null}
-      {writing && row.content && <span className="chat-cursor" aria-hidden />}
+      {writing && text && <span className="chat-cursor" aria-hidden />}
 
+      {!writing && !text && row.content && proposals.length === 0 && (
+        <span style={{ color: "var(--fg-mute)", fontSize: 12.5 }}>
+          The reply held only suggested notes, and none of them could be read.
+        </span>
+      )}
       {!writing && m && <Ending message={m} />}
+
+      {!writing && <ProposalList chatId={chatId} datasetId={datasetId} proposals={proposals} liveNotes={liveNotes} />}
+      {!writing && onAskForNotes && m?.status === "complete" && proposals.length === 0 && (
+        <button className="btn sm ghost" style={{ marginTop: 8 }} onClick={onAskForNotes} title="Ask the analyst to write what you agreed as suggested notes">
+          Ask it to note this
+        </button>
+      )}
 
       {!writing && related.length > 0 && (
         <details open={stripOpen} style={{ marginTop: 10 }}>

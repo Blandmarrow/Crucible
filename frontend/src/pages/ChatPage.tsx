@@ -4,7 +4,8 @@ import toast from "react-hot-toast";
 import { Eye, Plus, Trash2 } from "lucide-react";
 import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
-import { chatKey, chatPreviewKey, chatsApi, chatsKey, type Chat, type ChatUpdate, type Privacy } from "../api/chats";
+import { ASK_FOR_NOTES, chatKey, chatPreviewKey, chatsApi, chatsKey, type Chat, type ChatUpdate, type Privacy } from "../api/chats";
+import { APP_NOTES_KEY, datasetNotesKey, notesApi } from "../api/notes";
 import { filterSpecParams, type Finding } from "../api/health";
 import { providersApi, type ProviderOut } from "../api/providers";
 import { apiErrorDetail } from "../utils/apiError";
@@ -124,6 +125,13 @@ function ChatView({ chat, datasetId, providers }: { chat: Chat; datasetId: strin
 
   const { data: detail } = useQuery({ queryKey: chatKey(chat.id), queryFn: () => chatsApi.get(chat.id) });
   const { data: report } = useHealthReport(datasetId);
+  // The notes as they are now, so a suggestion whose note has gone shows as out of date.
+  const { data: datasetNotes } = useQuery({ queryKey: datasetNotesKey(datasetId), queryFn: () => notesApi.dataset(datasetId).list() });
+  const { data: appNotes } = useQuery({ queryKey: APP_NOTES_KEY, queryFn: () => notesApi.app().list() });
+  const liveNotes = useMemo(
+    () => (datasetNotes && appNotes ? new Map([...datasetNotes.items, ...appNotes.items].map((n) => [n.id, n])) : null),
+    [datasetNotes, appNotes],
+  );
   const findings = useMemo(
     () => new Map((report ? [...report.findings, ...report.dismissed] : []).map((f) => [f.id, f])),
     [report],
@@ -230,6 +238,10 @@ function ChatView({ chat, datasetId, providers }: { chat: Chat; datasetId: strin
       </header>
 
       <MessageList
+        chatId={chat.id}
+        datasetId={datasetId}
+        liveNotes={liveNotes}
+        onAskForNotes={!blockedReason && !stream ? () => void sendMessage(qc, datasetId, chat.id, ASK_FOR_NOTES) : undefined}
         messages={detail?.messages ?? []}
         stream={stream}
         findings={findings}

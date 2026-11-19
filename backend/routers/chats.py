@@ -3,6 +3,7 @@ and sending a message with its streamed reply. See docs/dev/analyst/chat.md and
 docs/dev/analyst/sending.md.
 """
 import json
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
@@ -10,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from backend.database import get_db
-from backend.models import Chat, ChatMessage, Dataset, OpenAIProvider
+from backend.models import Chat, ChatMessage, ChatProposal, Dataset, OpenAIProvider
 from backend.schemas.chat import (
     ChatCreate,
     ChatDetail,
@@ -19,9 +20,10 @@ from backend.schemas.chat import (
     ChatUpdate,
     PreviewOut,
     PreviewRequest,
+    ProposalOut,
     SendRequest,
 )
-from backend.services import chat_runner
+from backend.services import chat_runner, note_proposals
 from backend.services.analyst_context import build_context
 
 router = APIRouter(tags=["chats"])
@@ -194,6 +196,32 @@ async def resume_stream(chat_id: str, message_id: int, db: AsyncSession = Depend
         yield {"event": "error" if msg.status == "error" else "done", "data": json.dumps(final)}
 
     return EventSourceResponse(generate())
+
+
+async def _get_proposal(db: AsyncSession, chat: Chat, proposal_id: int) -> ChatProposal:
+    p = await db.get(ChatProposal, proposal_id)
+    msg = await db.get(ChatMessage, p.message_id) if p is not None else None
+    if p is None or msg is None or msg.chat_id != chat.id:
+        raise HTTPException(404, "Suggestion not found")
+    return p
+
+
+@router.post("/chats/{chat_id}/proposals/{proposal_id}/{action}", response_model=ProposalOut)
+async def act_on_proposal(
+    chat_id: str, proposal_id: int, action: Literal["accept", "reject", "undo"],
+    db: AsyncSession = Depends(get_db),
+):
+    """Accept a note proposal (apply it to the notes), reject it, or undo either. See
+    docs/dev/analyst/proposals.md."""
+    chat = await _get_chat(db, chat_id)
+    p = await _get_proposal(db, chat, proposal_id)
+    if action == "accept":
+        p = await note_proposals.accept(db, chat, p)
+    elif action == "reject":
+        p = await note_proposals.reject(db, p)
+    else:
+        p = await note_proposals.undo(db, chat, p)
+    return ProposalOut.model_validate(p)
 
 
 @router.post("/chats/{chat_id}/messages/{message_id}/cancel", response_model=ChatMessageOut)

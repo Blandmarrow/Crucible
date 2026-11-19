@@ -39,6 +39,22 @@ class ChatOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ProposalOut(BaseModel):
+    """One change a reply proposed to the notes (docs/dev/analyst/proposals.md)."""
+
+    id: int
+    seq: int
+    op: Literal["add", "edit", "remove"]
+    section: str
+    target_item_id: str | None = None
+    target_text: str | None = None
+    new_text: str | None = None
+    status: Literal["pending", "accepted", "rejected", "stale"]
+    applied_item_id: str | None = None
+
+    model_config = {"from_attributes": True}
+
+
 class ChatMessageOut(BaseModel):
     id: int
     seq: int
@@ -53,6 +69,7 @@ class ChatMessageOut(BaseModel):
     tokens_estimated: bool = False
     context_manifest: dict | None = None
     related_findings: list | None = None
+    proposals: list[ProposalOut] = Field(default_factory=list)
     created_at: UtcDatetime
 
     model_config = {"from_attributes": True}

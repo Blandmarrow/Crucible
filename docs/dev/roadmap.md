@@ -31,21 +31,20 @@ restates its stages.
    linking the record that holds the full text.
 5. **Landed**: one line per finished milestone or handoff record.
 
-## Next session (updated 2026-11-19, M12 phase 2c in review)
+## Next session (updated 2026-11-19, M12 phase 2d in review)
 
 This block lives on `feat/analyst` only: by decision 21 nothing of M12 reaches `main`, the
 docs included, until the whole feature is done.
 
-1. **2c is PR #185** into `feat/analyst`: the chat page, `chatStore`, `react-markdown` and
-   Settings → Analyst (`docs/dev/analyst/chat-ui.md`), Opus-reviewed with its lifecycle
-   findings fixed. Merge it once the user agrees.
-2. **Then 2d, note proposals** (the list under Now). First check what 2a already built for
-   it: the plan's `chat_proposals` table and the notes' chat columns. The fake LLM's `notes`
-   and `notes-malformed` presets are ready, and a reply's manifest carries `note_numbers`.
-3. **2e must key the open chat by pane.** `chatStore.openChat` is keyed by dataset, so two
-   panes on one dataset show the same chat (`chat-ui.md` § The stream lives outside React).
-   "Open chat beside" puts exactly two such panes side by side.
-4. Merge `main` into `feat/analyst` regularly; migrations only on a throwaway database.
+1. **2d is PR #186** into `feat/analyst`: note proposals, `chat_proposals` and the notes'
+   chat columns (`docs/dev/analyst/proposals.md`), Opus-reviewed with its findings fixed.
+   The user has said to merge it once its checks pass.
+2. **Then 2e**: "Open chat beside" with the pane layout persisted, then scripted trials
+   against two or three local models and Gemini Flash (the list under Now). It must key
+   the open chat by pane: `chatStore.openChat` is keyed by dataset, so two panes on one
+   dataset show the same chat (`docs/dev/analyst/chat-ui.md` § The stream lives outside
+   React).
+3. Merge `main` into `feat/analyst` regularly; migrations only on a throwaway database.
    The previous block is in
    [roadmap-archive/handoff-2026-11-19.md](roadmap-archive/handoff-2026-11-19.md).
 
@@ -78,8 +77,9 @@ Plan: [analyst-plan/README.md](analyst-plan/README.md). Gate: every phase below 
   - [x] 2c, the chat page: `chatStore`, the components, `react-markdown`, the Settings
     Analyst tab and the user docs (record: `docs/dev/analyst/chat-ui.md`): PR #185 into
     `feat/analyst`, 2026-11-19.
-  - [ ] 2d, note proposals: the `crucible-notes` parser, accept and undo, the notes' chat
-    columns.
+  - [x] 2d, note proposals: the `crucible-notes` parser, accept and undo, the notes' chat
+    columns (record: `docs/dev/analyst/proposals.md`): PR #186 into `feat/analyst`,
+    2026-11-19.
   - [ ] 2e, "Open chat beside" with the pane layout persisted, then scripted trials against
     local models and Gemini Flash.
 - [ ] Phase 3: read-only tools for models that handle them

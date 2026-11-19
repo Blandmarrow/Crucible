@@ -24,8 +24,11 @@ Three tables, in `backend/models/notes.py`:
   item table, with a CHECK that exactly one is set, rather than one polymorphic id: a
   polymorphic id has no foreign key, so a dataset's history would outlive the dataset.
 
-Phase 2 adds `source_chat_id` and the history's `chat_id`, both `ON DELETE SET NULL` (deleting
-a chat must never delete a note), once the `chats` table exists.
+Phase 2d added `source_chat_id` to both item tables and `chat_id` to the history, all
+`ON DELETE SET NULL` (deleting a chat must never delete a note). They record which chat's
+accepted proposal made a change; [proposals.md](proposals.md) covers them. The writers in
+`notes_service` take `chat_id` and, for that path, `commit=False`, so a proposal's status
+and its note change land in one commit.
 
 **Notes are not dataset content.** They cascade with their dataset, are never part of a
 snapshot, and `duplicate_dataset` does not copy them.

@@ -14,6 +14,7 @@ budgets); the family hub is [../analyst.md](../analyst.md). How a user reads the
 | `frontend/src/pages/ChatPage.tsx` | The page: the chat list, a chat's header (title, provider, model, "What gets sent", delete) and the empty state |
 | `frontend/src/components/chat/MessageList.tsx` | The stored messages with the live reply laid over them, a reply's ending and cost, the related-findings strip |
 | `frontend/src/components/chat/ChatMarkdown.tsx` | A reply's text as markdown, with finding references as chips |
+| `frontend/src/components/chat/ProposalList.tsx` | A reply's suggested notes: [proposals.md](proposals.md) § The page |
 | `frontend/src/components/chat/Composer.tsx` | The message box, Send or Stop, and the budget line |
 | `frontend/src/components/chat/ContextDialog.tsx` | "What gets sent": the chat's privacy toggles and the preview |
 | `frontend/src/store/chatStore.ts` | The streams, outside React, and which chat each dataset last showed |

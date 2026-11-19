@@ -109,7 +109,8 @@ The bottom of the page holds two sets of notes:
   still to do).
 - **About me**: shared by every dataset, such as "I train SDXL LoRAs with kohya".
 
-Type into a section's box and press Enter to add a note. Click a note to edit it, use the
+The analyst chat can also suggest notes, which you accept one by one
+([Suggested notes](#suggested-notes)). Type into a section's box and press Enter to add a note. Click a note to edit it, use the
 arrows to reorder it, and × to remove it; the removal can be undone from the message that
 appears. Notes are kept short so they fit beside the findings for a small AI model: 4,000
 characters per dataset and 2,000 for About me, with a counter above each set.
@@ -176,6 +177,23 @@ Settings → [Analyst](settings.md#analyst). The line under the message box show
 next message could use, and how much of each budget is spent. A message that could pass
 either budget is not sent, and the line turns red with both figures and where to raise them. A free provider has no
 budget. Deleting a chat does not give its tokens back to the day.
+
+### Suggested notes
+
+When you and the analyst agree on something worth keeping, it can suggest changes to the
+notes: a decision to record, an open item to add, a preference to reword, or a note to
+remove. Each suggestion shows under the reply as a card, with the old text struck out and the
+new text below it.
+
+**Nothing changes until you accept.** **Accept** applies one suggestion, **Reject** sets it
+aside, and **Undo** reverses either: an added note is removed again, a changed one is put
+back, a removed one returns. A note you have edited by hand since is not undone over your
+edit. A suggestion about a note you have since removed or reworded shows as out of date,
+since accepting it would change something you have not seen. A suggestion to remove a note
+that dismisses a health finding says that removing it brings the finding back.
+
+If the analyst agrees to something but suggests no notes, **Ask it to note this**, under the
+latest reply, asks it to write them. Deleting a chat keeps the notes it added.
 
 ### When a reply goes wrong
 

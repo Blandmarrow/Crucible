@@ -16,6 +16,8 @@ export interface NoteItem {
   /** Set on a dismissal: the health finding it hides. */
   finding_id: string | null;
   permanent: boolean;
+  /** The chat whose accepted proposal added it; null when written by hand. */
+  source_chat_id: string | null;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;

@@ -28,4 +28,10 @@ class OpenAIProvider(Base):
     # follows `provider_is_billed`: a billed provider gets numbers only, a free one
     # everything. See backend/services/analyst_context.py.
     analyst_privacy: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    # Whether each model passed the analyst's tool-call probe (M12 phase 3),
+    # {model: {"ok": bool, "checked_at": iso, "detail": str}}. Tool support belongs to a
+    # model, not a server, so it is keyed by model. NULL, or no entry for a model, means
+    # never probed, and the chat sends that model no tools. Cleared when the server or
+    # whether it bills changes. See schemas.openai_provider.tools_ok.
+    tools_probe: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

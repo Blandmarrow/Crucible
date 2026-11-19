@@ -22,6 +22,9 @@ Run from the repo root with the venv active:
 `--from-db NAME` reads the provider's address, key and default model from
 `dataset_manager.db` (read-only); `--model` overrides the model, and
 `--api-key-env VAR` takes the key from an environment variable instead.
+
+Each run starts with the tool-call probe (M12 phase 3b, docs/dev/analyst/tools.md), two
+short calls, and reports its verdict; `--probe-only` stops there.
 """
 from __future__ import annotations
 
@@ -94,7 +97,7 @@ def provider_from_db(name: str) -> dict:
     return {"base_url": row[0], "api_key": row[1] or "", "model": row[2] or "", "max_tokens": row[3]}
 
 
-async def trial(cfg: dict, pause: float) -> list[Result]:
+async def trial(cfg: dict, pause: float, probe_only: bool = False) -> tuple[dict, list[Result]]:
     from backend.tests.conftest import API, api_env, png_bytes, upload_image
     from backend.tests.test_chat_send import _events
 
@@ -120,6 +123,12 @@ async def trial(cfg: dict, pause: float) -> list[Result]:
             r = await env.client.post(f"{API}/providers/", json=body)
             assert r.status_code == 201, r.text
             provider_id = r.json()["id"]
+            t0 = time.monotonic()
+            r = await env.client.post(f"{API}/providers/{provider_id}/probe-tools", json={})
+            probe = r.json() if r.status_code == 200 else {"ok": None, "detail": f"no verdict ({r.status_code}): {r.json().get('detail')}"}
+            probe["seconds"] = time.monotonic() - t0
+            if probe_only:
+                return probe, results
             known = {f["id"] for f in (await env.client.get(f"{API}/datasets/{ds['id']}/health")).json()["findings"]}
 
             for n, (name, message, check) in enumerate(CONVERSATIONS):
@@ -159,14 +168,17 @@ async def trial(cfg: dict, pause: float) -> list[Result]:
                 else:
                     res.passed = ok and "remove open_item" in res.proposals
                 results.append(res)
-    return results
+    return probe, results
 
 
-def report(cfg: dict, results: list[Result]) -> str:
+def report(cfg: dict, probe: dict, results: list[Result]) -> str:
+    verdict = {True: "passed", False: "failed", None: "no verdict"}[probe.get("ok")]
     lines = [
         f"# Analyst trial: `{cfg['model'] or '(provider default)'}`",
         "",
         f"Provider: {cfg['base_url']} · Max tokens {cfg['max_tokens']}",
+        "",
+        f"Tool-call probe: **{verdict}** in {probe['seconds']:.1f} s. {probe.get('detail', '')}",
         "",
         "| Conversation | Passed | Status | Seconds | Tokens in / out | Valid refs | Invented refs | Proposals |",
         "|---|---|---|---|---|---|---|---|",
@@ -195,6 +207,7 @@ def main() -> None:
     ap.add_argument("--max-tokens", type=int, help="the reply budget (default: the provider's, else 4096)")
     ap.add_argument("--pause", type=float, default=0.0, help="seconds between conversations, for a rate-limited tier")
     ap.add_argument("--out", type=Path, help="also write the report here")
+    ap.add_argument("--probe-only", action="store_true", help="run the tool-call probe and stop")
     args = ap.parse_args()
 
     cfg = provider_from_db(args.from_db) if args.from_db else {"base_url": "", "api_key": "", "model": "", "max_tokens": None}
@@ -211,12 +224,12 @@ def main() -> None:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")  # the report's · and — on a Windows console
     os.chdir(REPO / "backend")  # as check_migrations.py does: some migrations import backend.*
-    results = asyncio.run(trial(cfg, args.pause))
-    text = report(cfg, results)
+    probe, results = asyncio.run(trial(cfg, args.pause, args.probe_only))
+    text = report(cfg, probe, results)
     print(text)
     if args.out:
         args.out.write_text(text, encoding="utf-8")
-    print(json.dumps({"passed": sum(r.passed for r in results), "of": len(results)}))
+    print(json.dumps({"probe": probe.get("ok"), "passed": sum(r.passed for r in results), "of": len(results)}))
 
 
 if __name__ == "__main__":

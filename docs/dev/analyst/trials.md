@@ -22,7 +22,8 @@ python scripts/analyst_trials.py --base-url http://localhost:1234/v1 --model qwe
 
 `--from-db NAME` reads a saved provider's address, key and default model from
 `dataset_manager.db`, read-only. `--pause` spaces the conversations for a rate-limited
-free tier.
+free tier. Each run starts with the tool-call probe ([tools.md](tools.md) § The probe) and
+puts its verdict at the top of the report; `--probe-only` stops there.
 
 **Every trial chat shares everything** (`SHARE_ALL`, through the chat's privacy override).
 The trial measures the model, not the privacy settings: under a billed provider's default

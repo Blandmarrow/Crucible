@@ -87,7 +87,13 @@ with its headers and parsed body, which is what a privacy test reads; e2e specs 
 same record from `GET /_fake/requests`.
 
 A test scripts replies by pushing `Reply` objects onto `replies`, used first in order.
-Otherwise a `[[fake:…]]` marker in the last user message picks a preset, so a browser spec
+Two rules come next, for tool calls (M12 phase 3, `docs/dev/analyst/tools.md`). **A request
+whose last message is a `tool` answer gets text quoting it**, "The tool returned: …", so a
+tool round trip ends without scripting. That rule sits ahead of the markers on purpose:
+after `[[fake:tool]]` the marker is still the last user message, and would call the tool
+again forever. **A request offering the probe's tool, `crucible_echo`, calls it** with the
+word its prompt asks for, so the tool-call probe passes against the served fake, where e2e
+cannot script replies. Otherwise a `[[fake:…]]` marker in the last user message picks a preset, so a browser spec
 chooses through prompt text alone: `refusal`, `empty`, `length`, `notes`,
 `notes-malformed`, `tool`, `no-usage`, `slow`, `stall`, `429`, `500` and `401`. An unknown
 marker is a 400 naming it. `slow` and `stall` work on plain requests too, which matters

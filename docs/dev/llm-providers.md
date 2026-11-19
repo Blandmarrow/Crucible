@@ -12,6 +12,7 @@ This file covers OpenAI-compatible provider configuration: the `/providers` CRUD
 | `POST /` | Create provider; 409 on duplicate name. Builds the row as `OpenAIProvider(**body.model_dump())` — the old explicit field list silently dropped `max_tokens`, and would have dropped `timeout_s` too |
 | `PATCH /{id}` | Update any fields; `exclude_none=True` so omitted fields are not cleared |
 | `DELETE /{id}` | Hard delete |
+| `POST /{id}/probe-tools` | The analyst's tool-call probe for one model (`{model?}`, default the provider's): two real calls, the verdict stored in `tools_probe`; 502 when it reaches none. In `services/tool_probe.py`, see `docs/dev/analyst/tools.md` |
 | `GET /{id}/models` | Calls provider's `/v1/models` endpoint via `openai.OpenAI` with a 5-second timeout and `max_retries=0` (without it the never-raises probe spends 15 s); returns `{"models": []}` on any error (provider offline, auth failure) — never raises |
 
 ## Model
@@ -22,7 +23,7 @@ This file covers OpenAI-compatible provider configuration: the `/providers` CRUD
 
 ## Schema
 
-`OpenAIProviderOut.from_orm_row` is the remaining hand-maintained field list (the create path was fixed by the `**model_dump()` splat above) — a column added to the model and the schema but forgotten there fails *silently*, leaving the field at its default. `OpenAIProviderOut` masks the API key (last 4 chars visible) and adds a computed `is_remote: bool` and `is_billed: bool` (`provider_is_billed`), with the raw `billed` beside them (all three are in `from_orm_row`'s list). The analyst's `analyst_privacy` override and the computed `analyst_privacy_effective` are in the list too; they are covered in `docs/dev/analyst/chat.md` § Privacy: three layers. `is_remote` is true when the base URL hostname is not `localhost`/`127.0.0.1`/`::1`; `is_billed` is the explicit `billed` setting, else `is_remote`. Remote providers show a warning banner in the CaptioningPage and Settings form.
+`OpenAIProviderOut.from_orm_row` is the remaining hand-maintained field list (the create path was fixed by the `**model_dump()` splat above) — a column added to the model and the schema but forgotten there fails *silently*, leaving the field at its default. `OpenAIProviderOut` masks the API key (last 4 chars visible) and adds a computed `is_remote: bool` and `is_billed: bool` (`provider_is_billed`), with the raw `billed` beside them (all three are in `from_orm_row`'s list). The analyst's `analyst_privacy` override and the computed `analyst_privacy_effective` are in the list too; they are covered in `docs/dev/analyst/chat.md` § Privacy: three layers. So is `tools_probe`, the analyst's tool-call verdict per model (migration `bcbc83198eb1`), which `PATCH` clears with the chats' privacy when the address or whether it bills changes (`docs/dev/analyst/tools.md`). `is_remote` is true when the base URL hostname is not `localhost`/`127.0.0.1`/`::1`; `is_billed` is the explicit `billed` setting, else `is_remote`. Remote providers show a warning banner in the CaptioningPage and Settings form.
 
 ## Captioner
 

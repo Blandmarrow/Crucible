@@ -8,6 +8,8 @@ import SidebarVersionPanel from "../versioning/SidebarVersionPanel";
 import CrucibleMark from "../common/CrucibleMark";
 import { releaseNotesUrl, useAppVersion } from "../../hooks/useAppVersion";
 import { useErrorConsoleStore } from "../../store/errorConsoleStore";
+import { PanelRight } from "lucide-react";
+import { useOpenChatBeside } from "../../hooks/useOpenChatBeside";
 
 /* ── SVG icons matching the design spec ── */
 const IcoDatasets = () => (
@@ -237,6 +239,7 @@ export default function Sidebar() {
   const cpuRam = useCpuRamStats();
   const errorCount = useErrorConsoleStore((s) => s.errors.length);
   const appVersion = useAppVersion();
+  const openChatBeside = useOpenChatBeside();
 
   const { data: dataset } = useQuery({
     queryKey: ["dataset", datasetId],
@@ -337,7 +340,20 @@ export default function Sidebar() {
             <NavItem to={`/datasets/${datasetId}/quality`} icon={<IcoQuality />} label="Score images" />
             <NavItem to={`/datasets/${datasetId}/stats`} icon={<IcoStats />} label="Stats" />
             <NavItem to={`/datasets/${datasetId}/health`} icon={<IcoHealth />} label="Health" />
-            <NavItem to={`/datasets/${datasetId}/chat`} icon={<IcoChat />} label="Analyst" />
+            <div style={{ position: "relative" }}>
+              <NavItem to={`/datasets/${datasetId}/chat`} icon={<IcoChat />} label="Analyst" />
+              {/* The chat beside whatever page is open, kept there while the left pane
+                  follows the sidebar (docs/dev/analyst/chat-ui.md § Open beside). */}
+              <button
+                className="icon-btn"
+                aria-label="Open the analyst beside this page"
+                title="Open the analyst beside this page"
+                onClick={() => openChatBeside(datasetId)}
+                style={{ position: "absolute", right: 4, top: "50%", transform: "translateY(-50%)", width: 26, height: 26 }}
+              >
+                <PanelRight size={14} />
+              </button>
+            </div>
             <NavItem to={`/datasets/${datasetId}/bulk-edit`} icon={<IcoBulkEdit />} label="Bulk Edit" />
             <NavItem to={`/datasets/${datasetId}/consolidate`} icon={<IcoConsolidate />} label="Consolidate Tags" />
             <NavItem to={`/datasets/${datasetId}/versions`} icon={<IcoVersions />} label="Versions" />

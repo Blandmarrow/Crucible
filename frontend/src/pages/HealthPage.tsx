@@ -1,7 +1,7 @@
 import { useId, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
-import { RefreshCw } from "lucide-react";
+import { MessageSquare, RefreshCw } from "lucide-react";
 import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
 import { datasetsApi } from "../api/datasets";
 import { filterSpecParams, healthApi, type Finding, type HealthReport, type Severity } from "../api/health";
@@ -14,6 +14,7 @@ import NotesEditor from "../components/health/NotesEditor";
 import { SEVERITY_CLASS, SEVERITY_LABEL } from "../components/health/severity";
 import { useFindingActions } from "../components/health/useFindingActions";
 import { useHealthReport } from "../components/health/useHealthReport";
+import { useOpenChatBeside } from "../hooks/useOpenChatBeside";
 
 /** The Health page (M12): what Crucible finds wrong with a dataset, with no AI.
  *  The body is keyed on the dataset so its drafts and open dialogs reset on a switch
@@ -27,6 +28,7 @@ export default function HealthPage() {
 function HealthBody({ datasetId }: { datasetId: string }) {
   const qc = useQueryClient();
   const { openInGallery, openFix } = useFindingActions(datasetId);
+  const openChatBeside = useOpenChatBeside();
   const [showing, setShowing] = useState<Finding | null>(null);
   const [dismissing, setDismissing] = useState<Finding | null>(null);
 
@@ -52,6 +54,9 @@ function HealthBody({ datasetId }: { datasetId: string }) {
         </div>
         <div className="phactions">
           {report && <SummaryBadges summary={report.summary} />}
+          <button className="btn sm" onClick={() => openChatBeside(datasetId)} title="Open the analyst chat beside this page">
+            <MessageSquare size={13} /> Ask the analyst
+          </button>
           <button
             className="icon-btn"
             title="Check again"

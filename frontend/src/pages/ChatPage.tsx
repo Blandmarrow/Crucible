@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import { Eye, Plus, Trash2 } from "lucide-react";
 import { usePaneDatasetId } from "../hooks/usePaneDatasetId";
+import { usePaneContext } from "../contexts/PaneContext";
+import { currentPaneView, usePaneStore } from "../store/paneStore";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import { ASK_FOR_NOTES, chatKey, chatPreviewKey, chatsApi, chatsKey, type Chat, type ChatUpdate, type Privacy } from "../api/chats";
 import { APP_NOTES_KEY, datasetNotesKey, notesApi } from "../api/notes";
@@ -30,10 +32,28 @@ export default function ChatPage() {
   return <ChatBody key={datasetId} datasetId={datasetId} />;
 }
 
+/** The chat a page shows, and how to change it. In a pane it is the pane's own
+ *  (`PaneView.chatId`), so two panes on one dataset can show two chats and a pinned chat
+ *  survives a reload with the layout; outside panes, the one each dataset last showed. */
+function useOpenChat(datasetId: string): [string | undefined, (id: string | null) => void] {
+  const ctx = usePaneContext();
+  const routedChat = useChatStore((s) => s.openChat[datasetId]);
+  const setOpenChat = useChatStore((s) => s.setOpenChat);
+  const paneId = ctx?.paneId;
+  const set = useCallback((id: string | null) => {
+    if (!paneId) {
+      setOpenChat(datasetId, id);
+      return;
+    }
+    const view = currentPaneView(paneId);
+    if (view) usePaneStore.getState().setView(paneId, { ...view, chatId: id ?? undefined });
+  }, [paneId, datasetId, setOpenChat]);
+  return [ctx ? ctx.view.chatId : routedChat, set];
+}
+
 function ChatBody({ datasetId }: { datasetId: string }) {
   const qc = useQueryClient();
-  const openChatId = useChatStore((s) => s.openChat[datasetId]);
-  const setOpenChat = useChatStore((s) => s.setOpenChat);
+  const [openChatId, setOpenChatId] = useOpenChat(datasetId);
   // Which chats are writing, as one string: a streamed piece of text then does not
   // re-render the list.
   const writingIds = useChatStore((s) => Object.keys(s.streams).join(","));
@@ -49,7 +69,7 @@ function ChatBody({ datasetId }: { datasetId: string }) {
       // Into the list straight away, so the new chat opens before the refetch lands.
       qc.setQueryData<Chat[]>(chatsKey(datasetId), (old) => [chat, ...(old ?? [])]);
       qc.invalidateQueries({ queryKey: chatsKey(datasetId) });
-      setOpenChat(datasetId, chat.id);
+      setOpenChatId(chat.id);
     },
     onError: (err) => toast.error(apiErrorDetail(err, "Could not start a chat")),
   });
@@ -69,7 +89,7 @@ function ChatBody({ datasetId }: { datasetId: string }) {
               <button
                 className="chat-list-item"
                 aria-current={c.id === selected?.id}
-                onClick={() => setOpenChat(datasetId, c.id)}
+                onClick={() => setOpenChatId(c.id)}
               >
                 <span className="t">{c.title || "New chat"}</span>
                 <span className="m">
@@ -89,7 +109,7 @@ function ChatBody({ datasetId }: { datasetId: string }) {
         ) : !selected ? (
           <EmptyState providers={providers} onCreate={() => create.mutate()} busy={create.isPending} />
         ) : (
-          <ChatView key={selected.id} chat={selected} datasetId={datasetId} providers={providers} />
+          <ChatView key={selected.id} chat={selected} datasetId={datasetId} providers={providers} onDeleted={() => setOpenChatId(null)} />
         )}
       </section>
     </div>
@@ -113,10 +133,14 @@ function EmptyState({ providers, onCreate, busy }: { providers: ProviderOut[]; o
   );
 }
 
-function ChatView({ chat, datasetId, providers }: { chat: Chat; datasetId: string; providers: ProviderOut[] }) {
+function ChatView({ chat, datasetId, providers, onDeleted }: {
+  chat: Chat;
+  datasetId: string;
+  providers: ProviderOut[];
+  onDeleted: () => void;
+}) {
   const qc = useQueryClient();
   const stream = useChatStore((s) => s.streams[chat.id]);
-  const setOpenChat = useChatStore((s) => s.setOpenChat);
   const { openInGallery, openFix } = useFindingActions(datasetId);
   const [draft, setDraft] = useState("");
   const [showContext, setShowContext] = useState(false);
@@ -176,7 +200,7 @@ function ChatView({ chat, datasetId, providers }: { chat: Chat; datasetId: strin
       await chatsApi.remove(chat.id);
     },
     onSuccess: () => {
-      setOpenChat(datasetId, null);
+      onDeleted();
       qc.removeQueries({ queryKey: chatKey(chat.id) });
       qc.invalidateQueries({ queryKey: chatsKey(datasetId) });
     },

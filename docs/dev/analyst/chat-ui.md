@@ -87,16 +87,36 @@ so the fetch lives in `chatStore`:
   joins `forgotten`, which `resumeReply` refuses: the server stops the reply before it
   deletes, so a refetch mid-delete can still show it `partial`, and a resume would 404 once
   the delete commits. A failed delete takes the chat back out (`unforgetStream`).
-- `openChat` remembers, in memory only, the chat each dataset last showed. No storage key is
-  involved. It is keyed by dataset, not by pane, so **two panes on one dataset show the same
-  chat**: picking a chat in one switches the other. Two chats side by side would need it
-  keyed by pane as well.
+- **Which chat a page shows** (`useOpenChat` in `ChatPage`) is the pane's own in split view,
+  `PaneView.chatId`, so two panes on one dataset can show two chats, and a pinned chat
+  comes back with the saved layout. Outside split view it is `openChat`, kept in memory
+  by dataset, with no storage key. Either falls back to the newest chat when the one it
+  names is gone.
 
 `MessageList.mergeRows` lays the stream over the stored messages: the stream's text wins for
 its own row while it runs, and its user message shows until a stored message with the same
 id arrives. The list follows the reply while the reader is at the bottom and leaves them
 alone once they scroll up. The chat list reads only which chats are writing, as one string,
 so a streamed piece re-renders the messages and not the list.
+
+## Open beside
+
+The chat is meant to stay visible while the user works elsewhere, and panes are how
+(the plan's first attempt, `docs/dev/analyst-plan/README.md`). `useOpenChatBeside(datasetId)` calls `paneStore.openBeside`
+(`docs/dev/panes-routing.md` § The layout survives a reload): the neighbouring pane, or a
+new pane split off the current one, turning split view on if it is off, and never in the
+first pane, which the sidebar drives. **A pane already showing that dataset's chat is
+focused instead**, so asking twice never stacks two chats, and on the routed chat page with
+split view off the button does nothing, since the chat is already the page.
+The active pane is set in a microtask, as `useOpenBeside` does, because the calling pane
+makes itself active on the same click.
+
+Two callers: the button beside the sidebar's Analyst item ("Open the analyst beside this
+page"), from outside any pane, where the active pane is the one beside which it opens; and
+"Ask the analyst" on the Health page. `RouteSyncer` only drives the first pane, so the
+sidebar's links move the page on the left and leave the chat alone. The layout, and with it
+each pane's chat, is saved and restored on reload, the first pane's included
+(`docs/dev/panes-routing.md` § The layout survives a reload).
 
 ## Rendering a reply
 
@@ -162,5 +182,10 @@ reasoning model needs Max tokens room.
 names the chat; the request went out as a stream; a `[[fake:stall]]` reply is stopped with its
 text kept; another is picked back up after a reload and then stopped; "What gets sent" turns
 captions off for the chat and back. Not covered: rendering safety (no fake preset replies
-with markdown images or HTML), a refused send keeping its draft, and a delete mid-reply. A second test drives
+with markdown images or HTML), a refused send keeping its draft, and a delete mid-reply.
+`frontend/e2e/chat-beside.spec.ts` opens the chat beside the gallery, picks a chat in that
+pane, follows the sidebar to Stats on the left, asks again without stacking, and reloads
+back onto the same chat; opens it from the Health page; reaches Settings with a restored
+split view; opens beside the routed pane when another is active; and, on the routed chat
+page, opens nothing and carries the chat being read into split view and across a reload. A second test drives
 Settings → Analyst: a provider's privacy and its reset, and a budget.

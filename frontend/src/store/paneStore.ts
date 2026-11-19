@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { nanoid } from "./nanoid";
-import type { PageType, PaneView } from "../contexts/PaneContext";
+import { isPageType, type PageType, type PaneView } from "../contexts/PaneContext";
+import { PANE_LAYOUT_KEY } from "../constants/storage";
 
 export type { PageType, PaneView };
 
@@ -33,6 +34,10 @@ interface PaneStore {
   setActivePaneId: (id: string) => void;
   updateSizes: (splitId: string, sizes: [number, number]) => void;
   syncFromRoute: (view: PaneView) => void;
+  /** Show `view` beside `fromPaneId` (the routed first pane when null): in its
+   *  neighbour, or in a new pane split off it, turning split view on if it was off.
+   *  Never in the first pane, which the route drives. Returns the pane. */
+  openBeside: (fromPaneId: string | null, view: PaneView) => string;
 }
 
 function makeLeaf(view: PaneView): PaneLeaf {
@@ -107,7 +112,12 @@ function updateSplitSizes(tree: PaneTree, splitId: string, sizes: [number, numbe
 }
 
 function updateFirstLeaf(tree: PaneTree, view: PaneView): PaneTree {
-  if (tree.type === "leaf") return { ...tree, view };
+  if (tree.type === "leaf") {
+    // The route carries no chat id: a sync that leaves the pane on the same chat page
+    // (a reload, the same link again) keeps the chat it was showing.
+    const same = tree.view.page === view.page && tree.view.datasetId === view.datasetId;
+    return { ...tree, view: { ...view, chatId: view.chatId ?? (same ? tree.view.chatId : undefined) } };
+  }
   return {
     ...tree,
     children: [
@@ -120,11 +130,15 @@ function updateFirstLeaf(tree: PaneTree, view: PaneView): PaneTree {
 // ── Store ─────────────────────────────────────────────────────────────────────
 
 const initialLeaf = makeLeaf({ page: "datasets" });
+const restored = loadLayout();
 
-export const usePaneStore = create<PaneStore>((set) => ({
-  enabled: false,
-  layout: initialLeaf,
-  activePaneId: initialLeaf.id,
+// The new pane's share when something opens beside a page: the page keeps the room.
+const BESIDE_SIZES: [number, number] = [62, 38];
+
+export const usePaneStore = create<PaneStore>((set, get) => ({
+  enabled: restored?.enabled ?? false,
+  layout: restored?.layout ?? initialLeaf,
+  activePaneId: restored?.activePaneId ?? initialLeaf.id,
 
   toggleEnabled: () => set((s) => ({ enabled: !s.enabled })),
   setEnabled: (v) => set({ enabled: v }),
@@ -158,7 +172,132 @@ export const usePaneStore = create<PaneStore>((set) => ({
 
   syncFromRoute: (view) =>
     set((s) => ({ layout: updateFirstLeaf(s.layout, view) })),
+
+  openBeside: (fromPaneId, view) => {
+    const s = get();
+    if (!s.enabled) {
+      // The left pane is a placeholder: RouteSyncer fills it from the route as split
+      // view turns on, so the page that asked stays where it was.
+      const leaf = makeLeaf(view);
+      set({
+        enabled: true,
+        layout: { type: "split", id: nanoid(), direction: "horizontal", sizes: BESIDE_SIZES, children: [makeLeaf({ page: "datasets" }), leaf] },
+        activePaneId: leaf.id,
+      });
+      return leaf.id;
+    }
+    // From outside any pane (the sidebar), "this page" is the routed one: the first pane.
+    const routed = firstLeafId(s.layout);
+    const from = fromPaneId && findLeaf(s.layout, fromPaneId) ? fromPaneId : routed;
+    const neighbour = neighbourLeafId(s.layout, from);
+    // The first pane follows the sidebar, so whatever opened there would be replaced
+    // by the next click: split instead.
+    if (neighbour && neighbour !== routed) {
+      set({ layout: updateLeafView(s.layout, neighbour, view), activePaneId: neighbour });
+      return neighbour;
+    }
+    const leaf = makeLeaf(view);
+    set({ layout: replaceLeaf(s.layout, from, (old) => ({
+      type: "split", id: nanoid(), direction: "horizontal", sizes: BESIDE_SIZES, children: [old, leaf],
+    })), activePaneId: leaf.id });
+    return leaf.id;
+  },
 }));
+
+function replaceLeaf(tree: PaneTree, id: string, f: (leaf: PaneLeaf) => PaneTree): PaneTree {
+  if (tree.type === "leaf") return tree.id === id ? f(tree) : tree;
+  return { ...tree, children: [replaceLeaf(tree.children[0], id, f), replaceLeaf(tree.children[1], id, f)] };
+}
+
+/** The first leaf for which `match` holds, in reading order. */
+export function findLeafWhere(tree: PaneTree, match: (view: PaneView) => boolean): PaneLeaf | null {
+  if (tree.type === "leaf") return match(tree.view) ? tree : null;
+  return findLeafWhere(tree.children[0], match) ?? findLeafWhere(tree.children[1], match);
+}
+
+// ── Persistence ───────────────────────────────────────────────────────────────
+//
+// The layout is saved so a pane pinned beside the work (the analyst chat, M12) survives
+// a reload. One-shot deep-link targets are dropped on the way out: each is applied
+// once per change, so restoring it would re-apply it over what the user has chosen
+// since. Read back, the tree is checked node by node and dropped whole if anything is
+// off, since a dev and a production install on one origin share this key and may not
+// know the same pages. See docs/dev/panes-routing.md § The layout survives a reload.
+
+interface SavedLayout {
+  v: 1;
+  enabled: boolean;
+  layout: PaneTree;
+  activePaneId: string;
+}
+
+const ONE_SHOT: (keyof PaneView)[] = ["subfolder", "sourceVideoId", "filter"];
+
+function forStorage(tree: PaneTree): PaneTree {
+  if (tree.type === "leaf") {
+    const view = { ...tree.view };
+    for (const k of ONE_SHOT) delete view[k];
+    return { ...tree, view };
+  }
+  return { ...tree, children: [forStorage(tree.children[0]), forStorage(tree.children[1])] };
+}
+
+function validTree(t: unknown): t is PaneTree {
+  if (!t || typeof t !== "object") return false;
+  const n = t as Record<string, unknown>;
+  if (typeof n.id !== "string") return false;
+  if (n.type === "leaf") {
+    const v = n.view as Record<string, unknown> | undefined;
+    const optString = (x: unknown) => x === undefined || typeof x === "string";
+    return !!v && typeof v === "object" && isPageType(v.page)
+      && optString(v.datasetId) && optString(v.imageId) && optString(v.videoId) && optString(v.chatId)
+      && (v.compareIds === undefined || (Array.isArray(v.compareIds) && v.compareIds.every((x) => typeof x === "string")));
+  }
+  if (n.type !== "split") return false;
+  const sizes = n.sizes as unknown[];
+  const children = n.children as unknown[];
+  return (n.direction === "horizontal" || n.direction === "vertical")
+    && Array.isArray(sizes) && sizes.length === 2 && sizes.every((x) => typeof x === "number" && x > 0)
+    && Array.isArray(children) && children.length === 2 && children.every(validTree);
+}
+
+function loadLayout(): Omit<SavedLayout, "v"> | null {
+  try {
+    const raw = localStorage.getItem(PANE_LAYOUT_KEY);
+    if (!raw) return null;
+    const saved = JSON.parse(raw) as Partial<SavedLayout>;
+    if (saved.v !== 1 || typeof saved.enabled !== "boolean" || !validTree(saved.layout)) return null;
+    const active = typeof saved.activePaneId === "string" && findLeaf(saved.layout, saved.activePaneId)
+      ? saved.activePaneId
+      : firstLeafId(saved.layout);
+    return { enabled: saved.enabled, layout: saved.layout, activePaneId: active };
+  } catch {
+    return null;
+  }
+}
+
+let saveTimer: ReturnType<typeof setTimeout> | undefined;
+function saveNow() {
+  clearTimeout(saveTimer);
+  saveTimer = undefined;
+  const s = usePaneStore.getState();
+  const saved: SavedLayout = { v: 1, enabled: s.enabled, layout: forStorage(s.layout), activePaneId: s.activePaneId };
+  try {
+    localStorage.setItem(PANE_LAYOUT_KEY, JSON.stringify(saved));
+  } catch {
+    // Storage full or blocked: split view still works, it just will not come back.
+  }
+}
+usePaneStore.subscribe((s, prev) => {
+  if (s.layout === prev.layout && s.enabled === prev.enabled && s.activePaneId === prev.activePaneId) return;
+  clearTimeout(saveTimer);
+  // Debounced: dragging a divider updates the sizes on every frame.
+  saveTimer = setTimeout(saveNow, 250);
+});
+// A change still waiting when the page goes (a reload, Restart) is saved first.
+if (typeof window !== "undefined") {
+  window.addEventListener("pagehide", () => { if (saveTimer !== undefined) saveNow(); });
+}
 
 function findSplit(tree: PaneTree, leafId: string): PaneSplit | null {
   if (tree.type === "leaf") return null;

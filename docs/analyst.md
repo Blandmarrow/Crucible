@@ -123,6 +123,12 @@ snapshot or a duplicate. Duplicating a dataset does copy its goal and target res
 The chat needs an LLM provider: a local server such as LM Studio, or a hosted API. Add one
 in Settings → LLM Providers ([details](settings.md#llm-providers)).
 
+To keep the chat in view while you work, click the panel button beside **Analyst** in the
+sidebar, or **Ask the analyst** on the Health page. The chat opens in a pane beside the page,
+in [split view](workspace.md#split-view); the sidebar then changes the other pane and leaves
+the chat where it is. Asking again goes to the chat already open. Each pane remembers its own
+chat, and the layout comes back after a reload.
+
 **Start a chat** with the button on the Analyst page, or **New chat** beside the list of this
 dataset's chats. At the top of a chat, pick the provider and the model. A blank model means
 the provider's default model. The first message you send names the chat; click the name to

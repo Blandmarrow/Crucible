@@ -41,7 +41,7 @@ through are `docs/dev/image-filters.md`; the Stats cache and index pin the repor
 | `scripts/analyst_trials.py` | `docs/dev/analyst/trials.md` |
 | `backend/services/analyst_tools.py`, `render_tool_result` and `ContextItem` in `backend/services/analyst_context.py` | `docs/dev/analyst/tool-registry.md` |
 | `backend/services/tool_probe.py`, `POST /providers/{id}/probe-tools`, `openai_providers.tools_probe`, the tool calls in `backend/ml/chat_stream.py` | `docs/dev/analyst/tools.md` |
-| `frontend/src/components/chat/ToolCalls.tsx`, `ToolSupport` in `AnalystPanel.tsx` | `docs/dev/analyst/chat-ui.md` § Tool calls and § Settings → Analyst |
+| `frontend/src/components/chat/ToolCalls.tsx`, `frontend/src/components/providers/ToolCheck.tsx`, `ToolSupport` in `AnalystPanel.tsx` | `docs/dev/analyst/chat-ui.md` § Tool calls and § Settings → Analyst |
 | `frontend/src/pages/ChatPage.tsx`, `frontend/src/components/chat/`, `frontend/src/store/chatStore.ts`, `frontend/src/api/chats.ts`, `frontend/src/components/settings/AnalystPanel.tsx` | `docs/dev/analyst/chat-ui.md` |
 | `frontend/src/components/health/FindingCard.tsx`, `useFindingActions.ts`, `useHealthReport.ts` (shared by Health and the chat) | `docs/dev/analyst/ui.md`; + `docs/dev/analyst/chat-ui.md` for the chat's use |
 | `frontend/src/components/common/FilteredImagesModal.tsx` | `docs/dev/statistics-panels.md`; + `docs/dev/analyst/ui.md` for the Health page's use |

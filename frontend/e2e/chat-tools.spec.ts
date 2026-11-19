@@ -30,9 +30,9 @@ test('analyst tools: a checked model looks things up, and the reply shows what i
     await page.goto('/settings')
     await page.getByRole('button', { name: 'Analyst', exact: true }).click()
     const tools = page.getByTestId(`analyst-tools-${providerId}`)
-    await expect(tools).toContainText('not checked')
+    await expect(tools.getByTestId('tool-check-verdict')).toHaveText('not checked')
     await tools.getByRole('button', { name: 'Check tool support' }).click()
-    await expect(tools).toContainText('supported')
+    await expect(tools.getByTestId('tool-check-verdict')).toHaveText('supported')
     await expect(tools).toContainText('Passed: the model called the tool and used its answer.')
     const all: { id: string; tools_probe: Record<string, { ok: boolean }> }[] =
       await (await request.get('/api/v1/providers/')).json()

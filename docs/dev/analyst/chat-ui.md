@@ -164,7 +164,9 @@ reload mid-reply keeps them. Once the reply has ended the stored message's `tool
 take over.
 
 "What gets sent" says which tools the chat may call (the manifest's `tools_offered`), or
-why it has none: the model has not passed the check, or the privacy allows none.
+why it has none: the chat's model has not passed the check, or the privacy allows none.
+With none offered it also shows `ToolCheck` for the chat's own model (its `model`, else the
+provider's default), since Settings → Analyst checks only each provider's default model.
 
 ## Controls that save as you use them
 
@@ -197,14 +199,21 @@ sends `analyst_privacy_reset`. The tab's copy states the two facts a user cannot
 boxes: the defaults follow the provider's `billed` box rather than its address, and a
 reasoning model needs Max tokens room.
 
-Each row also has `ToolSupport`: the verdict for the provider's default model from
-`tools_probe` ("supported", "not supported" or "not checked", with the detail and when),
-any other models checked, and **Check tool support**, which posts to
-`POST /providers/{id}/probe-tools` (`tools.md` § The probe). A pass or a fail refetches the
-providers and every chat's preview, since it changes which tools those chats are offered.
-A 502 or 409, no verdict, shows its reason under the button and changes nothing. With no
-default model the button is disabled; the API can probe any model, but the tab checks only
-the default one.
+Each row also has `ToolSupport`: `ToolCheck` for the provider's default model, and the
+other models checked on it. `ToolCheck` (`frontend/src/components/providers/`, shared with
+"What gets sent") shows the verdict from `tools_probe` ("supported", "not supported" or "not
+checked", with the detail and when) and **Check tool support**, which posts to
+`POST /providers/{id}/probe-tools` with the model (`tools.md` § The probe). A pass or a fail
+refetches the providers and every chat's preview, since it changes which tools those chats
+are offered.
+
+- **"Checking…" is read from the mutation cache**, by the key `["probe-tools", provider,
+  model]` through `useIsMutating`, not from the component's own mutation. A check can take
+  minutes; leaving the tab and coming back must still show it running, and must not let a
+  second click start another (the server would answer 409).
+- **A 502 or 409, no verdict, shows its reason and changes nothing**, until a newer verdict
+  lands: the reason is kept with the verdict it was made against, and hidden once that
+  changes.
 
 ## Tests
 
@@ -212,8 +221,10 @@ the default one.
 provider (the fake calls the probe's tool itself); a chat sends `[[fake:tool]]`, and the
 reply shows the `list_snapshots` call, opening to its exact result; the two requests went
 out with the tools and then the tool's answer; "What gets sent" lists the tools, and turning
-Numbers off drops the ones that read it; a reload keeps the stored call. Not covered: a
-call still running, a failed call's styling, and the `budget` notice.
+Numbers off drops the ones that read it; a reload keeps the stored call. `chat.spec.ts`
+checks an unchecked model from "What gets sent" and sees the tools appear. Not covered: a
+call still running, a failed call's styling, the `budget` notice, and "Checking…" across
+leaving the tab.
 
 `frontend/e2e/chat.spec.ts`, against the fake LLM: a reply streams in, gets its strip and
 names the chat; the request went out as a stream; a `[[fake:stall]]` reply is stopped with its

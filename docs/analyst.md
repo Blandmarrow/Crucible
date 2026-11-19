@@ -192,8 +192,10 @@ needs a generous Max tokens; both above ran at 16,000.
 
 ### Tools
 
-A model that passes **Check tool support** in Settings → [Analyst](settings.md#analyst) can
-look things up while it answers, instead of working only from what was sent up front:
+A model that passes **Check tool support** can look things up while it answers, instead of
+working only from what was sent up front. Settings → [Analyst](settings.md#analyst) checks
+each provider's default model; a chat on another model checks its own under **What gets
+sent**. The analyst can look up:
 
 - the detail of one finding, dismissed ones included;
 - the captions behind a finding or a filter, up to 20 at a time;
@@ -204,8 +206,8 @@ Each lookup shows above the reply, such as "Read captions for low_resolution". C
 see exactly what was sent. The boxes in **What gets sent** apply to lookups too, and the
 dialog lists the tools this chat may use. With Captions off the analyst cannot read
 captions, and a search by text is refused while File names are off, since it would match
-them. A reply looks things up four times at most, and every lookup counts toward the
-budgets. A model that has not passed the check chats without tools. Gemini 2.5 Flash and
+them. A reply looks things up in four steps at most, a few lookups each, and every step
+counts toward the budgets. A model that has not passed the check chats without tools. Gemini 2.5 Flash and
 Qwen 3.8 27B pass it.
 
 ### Budgets

@@ -58,7 +58,7 @@ export default function ToolCalls({ calls, running }: { calls: ToolCall[]; runni
     <div style={{ display: "flex", flexDirection: "column", gap: 2, margin: "0 0 8px" }} data-testid="chat-tool-calls">
       {calls.map((c) => (
         <details key={c.id} data-testid="chat-tool-call" data-tool={c.name} data-status={c.status}>
-          <summary style={{ cursor: "pointer", fontSize: 12, color: c.status === "error" ? "var(--warn)" : "var(--fg-mute)" }}>
+          <summary style={{ cursor: "pointer", fontSize: 12, overflowWrap: "anywhere", color: c.status === "error" ? "var(--warn)" : "var(--fg-mute)" }}>
             {describeCall(c.name, c.arguments)}
             {c.status === "error" ? " (failed)" : ""}
           </summary>
@@ -72,7 +72,7 @@ export default function ToolCalls({ calls, running }: { calls: ToolCall[]; runni
         </details>
       ))}
       {running.map((r, i) => (
-        <div key={`running-${i}-${r.call_id}`} style={{ fontSize: 12, color: "var(--fg-mute)" }} data-testid="chat-tool-running">
+        <div key={`running-${i}-${r.call_id}`} style={{ fontSize: 12, color: "var(--fg-mute)", overflowWrap: "anywhere" }} data-testid="chat-tool-running">
           {describeCall(r.name, r.arguments)}…
         </div>
       ))}

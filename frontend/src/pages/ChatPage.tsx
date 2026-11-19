@@ -295,8 +295,7 @@ function ChatView({ chat, datasetId, providers, onDeleted }: {
           preview={preview}
           loading={previewLoading}
           busy={update.isPending}
-          providerPrivacy={provider?.analyst_privacy_effective ?? null}
-          providerName={provider?.name ?? null}
+          provider={provider}
           onPrivacy={(privacy: Privacy | null, done: () => void) => update.mutate({ privacy }, { onSettled: done })}
           onClose={() => setShowContext(false)}
         />

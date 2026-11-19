@@ -184,5 +184,7 @@ Crucible computes a health report of findings, an optional goal and per-dataset 
 the LLM explains them and suggests actions; performing actions comes last, behind
 confirmation. Crucible enforces what the LLM sees, budgets are in tokens, the chat is tried
 in the split-view panes first, and nothing reaches `main`, docs included, until the whole
-feature is done on `feat/analyst`. Full record:
+feature is done on `feat/analyst`. Amended 2026-11-19 by the user for phase 3: a tool call
+is a row of its own table, earlier tool results are not resent, and the image filter
+builder stays put until M4 lands. Full record:
 [decisions/21-dataset-analyst.md](decisions/21-dataset-analyst.md).

@@ -333,7 +333,8 @@ Start at the [feature index](docs/features.md), or jump straight to a topic:
 | Batch Editing & Image Processing | [docs/editing.md](docs/editing.md) |
 | Tag Consolidation | [docs/tag-consolidation.md](docs/tag-consolidation.md) |
 | Statistics Dashboard | [docs/statistics.md](docs/statistics.md) |
-| Dataset Analyst: Health, Notes and Chat | [docs/analyst.md](docs/analyst.md) |
+| Dataset Analyst: Health and Notes | [docs/analyst.md](docs/analyst.md) |
+| Analyst Chat | [docs/analyst-chat.md](docs/analyst-chat.md) |
 | Dataset Versioning | [docs/versioning.md](docs/versioning.md) |
 | Source & License Provenance | [docs/provenance.md](docs/provenance.md) |
 | Licenses and Credits | [docs/licenses.md](docs/licenses.md) |

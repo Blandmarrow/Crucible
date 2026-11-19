@@ -24,7 +24,9 @@ Run from the repo root with the venv active:
 `--api-key-env VAR` takes the key from an environment variable instead.
 
 Each run starts with the tool-call probe (M12 phase 3b, docs/dev/analyst/tools.md), two
-short calls, and reports its verdict; `--probe-only` stops there.
+short calls, and reports its verdict; `--probe-only` stops there. The `tools` conversation
+asks for a lookup outright, so it fails for a model that did not pass the probe: it is
+offered no tools.
 """
 from __future__ import annotations
 
@@ -67,6 +69,11 @@ CONVERSATIONS = [
     ("note-remove",
      "The open item about re-tagging the forest images is done. Please remove it from the notes.",
      "notes-remove"),
+    # The one conversation that needs a tool: the captions of one finding's images are not
+    # in the context (the context's sample is the whole dataset's), so the model must look.
+    ("tools",
+     "Use your tools to read the captions of the images in [[finding:low_resolution]], then tell "
+     "me in two sentences what you notice about those captions.", "tools"),
 ]
 
 
@@ -82,6 +89,8 @@ class Result:
     refs_valid: int = 0
     refs_invented: list[str] = field(default_factory=list)
     proposals: list[str] = field(default_factory=list)
+    # The reply's tool calls as "name" or "name (error)".
+    tools: list[str] = field(default_factory=list)
     passed: bool = False
     reply: str = ""
 
@@ -160,11 +169,17 @@ async def trial(cfg: dict, pause: float, probe_only: bool = False) -> tuple[dict
                 res.refs_valid = sum(1 for x in refs if x in known)
                 res.refs_invented = sorted({x for x in refs if x not in known})
                 res.proposals = [f"{p['op']} {p['section']}" for p in final.get("proposals") or []]
+                calls = final.get("tool_calls") or []
+                res.tools = [c["name"] + ("" if c["status"] == "ok" else " (error)") for c in calls]
                 ok = final["status"] == "complete" and not final.get("error_kind")
                 if check == "refs":
                     res.passed = ok and res.refs_valid > 0 and not res.refs_invented
                 elif check == "notes-add":
                     res.passed = ok and "add decision" in res.proposals
+                elif check == "tools":
+                    # Finished, at least one call that ran, and no invented finding.
+                    res.passed = (ok and any(c["status"] == "ok" for c in calls)
+                                  and not res.refs_invented)
                 else:
                     res.passed = ok and "remove open_item" in res.proposals
                 results.append(res)
@@ -180,14 +195,15 @@ def report(cfg: dict, probe: dict, results: list[Result]) -> str:
         "",
         f"Tool-call probe: **{verdict}** in {probe['seconds']:.1f} s. {probe.get('detail', '')}",
         "",
-        "| Conversation | Passed | Status | Seconds | Tokens in / out | Valid refs | Invented refs | Proposals |",
-        "|---|---|---|---|---|---|---|---|",
+        "| Conversation | Passed | Status | Seconds | Tokens in / out | Valid refs | Invented refs | Proposals | Tool calls |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for r in results:
         tokens = f"{r.tokens_in} / {r.tokens_out}{' (est.)' if r.estimated else ''}" if r.tokens_in is not None else "—"
         lines.append(
             f"| {r.name} | {'yes' if r.passed else 'no'} | {r.status} | {r.seconds:.1f} | {tokens} | "
-            f"{r.refs_valid} | {', '.join(r.refs_invented) or '—'} | {', '.join(r.proposals) or '—'} |"
+            f"{r.refs_valid} | {', '.join(r.refs_invented) or '—'} | {', '.join(r.proposals) or '—'} | "
+            f"{', '.join(r.tools) or '—'} |"
         )
     lines.append("")
     for r in results:

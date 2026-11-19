@@ -42,7 +42,7 @@ The order images travel through the app:
 | Score images | [scoring.md](scoring.md) · [reading-scores.md](reading-scores.md) · [style-similarity.md](style-similarity.md) · [duplicates.md](duplicates.md) |
 | Stats | [statistics.md](statistics.md) |
 | Health | [analyst.md](analyst.md) |
-| Analyst | [analyst.md](analyst.md#the-analyst-chat) |
+| Analyst | [analyst-chat.md](analyst-chat.md) |
 | Bulk Edit | [editing.md](editing.md) · [detection.md](detection.md) |
 | Consolidate Tags | [tag-consolidation.md](tag-consolidation.md) |
 | Versions | [versioning.md](versioning.md) |

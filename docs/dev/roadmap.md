@@ -31,22 +31,21 @@ restates its stages.
    linking the record that holds the full text.
 5. **Landed**: one line per finished milestone or handoff record.
 
-## Next session (updated 2026-11-19, M12 phase 3e in review)
+## Next session (updated 2026-11-19, M12 phase 3 done)
 
 This block lives on `feat/analyst` only: by decision 21 nothing of M12 reaches `main`, the
 docs included, until the whole feature is done.
 
-1. **Phase 3** runs in six PRs with three rulings
-   ([§ Phase 3](analyst-plan/README.md#phase-3--read-only-tools)); 3a to 3d merged as PRs
-   #189 to #192.
-2. **3e**, the UI for tool calls and the "Check tool support" button, is PR #193 into
-   `feat/analyst` (record: `docs/dev/analyst/chat-ui.md` § Tool calls): Opus-review it,
-   merge once its checks pass.
-3. **Then 3f**: a tools conversation in `scripts/analyst_trials.py` that makes the model
-   call a tool, run live; the rulings as a decision entry; § Phase 3 moved out of the plan.
-4. **Two docs at their budget.** `docs/analyst.md` is 56 words over, its split recorded in
-   `docs/dev/pending-splits.md`: do it first in the next session that adds to it. CLAUDE.md
-   sits at exactly 6,500 words.
+1. **Phase 3 is complete** once PR #194, the trials and wrap-up, merges into `feat/analyst`
+   after its Opus review and checks. Qwen 3.8 27B called a tool live and passed all four
+   trial conversations (`docs/dev/analyst/trials.md`).
+2. **Re-run the Gemini 2.5 Flash trials** when its free tier has quota again (it passed the
+   probe; every conversation then got a 429), and record the row.
+3. **Next is phase 4, actions behind confirmation**
+   ([§ Phase 4](analyst-plan/README.md#phase-4--actions-behind-confirmation)): plan it in
+   PRs as phase 3 was, each Opus-reviewed.
+4. CLAUDE.md sits at exactly its 6,500-word budget: an addition there needs a split first
+   (the `doc-maintenance` skill).
 5. Merge `main` into `feat/analyst` regularly; migrations only on a throwaway database.
    The previous block is in
    [roadmap-archive/handoff-2026-11-19.md](roadmap-archive/handoff-2026-11-19.md).
@@ -88,8 +87,9 @@ Plan: [analyst-plan/README.md](analyst-plan/README.md). Gate: every phase below 
   - [x] 2e, part two: scripted trials against local models and Gemini Flash, and the
     minimum-model line in `docs/analyst.md` (record: `docs/dev/analyst/trials.md`): PR #188
     into `feat/analyst`, 2026-11-19.
-- [ ] Phase 3: read-only tools for models that handle them
-  ([§ Phase 3](analyst-plan/README.md#phase-3--read-only-tools)).
+- [x] Phase 3: read-only tools for models that pass a tool-call probe (record:
+  `docs/dev/analyst/tools.md`, `tool-registry.md`, `tool-loop.md`; rulings: decision 21's
+  amendment of 2026-11-19), in six PRs, #189 to #194, into `feat/analyst`, 2026-11-19.
 - [ ] Phase 4: actions behind confirmation, each taking a snapshot first
   ([§ Phase 4](analyst-plan/README.md#phase-4--actions-behind-confirmation)).
 - [ ] Phase 5: measure caption–image agreement, then build what measures well

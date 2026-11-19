@@ -4,8 +4,7 @@
 probe can call, how a tool's result is built, and the filter it goes through. The probe
 and the stream's tool calls are [tools.md](tools.md); the context and its filter, which
 this one mirrors, are [chat.md](chat.md) § `build_context`: the one choke point. The loop
-that offers the tools and calls them is phase 3d, planned in
-[../analyst-plan/README.md](../analyst-plan/README.md) § Phase 3.
+that offers the tools and calls them is [tool-loop.md](tool-loop.md).
 
 ## Where things live
 

@@ -18,6 +18,9 @@ export interface Thresholds {
   llm_gpu_handoff: boolean;
   /** Caption requests a job sends Ollama at once (1-16). */
   ollama_max_concurrent: number;
+  /** The analyst's token budgets for billed providers (min 1,000): per chat and per day. */
+  analyst_chat_budget_tokens: number;
+  analyst_daily_budget_tokens: number;
 }
 
 /** One secret as the server reports it: never the plaintext, only a mask and its origin. */

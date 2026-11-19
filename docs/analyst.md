@@ -1,4 +1,4 @@
-# Dataset Health and Notes
+# Dataset Analyst: Health, Notes and Chat
 
 The **Health** page lists what Crucible finds wrong with a dataset, by itself, with no AI
 involved: images with no caption, images below your target resolution, duplicates, stale
@@ -6,11 +6,13 @@ scores, missing licences and more. Each finding says how many images it affects,
 and points at the page that fixes it. Beside the findings you keep **notes** about the
 dataset: your standing preferences, the decisions you made, and what is still to do.
 
-This is the first part of the dataset analyst. A later version adds a chat in which an AI
-model reads these findings and notes and gives advice; everything here already works without
-it.
+The **Analyst** page is a chat about the dataset with an AI model you choose. The model reads
+the findings, your goal and your notes, explains what matters most for what you are making,
+and suggests what to do. It only advises: it changes nothing in the dataset. See
+[The analyst chat](#the-analyst-chat) below. The Health page and the notes work without it.
 
-Open it from **Health** in the sidebar, under a dataset, or pick **Health** in a split pane.
+Open either from the sidebar, under a dataset (**Health**, **Analyst**), or pick it in a
+split pane.
 
 ## The goal and target resolution
 
@@ -114,3 +116,73 @@ characters per dataset and 2,000 for About me, with a counter above each set.
 
 Notes belong to the dataset: deleting the dataset deletes them, and they are not part of a
 snapshot or a duplicate. Duplicating a dataset does copy its goal and target resolution.
+
+## The analyst chat
+
+The chat needs an LLM provider: a local server such as LM Studio, or a hosted API. Add one
+in Settings → LLM Providers ([details](settings.md#llm-providers)).
+
+**Start a chat** with the button on the Analyst page, or **New chat** beside the list of this
+dataset's chats. At the top of a chat, pick the provider and the model. A blank model means
+the provider's default model. The first message you send names the chat; click the name to
+change it.
+
+Type in the box at the bottom. **Enter** sends, and **Shift+Enter** starts a new line. The reply
+appears as it is written. **Stop** ends it early and keeps what arrived. Leaving the page does
+not stop a reply: it carries on, and the chat shows it when you come back, even after a
+reload.
+
+Under each reply, **Related findings** lists up to six of the dataset's findings as cards,
+with the same buttons as on the Health page: Show images, Open in gallery and the page that
+fixes it. Crucible picks these cards itself, starting with the ones the reply mentions, so
+the buttons work even with a model that ignores the request to name findings. A finding the
+reply names in its text shows as a small badge. A name that matches no real finding stays
+plain text, so a model cannot invent a button.
+
+Replies can use headings, lists, tables and links. A picture in a reply is never loaded,
+since its address could carry data out.
+
+### What gets sent
+
+**What gets sent**, at the top of a chat, shows exactly what the next message would send to
+the provider: the instructions, the facts about the dataset and the earlier messages. It also
+lets you choose what this chat may share:
+
+| Category | What it shares |
+|---|---|
+| Numbers | Counts, distributions and the findings |
+| Name and goal | The dataset's name and what it is for |
+| Notes | This dataset's notes and About me |
+| Tags | The most common tags in tag-style captions |
+| Captions | A sample of up to 20 captions. This also shows tags, since tags are written in captions |
+| File names | The file names of the same sample. The folder they sit in is never sent |
+| Images | Not sent yet |
+
+A provider marked **billed** gets only Numbers by default, and a free one gets everything.
+You can change those defaults per provider in Settings → [Analyst](settings.md#analyst). A
+change in **What gets sent** applies to this chat only, and **Follow the provider's defaults
+again** undoes it. Switching the chat to another provider also undoes it, so a choice made
+for a local server never follows the chat to a paid one.
+
+If you turn something off, earlier replies that saw it are left out of what is sent from then
+on, since a reply can quote captions and names. Tags, captions and file names are sent marked
+as data, never as instructions. A caption can still argue for something, which is why the
+analyst only ever suggests.
+
+### Budgets
+
+For a billed provider, two token budgets apply: one per chat and one per day, set in
+Settings → [Analyst](settings.md#analyst). The line under the message box shows the most the
+next message could use, and how much of each budget is spent. A message that could pass
+either budget is not sent, and the line says which budget to raise. A free provider has no
+budget. Deleting a chat does not give its tokens back to the day.
+
+### When a reply goes wrong
+
+- **Cut off at Max tokens**: the reply hit the provider's Max tokens. A model that reasons
+  before it answers spends its thinking from the same allowance. Gemini 2.5 Flash needed
+  2,048 where 1,024 cut it short. Raise Max tokens in Settings → LLM Providers.
+- **The provider went quiet**: no text for a minute, or none at all for three minutes, so
+  Crucible stopped waiting. What arrived is kept.
+- **An error from the provider** (a rate limit, a wrong key) is shown under the message. Try
+  again, or check the provider's settings.

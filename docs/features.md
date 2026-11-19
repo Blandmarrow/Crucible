@@ -22,7 +22,7 @@ The order images travel through the app:
 | 3 | Score for aesthetics, technical quality, watermarks and NSFW | [Quality Scoring](scoring.md) |
 | 3 | Compare images against reference images for style, read as a percentile | [Style Similarity](style-similarity.md) |
 | 3 | Review and clear the duplicate groups a scoring run found | [Duplicate Resolution](duplicates.md) |
-| 3 | Check a dataset's health: what is wrong with it, which images, and the page that fixes it; keep notes on the dataset | [Dataset Health and Notes](analyst.md) |
+| 3 | Check a dataset's health: what is wrong with it, which images, and the page that fixes it; keep notes on the dataset; ask an AI analyst about it | [Dataset Analyst](analyst.md) |
 | 3 | Compare images side by side with linked zoom, to pick a keeper or judge an edit; export a contact sheet | [Compare](compare.md) |
 | 4 | Detect and segment objects; crop to subject; locate watermarks | [Object Detection](detection.md) |
 | 5 | Batch-edit captions, crops, resizes; upscale and LUT color grade | [Batch Editing & Image Processing](editing.md) |
@@ -42,6 +42,7 @@ The order images travel through the app:
 | Score images | [scoring.md](scoring.md) · [reading-scores.md](reading-scores.md) · [style-similarity.md](style-similarity.md) · [duplicates.md](duplicates.md) |
 | Stats | [statistics.md](statistics.md) |
 | Health | [analyst.md](analyst.md) |
+| Analyst | [analyst.md](analyst.md#the-analyst-chat) |
 | Bulk Edit | [editing.md](editing.md) · [detection.md](detection.md) |
 | Consolidate Tags | [tag-consolidation.md](tag-consolidation.md) |
 | Versions | [versioning.md](versioning.md) |

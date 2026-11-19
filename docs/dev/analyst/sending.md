@@ -127,8 +127,8 @@ The reply may write `[[finding:id]]` (the system prompt asks it to). After the s
 `_related` stores the strip shown under the reply. It takes the reply's references that name
 a current finding, in order, then the most severe open findings until there are
 `RELATED_MIN` (3), at most `RELATED_MAX` (6). An id the report does not know is never
-stored, so the model cannot invent a button. Rendering a reference as a card is the
-frontend's job (2c).
+stored, so the model cannot invent a button. How the page renders a reference and the strip
+is [chat-ui.md](chat-ui.md) § Rendering a reply.
 
 ## Budgets
 

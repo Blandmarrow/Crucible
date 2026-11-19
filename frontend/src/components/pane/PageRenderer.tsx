@@ -9,6 +9,7 @@ import {
   QualityPage,
   StatsPage,
   HealthPage,
+  ChatPage,
   ExportPage,
   BulkEditPage,
   TagConsolidatePage,
@@ -53,6 +54,9 @@ function renderPage(view: PaneView) {
     // Unkeyed: HealthPage keys its own body on the dataset, so its drafts reset on a
     // switch without remounting the route.
     case "health":       return <HealthPage />;
+    // Unkeyed for the same reason, and more: a reply being written lives in
+    // chatStore, so neither a remount nor a dataset switch stops it.
+    case "chat":         return <ChatPage />;
     case "export":       return <ExportPage />;
     case "bulk-edit":    return <BulkEditPage />;
     case "consolidate":  return <TagConsolidatePage key={view.datasetId} />;

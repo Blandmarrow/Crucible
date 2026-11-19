@@ -18,6 +18,7 @@ export const CaptioningPage = lazy(() => import("./CaptioningPage"));
 export const QualityPage = lazy(() => import("./QualityPage"));
 export const StatsPage = lazy(() => import("./StatsPage"));
 export const HealthPage = lazy(() => import("./HealthPage"));
+export const ChatPage = lazy(() => import("./ChatPage"));
 export const ExportPage = lazy(() => import("./ExportPage"));
 export const BulkEditPage = lazy(() => import("./BulkEditPage"));
 export const TagConsolidatePage = lazy(() => import("./TagConsolidatePage"));

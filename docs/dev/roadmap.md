@@ -31,20 +31,19 @@ restates its stages.
    linking the record that holds the full text.
 5. **Landed**: one line per finished milestone or handoff record.
 
-## Next session (updated 2026-11-19, M12 phase 2e in review)
+## Next session (updated 2026-11-19, M12 phase 2 done)
 
 This block lives on `feat/analyst` only: by decision 21 nothing of M12 reaches `main`, the
 docs included, until the whole feature is done.
 
-1. **2e's first half is PR #187** into `feat/analyst`: "Open the analyst beside" and the
-   saved pane layout (`docs/dev/analyst/chat-ui.md` § Open beside,
-   `docs/dev/panes-routing.md` § The layout survives a reload), Opus-reviewed with its
-   findings fixed. The user has said to merge it once its checks pass.
-2. **Then the trials**, the rest of phase 2: a trial script (drafted, next PR) runs three fixed
-   conversations about a synthetic dataset against one model, in-process on a throwaway
-   database. Run it on Gemini Flash (in the dev DB) and two or three local models; the
-   local servers (LM Studio, Strata) need the user to start them. The results set the
-   "minimum model we recommend" line in `docs/analyst.md`.
+1. **The trials are PR #188** into `feat/analyst` (`docs/dev/analyst/trials.md`): Gemini
+   2.5 Flash and Qwen 3.8 27B pass all three conversations. Merge it once its checks pass,
+   and phase 2 is complete.
+2. **Next is phase 3, read-only tools**
+   ([§ Phase 3](analyst-plan/README.md#phase-3--read-only-tools)): split it into PRs as
+   phase 2 was, on branches off `feat/analyst`, each Opus-reviewed. A small prompt change
+   can come first: the system prompt does not list Crucible's pages, and Gemini invented
+   some in the trials (the plan's § Open questions).
 3. Merge `main` into `feat/analyst` regularly; migrations only on a throwaway database.
    The previous block is in
    [roadmap-archive/handoff-2026-11-19.md](roadmap-archive/handoff-2026-11-19.md).
@@ -67,8 +66,8 @@ Plan: [analyst-plan/README.md](analyst-plan/README.md). Gate: every phase below 
   - [x] 1b, the Health page, the dialogs' goal fields and the card badge, with the user docs:
     PR #180 into `feat/analyst`, 2026-11-18.
   - [x] 1c, the gallery `?filter=` deep link: PR #181 into `feat/analyst`, 2026-11-18.
-- [ ] Phase 2: the analyst chat without tools, its privacy filter, budgets and streaming
-  ([§ Phase 2](analyst-plan/README.md#phase-2--analyst-chat-no-tools)), in five PRs:
+- [x] Phase 2: the analyst chat without tools, its privacy filter, budgets and streaming
+  (record: `docs/dev/analyst/chat.md` and its siblings), in six PRs:
   - [x] 2a, the chat tables, budget settings, provider privacy and `build_context` with the
     preview route (record: `docs/dev/analyst/chat.md`): PR #183 into `feat/analyst`,
     2026-11-19.
@@ -83,8 +82,9 @@ Plan: [analyst-plan/README.md](analyst-plan/README.md). Gate: every phase below 
     2026-11-19.
   - [x] 2e, "Open chat beside" with the pane layout persisted (record:
     `docs/dev/analyst/chat-ui.md` § Open beside): PR #187 into `feat/analyst`, 2026-11-19.
-  - [ ] 2e, part two: scripted trials against local models and Gemini Flash, and the
-    minimum-model line in `docs/analyst.md`.
+  - [x] 2e, part two: scripted trials against local models and Gemini Flash, and the
+    minimum-model line in `docs/analyst.md` (record: `docs/dev/analyst/trials.md`): PR #188
+    into `feat/analyst`, 2026-11-19.
 - [ ] Phase 3: read-only tools for models that handle them
   ([§ Phase 3](analyst-plan/README.md#phase-3--read-only-tools)).
 - [ ] Phase 4: actions behind confirmation, each taking a snapshot first

@@ -66,6 +66,18 @@ test('analyst chat: a reply streams, a stalled one is stopped, privacy is the ch
     await expect(stalled).toContainText('A plain')
     await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeVisible()
 
+    // A reload mid-reply picks the stream back up: the server kept the reply going.
+    await box.fill('[[fake:stall]] once more')
+    await box.press('Enter')
+    await expect(page.getByTestId('chat-reply').last()).toContainText('A plain')
+    await page.reload()
+    const resumed = page.getByTestId('chat-reply').last()
+    await expect(resumed).toHaveAttribute('data-status', 'writing')
+    await expect(resumed).toContainText('A plain')
+    await page.getByRole('button', { name: 'Stop', exact: true }).click()
+    await expect(resumed).toHaveAttribute('data-status', 'cancelled')
+    await expect(resumed).toContainText('A plain')
+
     // "What gets sent": the exact context, and the chat's own privacy choice.
     await page.getByRole('button', { name: 'What gets sent' }).click()
     const dialog = page.getByRole('dialog', { name: 'What gets sent' })
@@ -84,7 +96,7 @@ test('analyst chat: a reply streams, a stalled one is stopped, privacy is the ch
     // The stored chat agrees with the page.
     const chats = await (await request.get(`/api/v1/datasets/${ds.id}/chats`)).json()
     expect(chats).toHaveLength(1)
-    expect(chats[0].message_count).toBe(4)
+    expect(chats[0].message_count).toBe(6)
     expect(chats[0].privacy).toBeNull()
   } finally {
     await request.delete(`/api/v1/providers/${providerId}`)

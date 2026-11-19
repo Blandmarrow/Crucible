@@ -8,7 +8,7 @@ import { chatKey, chatPreviewKey, chatsApi, chatsKey, type Chat, type ChatUpdate
 import { filterSpecParams, type Finding } from "../api/health";
 import { providersApi, type ProviderOut } from "../api/providers";
 import { apiErrorDetail } from "../utils/apiError";
-import { forgetStream, resumeReply, sendMessage, stopReply, useChatStore } from "../store/chatStore";
+import { forgetStream, resumeReply, sendMessage, stopReply, unforgetStream, useChatStore } from "../store/chatStore";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import FilteredImagesModal from "../components/common/FilteredImagesModal";
 import ModelPicker from "../components/providers/ModelPicker";
@@ -172,7 +172,10 @@ function ChatView({ chat, datasetId, providers }: { chat: Chat; datasetId: strin
       qc.removeQueries({ queryKey: chatKey(chat.id) });
       qc.invalidateQueries({ queryKey: chatsKey(datasetId) });
     },
-    onError: (err) => toast.error(apiErrorDetail(err, "Could not delete the chat")),
+    onError: (err) => {
+      unforgetStream(chat.id);
+      toast.error(apiErrorDetail(err, "Could not delete the chat"));
+    },
   });
 
   const provider = providers.find((p) => p.id === chat.provider_id) ?? null;
@@ -203,11 +206,21 @@ function ChatView({ chat, datasetId, providers }: { chat: Chat; datasetId: strin
         </select>
         {provider && (
           <div style={{ width: 240 }}>
-            <ModelField chat={chat} provider={provider} onCommit={(model) => update.mutate({ model })} />
+            {/* Keyed on the provider, so a model still waiting out its debounce is dropped
+                with the provider rather than saved onto the new one. */}
+            <ModelField key={provider.id} chat={chat} provider={provider} onCommit={(model) => update.mutate({ model })} />
           </div>
         )}
         <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
-          <button className="btn sm" onClick={() => setShowContext(true)}>
+          <button
+            className="btn sm"
+            onClick={() => {
+              // Notes, the goal or captions may have changed in another pane since the
+              // preview was fetched: the dialog promises what the next send would send.
+              qc.invalidateQueries({ queryKey: chatPreviewKey(chat.id) });
+              setShowContext(true);
+            }}
+          >
             <Eye size={13} /> What gets sent
           </button>
           <button className="icon-btn" title="Delete this chat" aria-label="Delete this chat" onClick={() => setConfirmDelete(true)}>
@@ -233,7 +246,8 @@ function ChatView({ chat, datasetId, providers }: { chat: Chat; datasetId: strin
         writing={writing}
         stopping={!!stream?.stopping}
         canStop={!!stream?.messageId}
-        canSend={!blockedReason}
+        // Until a reply's stored copy has replaced its stream, a send would be refused.
+        canSend={!blockedReason && !stream}
         blockedReason={blockedReason}
         budget={provider ? preview?.budget : undefined}
         estimate={preview?.manifest.estimated_tokens}
@@ -247,7 +261,7 @@ function ChatView({ chat, datasetId, providers }: { chat: Chat; datasetId: strin
           busy={update.isPending}
           providerPrivacy={provider?.analyst_privacy_effective ?? null}
           providerName={provider?.name ?? null}
-          onPrivacy={(privacy: Privacy | null) => update.mutate({ privacy })}
+          onPrivacy={(privacy: Privacy | null, done: () => void) => update.mutate({ privacy }, { onSettled: done })}
           onClose={() => setShowContext(false)}
         />
       )}

@@ -20,8 +20,9 @@ export default function ContextDialog({ chat, preview, loading, busy, providerPr
   /** What the provider allows, for showing a pending return to its defaults. */
   providerPrivacy: Record<string, boolean> | null;
   providerName: string | null;
-  /** A new override for the chat, or null to follow the provider again. */
-  onPrivacy: (p: Privacy | null) => void;
+  /** A new override for the chat, or null to follow the provider again; `done` runs
+   *  once the save has settled, whatever its outcome. */
+  onPrivacy: (p: Privacy | null, done: () => void) => void;
   onClose: () => void;
 }) {
   const uid = useId();
@@ -29,14 +30,9 @@ export default function ContextDialog({ chat, preview, loading, busy, providerPr
   // the save and its refetches land. State, not the mutation's variables: React puts
   // a controlled checkbox back at the end of the click, before those arrive.
   const [pendingPrivacy, setPending] = useState<Privacy | null | undefined>(undefined);
-  const [wasBusy, setWasBusy] = useState(busy);
-  if (busy !== wasBusy) {
-    setWasBusy(busy);
-    if (!busy) setPending(undefined);
-  }
   const choose = (p: Privacy | null) => {
     setPending(p);
-    onPrivacy(p);
+    onPrivacy(p, () => setPending(undefined));
   };
   const effective: Partial<Record<string, boolean>> | undefined =
     pendingPrivacy === undefined ? preview?.privacy : pendingPrivacy ?? providerPrivacy ?? undefined;

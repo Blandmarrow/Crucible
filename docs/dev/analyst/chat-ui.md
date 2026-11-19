@@ -26,10 +26,12 @@ Query keys, from `api/chats.ts`:
 - `chatKey(chatId)`, `["chat", id]`: the chat and its messages.
 - `chatPreviewKey(chatId)` plus the draft, `["chat-preview", id, draft]`: the preview, which
   also carries the budget figures. The draft is debounced (600 ms) before it joins the key,
-  and `keepPreviousData` holds the last line while the next loads. Every write that moves the
-  context or the budgets invalidates the `["chat-preview", id]` prefix: a reply ending, a
-  chat update, and in Settings a budget or provider privacy change (which invalidates
-  `["chat-preview"]` for every chat).
+  and `keepPreviousData` holds the last line while the next loads. A chat update invalidates
+  its `["chat-preview", id]` prefix. A reply ending, and in Settings a budget or provider
+  privacy change, invalidate `["chat-preview"]` for every chat, since today's budget is
+  shared. A write in another pane (a note, the goal, a caption) invalidates nothing here, so
+  **opening "What gets sent" invalidates the chat's preview first**: the dialog promises
+  exactly what the next send would send.
 
 The findings come from the Health page's own query (`useHealthReport`, [ui.md](ui.md)), so a
 chat beside a Health pane shares one report.
@@ -66,9 +68,13 @@ so the fetch lives in `chatStore`:
   stream is read in the background.
 - **Settling waits for the stored copy.** When the stream ends, however it ends, the chat
   and the list are invalidated and refetched first, and only then is the stream entry
-  dropped. In the other order the reply would blink out between the two copies.
+  dropped. In the other order the reply would blink out between the two copies. Send stays
+  off until the entry is gone, since the server would refuse a send that early. A run drops
+  only its own entry (`drop` checks the run's `AbortController`), never a later run's.
 - **A dropped connection is not a failed reply.** The server's task keeps writing, so the
-  toast says to reopen the chat, and the refetch shows what was stored.
+  toast says to reopen the chat, and the refetch shows what was stored. The reply's id leaves
+  `resumed` (below), so reopening does resume it, even when the dropped stream was itself a
+  resume.
 - **Resume.** Opening a chat whose last message is an assistant row still `partial` calls
   `resumeReply`, which reads `GET …/messages/{id}/stream`. It runs once per reply per page
   load (`resumed`): a row left `partial` with no run behind it, before the startup sweep has
@@ -76,9 +82,14 @@ so the fetch lives in `chatStore`:
 - **Stop** posts the cancel route and lets the stream end with its `done` event. It is off
   until `start` has given the reply a row id. **Deleting a chat** first calls
   `forgetStream`, which aborts the fetch, so the server's own end of the stream is not
-  reported as a lost connection.
+  reported as a lost connection. An aborted run skips the settle's refetch, and the chat
+  joins `forgotten`, which `resumeReply` refuses: the server stops the reply before it
+  deletes, so a refetch mid-delete can still show it `partial`, and a resume would 404 once
+  the delete commits. A failed delete takes the chat back out (`unforgetStream`).
 - `openChat` remembers, in memory only, the chat each dataset last showed. No storage key is
-  involved.
+  involved. It is keyed by dataset, not by pane, so **two panes on one dataset show the same
+  chat**: picking a chat in one switches the other. Two chats side by side would need it
+  keyed by pane as well.
 
 `MessageList.mergeRows` lays the stream over the stored messages: the stream's text wins for
 its own row while it runs, and its user message shows until a stored message with the same
@@ -118,12 +129,15 @@ token counts sit under it.
 - **A checkbox shows its pending value from the click.** React puts a controlled checkbox
   back at the end of the click event, before a mutation's pending state reaches the page,
   so reading `isPending`/`variables` leaves it unticking and reticking. `ContextDialog` and
-  `AnalystPanel` keep the choice in local state from the click instead. Their mutations'
-  `onSuccess` returns the invalidations' promise, so the mutation stays pending, and the
-  pending choice stays shown, until the refetch lands.
+  `AnalystPanel` keep the choice in local state from the click, and clear it in that call's
+  own `onSettled`. Their mutations' `onSuccess` returns the invalidations' promise, so the
+  call settles, and the pending choice goes, only once the refetch has landed.
 - **The model saves when typing pauses.** `ModelPicker` reports every keystroke in its text
-  mode, so `ModelField` debounces 700 ms before the PATCH. A server change (a new provider
-  clears the model) replaces the field only while the user has not typed past it. Blank
+  mode, so `ModelField` debounces 700 ms before the PATCH. It is keyed on the provider, so a
+  model still waiting when the provider changes is dropped, not saved onto the new one. A
+  server change replaces the field only while the user has not typed past it. A send within
+  700 ms of a model change still uses the old model, and a title being edited when the chat
+  is switched is not saved. Blank
   means the provider's default: `ModelPicker`'s `emptyLabel` offers it as a real choice,
   "Provider default (…)".
 - **A provider change sends `model: ""` and never `privacy`.** The server clears the chat's
@@ -145,5 +159,7 @@ reasoning model needs Max tokens room.
 
 `frontend/e2e/chat.spec.ts`, against the fake LLM: a reply streams in, gets its strip and
 names the chat; the request went out as a stream; a `[[fake:stall]]` reply is stopped with its
-text kept; "What gets sent" turns captions off for the chat and back. A second test drives
+text kept; another is picked back up after a reload and then stopped; "What gets sent" turns
+captions off for the chat and back. Not covered: rendering safety (no fake preset replies
+with markdown images or HTML), a refused send keeping its draft, and a delete mid-reply. A second test drives
 Settings → Analyst: a provider's privacy and its reset, and a budget.

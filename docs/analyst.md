@@ -174,7 +174,7 @@ analyst only ever suggests.
 For a billed provider, two token budgets apply: one per chat and one per day, set in
 Settings → [Analyst](settings.md#analyst). The line under the message box shows the most the
 next message could use, and how much of each budget is spent. A message that could pass
-either budget is not sent, and the line says which budget to raise. A free provider has no
+either budget is not sent, and the line turns red with both figures and where to raise them. A free provider has no
 budget. Deleting a chat does not give its tokens back to the day.
 
 ### When a reply goes wrong

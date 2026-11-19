@@ -33,7 +33,10 @@ function mergeRows(messages: ChatMessage[], stream: ChatStream | undefined): Row
     rows.push({ key: "live-user", role: "user", content: stream.userText, message: null, live: false });
   }
   const i = stream.messageId === null ? -1 : rows.findIndex((r) => r.message?.id === stream.messageId);
-  const live: Row = { key: i >= 0 ? rows[i].key : "live-reply", role: "assistant", content: stream.text, message: i >= 0 ? rows[i].message : null, live: stream.phase !== "ended" };
+  // A resume knows its row before its `start` brings the text: keep the stored text
+  // until then rather than blanking it.
+  const content = stream.phase === "connecting" && i >= 0 ? rows[i].content : stream.text;
+  const live: Row = { key: i >= 0 ? rows[i].key : "live-reply", role: "assistant", content, message: i >= 0 ? rows[i].message : null, live: stream.phase !== "ended" };
   if (i >= 0) rows[i] = live;
   else rows.push(live);
   return rows;

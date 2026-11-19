@@ -3,7 +3,6 @@ import type { QueryClient } from "@tanstack/react-query";
 import toast from "react-hot-toast";
 import {
   chatKey,
-  chatPreviewKey,
   chatsApi,
   chatsKey,
   openReplyStream,
@@ -54,6 +53,9 @@ export const useChatStore = create<ChatStore>((set) => ({
 // data a component renders. Keyed by chat id, like `streams`.
 const controllers = new Map<string, AbortController>();
 const resumed = new Set<number>();
+// Chats being deleted: no resume may start for them (a refetch mid-delete can still
+// show the reply `partial`, and its resume would 404 once the delete commits).
+const forgotten = new Set<string>();
 
 function patch(chatId: string, change: Partial<ChatStream>) {
   useChatStore.setState((s) => {
@@ -63,7 +65,9 @@ function patch(chatId: string, change: Partial<ChatStream>) {
   });
 }
 
-function drop(chatId: string) {
+function drop(chatId: string, ac?: AbortController) {
+  // A run drops only its own entry: a later run on the same chat may have replaced it.
+  if (ac && controllers.get(chatId) !== ac) return;
   controllers.delete(chatId);
   useChatStore.setState((s) => {
     if (!(chatId in s.streams)) return s;
@@ -100,16 +104,17 @@ function onEvent(chatId: string, e: ReplyEvent) {
 
 /** The stored chat, then the stream entry dropped: in that order, so the reply never
  *  blinks out between the streamed copy and the stored one. */
-async function settle(qc: QueryClient, s: ChatStream) {
+async function settle(qc: QueryClient, s: ChatStream, ac: AbortController) {
   try {
     await Promise.all([
       qc.invalidateQueries({ queryKey: chatKey(s.chatId) }),
       qc.invalidateQueries({ queryKey: chatsKey(s.datasetId) }),
     ]);
   } finally {
-    // The budget figures moved with the call, whatever it cost.
-    qc.invalidateQueries({ queryKey: chatPreviewKey(s.chatId) });
-    drop(s.chatId);
+    // The budget figures moved with the call, whatever it cost. Every chat's: today's
+    // budget is shared by all of them.
+    qc.invalidateQueries({ queryKey: ["chat-preview"] });
+    drop(s.chatId, ac);
   }
 }
 
@@ -139,15 +144,23 @@ function run(qc: QueryClient, stream: ChatStream, url: string, method: "POST" | 
         toast.error(err.message);
       } else if (opened) {
         // The connection dropped mid-reply. The server keeps writing it, so the stored
-        // row (refetched below) shows what arrived, and reopening the chat resumes it.
+        // row (refetched below) shows what arrived, and reopening the chat resumes it:
+        // the reply may resume again, since this was not the ended-as-partial loop.
+        if (stream.messageId !== null) resumed.delete(stream.messageId);
+        const id = useChatStore.getState().streams[stream.chatId]?.messageId;
+        if (id) resumed.delete(id);
         toast.error("Lost the connection to the reply. Reopen the chat to pick it back up.");
       } else {
         toast.error(apiErrorDetail(err, "Could not reach Crucible's server."));
       }
     } finally {
       accept(opened);
-      const last = useChatStore.getState().streams[stream.chatId] ?? stream;
-      await settle(qc, last);
+      // Aborted: the chat is being deleted and `forgetStream` already dropped the entry.
+      // A refetch now could show the reply still `partial` and start a resume.
+      if (!ac.signal.aborted) {
+        const last = useChatStore.getState().streams[stream.chatId] ?? stream;
+        await settle(qc, last, ac);
+      }
     }
   })();
   return accepted;
@@ -169,7 +182,7 @@ export function resumeReply(qc: QueryClient, datasetId: string, chatId: string, 
   // Once per reply per page load. A row left `partial` with no run behind it (the
   // startup sweep has not seen it yet) would otherwise resume, refetch as `partial`
   // and resume again, forever.
-  if (useChatStore.getState().streams[chatId] || resumed.has(messageId)) return;
+  if (useChatStore.getState().streams[chatId] || resumed.has(messageId) || forgotten.has(chatId)) return;
   resumed.add(messageId);
   void run(qc, {
     chatId, datasetId, userText: null, userMessageId: null, messageId,
@@ -192,6 +205,12 @@ export async function stopReply(chatId: string, messageId: number): Promise<Chat
 /** Stop listening without stopping the reply: for a chat being deleted, whose stream
  *  the server ends itself. */
 export function forgetStream(chatId: string) {
+  forgotten.add(chatId);
   controllers.get(chatId)?.abort();
   drop(chatId);
+}
+
+/** The delete failed: the chat may resume again. */
+export function unforgetStream(chatId: string) {
+  forgotten.delete(chatId);
 }

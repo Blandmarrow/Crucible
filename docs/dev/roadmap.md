@@ -31,19 +31,20 @@ restates its stages.
    linking the record that holds the full text.
 5. **Landed**: one line per finished milestone or handoff record.
 
-## Next session (updated 2026-11-19, M12 phase 2d in review)
+## Next session (updated 2026-11-19, M12 phase 2e in review)
 
 This block lives on `feat/analyst` only: by decision 21 nothing of M12 reaches `main`, the
 docs included, until the whole feature is done.
 
-1. **2d is PR #186** into `feat/analyst`: note proposals, `chat_proposals` and the notes'
-   chat columns (`docs/dev/analyst/proposals.md`), Opus-reviewed with its findings fixed.
-   The user has said to merge it once its checks pass.
-2. **Then 2e**: "Open chat beside" with the pane layout persisted, then scripted trials
-   against two or three local models and Gemini Flash (the list under Now). It must key
-   the open chat by pane: `chatStore.openChat` is keyed by dataset, so two panes on one
-   dataset show the same chat (`docs/dev/analyst/chat-ui.md` § The stream lives outside
-   React).
+1. **2e's first half is PR #187** into `feat/analyst`: "Open the analyst beside" and the
+   saved pane layout (`docs/dev/analyst/chat-ui.md` § Open beside,
+   `docs/dev/panes-routing.md` § The layout survives a reload), Opus-reviewed with its
+   findings fixed. The user has said to merge it once its checks pass.
+2. **Then the trials**, the rest of phase 2: a trial script (drafted, next PR) runs three fixed
+   conversations about a synthetic dataset against one model, in-process on a throwaway
+   database. Run it on Gemini Flash (in the dev DB) and two or three local models; the
+   local servers (LM Studio, Strata) need the user to start them. The results set the
+   "minimum model we recommend" line in `docs/analyst.md`.
 3. Merge `main` into `feat/analyst` regularly; migrations only on a throwaway database.
    The previous block is in
    [roadmap-archive/handoff-2026-11-19.md](roadmap-archive/handoff-2026-11-19.md).
@@ -80,8 +81,10 @@ Plan: [analyst-plan/README.md](analyst-plan/README.md). Gate: every phase below 
   - [x] 2d, note proposals: the `crucible-notes` parser, accept and undo, the notes' chat
     columns (record: `docs/dev/analyst/proposals.md`): PR #186 into `feat/analyst`,
     2026-11-19.
-  - [ ] 2e, "Open chat beside" with the pane layout persisted, then scripted trials against
-    local models and Gemini Flash.
+  - [x] 2e, "Open chat beside" with the pane layout persisted (record:
+    `docs/dev/analyst/chat-ui.md` § Open beside): PR #187 into `feat/analyst`, 2026-11-19.
+  - [ ] 2e, part two: scripted trials against local models and Gemini Flash, and the
+    minimum-model line in `docs/analyst.md`.
 - [ ] Phase 3: read-only tools for models that handle them
   ([§ Phase 3](analyst-plan/README.md#phase-3--read-only-tools)).
 - [ ] Phase 4: actions behind confirmation, each taking a snapshot first

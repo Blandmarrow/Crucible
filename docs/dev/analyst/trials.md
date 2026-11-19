@@ -46,13 +46,18 @@ is not usable as configured.
 | Date | Model | Max tokens | rank | note-decision | note-remove | Notes |
 |---|---|---|---|---|---|---|
 | 2026-11-19 | Gemini 2.5 Flash (OpenAI-compatible endpoint) | 16,000 | pass | pass | pass | Hidden reasoning: about 500 output tokens for a short ranked answer |
+| 2026-11-19 | Qwen 3.8 27B, local (LM Studio, `qwen3.8-27b`) | 16,000 | pass | pass | pass | Three valid references in `rank`; 19 s for the first reply, about 2 s for the short ones, on one desktop GPU |
+
+Smaller local models are untested so far. The user doc's model line names what passed and
+says so; a new result goes in this table and, when it changes the advice, in that line.
 
 ## Observations
 
-- **The model names tools that do not exist** ("Image Review", "Image Editor"). The system
+- **Gemini names tools that do not exist** ("Image Review", "Image Editor"). The system
   prompt tells it to suggest Crucible's tools but never lists them, and the finding cards'
-  fix buttons are the real ones. Listing the pages, or leaning on the cards, is a later
-  prompt change.
+  fix buttons are the real ones. Qwen 3.8 27B pointed at "the card" instead. Listing the
+  pages, or telling the model to lean on the cards, is a later prompt change.
 - **Under a billed provider's default privacy, the analyst cannot see the goal or the
   notes.** It asked what the goal was although one was set. That is the default working as
-  designed, but the user doc should say plainly what the analyst cannot know under it.
+  designed, and `docs/analyst.md` § What gets sent now says what the analyst cannot know
+  under it.

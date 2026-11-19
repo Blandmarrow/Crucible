@@ -59,18 +59,23 @@ Each `Tool` in `TOOLS` has:
 
 - **A hand-written JSON schema** of plain types, with no `anyOf` and no `null`, since
   servers accept different amounts of JSON Schema.
-- **A pydantic model** (`extra="forbid"`, bounded numbers) that validates what the
-  model sent. `test_each_schema_names_its_models_fields` checks the two agree, the nested
-  filter included.
+- **A pydantic model** (`extra="forbid"`) that validates what the model sent. Every
+  number is bounded and every string capped, the nested filter included (`ToolFilter`,
+  a `FilterSpec` with limits), so a wild value is an error for the model and never an
+  overflow in SQLite. `test_each_schema_names_its_models_fields` checks the schema and
+  the model agree, and that the filter's `score_field` and `quality_flag` enums are the
+  values the images router accepts (`_ALLOWED_SCORE_FIELDS`, `ALLOWED_FLAG_KEYS`).
 - **`needs`**, the categories it reads. `offered(privacy)` keeps a tool only while all of
   them are on, and `tool_specs` is what a request offers. That is the first layer; the
   filter is the second.
-- **A read-only handler**, `(db, dataset, args) -> Outcome(items, error)`.
+- **A read-only handler**, `(db, dataset, args, privacy) -> Outcome(items, error)`. The
+  privacy is for what a tool may *query* by (below); its output goes through the filter
+  whatever the handler does.
 
 `run_tool(db, ds, name, arguments, privacy)` is the one entry point. An unknown tool, one
-not offered under this privacy, arguments that are not a JSON object or fail validation,
-and a handler that raises all become a short error the model can act on; a raise is also
-logged. Nothing a tool does writes to the database.
+not offered under this privacy, arguments that are not a JSON object (nested deep enough
+to exhaust the parser included) or fail validation, and a handler that raises all become
+a short error the model can act on; a raise is also logged. Nothing a tool does writes to the database.
 
 | Tool | Arguments | Needs | Reads | Sends |
 |---|---|---|---|---|
@@ -88,6 +93,10 @@ Notes on the choices:
   the handler. `feat/m4-rating-port` edits that function's body, so moving it now would
   clash; M8 stage 8 (split `images.py`) gives it a service home. A filter it refuses
   (a bad `quality_flag`, say) is an error for the model, not a 400.
+- **`search` is refused while file names are not shared.** It matches the original file
+  name as well as the caption, so with File names off a model could still find names
+  one guess at a time from the match count. It is a case-insensitive `LIKE`, so `%` and
+  `_` match any text; the schema says so.
 - **`tag_stats` counts as the context's Tags category does**: tag-style captions only,
   once per image, ties by name, from the cached caption pass. That pass keeps a `ranked`
   list of `TAG_STATS_MAX` (500) beside its `top` 30 for this. `caption_service.get_tag_stats`
@@ -96,7 +105,9 @@ Notes on the choices:
 - **`compare_snapshot` compares findings with now, but images only with the latest
   snapshot**: there is no snapshot-against-the-live-dataset diff. When the snapshot is
   the latest, it says changes since are not recorded image by image. `diff_versions`
-  reads every image state of both snapshots, which is fine for one call.
+  reads every image state of both snapshots, which is fine for one call; 3d's cap on tool
+  rounds bounds how often a reply can ask. The example file names are sorted, since the
+  diff builds them from sets.
 
 ## Adding a tool
 
@@ -121,4 +132,5 @@ Notes on the choices:
 - The filter on its own: withheld counts, a dropped label, the data block, delimiter
   tricks, the size cap, an `own` item outside numbers refused, an error cleaned.
 - Each tool's output on the seeded dataset, a sample repeating for the same call, and the
-  errors for bad calls.
+  errors for bad calls: deep nesting, unbounded numbers, a NaN, an overlong search, and a
+  search while file names are off.

@@ -22,8 +22,10 @@ from backend.services.analyst_context import (
     ContextItem,
     render_tool_result,
 )
+from backend.services import analyst_tools
 from backend.services.analyst_tools import TOOLS, offered, run_tool, tool_specs
 from backend.tests.conftest import API, api_env, png_bytes, run, upload_image, wait_for_job
+from backend.utils import ALLOWED_FLAG_KEYS
 
 TOGGLES = ("numbers", "identity", "notes", "tags", "captions", "file_names")
 ALL_ON = {c: c != "images" for c in PRIVACY_CATEGORIES}
@@ -113,6 +115,12 @@ def test_each_schema_names_its_models_fields():
         text = json.dumps(tool.parameters)
         assert "anyOf" not in text and '"null"' not in text, tool.name
     assert set(TOOLS["sample_captions"].parameters["properties"]["filter"]["properties"]) == set(FilterSpec.model_fields)
+    # The filter's allowed values are the router's, which validates them.
+    from backend.routers.images import _ALLOWED_SCORE_FIELDS
+
+    props = TOOLS["sample_captions"].parameters["properties"]["filter"]["properties"]
+    assert set(props["score_field"]["enum"]) == set(_ALLOWED_SCORE_FIELDS) == set(analyst_tools.SCORE_FIELDS)
+    assert set(props["quality_flag"]["enum"]) == set(ALLOWED_FLAG_KEYS)
     # First and argument-free, for the e2e suite's `[[fake:tool]]`.
     first = next(iter(TOOLS.values()))
     assert first.name == "list_snapshots" and not first.parameters["required"]
@@ -182,8 +190,12 @@ def test_no_tool_sends_a_disabled_category(tmp_path):
                     out = await _run(env, ds_id, name, args, privacy)
                     # Lowercased: upload folds file names to lower case.
                     text = out.text.lower()
+                    # `search` matches file names too, so it is refused while they are off.
+                    searches = "search" in (args.get("filter") or {})
                     if name not in names_offered:
                         assert out.error and "not available" in text, (name, on)
+                    elif searches and "file_names" not in on:
+                        assert out.error and "also matches file names" in text, (name, on)
                     else:
                         assert not out.error, (name, args, on, text)
                     assert set(out.categories) <= on, (name, on, out.categories)
@@ -263,14 +275,25 @@ def test_bad_calls_get_errors_not_exceptions(tmp_path):
                 ("sample_captions", {"filter": {"quality_flag": "not_a_flag"}}, "refused"),
                 ("sample_captions", {"filter": {"made_up": 1}}, "made_up"),
                 ("compare_snapshot", {"version_id": "nope"}, "No snapshot of this dataset"),
+                # Every number in the filter is bounded and every string capped: a wild
+                # value is an error for the model, never an overflow in SQLite.
+                ("sample_captions", {"filter": {"caption_tokens_min": 10**30}}, "caption_tokens_min"),
+                ("sample_captions", {"filter": {"short_side_max": 0}}, "short_side_max"),
+                ("sample_captions", {"filter": {"search": "x" * 201}}, "search"),
             ]
             for name, args, words in cases:
                 out = await _run(env, ds_id, name, args, ALL_ON)
                 assert out.error and words in out.text, (name, args, out.text)
             async with env.Session() as db:
                 ds = await db.get(Dataset, ds_id)
-                for raw, words in (("{oops", "not valid JSON"), ("[1, 2]", "JSON object"), ("", "")):
+                for raw, words in (("{oops", "not valid JSON"), ("[1, 2]", "JSON object"), ("", ""),
+                                   ("[" * 100_000, "not valid JSON")):
                     out = await run_tool(db, ds, "list_snapshots", raw, ALL_ON)
                     assert (out.error and words in out.text) if words else not out.error
+                out = await run_tool(db, ds, "sample_captions", '{"filter": {"max_score_lt": NaN}}', ALL_ON)
+                assert out.error and "max_score_lt" in out.text
+                # With file names shared, search works, wildcards and all.
+                out = await run_tool(db, ds, "sample_captions", '{"filter": {"search": "p_rk"}}', ALL_ON)
+                assert not out.error and "1 images match" in out.text
 
     run(scenario())

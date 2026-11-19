@@ -43,6 +43,7 @@ from backend.services.analyst_context import (
     summary_of,
 )
 from backend.services.dataset_service import get_dataset_stats
+from backend.utils import ALLOWED_FLAG_KEYS
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +63,9 @@ def _fail(message: str) -> Outcome:
     return Outcome(items=[], error=message)
 
 
-Handler = Callable[[AsyncSession, Dataset, BaseModel], Awaitable[Outcome]]
+# (db, dataset, validated args, the chat's privacy). The privacy is for what a tool may
+# *query* by: its output goes through the filter whatever the handler does.
+Handler = Callable[[AsyncSession, Dataset, BaseModel, dict], Awaitable[Outcome]]
 
 
 @dataclass(frozen=True)
@@ -94,7 +97,7 @@ class ListSnapshotsArgs(_Args):
     limit: int = Field(default=10, ge=1, le=SNAPSHOTS_MAX)
 
 
-async def _list_snapshots(db: AsyncSession, ds: Dataset, args: ListSnapshotsArgs) -> Outcome:
+async def _list_snapshots(db: AsyncSession, ds: Dataset, args: ListSnapshotsArgs, privacy: dict) -> Outcome:
     total = int(await db.scalar(
         select(func.count(DatasetVersion.id)).where(DatasetVersion.dataset_id == ds.id)) or 0)
     if not total:
@@ -126,7 +129,7 @@ class GetFindingArgs(_Args):
     finding_id: str = Field(min_length=1, max_length=64)
 
 
-async def _get_finding(db: AsyncSession, ds: Dataset, args: GetFindingArgs) -> Outcome:
+async def _get_finding(db: AsyncSession, ds: Dataset, args: GetFindingArgs, privacy: dict) -> Outcome:
     f = await health_service.find(db, ds.id, args.finding_id)
     if f is None:
         return _fail(f"No finding has the id {args.finding_id!r}. The ids are the ones in [[finding:…]].")
@@ -156,9 +159,31 @@ async def _get_finding(db: AsyncSession, ds: Dataset, args: GetFindingArgs) -> O
 # --- sample_captions ---------------------------------------------------------------
 
 
+# The score columns a filter may name: `routers/images.py::_ALLOWED_SCORE_FIELDS`, kept
+# here so the schema can list them without importing the router at load.
+# `test_analyst_tools.py` checks the two sets match.
+SCORE_FIELDS = (
+    "aesthetic_score", "blur_score", "noise_score", "uniformity_score", "watermark_score",
+    "color_score", "saturation_score", "luminance_score", "style_similarity_score",
+)
+_BIG = 100_000
+
+
+class ToolFilter(FilterSpec):
+    """A `FilterSpec` as a model may send it: every number bounded and every string
+    capped, so a wild value is an error for the model, never an overflow in SQLite."""
+    search: str | None = Field(default=None, min_length=1, max_length=200)
+    caption_tokens_min: int | None = Field(default=None, ge=0, le=_BIG)
+    caption_tokens_max: int | None = Field(default=None, ge=1, le=_BIG)
+    short_side_max: int | None = Field(default=None, ge=1, le=_BIG)
+    quality_flag: str | None = Field(default=None, max_length=64)
+    score_field: str | None = Field(default=None, max_length=64)
+    max_score_lt: float | None = Field(default=None, ge=-_BIG, le=_BIG, allow_inf_nan=False)
+
+
 class SampleCaptionsArgs(_Args):
     finding_id: str | None = Field(default=None, min_length=1, max_length=64)
-    filter: FilterSpec | None = None
+    filter: ToolFilter | None = None
     limit: int = Field(default=SAMPLE_MAX, ge=1, le=SAMPLE_MAX)
 
     @model_validator(mode="after")
@@ -168,7 +193,7 @@ class SampleCaptionsArgs(_Args):
         return self
 
 
-async def _sample_captions(db: AsyncSession, ds: Dataset, args: SampleCaptionsArgs) -> Outcome:
+async def _sample_captions(db: AsyncSession, ds: Dataset, args: SampleCaptionsArgs, privacy: dict) -> Outcome:
     # The filter builder lives in the images router and is imported here, late, on
     # purpose: `feat/m4-rating-port` edits its body, so moving it now would clash. M8
     # stage 8 (split `images.py`) gives it a service home.
@@ -190,6 +215,11 @@ async def _sample_captions(db: AsyncSession, ds: Dataset, args: SampleCaptionsAr
         scope = f"[[finding:{f.id}]]"
     elif spec is not None:
         scope = "the filter given"
+        # `search` matches file names as well as captions, so with file names not shared a
+        # model could find them one guess at a time from the match count.
+        if spec.search is not None and not privacy.get("file_names"):
+            return _fail("search also matches file names, which this chat does not share. "
+                         "Use the other filters.")
     spec_values = spec.model_dump(exclude_none=True) if spec is not None else {}
     try:
         params = ImageFilterParams(dataset_id=ds.id, **spec_values)
@@ -229,7 +259,7 @@ class TagStatsArgs(_Args):
     limit: int = Field(default=30, ge=1, le=TAGS_MAX)
 
 
-async def _tag_stats(db: AsyncSession, ds: Dataset, args: TagStatsArgs) -> Outcome:
+async def _tag_stats(db: AsyncSession, ds: Dataset, args: TagStatsArgs, privacy: dict) -> Outcome:
     summary = await health_service.caption_summary(db, ds.id)
     ranked = summary.get("ranked") or []
     items = [ContextItem("numbers", (
@@ -257,7 +287,7 @@ class CompareSnapshotArgs(_Args):
     version_id: str = Field(min_length=1, max_length=36)
 
 
-async def _compare_snapshot(db: AsyncSession, ds: Dataset, args: CompareSnapshotArgs) -> Outcome:
+async def _compare_snapshot(db: AsyncSession, ds: Dataset, args: CompareSnapshotArgs, privacy: dict) -> Outcome:
     v = await db.get(DatasetVersion, args.version_id)
     if v is None or v.dataset_id != ds.id:
         return _fail(f"No snapshot of this dataset has the id {args.version_id!r}. Call list_snapshots for the ids.")
@@ -296,7 +326,8 @@ async def _compare_snapshot(db: AsyncSession, ds: Dataset, args: CompareSnapshot
         items.append(ContextItem("numbers", "Changed, by column: " + ", ".join(
             f"{col} {n}" for col, n in sorted(fields.items(), key=lambda kv: (-kv[1], kv[0]))) + ".", own=True))
     for what, rows in (("added", diff["added"]), ("removed", diff["removed"])):
-        for row in rows[:DIFF_EXAMPLES]:
+        # Sorted: the diff builds these from sets, whose order changes between runs.
+        for row in sorted(rows, key=lambda r: r.get("filename") or "")[:DIFF_EXAMPLES]:
             items.append(ContextItem("file_names", base_name(row.get("filename") or ""), prefix=f"{what}: "))
     return Outcome(items)
 
@@ -306,14 +337,21 @@ async def _compare_snapshot(db: AsyncSession, ds: Dataset, args: CompareSnapshot
 _LIMIT = {"type": "integer", "minimum": 1}
 _FILTER_SCHEMA = _object({
     "captioned": {"type": "boolean", "description": "true: captioned images only; false: uncaptioned only."},
-    "search": {"type": "string", "description": "Text the caption or file name contains."},
-    "caption_tokens_min": {"type": "integer", "description": "Captions at least this many tokens long."},
-    "caption_tokens_max": {"type": "integer", "description": "Captions at most this many tokens long."},
-    "short_side_max": {"type": "integer", "description": "Images whose short side is at most this many pixels."},
-    "quality_flag": {"type": "string", "description": "Images with this quality flag set."},
-    "score_field": {"type": "string", "description": "The score that max_score_lt or score_is_null applies to."},
+    "search": {"type": "string", "maxLength": 200,
+               "description": "Text the caption or file name contains, ignoring case; % and _ match any text."},
+    "caption_tokens_min": {"type": "integer", "minimum": 0, "maximum": _BIG,
+                           "description": "Captions at least this many tokens long."},
+    "caption_tokens_max": {"type": "integer", "minimum": 1, "maximum": _BIG,
+                           "description": "Captions fewer than this many tokens long."},
+    "short_side_max": {"type": "integer", "minimum": 1, "maximum": _BIG,
+                       "description": "Images whose short side is below this many pixels."},
+    "quality_flag": {"type": "string", "enum": sorted(ALLOWED_FLAG_KEYS),
+                     "description": "Images with this quality flag set."},
+    "score_field": {"type": "string", "enum": list(SCORE_FIELDS),
+                    "description": "The score that max_score_lt or score_is_null applies to (default aesthetic_score)."},
     "score_is_null": {"type": "boolean", "description": "true: images not yet scored on score_field."},
-    "max_score_lt": {"type": "number", "description": "Images whose score_field is below this."},
+    "max_score_lt": {"type": "number", "minimum": -_BIG, "maximum": _BIG,
+                     "description": "Images whose score_field is below this."},
     "scores_stale": {"type": "boolean", "description": "true: images whose scores predate an edit."},
     "license_missing": {"type": "boolean", "description": "true: images with no licence."},
 })
@@ -403,7 +441,7 @@ async def run_tool(
             "This tool is not available in this chat: the user does not share what it reads."))
     try:
         raw = json.loads(arguments) if (arguments or "").strip() else {}
-    except ValueError:
+    except (ValueError, RecursionError):  # deeply nested JSON exhausts the parser's stack
         return render_tool_result(title, [], privacy, error="The arguments were not valid JSON.")
     if not isinstance(raw, dict):
         return render_tool_result(title, [], privacy, error="The arguments must be a JSON object.")
@@ -412,7 +450,7 @@ async def run_tool(
     except ValidationError as exc:
         return render_tool_result(title, [], privacy, error="Invalid arguments: " + _validation_message(exc))
     try:
-        outcome = await tool.handler(db, ds, args)
+        outcome = await tool.handler(db, ds, args, privacy)
     except Exception:  # noqa: BLE001 — the model gets an error, the log gets the detail
         logger.error("Analyst tool %s failed for dataset %s", name, ds.id, exc_info=True)
         return render_tool_result(title, [], privacy, error="The tool failed inside Crucible; see the log.")

@@ -47,9 +47,26 @@ PROBE_TOOL = {
     "function": {
         "name": PROBE_TOOL_NAME,
         "description": "Echoes a word back with a check code. Call it when asked to.",
+        # Shaped like the analyst's own tools (`analyst_tools.TOOLS`): a nested object with
+        # no required fields, integer bounds, an enum and a length cap. A server that
+        # accepts this schema accepts theirs, so a pass is not undone by the first real
+        # request. The model need not fill `options`.
         "parameters": {
             "type": "object",
-            "properties": {"word": {"type": "string", "description": "The word to echo."}},
+            "properties": {
+                "word": {"type": "string", "maxLength": 40, "description": "The word to echo."},
+                "options": {
+                    "type": "object",
+                    "properties": {
+                        "repeat": {"type": "integer", "minimum": 1, "maximum": 3,
+                                   "description": "How many times to echo it (default 1)."},
+                        "case": {"type": "string", "enum": ["as_is", "upper"],
+                                 "description": "How to write it (default as_is)."},
+                    },
+                    "required": [],
+                    "additionalProperties": False,
+                },
+            },
             "required": ["word"],
             "additionalProperties": False,
         },

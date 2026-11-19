@@ -2,8 +2,9 @@
 
 **Status: living.** Phase 3 of the analyst (M12): models that handle tool calls can look
 things up during a reply. This file covers the stream's tool calls and the per-model
-probe that decides whether a model gets tools at all (3b). The tools, their privacy filter
-and the loop in the send path are later PRs, planned in
+probe that decides whether a model gets tools at all (3b). The tools and their privacy
+filter are [tool-registry.md](tool-registry.md) (3c); the loop in the send path is a
+later PR, planned in
 [../analyst-plan/README.md](../analyst-plan/README.md) § Phase 3. The send path the loop
 will extend is [sending.md](sending.md); the provider rows are
 `docs/dev/llm-providers.md`; the family hub is [../analyst.md](../analyst.md).
@@ -59,6 +60,13 @@ loop the chat will run:
 1. Offer one tool, `crucible_echo(word)`, and ask the model to call it with the word
    `ember`.
 2. Answer the call with a random check code, and pass if the reply repeats it.
+
+The tool's schema is shaped like the analyst's own tools' (a nested object with no
+required fields, integer bounds, an enum, a length cap), so a server that accepts the
+probe's schema accepts theirs and a pass is not undone by the first real request; the
+model need not fill the nested part. Gemini 2.5 Flash accepted both on 2026-11-19, and
+asked for "captions of images below 512 pixels" it called `sample_captions` with
+`{"filter": {"short_side_max": 512}, "limit": 3}`.
 
 That catches every way a model can fail at tools: answering in text, calling a tool that
 was not offered, arguments that are not the JSON asked for, the wrong word, calling the

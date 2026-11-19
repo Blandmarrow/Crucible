@@ -67,6 +67,17 @@ HISTORY_MAX_CHARS = 24_000
 # reports no usage.
 CHARS_PER_TOKEN = 4
 
+# A tool's result (M12 phase 3), and one item of dataset text in it.
+TOOL_RESULT_MAX_CHARS = 6_000
+TOOL_ITEM_MAX_CHARS = CAPTION_MAX_CHARS
+# The categories that are dataset text, placed inside the data block. Identity and notes
+# are the user's own words: cleaned, but outside it, as in the context.
+DATA_CATEGORIES = frozenset({"tags", "captions", "file_names"})
+_CATEGORY_NOUNS = {
+    "numbers": "counts", "identity": "names", "notes": "notes", "tags": "tags",
+    "captions": "captions", "file_names": "file names",
+}
+
 DATA_OPEN = "<dataset-data>"
 DATA_CLOSE = "</dataset-data>"
 # Fixed patterns, so stdlib `re` is safe here (CLAUDE.md § client-supplied regex).
@@ -155,6 +166,44 @@ class _Parts:
     data: list[_Section] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class ContextItem:
+    """One piece of a tool's result (M12 phase 3), in one privacy category.
+
+    A tool handler returns these and never a string: `render_tool_result` alone turns
+    them into text, so a tool cannot send what the chat's privacy holds back.
+
+    - `text` is dataset or user text, cleaned (`_clean`) when rendered, unless `own`.
+    - `own=True` marks Crucible's own words, sent as written. Only `numbers` items may
+      be `own`: a count, an id, a date, a finding's title. Never put dataset text in one.
+    - `label` is dataset or user text shown before `text` (a file name before its
+      caption, a snapshot's name before its counts), sent only while `label_category`
+      is on, and cleaned.
+    - `prefix` and `suffix` are Crucible's own words around it ("added: ", " (42)").
+    """
+    category: str
+    text: str
+    own: bool = False
+    label: str = ""
+    label_category: str | None = None
+    prefix: str = ""
+    suffix: str = ""
+
+
+@dataclass
+class ToolRender:
+    """A tool's result as the model will see it, and what it shared."""
+    text: str
+    # The categories the text carries, for the reply's manifest (phase 3d).
+    categories: list[str]
+    chars: int
+    # Items left out because their category is off, by category.
+    withheld: dict[str, int] = field(default_factory=dict)
+    # Items left out because the result reached `TOOL_RESULT_MAX_CHARS`.
+    cut: int = 0
+    error: bool = False
+
+
 # --- Privacy ---------------------------------------------------------------------
 
 
@@ -217,7 +266,9 @@ def _numbers_text(numbers: dict) -> str:
     return "; ".join(parts)
 
 
-def _finding_line(f: Finding) -> str:
+def finding_line(f: Finding) -> str:
+    """A finding as one line of `numbers` text: Crucible's own words only. Tag names in
+    its `numbers` are dropped (`_numbers_text`); they belong to the Tags category."""
     line = f"- [[finding:{f.id}]] ({f.severity}) {f.title}"
     if f.count or f.total:
         line += f": {f.count} of {f.total} {f.unit}"
@@ -242,9 +293,30 @@ def _dist(label: str, dist: dict | None) -> str | None:
 # --- Sections ----------------------------------------------------------------------
 
 
-def _summary_of(report: HealthReport) -> list[dict]:
+def summary_of(report: HealthReport) -> list[dict]:
+    """The findings as `[{id, count, severity}]`, dismissed ones included: what a reply
+    and a snapshot store, and what a later delta compares."""
     findings = sorted((*report.findings, *report.dismissed), key=lambda f: f.id)
     return [{"id": f.id, "count": f.count, "severity": f.severity} for f in findings]
+
+
+def summary_changes(before: list[dict], now: list[dict]) -> list[str]:
+    """Each finding whose count differs between two summaries, as "id a → b". Finding ids
+    are Crucible's own, so the result is `numbers` text."""
+    a_counts = {i["id"]: int(i["count"]) for i in before}
+    b_counts = {i["id"]: int(i["count"]) for i in now}
+    changes: list[str] = []
+    for fid in sorted(a_counts.keys() | b_counts.keys()):
+        a, b = a_counts.get(fid), b_counts.get(fid)
+        if a == b:
+            continue
+        if b is None:
+            changes.append(f"{fid} {a} → 0 (resolved)")
+        elif a is None:
+            changes.append(f"{fid} new: {b}")
+        else:
+            changes.append(f"{fid} {a} → {b}")
+    return changes
 
 
 def _delta_text(prev: ChatMessage | None, summary: list[dict], image_count: int) -> str | None:
@@ -254,18 +326,7 @@ def _delta_text(prev: ChatMessage | None, summary: list[dict], image_count: int)
     changes: list[str] = []
     if prev.image_count is not None and prev.image_count != image_count:
         changes.append(f"images {prev.image_count} → {image_count}")
-    before = {i["id"]: int(i["count"]) for i in prev.findings_summary}
-    now = {i["id"]: int(i["count"]) for i in summary}
-    for fid in sorted(before.keys() | now.keys()):
-        a, b = before.get(fid), now.get(fid)
-        if a == b:
-            continue
-        if b is None:
-            changes.append(f"{fid} {a} → 0 (resolved)")
-        elif a is None:
-            changes.append(f"{fid} new: {b}")
-        else:
-            changes.append(f"{fid} {a} → {b}")
+    changes += summary_changes(prev.findings_summary, summary)
     if not changes:
         return None
     return "## Since your last reply\n" + "; ".join(changes) + "."
@@ -308,7 +369,7 @@ def _numbers_section(ds: Dataset, report: HealthReport, stats: dict, delta: str 
 
     lines += ["", "## Findings"]
     if report.findings:
-        lines += [_finding_line(f) for f in report.findings]
+        lines += [finding_line(f) for f in report.findings]
     else:
         lines.append("No open findings.")
     if report.dismissed:
@@ -442,6 +503,69 @@ def _sample_section(rows: list[tuple[str, str]], captions: bool, names: bool) ->
     return sections
 
 
+# --- Tool results (M12 phase 3) ----------------------------------------------------
+
+
+def render_tool_result(
+    title: str, items: list[ContextItem], privacy: dict[str, bool], *, error: str | None = None,
+) -> ToolRender:
+    """A tool's items as the text the model gets: **the tools' privacy filter**, as
+    `build_context` is the context's. An item whose category is off is left out and
+    counted; a label whose category is off is dropped from its line. Dataset and user
+    text goes through `_clean`, and tags, captions and file names sit inside the data
+    block. The result stops at `TOOL_RESULT_MAX_CHARS`, saying how much was cut.
+
+    `title` and `error` are Crucible's words about the call; `error` is cleaned anyway,
+    since it may quote an argument the model sent."""
+    if error is not None:
+        text = f"{title}\nError: {_clean(error, 400)}"
+        return ToolRender(text=text, categories=[], chars=len(text), error=True)
+
+    facts: list[str] = []
+    data: list[str] = []
+    sent: set[str] = set()
+    withheld: dict[str, int] = {}
+    budget = TOOL_RESULT_MAX_CHARS - len(title) - len(DATA_OPEN) - len(DATA_CLOSE) - 200
+    cut = 0
+    for item in items:
+        if item.category not in PRIVACY_CATEGORIES or item.category in RESERVED_CATEGORIES:
+            raise ValueError(f"a tool item has no usable category: {item.category!r}")
+        if item.own and item.category != "numbers":
+            raise ValueError("only a numbers item may carry Crucible's own text")
+        if not privacy.get(item.category):
+            withheld[item.category] = withheld.get(item.category, 0) + 1
+            continue
+        body = item.text if item.own else _clean(item.text, TOOL_ITEM_MAX_CHARS)
+        line_sent = {item.category}
+        in_data = item.category in DATA_CATEGORIES
+        if item.label and item.label_category and privacy.get(item.label_category):
+            body = f"{_clean(item.label, 200)}: {body}"
+            line_sent.add(item.label_category)
+            in_data = in_data or item.label_category in DATA_CATEGORIES
+        line = f"- {item.prefix}{body}{item.suffix}"
+        if len(line) + 1 > budget:
+            cut += 1
+            continue
+        budget -= len(line) + 1
+        (data if in_data else facts).append(line)
+        sent |= line_sent
+
+    lines = [title, *facts]
+    if data:
+        lines += [DATA_OPEN, *data, DATA_CLOSE]
+    if not facts and not data:
+        lines.append("(Nothing to show.)")
+    if withheld:
+        lines.append("Not shared in this chat: " + ", ".join(
+            f"{n} {_CATEGORY_NOUNS[c]}" for c, n in sorted(withheld.items())) + ".")
+    if cut:
+        lines.append(f"({cut} more items not shown: a tool result is capped at {TOOL_RESULT_MAX_CHARS:,} characters.)")
+    text = "\n".join(lines)
+    return ToolRender(
+        text=text, categories=sorted(sent), chars=len(text), withheld=withheld, cut=cut,
+    )
+
+
 # --- History -----------------------------------------------------------------------
 
 
@@ -516,7 +640,7 @@ async def build_context(db: AsyncSession, chat: Chat, *, draft: str = "") -> Con
     report = await health_service.get_health(db, ds.id, write_back=False)
     stats = await get_dataset_stats(db, ds.id)
     image_count = int(stats.get("image_count") or 0)
-    summary = _summary_of(report)
+    summary = summary_of(report)
 
     history_rows = list((await db.execute(
         select(ChatMessage).where(ChatMessage.chat_id == chat.id).order_by(ChatMessage.seq)

@@ -75,6 +75,9 @@ AR_SPARSE_MIN_IMAGES = 3
 STYLE_OUTLIER_IQR_K = 1.5
 # The most-used tags the caption pass keeps, for the analyst's Tags category.
 TOP_TAGS = 30
+# The ranked tags the cached caption pass keeps for the analyst's `tag_stats` tool
+# (M12 phase 3), counted as `top` is, so the tool and the context never disagree.
+TAG_STATS_MAX = 500
 
 # Quality flags: stats key -> (finding id, severity, title, flag key, setting name).
 _FLAG_FINDINGS: tuple[tuple[str, str, str, str, str, str | None], ...] = (
@@ -204,6 +207,8 @@ def _aggregate_captions(captions: list[str]) -> dict:
         "everywhere": everywhere,
         # The analyst's Tags category (backend/services/analyst_context.py).
         "top": [{"tag": t, "count": n} for t, n in ranked[:TOP_TAGS]],
+        # The analyst's `tag_stats` tool (backend/services/analyst_tools.py).
+        "ranked": [{"tag": t, "count": n} for t, n in ranked[:TAG_STATS_MAX]],
     }
 
 

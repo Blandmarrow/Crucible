@@ -80,7 +80,8 @@ The PRs, each a branch off `feat/analyst` with an Opus review:
   `POST /providers/{id}/probe-tools`: one round trip through a `crucible_echo` tool, under the
   provider slot, its usage recorded and the daily budget applied. The fake LLM answers a
   `tool` message with text and calls `crucible_echo` itself, since e2e cannot script replies.
-- **3c**, `ContextItem(category, text)`, `analyst_context.tool_specs(privacy)` (a tool is
+- **3c**, on `feat/analyst-p3c-tools` (record: `docs/dev/analyst/tool-registry.md`):
+  `ContextItem(category, text)`, `analyst_context.tool_specs(privacy)` (a tool is
   offered only when its categories are on) and `render_tool_result` (the filter, `_clean`,
   `<dataset-data>`, a size cap), and the registry in a new module, analyst_tools.py in `backend/services/`:
   `list_snapshots` (first, argument-free, so `[[fake:tool]]` hits a real tool), `get_finding`,
